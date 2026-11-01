@@ -18,11 +18,17 @@ import webbrowser
 import threading
 import time
 import logging
+import tempfile
+import shutil
+import ctypes
+import errno
+import stat
+from decimal import Decimal
 from collections import deque
 from typing import Any, Optional
 
 import uvicorn
-from fastapi import FastAPI, HTTPException
+from fastapi import Depends, FastAPI, HTTPException
 from fastapi.responses import HTMLResponse
 from pydantic import BaseModel
 
@@ -58,6 +64,117 @@ logging.basicConfig(
 )
 logger = logging.getLogger('jtree')
 
+
+def _darwin_metadata(path):
+    """Capture metadata that must survive replacement, using Darwin libc APIs."""
+    libc = ctypes.CDLL(None, use_errno=True)
+    encoded = os.fsencode(path)
+    libc.listxattr.argtypes = [ctypes.c_char_p, ctypes.c_void_p, ctypes.c_size_t, ctypes.c_int]
+    libc.listxattr.restype = ctypes.c_ssize_t
+    libc.getxattr.argtypes = [ctypes.c_char_p, ctypes.c_char_p, ctypes.c_void_p, ctypes.c_size_t, ctypes.c_uint32, ctypes.c_int]
+    libc.getxattr.restype = ctypes.c_ssize_t
+
+    def checked(result):
+        if result < 0:
+            error = ctypes.get_errno()
+            raise OSError(error, os.strerror(error), path)
+        return result
+
+    size = checked(libc.listxattr(encoded, None, 0, 0))
+    names = ctypes.create_string_buffer(size or 1)
+    if size:
+        size = checked(libc.listxattr(encoded, names, size, 0))
+    attributes = {}
+    for name in names.raw[:size].split(b'\0'):
+        if not name or name == b'com.apple.provenance':
+            continue
+        length = checked(libc.getxattr(encoded, name, None, 0, 0, 0))
+        value = ctypes.create_string_buffer(length or 1)
+        if length:
+            length = checked(libc.getxattr(encoded, name, value, length, 0, 0))
+        attributes[name] = value.raw[:length]
+
+    libc.acl_get_file.argtypes = [ctypes.c_char_p, ctypes.c_int]
+    libc.acl_get_file.restype = ctypes.c_void_p
+    libc.acl_to_text.argtypes = [ctypes.c_void_p, ctypes.POINTER(ctypes.c_ssize_t)]
+    libc.acl_to_text.restype = ctypes.c_void_p
+    libc.acl_free.argtypes = [ctypes.c_void_p]
+    acl = libc.acl_get_file(encoded, 0x100)  # ACL_TYPE_EXTENDED, sys/acl.h
+    if not acl:
+        error = ctypes.get_errno()
+        if error != errno.ENOENT:
+            raise OSError(error, os.strerror(error), path)
+        acl_text = None
+    else:
+        try:
+            length = ctypes.c_ssize_t()
+            text = libc.acl_to_text(acl, ctypes.byref(length))
+            if not text:
+                error = ctypes.get_errno()
+                raise OSError(error, os.strerror(error), path)
+            try:
+                acl_text = ctypes.string_at(text, length.value)
+            finally:
+                libc.acl_free(text)
+        finally:
+            libc.acl_free(acl)
+    info = os.stat(path)
+    return (stat.S_IMODE(info.st_mode), info.st_uid, info.st_gid, info.st_flags, attributes, acl_text)
+
+
+def _copy_metadata(source, destination):
+    if sys.platform == 'darwin':
+        libc = ctypes.CDLL(None, use_errno=True)
+        libc.copyfile.argtypes = [ctypes.c_char_p, ctypes.c_char_p, ctypes.c_void_p, ctypes.c_uint32]
+        libc.copyfile.restype = ctypes.c_int
+        # COPYFILE_METADATA = COPYFILE_ACL | COPYFILE_STAT | COPYFILE_XATTR.
+        if libc.copyfile(os.fsencode(source), os.fsencode(destination), None, 0x7) != 0:
+            error = ctypes.get_errno()
+            raise OSError(error, os.strerror(error), source)
+    else:
+        shutil.copystat(source, destination)
+
+
+def _metadata_snapshot(path):
+    if sys.platform == 'darwin':
+        return _darwin_metadata(path)
+    if not hasattr(os, 'listxattr'):
+        raise OSError('Cannot verify extended metadata on this platform')
+    info = os.stat(path)
+    attributes = {name: os.getxattr(path, name) for name in os.listxattr(path)}
+    return (stat.S_IMODE(info.st_mode), info.st_uid, info.st_gid, getattr(info, 'st_flags', 0), attributes)
+
+# local-server-guard:begin
+class LocalOriginGuard:
+    """Reject foreign Host on every request, and foreign Origin on state changes."""
+
+    def __init__(self, app):
+        self.app = app
+
+    async def __call__(self, scope, receive, send):
+        if scope["type"] not in ("http", "websocket"):
+            await self.app(scope, receive, send)
+            return
+        server = scope.get("server")
+        port = server[1] if server and len(server) > 1 else None
+        allowed = {f"127.0.0.1:{port}", f"localhost:{port}"}
+        headers = [(k.lower(), v.decode("latin-1")) for k, v in scope.get("headers", [])]
+        hosts = [v for k, v in headers if k == b"host"]
+        origins = [v for k, v in headers if k == b"origin"]
+        ok = type(port) is int and 1 <= port <= 65535 and len(hosts) == 1 and hosts[0] in allowed
+        if ok and (scope["type"] == "websocket" or scope["method"] not in ("GET", "HEAD")):
+            ok = len(origins) == 1 and origins[0] == f"http://{hosts[0]}"
+        if ok:
+            await self.app(scope, receive, send)
+        elif scope["type"] == "websocket":
+            await receive()
+            await send({"type": "websocket.close", "code": 1008})
+        else:
+            await send({"type": "http.response.start", "status": 403,
+                        "headers": [(b"content-type", b"text/plain")]})
+            await send({"type": "http.response.body", "body": b"Forbidden"})
+# local-server-guard:end
+
 # --- JSON Manager ---
 
 class JSONManager:
@@ -80,11 +197,40 @@ class JSONManager:
             raise ValueError(f"File too large: {file_size / 1024 / 1024:.1f}MB (max 50MB)")
 
         with open(self.file_path, 'r', encoding='utf-8') as f:
-            self.data = json.load(f)
+            self.data, self.warning = self._load(f.read())
+
+    @staticmethod
+    def _validate_value(value):
+        try:
+            json.dumps(value, ensure_ascii=False, allow_nan=False).encode('utf-8')
+        except (ValueError, UnicodeError) as exc:
+            raise ValueError('JSON contains a non-finite number or invalid Unicode') from exc
+
+    @staticmethod
+    def _load(content):
+        warnings = set()
+        def pairs(items):
+            result = {}
+            for key, value in items:
+                if key in result:
+                    warnings.add('duplicate keys')
+                result[key] = value
+            return result
+        def number(value):
+            parsed = float(value)
+            if not Decimal(value).is_finite() or not Decimal.from_float(parsed).is_finite() or Decimal(str(parsed)) != Decimal(value):
+                warnings.add('number precision or range')
+            return parsed
+        data = json.loads(content, object_pairs_hook=pairs, parse_float=number,
+                          parse_constant=lambda value: (_ for _ in ()).throw(ValueError(f'Invalid JSON number: {value}')))
+        JSONManager._validate_value(data)
+        warning = ('Saving may change ' + ', '.join(sorted(warnings))) if warnings else None
+        return data, warning
 
     @classmethod
     def from_content(cls, content: str, file_name: str):
         """Create a JSONManager from raw JSON content (no file on disk)."""
+        cls._validate_value(file_name)
         if len(content) > cls.MAX_FILE_SIZE:
             raise ValueError(f"Content too large: {len(content) / 1024 / 1024:.1f}MB (max 50MB)")
         instance = object.__new__(cls)
@@ -95,38 +241,30 @@ class JSONManager:
         instance.max_undo = 50
         instance.undo_stack = deque(maxlen=instance.max_undo)
         instance.redo_stack = deque(maxlen=50)
-        instance.data = json.loads(content)
+        instance.data, instance.warning = cls._load(content)
         return instance
 
-    def _resolve_path(self, path: str):
-        """Resolve a dot-separated path to (parent, key, target_value).
-        Returns (None, None, self.data) for root path ''.
-
-        LIMITATION: Uses '.' as the path separator, so dictionary keys that
-        contain literal dots will be misinterpreted as nested paths. Changing
-        the separator would break the entire frontend path model.
-        """
-        if path == '' or path is None:
+    def _resolve_path(self, path: list[str | int]):
+        """Resolve a structured path to (parent, key, value); [] denotes root."""
+        if not path:
             return None, None, self.data
 
-        parts = path.split('.')
         current = self.data
         parent = None
         key = None
 
-        for part in parts:
+        for part in path:
             parent = current
             if isinstance(current, list):
-                try:
-                    idx = int(part)
-                except ValueError:
+                if type(part) is not int:
                     raise KeyError(f"Invalid array index: {part}")
+                idx = part
                 if idx < 0 or idx >= len(current):
                     raise IndexError(f"Array index out of bounds: {idx} (length {len(current)})")
                 key = idx
                 current = current[idx]
             elif isinstance(current, dict):
-                if part not in current:
+                if not isinstance(part, str) or part not in current:
                     raise KeyError(f"Key not found: {part}")
                 key = part
                 current = current[part]
@@ -135,7 +273,7 @@ class JSONManager:
 
         return parent, key, current
 
-    def _node_info(self, value: Any, path: str) -> dict:
+    def _node_info(self, value: Any, path: list[str | int]) -> dict:
         """Return metadata about a node."""
         if isinstance(value, dict):
             return {
@@ -171,11 +309,11 @@ class JSONManager:
                 "path": path,
             }
 
-    def get_node(self, path: str) -> dict:
+    def get_node(self, path: list[str | int]) -> dict:
         _, _, value = self._resolve_path(path)
         return self._node_info(value, path)
 
-    def get_children(self, path: str, offset: int = 0, limit: int = 50) -> dict:
+    def get_children(self, path: list[str | int], offset: int = 0, limit: int = 50) -> dict:
         _, _, value = self._resolve_path(path)
         children = []
         has_more = False
@@ -186,25 +324,25 @@ class JSONManager:
             subset = keys[offset:offset + limit]
             has_more = (offset + limit) < total
             for k in subset:
-                child_path = f"{path}.{k}" if path else k
+                child_path = path + [k]
                 children.append(self._node_info(value[k], child_path))
         elif isinstance(value, list):
             total = len(value)
             subset = list(range(offset, min(offset + limit, total)))
             has_more = (offset + limit) < total
             for i in subset:
-                child_path = f"{path}.{i}" if path else str(i)
+                child_path = path + [i]
                 children.append(self._node_info(value[i], child_path))
         else:
             total = 0
 
         return {"children": children, "hasMore": has_more, "total": total}
 
-    def get_subtree(self, path: str, depth: int = 2) -> dict:
+    def get_subtree(self, path: list[str | int], depth: int = 2) -> dict:
         _, _, value = self._resolve_path(path)
         return self._build_subtree(value, path, depth)
 
-    def _build_subtree(self, value: Any, path: str, depth: int, max_children: int = 1000) -> dict:
+    def _build_subtree(self, value: Any, path: list[str | int], depth: int, max_children: int = 1000) -> dict:
         info = self._node_info(value, path)
         if depth <= 0 or info["childCount"] == 0:
             return info
@@ -217,7 +355,7 @@ class JSONManager:
                         "value": f"[truncated: showing {max_children} of {len(value)} children]",
                         "childCount": 0, "summary": "truncated"})
                     break
-                child_path = f"{path}.{k}" if path else k
+                child_path = path + [k]
                 info["children"].append(self._build_subtree(v, child_path, depth - 1, max_children))
         elif isinstance(value, list):
             for i, v in enumerate(value):
@@ -226,7 +364,7 @@ class JSONManager:
                         "value": f"[truncated: showing {max_children} of {len(value)} children]",
                         "childCount": 0, "summary": "truncated"})
                     break
-                child_path = f"{path}.{i}" if path else str(i)
+                child_path = path + [i]
                 info["children"].append(self._build_subtree(v, child_path, depth - 1, max_children))
 
         return info
@@ -234,12 +372,12 @@ class JSONManager:
     def search(self, query: str, search_type: str = "both", limit: int = 100) -> list:
         results = []
         query_lower = query.lower()
-        self._search_recursive(self.data, "", query_lower, search_type, results, limit)
+        self._search_recursive(self.data, [], query_lower, search_type, results, limit)
         return results
 
     _MAX_SEARCH_DEPTH = 500
 
-    def _search_recursive(self, value: Any, path: str, query: str, search_type: str, results: list, limit: int, depth: int = 0):
+    def _search_recursive(self, value: Any, path: list[str | int], query: str, search_type: str, results: list, limit: int, depth: int = 0):
         if len(results) >= limit or depth > self._MAX_SEARCH_DEPTH:
             return
 
@@ -247,7 +385,7 @@ class JSONManager:
             for k, v in value.items():
                 if len(results) >= limit:
                     return
-                child_path = f"{path}.{k}" if path else k
+                child_path = path + [k]
                 if search_type in ("key", "both") and query in k.lower():
                     results.append({"path": child_path, "matchType": "key", "key": k, "preview": self._preview(v)})
                 if search_type in ("value", "both") and not isinstance(v, (dict, list)):
@@ -258,7 +396,7 @@ class JSONManager:
             for i, v in enumerate(value):
                 if len(results) >= limit:
                     return
-                child_path = f"{path}.{i}" if path else str(i)
+                child_path = path + [i]
                 if search_type in ("value", "both") and not isinstance(v, (dict, list)):
                     if query in str(v).lower():
                         results.append({"path": child_path, "matchType": "value", "key": str(i), "preview": str(v)})
@@ -271,23 +409,23 @@ class JSONManager:
             return f"[{len(value)} items]"
         return str(value)
 
-    def _push_undo(self, op_type: str, path: str, old_value: Any):
+    def _push_undo(self, op_type: str, path: list[str | int], old_value: Any):
         self.undo_stack.append({"op": op_type, "path": path, "old_value": copy.deepcopy(old_value)})
         self.redo_stack.clear()  # new mutation invalidates redo history
 
-    def set_value(self, path: str, new_value: Any):
+    def set_value(self, path: list[str | int], new_value: Any):
         if self.readonly:
             raise PermissionError("File is open in read-only mode")
         parent, key, old_value = self._resolve_path(path)
         if parent is None:
-            self._push_undo("set_root", "", copy.deepcopy(self.data))
+            self._push_undo("set_root", [], copy.deepcopy(self.data))
             self.data = new_value
         else:
             self._push_undo("set_value", path, copy.deepcopy(old_value))
             parent[key] = new_value
         self.dirty = True
 
-    def add_child(self, path: str, key: Optional[str], value: Any):
+    def add_child(self, path: list[str | int], key: Optional[str], value: Any):
         if self.readonly:
             raise PermissionError("File is open in read-only mode")
         _, _, target = self._resolve_path(path)
@@ -306,10 +444,10 @@ class JSONManager:
             raise ValueError("Can only add children to objects or arrays")
         self.dirty = True
 
-    def delete_node(self, path: str):
+    def delete_node(self, path: list[str | int]):
         if self.readonly:
             raise PermissionError("File is open in read-only mode")
-        if path == '' or path is None:
+        if not path:
             raise ValueError("Cannot delete root node")
         parent, key, old_value = self._resolve_path(path)
         undo_entry = {"op": "delete", "path": path, "old_value": copy.deepcopy(old_value)}
@@ -324,10 +462,10 @@ class JSONManager:
             parent.pop(key)
         self.dirty = True
 
-    def rename_key(self, path: str, new_key: str):
+    def rename_key(self, path: list[str | int], new_key: str):
         if self.readonly:
             raise PermissionError("File is open in read-only mode")
-        if path == '' or path is None:
+        if not path:
             raise ValueError("Cannot rename root node")
         parent, old_key, value = self._resolve_path(path)
         if not isinstance(parent, dict):
@@ -346,7 +484,7 @@ class JSONManager:
         parent.update(new_dict)
         self.dirty = True
 
-    def move_child(self, parent_path: str, from_index: int, to_index: int):
+    def move_child(self, parent_path: list[str | int], from_index: int, to_index: int):
         if self.readonly:
             raise PermissionError("File is open in read-only mode")
         _, _, target = self._resolve_path(parent_path)
@@ -372,12 +510,12 @@ class JSONManager:
         path = entry["path"]
         fwd = entry["forward"]
         if op == "set_root":
-            self.undo_stack.append({"op": "set_root", "path": "", "old_value": copy.deepcopy(self.data)})
+            self.undo_stack.append({"op": "set_root", "path": [], "old_value": copy.deepcopy(self.data)})
             self.data = fwd
         elif op == "set_value":
             parent, key, old = self._resolve_path(path)
             if parent is None:
-                self.undo_stack.append({"op": "set_root", "path": "", "old_value": copy.deepcopy(self.data)})
+                self.undo_stack.append({"op": "set_root", "path": [], "old_value": copy.deepcopy(self.data)})
                 self.data = fwd
             else:
                 self.undo_stack.append({"op": "set_value", "path": path, "old_value": copy.deepcopy(old)})
@@ -405,9 +543,7 @@ class JSONManager:
             elif isinstance(parent, list):
                 parent.pop(key)
         elif op == "rename":
-            parts = path.split('.')
-            parent_path_str = '.'.join(parts[:-1])
-            _, _, parent_val = self._resolve_path(parent_path_str)
+            _, _, parent_val = self._resolve_path(path[:-1])
             if isinstance(parent_val, dict):
                 old_key = fwd["old_key"]
                 new_key = fwd["new_key"]
@@ -464,23 +600,19 @@ class JSONManager:
                 if idx < len(target):
                     target.pop(idx)
         elif op == "delete":
-            parts = path.split('.')
-            parent_path = '.'.join(parts[:-1])
-            key_part = parts[-1]
-            _, _, parent_val = self._resolve_path(parent_path)
+            key_part = path[-1]
+            _, _, parent_val = self._resolve_path(path[:-1])
             redo_entry["forward"] = copy.deepcopy(old)  # store value for redo verification
             if isinstance(parent_val, dict):
                 parent_val[key_part] = old
             elif isinstance(parent_val, list):
                 # Use stored array_index if available for correct restore position
-                idx = entry.get("array_index", int(key_part))
+                idx = entry.get("array_index", key_part)
                 parent_val.insert(idx, old)
         elif op == "rename":
             old_key = old["old_key"]
             new_key = old["new_key"]
-            parts = path.split('.')
-            parent_path = '.'.join(parts[:-1])
-            _, _, parent_val = self._resolve_path(parent_path)
+            _, _, parent_val = self._resolve_path(path[:-1])
             redo_entry["forward"] = {"old_key": old_key, "new_key": new_key}
             if isinstance(parent_val, dict) and new_key in parent_val:
                 new_dict = {}
@@ -511,15 +643,34 @@ class JSONManager:
         target = path or self.file_path
         if target is None:
             raise PermissionError("No file path set. Use Save As to choose a location.")
-        target = os.path.abspath(target)
-        with open(target, 'w', encoding='utf-8') as f:
-            json.dump(self.data, f, indent=2, ensure_ascii=False)
-            f.write('\n')
+        target = os.path.realpath(os.path.abspath(target))
+        content = (json.dumps(self.data, indent=2, ensure_ascii=False, allow_nan=False) + '\n').encode('utf-8')
+        fd, temp_path = tempfile.mkstemp(prefix='.jtree-', dir=os.path.dirname(target))
+        try:
+            with os.fdopen(fd, 'wb') as f:
+                f.write(content)
+                f.flush()
+                os.fsync(f.fileno())
+            if os.path.exists(target):
+                original = os.stat(target)
+                if original.st_nlink != 1:
+                    raise ValueError('Cannot atomically replace a file with multiple hard links')
+                metadata = _metadata_snapshot(target)
+                _copy_metadata(target, temp_path)
+                current = os.stat(target)
+                if ((original.st_dev, original.st_ino, original.st_mtime_ns, original.st_size, original.st_nlink) !=
+                        (current.st_dev, current.st_ino, current.st_mtime_ns, current.st_size, current.st_nlink) or
+                        metadata != _metadata_snapshot(target) or metadata != _metadata_snapshot(temp_path)):
+                    raise OSError('File or metadata changed, or metadata could not be preserved')
+            os.replace(temp_path, target)
+        finally:
+            if os.path.exists(temp_path):
+                os.unlink(temp_path)
         if self.file_path is None:
             # First save of a browser-uploaded file: adopt this path
             self.file_path = target
             self.display_name = os.path.basename(target)
-        if target == self.file_path:
+        if self.file_path and target == os.path.realpath(self.file_path):
             self.dirty = False
 
 
@@ -527,6 +678,7 @@ class JSONManager:
 # --- FastAPI App ---
 
 app = FastAPI(title="jtree")
+app.add_middleware(LocalOriginGuard)
 json_manager: Optional[JSONManager] = None
 _manager_lock = threading.Lock()
 
@@ -535,6 +687,21 @@ def _require_file():
     """Raise 409 if no file is loaded."""
     if json_manager is None:
         raise HTTPException(status_code=409, detail="No file loaded")
+
+
+def _decode_path(path: str = "[]") -> list[str | int]:
+    """Decode a JSON path query with exact object-key and array-index types."""
+    try:
+        parts = json.loads(path)
+    except (json.JSONDecodeError, ValueError):
+        raise HTTPException(status_code=400, detail="Path must be a JSON array")
+    if not isinstance(parts, list) or any(type(part) not in (str, int) for part in parts):
+        raise HTTPException(status_code=400, detail="Path must contain only strings and integer indices")
+    try:
+        JSONManager._validate_value(parts)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    return parts
 
 
 @app.get("/", response_class=HTMLResponse)
@@ -573,6 +740,7 @@ def api_status():
         "canRedo": len(json_manager.redo_stack) > 0,
         "loaded": True,
         "hasFilePath": json_manager.file_path is not None,
+        "warning": json_manager.warning,
     }
 
 
@@ -595,7 +763,7 @@ def api_open(body: OpenBody):
     with _manager_lock:
         try:
             json_manager = JSONManager(file_path, readonly=body.readonly)
-            return {"ok": True, "fileName": os.path.basename(file_path)}
+            return {"ok": True, "fileName": os.path.basename(file_path), "warning": json_manager.warning}
         except json.JSONDecodeError as e:
             raise HTTPException(status_code=400, detail=f"Invalid JSON: {e}")
         except ValueError as e:
@@ -609,17 +777,18 @@ class OpenContentBody(BaseModel):
 @app.post("/api/open-content")
 def api_open_content(body: OpenContentBody):
     global json_manager
-    try:
-        json_manager = JSONManager.from_content(body.content, body.fileName)
-        return {"ok": True, "fileName": body.fileName}
-    except json.JSONDecodeError as e:
-        raise HTTPException(status_code=400, detail=f"Invalid JSON: {e}")
-    except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e))
+    with _manager_lock:
+        try:
+            json_manager = JSONManager.from_content(body.content, body.fileName)
+            return {"ok": True, "fileName": body.fileName, "warning": json_manager.warning}
+        except json.JSONDecodeError as e:
+            raise HTTPException(status_code=400, detail=f"Invalid JSON: {e}")
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e))
 
 
 @app.get("/api/node")
-def api_get_node(path: str = ""):
+def api_get_node(path: list[str | int] = Depends(_decode_path)):
     _require_file()
     try:
         return json_manager.get_node(path)
@@ -628,7 +797,7 @@ def api_get_node(path: str = ""):
 
 
 @app.get("/api/children")
-def api_get_children(path: str = "", offset: int = 0, limit: int = 50):
+def api_get_children(path: list[str | int] = Depends(_decode_path), offset: int = 0, limit: int = 50):
     _require_file()
     if limit < 1 or limit > 500:
         limit = 50
@@ -641,7 +810,7 @@ def api_get_children(path: str = "", offset: int = 0, limit: int = 50):
 
 
 @app.get("/api/subtree")
-def api_get_subtree(path: str = "", depth: int = 2):
+def api_get_subtree(path: list[str | int] = Depends(_decode_path), depth: int = 2):
     _require_file()
     if depth < 1:
         depth = 1
@@ -669,16 +838,19 @@ class SetValueBody(BaseModel):
     value: Any
 
 @app.put("/api/node")
-def api_set_value(path: str, body: SetValueBody):
+def api_set_value(body: SetValueBody, path: list[str | int] = Depends(_decode_path)):
     _require_file()
     with _manager_lock:
         try:
+            JSONManager._validate_value(body.value)
             json_manager.set_value(path, body.value)
             return {"ok": True}
         except PermissionError as e:
             raise HTTPException(status_code=403, detail=str(e))
         except (KeyError, IndexError) as e:
             raise HTTPException(status_code=404, detail=str(e))
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e))
 
 
 class AddChildBody(BaseModel):
@@ -687,7 +859,7 @@ class AddChildBody(BaseModel):
     type: str = "string"
 
 @app.post("/api/node")
-def api_add_child(path: str, body: AddChildBody):
+def api_add_child(body: AddChildBody, path: list[str | int] = Depends(_decode_path)):
     _require_file()
     # Construct default value based on type
     value = body.value
@@ -696,6 +868,7 @@ def api_add_child(path: str, body: AddChildBody):
         value = defaults.get(body.type, "")
     with _manager_lock:
         try:
+            JSONManager._validate_value({body.key: value} if body.key is not None else value)
             json_manager.add_child(path, body.key, value)
             return {"ok": True}
         except PermissionError as e:
@@ -705,7 +878,7 @@ def api_add_child(path: str, body: AddChildBody):
 
 
 @app.delete("/api/node")
-def api_delete_node(path: str):
+def api_delete_node(path: list[str | int] = Depends(_decode_path)):
     _require_file()
     with _manager_lock:
         try:
@@ -721,10 +894,11 @@ class RenameBody(BaseModel):
     newKey: str
 
 @app.post("/api/rename")
-def api_rename(path: str, body: RenameBody):
+def api_rename(body: RenameBody, path: list[str | int] = Depends(_decode_path)):
     _require_file()
     with _manager_lock:
         try:
+            JSONManager._validate_value(body.newKey)
             json_manager.rename_key(path, body.newKey)
             return {"ok": True}
         except PermissionError as e:
@@ -742,6 +916,8 @@ def api_save():
             return {"ok": True}
         except PermissionError as e:
             raise HTTPException(status_code=403, detail=str(e))
+        except (ValueError, UnicodeError) as e:
+            raise HTTPException(status_code=400, detail=str(e))
         except OSError as e:
             raise HTTPException(status_code=500, detail=str(e))
 
@@ -772,6 +948,8 @@ def api_save_as(body: SaveAsBody):
         try:
             json_manager.save(resolved)
             return {"ok": True}
+        except (ValueError, UnicodeError) as e:
+            raise HTTPException(status_code=400, detail=str(e))
         except OSError as e:
             raise HTTPException(status_code=500, detail=str(e))
 
@@ -781,7 +959,7 @@ def api_download():
     """Return the full JSON content for browser-side Save As downloads."""
     _require_file()
     from fastapi.responses import Response
-    content = json.dumps(json_manager.data, indent=2, ensure_ascii=False)
+    content = json.dumps(json_manager.data, indent=2, ensure_ascii=False, allow_nan=False)
     return Response(content=content, media_type="application/json")
 
 
@@ -808,7 +986,7 @@ class MoveChildBody(BaseModel):
     toIndex: int
 
 @app.post("/api/move")
-def api_move_child(path: str, body: MoveChildBody):
+def api_move_child(body: MoveChildBody, path: list[str | int] = Depends(_decode_path)):
     _require_file()
     with _manager_lock:
         try:
@@ -821,12 +999,12 @@ def api_move_child(path: str, body: MoveChildBody):
 
 
 @app.get("/api/copy")
-def api_copy(path: str = ""):
+def api_copy(path: list[str | int] = Depends(_decode_path)):
     """Return a deep copy of the value at the given path, plus its key name."""
     _require_file()
     try:
         _, key, value = json_manager._resolve_path(path)
-        key_name = path.split('.')[-1] if path else 'root'
+        key_name = str(key) if path else 'root'
         return {
             "key": key_name,
             "value": copy.deepcopy(value),
@@ -841,34 +1019,35 @@ class PasteBody(BaseModel):
     value: Any
 
 @app.post("/api/paste")
-def api_paste(path: str, body: PasteBody):
+def api_paste(body: PasteBody, path: list[str | int] = Depends(_decode_path)):
     """Paste a value into a container. Auto-generates unique key for objects."""
-    _require_file()
-    if json_manager.readonly:
-        raise HTTPException(status_code=403, detail="File is open in read-only mode")
-    try:
-        _, _, target = json_manager._resolve_path(path)
-        if isinstance(target, dict):
-            # Generate unique key
-            base_key = body.key or "pasted"
-            key = base_key
-            counter = 1
-            while key in target:
-                key = f"{base_key}_copy{counter}"
-                counter += 1
-            json_manager._push_undo("add_child", path, {"key": key})
-            target[key] = copy.deepcopy(body.value)
-        elif isinstance(target, list):
-            json_manager._push_undo("add_child", path, {"index": len(target)})
-            target.append(copy.deepcopy(body.value))
-        else:
-            raise ValueError("Can only paste into objects or arrays")
-        json_manager.dirty = True
-        return {"ok": True, "key": key if isinstance(target, dict) else str(len(target) - 1)}
-    except PermissionError as e:
-        raise HTTPException(status_code=403, detail=str(e))
-    except (KeyError, IndexError, ValueError) as e:
-        raise HTTPException(status_code=400, detail=str(e))
+    with _manager_lock:
+        _require_file()
+        if json_manager.readonly:
+            raise HTTPException(status_code=403, detail="File is open in read-only mode")
+        try:
+            JSONManager._validate_value({body.key: body.value} if body.key is not None else body.value)
+            _, _, target = json_manager._resolve_path(path)
+            if isinstance(target, dict):
+                base_key = body.key if body.key is not None else "pasted"
+                key = base_key
+                counter = 1
+                while key in target:
+                    key = f"{base_key}_copy{counter}"
+                    counter += 1
+                json_manager._push_undo("add_child", path, {"key": key})
+                target[key] = copy.deepcopy(body.value)
+            elif isinstance(target, list):
+                json_manager._push_undo("add_child", path, {"index": len(target)})
+                target.append(copy.deepcopy(body.value))
+            else:
+                raise ValueError("Can only paste into objects or arrays")
+            json_manager.dirty = True
+            return {"ok": True, "key": key if isinstance(target, dict) else str(len(target) - 1)}
+        except PermissionError as e:
+            raise HTTPException(status_code=403, detail=str(e))
+        except (KeyError, IndexError, ValueError) as e:
+            raise HTTPException(status_code=400, detail=str(e))
 
 
 # --- HTML Template ---
@@ -1996,12 +2175,29 @@ class ErrorBoundary extends preact.Component {
     }
 }
 
+// The UI stores paths as stable keys; the wire format is always a typed array.
+const pathKey = parts => parts.length ? JSON.stringify(parts) : '';
+const pathParts = key => key === '' ? [] : JSON.parse(key);
+const pathContains = (parent, child) => {
+    const a = pathParts(parent), b = pathParts(child);
+    return a.length <= b.length && a.every((part, i) => part === b[i]);
+};
+const pathLabel = key => {
+    const parts = pathParts(key);
+    const last = parts.at(-1);
+    return !parts.length ? 'root' : typeof last === 'number' ? `[${last}]` : last || '""';
+};
+
 async function api(path, options = {}) {
+    const url = new URL(path, location.href);
+    if (url.searchParams.has('path')) {
+        url.searchParams.set('path', JSON.stringify(pathParts(url.searchParams.get('path'))));
+    }
     const headers = { ...options.headers };
     if (options.body) {
         headers['Content-Type'] = 'application/json';
     }
-    const res = await fetch(path, {
+    const res = await fetch(url, {
         headers,
         ...options,
     });
@@ -2009,7 +2205,13 @@ async function api(path, options = {}) {
         const err = await res.json().catch(() => ({ detail: res.statusText }));
         throw new Error(err.detail || 'API error');
     }
-    return res.json();
+    const result = await res.json();
+    // Only transform endpoint-defined node paths, never user data values.
+    const convert = node => { if (node && Array.isArray(node.path)) node.path = pathKey(node.path); };
+    if (url.pathname === '/api/node') convert(result);
+    if (url.pathname === '/api/children') (result.children || []).forEach(convert);
+    if (url.pathname === '/api/search') result.forEach(convert);
+    return result;
 }
 
 const TYPE_COLORS = {
@@ -2096,11 +2298,11 @@ function formatValue(value, type) {
 
 function pathSegments(path) {
     if (!path) return [{ label: 'root', path: '' }];
-    const parts = path.split('.');
+    const parts = pathParts(path);
     const segs = [{ label: 'root', path: '' }];
     for (let i = 0; i < parts.length; i++) {
-        const p = parts.slice(0, i + 1).join('.');
-        const label = /^\\d+$/.test(parts[i]) ? `[${parts[i]}]` : parts[i];
+        const p = pathKey(parts.slice(0, i + 1));
+        const label = pathLabel(p);
         segs.push({ label, path: p });
     }
     return segs;
@@ -2253,7 +2455,7 @@ function computeLanes(positions, expandedSet, childrenCache, groupColors) {
 
         const chain = groupColors?.get(path);
         const color = (chain && chain.length > 0) ? chain[chain.length - 1] : null;
-        const depth = path === '' ? 0 : path.split('.').length;
+        const depth = pathParts(path).length;
         if (depth > maxDepth) maxDepth = depth;
 
         rawLanes.push({ path, depth, bounds, color });
@@ -2354,7 +2556,7 @@ const SearchBar = memo(({ onSearch, onClose, isDark }) => {
                         html`<button key=${t} class=${`text-xs px-2 py-1 rounded ${searchType === t ? 'bg-blue-600 text-white' : 'btn-ghost'}`} onClick=${() => setSearchType(t)}>${t}</button>`
                     ))}</div></div>${results.length > 0 && (
                 html`<div class=${"overflow-y-auto max-h-[280px] border-t"} style=${{borderColor: isDark ? '#1a3a5c' : '#e2e8f0'}}>${results.map((r, i) => (
-                        html`<div key=${i} class=${"context-menu-item text-xs"} onClick=${() => onSearch(r.path)}><span class=${"font-mono truncate flex-1"} style=${{color: r.matchType === 'key' ? '#4fc3f7' : '#66bb6a'}}>${r.path}</span><span class=${"truncate opacity-60 max-w-[100px]"}>${r.preview}</span></div>`
+                        html`<div key=${i} class=${"context-menu-item text-xs"} onClick=${() => onSearch(r.path)}><span class=${"font-mono truncate flex-1"} style=${{color: r.matchType === 'key' ? '#4fc3f7' : '#66bb6a'}}>${pathSegments(r.path).slice(1).map(s => s.label).join(' > ') || 'root'}</span><span class=${"truncate opacity-60 max-w-[100px]"}>${r.preview}</span></div>`
                     ))}</div>`
             )}${query && !loading && results.length === 0 && (
                 html`<div class=${"p-3 text-xs opacity-50 text-center border-t"} style=${{borderColor: isDark ? '#1a3a5c' : '#e2e8f0'}}>No results</div>`
@@ -2389,13 +2591,13 @@ const ContextMenu = ({ x, y, node, onClose, onAction, readonly, isDark, hasClipb
             )}${!readonly && node.childCount === 0 && node.type !== 'object' && node.type !== 'array' && (
                 html`<div class=${"context-menu-item"} onClick=${() => { onAction('editValue', node); onClose(); }}><${Icon} name=${"edit"} size=${14} /> Edit Value</div>`
             )}${!readonly && !isRoot && node._parentType === 'array' && (() => {
-                const idx = parseInt(node.path.split('.').pop(), 10);
+                const idx = pathParts(node.path).at(-1);
                 return (
                     html`<${preact.Fragment}><div class=${"context-menu-separator"} /><div class=${`context-menu-item ${idx === 0 ? 'opacity-30 pointer-events-none' : ''}`} onClick=${() => { if (idx > 0) { onAction('moveUp', node); onClose(); } }}><${Icon} name=${"arrow-up"} size=${14} /> Move Up</div><div class=${`context-menu-item ${node._isLastInArray ? 'opacity-30 pointer-events-none' : ''}`} onClick=${() => { if (!node._isLastInArray) { onAction('moveDown', node); onClose(); } }}><${Icon} name=${"arrow-down"} size=${14} /> Move Down</div><div class=${"context-menu-item"} onClick=${() => { onAction('moveTo', node); onClose(); }}><${Icon} name=${"arrow-right-left"} size=${14} /> Move to Position...</div><//>`
                 );
             })()}<div class=${"context-menu-separator"} /><div class=${"context-menu-item"} onClick=${() => { onAction('copyNode', node); onClose(); }}><${Icon} name=${"copy"} size=${14} /> Copy Node</div>${!readonly && isContainer && (
                 html`<div class=${`context-menu-item ${!hasClipboard ? 'opacity-30 pointer-events-none' : ''}`} onClick=${() => { if (hasClipboard) { onAction('paste', node); onClose(); } }}><${Icon} name=${"clipboard-paste"} size=${14} /> Paste</div>`
-            )}<div class=${"context-menu-separator"} /><div class=${"context-menu-item"} onClick=${() => { navigator.clipboard.writeText(node.path); onClose(); }}><${Icon} name=${"link"} size=${14} /> Copy Path</div>${node.childCount === 0 && (
+            )}<div class=${"context-menu-separator"} /><div class=${"context-menu-item"} onClick=${() => { navigator.clipboard.writeText(JSON.stringify(pathParts(node.path))); onClose(); }}><${Icon} name=${"link"} size=${14} /> Copy Path</div>${node.childCount === 0 && (
                 html`<div class=${"context-menu-item"} onClick=${() => { navigator.clipboard.writeText(String(node.value)); onClose(); }}><${Icon} name=${"clipboard"} size=${14} /> Copy Value</div>`
             )}</div>`
     );
@@ -2404,8 +2606,7 @@ const ContextMenu = ({ x, y, node, onClose, onAction, readonly, isDark, hasClipb
 const GraphNode = memo(({ node, pos, groupColor, isExpanded, isSelected, isSearchMatch, isDark, onClick, onDoubleClick, onChevronClick, onContextMenu }) => {
     const tc = typeColor(node.type, isDark);
     const isLeaf = node.childCount === 0;
-    const keyName = node.path ? node.path.split('.').pop() : 'root';
-    const displayKey = /^\\d+$/.test(keyName) ? `[${keyName}]` : keyName;
+    const displayKey = pathLabel(node.path);
     // groupColor is an array of ancestor colors; use the last one (own color) for left border
     const chain = groupColor || [];
     const ownColor = chain.length > 0 ? chain[chain.length - 1] : tc.border;
@@ -2551,7 +2752,6 @@ const AddChildModal = ({ parentNode, onSave, onClose }) => {
     const [value, setDefaultValue] = useState('');
 
     const handleSave = () => {
-        if (isObject && !key.trim()) return;
         let parsedValue;
         if (childType === 'object') parsedValue = {};
         else if (childType === 'array') parsedValue = [];
@@ -2585,18 +2785,18 @@ const DeleteConfirmModal = ({ node, onConfirm, onClose }) => {
 };
 
 const RenameKeyModal = ({ node, onSave, onClose }) => {
-    const currentKey = node.path.split('.').pop();
+    const currentKey = pathParts(node.path).at(-1);
     const [newKey, setNewKey] = useState(currentKey);
 
     return (
-        html`<div class=${"modal-overlay"} onClick=${onClose}><div class=${"modal-box"} onClick=${e => e.stopPropagation()}><h3 class=${"text-sm font-semibold mb-3"}>Rename Key</h3><input class=${"input-field mb-4"} value=${newKey} onInput=${e => setNewKey(e.target.value)} onKeyDown=${e => e.key === 'Enter' && newKey.trim() && onSave(node.path, newKey.trim())} ref=${focusOnMount} /><div class=${"flex justify-end gap-2"}><button class=${"btn btn-ghost"} onClick=${onClose}>Cancel</button><button class=${"btn btn-primary"} onClick=${() => newKey.trim() && onSave(node.path, newKey.trim())} disabled=${!newKey.trim()}>Rename</button></div></div></div>`
+        html`<div class=${"modal-overlay"} onClick=${onClose}><div class=${"modal-box"} onClick=${e => e.stopPropagation()}><h3 class=${"text-sm font-semibold mb-3"}>Rename Key</h3><input class=${"input-field mb-4"} value=${newKey} onInput=${e => setNewKey(e.target.value)} onKeyDown=${e => e.key === 'Enter' && onSave(node.path, newKey)} ref=${focusOnMount} /><div class=${"flex justify-end gap-2"}><button class=${"btn btn-ghost"} onClick=${onClose}>Cancel</button><button class=${"btn btn-primary"} onClick=${() => onSave(node.path, newKey)}>Rename</button></div></div></div>`
     );
 };
 
 const MoveToModal = ({ node, onMove, onClose }) => {
-    const parts = node.path.split('.');
+    const parts = pathParts(node.path);
     const currentIdx = parseInt(parts.pop(), 10);
-    const parentPath = parts.join('.');
+    const parentPath = pathKey(parts);
     const [targetIdx, setTargetIdx] = useState(String(currentIdx));
 
     const handleSave = () => {
@@ -2700,8 +2900,7 @@ const NavSidebarItem = ({ node, depth, activePath, sidebarExpanded, onToggle, on
     const itemRef = useRef(null);
     const isOpen = sidebarExpanded.has(node.path);
     const isActive = activePath === node.path;
-    const keyName = node.path ? node.path.split('.').pop() : 'root';
-    const displayKey = /^\\d+$/.test(keyName) ? `[${keyName}]` : keyName;
+    const displayKey = pathLabel(node.path);
     const isObj = node.type === 'object';
     const typeColor = isObj ? '#4fc3f7' : '#ab47bc';
     const hasContainerChildren = node._navChildren && node._navChildren.some(c => c.type === 'object' || c.type === 'array');
@@ -2780,10 +2979,10 @@ const NavSidebar = ({ rootNode, activePath, onNavigate, isDark, isOpen, onToggle
         if (!navRootNode) return;
 
         // Build ancestor paths (e.g. "a.b.c" -> ["", "a", "a.b", "a.b.c"])
-        const parts = activePath ? activePath.split('.') : [];
+        const parts = pathParts(activePath);
         const ancestors = [''];
         for (let i = 0; i < parts.length; i++) {
-            ancestors.push(parts.slice(0, i + 1).join('.'));
+            ancestors.push(pathKey(parts.slice(0, i + 1)));
         }
 
         // Fetch any missing ancestors, then expand them all
@@ -2918,13 +3117,10 @@ const App = () => {
             setChildrenCache(prev => {
                 const next = new Map(prev);
                 // Annotate children with parent type info
-                const parentNode = path === '' ? rootNode : null;
                 const children = data.children.map(c => {
-                    // Determine parent type
-                    const parentPath = c.path.split('.').slice(0, -1).join('.');
                     return { ...c, _parentType: null }; // Will be set from node info
                 });
-                next.set(path, data.children);
+                next.set(path, children);
                 return next;
             });
             return data;
@@ -2996,7 +3192,9 @@ const App = () => {
             if (!localCache.has(p)) {
                 try {
                     const data = await api(`/api/children?path=${encodeURIComponent(p)}&offset=0&limit=200`);
-                    localCache.set(p, data.children || []);
+                    const parent = await api(`/api/node?path=${encodeURIComponent(p)}`);
+                    const children = data.children || [];
+                    localCache.set(p, children.map((c, i) => ({ ...c, _parentType: parent.type, _isLastInArray: parent.type === 'array' && i === children.length - 1 })));
                 } catch (e) {
                     continue;
                 }
@@ -3032,7 +3230,7 @@ const App = () => {
             const next = new Set(prev);
             for (const p of prev) {
                 // Root path ('') is ancestor of everything
-                if (path === '' || p === path || p.startsWith(path + '.')) {
+                if (path === '' || pathContains(path, p)) {
                     next.delete(p);
                 }
             }
@@ -3213,7 +3411,7 @@ const App = () => {
             setExpandedSet(prev => {
                 const next = new Set(prev);
                 for (const p of prev) {
-                    if (p === path || p.startsWith(path + '.')) next.delete(p);
+                    if (pathContains(path, p)) next.delete(p);
                 }
                 return next;
             });
@@ -3235,14 +3433,11 @@ const App = () => {
             // Update expanded paths
             setExpandedSet(prev => {
                 const next = new Set();
-                const oldKey = path.split('.').pop();
-                const parentPath = path.split('.').slice(0, -1).join('.');
-                const newPath = parentPath ? `${parentPath}.${newKey}` : newKey;
+                const oldParts = pathParts(path);
+                const newParts = [...oldParts.slice(0, -1), newKey];
                 for (const p of prev) {
-                    if (p === path) {
-                        next.add(newPath);
-                    } else if (p.startsWith(path + '.')) {
-                        next.add(newPath + p.slice(path.length));
+                    if (pathContains(path, p)) {
+                        next.add(pathKey([...newParts, ...pathParts(p).slice(oldParts.length)]));
                     } else {
                         next.add(p);
                     }
@@ -3295,7 +3490,7 @@ const App = () => {
             const annotated = data.children.map((c, i) => ({ ...c, _parentType: node.type, _isLastInArray: node.type === 'array' && i === data.children.length - 1 }));
             setChildrenCache(new Map([['', annotated]]));
         }
-        setToast(`Opened ${s.fileName}`);
+        setToast(s.warning || `Opened ${s.fileName}`);
     }, []);
 
     const handleOpenPath = useCallback(async (filePath) => {
@@ -3378,9 +3573,9 @@ const App = () => {
             const targetNode = await api(`/api/node?path=${encodeURIComponent(targetPath)}`);
             if (targetNode.type !== 'object' && targetNode.type !== 'array') {
                 // Not a container — paste into parent instead
-                const parts = targetPath.split('.');
+                const parts = pathParts(targetPath);
                 parts.pop();
-                pastePath = parts.join('.');
+                pastePath = pathKey(parts);
             }
         } catch (e) {
             // If we can't resolve, try anyway
@@ -3434,16 +3629,16 @@ const App = () => {
                 setModal({ type: 'edit', node });
                 break;
             case 'moveUp': {
-                const parts = node.path.split('.');
+                const parts = pathParts(node.path);
                 const idx = parseInt(parts.pop(), 10);
-                const parentPath = parts.join('.');
+                const parentPath = pathKey(parts);
                 if (idx > 0) handleMoveChild(parentPath, idx, idx - 1);
                 break;
             }
             case 'moveDown': {
-                const parts = node.path.split('.');
+                const parts = pathParts(node.path);
                 const idx = parseInt(parts.pop(), 10);
-                const parentPath = parts.join('.');
+                const parentPath = pathKey(parts);
                 handleMoveChild(parentPath, idx, idx + 1);
                 break;
             }
@@ -3526,8 +3721,7 @@ const App = () => {
             if (!pos) return;
             const tc = typeColor(node.type, isDark);
             const isLeaf = node.childCount === 0;
-            const keyName = node.path ? node.path.split('.').pop() : 'root';
-            const displayKey = /^\\d+$/.test(keyName) ? `[${keyName}]` : keyName;
+            const displayKey = pathLabel(node.path);
             const chain = groupColors?.get(node.path) || [];
             const ownColor = chain.length > 0 ? chain[chain.length - 1] : tc.border;
             const nodeBg = isDark ? '#0f1f3a' : '#ffffff';
@@ -3616,10 +3810,10 @@ const App = () => {
         setTimeout(() => setSearchMatchPath(null), 4500);
 
         // Expand all ancestors
-        const parts = path.split('.');
+        const parts = pathParts(path);
         const toExpand = [];
         for (let i = 0; i < parts.length - 1; i++) {
-            toExpand.push(parts.slice(0, i + 1).join('.'));
+            toExpand.push(pathKey(parts.slice(0, i + 1)));
         }
         toExpand.unshift('');
 
@@ -3646,10 +3840,10 @@ const App = () => {
 
         // Ensure all ancestors are expanded in the main canvas
         if (path) {
-            const parts = path.split('.');
+            const parts = pathParts(path);
             const toExpand = [''];
             for (let i = 0; i < parts.length; i++) {
-                toExpand.push(parts.slice(0, i + 1).join('.'));
+                toExpand.push(pathKey(parts.slice(0, i + 1)));
             }
             // Only expand the path itself if it's a container that we want to navigate to
             // The last segment might be the target; expand ancestors up to but not including it
@@ -3829,7 +4023,7 @@ const App = () => {
                 html`<${SaveAsModal} currentFile=${status?.file} onSave=${handleSaveAs} onBrowserSave=${(name) => { setModal(null); setToast(`Saved as ${name}`); fetchStatus(); }} onClose=${() => setModal(null)} />`
             )}${modal?.type === 'open' && (
                 html`<${OpenFileModal} onOpenContent=${handleOpenContent} onOpenPath=${handleOpenPath} onClose=${() => setModal(null)} error=${openError} />`
-            )}${!noFileLoaded && (
+            )}${status?.warning && html`<div role=${"alert"} class=${"px-4 py-2 text-xs text-amber-400"}>${status.warning}</div>`}${!noFileLoaded && (
                 html`<${Minimap} positions=${positions} viewBox=${{ x: -pan.x / zoom, y: -pan.y / zoom }} canvasSize=${{ width: canvasSize.width / zoom, height: canvasSize.height / zoom }} onNavigate=${handleMinimapNavigate} isDark=${isDark} />`
             )}${toast && html`<${Toast} message=${toast} onClose=${() => setToast(null)} />`}</div>`
     );

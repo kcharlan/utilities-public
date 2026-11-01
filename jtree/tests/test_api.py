@@ -82,7 +82,7 @@ class TestStatus:
         assert data["loaded"] is True
 
     def test_dirty_after_mutation(self, loaded_client):
-        loaded_client.put("/api/node", params={"path": "version"}, json={"value": 99})
+        loaded_client.put("/api/node", params={"path": json.dumps(["version"])}, json={"value": 99})
         data = loaded_client.get("/api/status").json()
         assert data["dirty"] is True
         assert data["canUndo"] is True
@@ -181,65 +181,65 @@ class TestGetNode:
         assert resp.status_code == 409
 
     def test_root_node(self, loaded_client):
-        data = loaded_client.get("/api/node", params={"path": ""}).json()
+        data = loaded_client.get("/api/node", params={"path": json.dumps([])}).json()
         assert data["type"] == "object"
         assert data["childCount"] == len(SAMPLE_DATA)
-        assert data["path"] == ""
+        assert data["path"] == []
 
     def test_string_leaf(self, loaded_client):
-        data = loaded_client.get("/api/node", params={"path": "name"}).json()
+        data = loaded_client.get("/api/node", params={"path": json.dumps(["name"])}).json()
         assert data["type"] == "string"
         assert data["value"] == "jtree"
 
     def test_number_leaf(self, loaded_client):
-        data = loaded_client.get("/api/node", params={"path": "version"}).json()
+        data = loaded_client.get("/api/node", params={"path": json.dumps(["version"])}).json()
         assert data["type"] == "number"
         assert data["value"] == 1
 
     def test_boolean_leaf(self, loaded_client):
-        data = loaded_client.get("/api/node", params={"path": "flag"}).json()
+        data = loaded_client.get("/api/node", params={"path": json.dumps(["flag"])}).json()
         assert data["type"] == "boolean"
         assert data["value"] is False
 
     def test_null_leaf(self, loaded_client):
-        data = loaded_client.get("/api/node", params={"path": "nothing"}).json()
+        data = loaded_client.get("/api/node", params={"path": json.dumps(["nothing"])}).json()
         assert data["type"] == "null"
         assert data["value"] is None
 
     def test_array_node(self, loaded_client):
-        data = loaded_client.get("/api/node", params={"path": "tags"}).json()
+        data = loaded_client.get("/api/node", params={"path": json.dumps(["tags"])}).json()
         assert data["type"] == "array"
         assert data["childCount"] == 3
 
     def test_nested_path(self, loaded_client):
-        data = loaded_client.get("/api/node", params={"path": "nested.c.deep"}).json()
+        data = loaded_client.get("/api/node", params={"path": json.dumps(["nested","c","deep"])}).json()
         assert data["type"] == "boolean"
         assert data["value"] is True
 
     def test_array_index_path(self, loaded_client):
-        data = loaded_client.get("/api/node", params={"path": "tags.1"}).json()
+        data = loaded_client.get("/api/node", params={"path": json.dumps(["tags",1])}).json()
         assert data["type"] == "string"
         assert data["value"] == "viewer"
 
     def test_invalid_path_returns_404(self, loaded_client):
-        resp = loaded_client.get("/api/node", params={"path": "nonexistent"})
+        resp = loaded_client.get("/api/node", params={"path": json.dumps(["nonexistent"])})
         assert resp.status_code == 404
 
     def test_invalid_array_index(self, loaded_client):
-        resp = loaded_client.get("/api/node", params={"path": "tags.99"})
+        resp = loaded_client.get("/api/node", params={"path": json.dumps(["tags",99])})
         assert resp.status_code == 404
 
     def test_traverse_into_scalar(self, loaded_client):
-        resp = loaded_client.get("/api/node", params={"path": "name.x"})
+        resp = loaded_client.get("/api/node", params={"path": json.dumps(["name","x"])})
         assert resp.status_code == 404
 
     def test_empty_object_node(self, loaded_client):
-        data = loaded_client.get("/api/node", params={"path": "empty_obj"}).json()
+        data = loaded_client.get("/api/node", params={"path": json.dumps(["empty_obj"])}).json()
         assert data["type"] == "object"
         assert data["childCount"] == 0
 
     def test_empty_array_node(self, loaded_client):
-        data = loaded_client.get("/api/node", params={"path": "empty_arr"}).json()
+        data = loaded_client.get("/api/node", params={"path": json.dumps(["empty_arr"])}).json()
         assert data["type"] == "array"
         assert data["childCount"] == 0
 
@@ -253,35 +253,35 @@ class TestGetChildren:
         assert client.get("/api/children").status_code == 409
 
     def test_root_children(self, loaded_client):
-        data = loaded_client.get("/api/children", params={"path": ""}).json()
+        data = loaded_client.get("/api/children", params={"path": json.dumps([])}).json()
         assert data["total"] == len(SAMPLE_DATA)
         assert len(data["children"]) == len(SAMPLE_DATA)
         assert data["hasMore"] is False
 
     def test_pagination_offset_limit(self, loaded_client):
-        data = loaded_client.get("/api/children", params={"path": "", "offset": 0, "limit": 2}).json()
+        data = loaded_client.get("/api/children", params={"path": json.dumps([]), "offset": 0, "limit": 2}).json()
         assert len(data["children"]) == 2
         assert data["hasMore"] is True
 
     def test_array_children(self, loaded_client):
-        data = loaded_client.get("/api/children", params={"path": "tags"}).json()
+        data = loaded_client.get("/api/children", params={"path": json.dumps(["tags"])}).json()
         assert data["total"] == 3
         assert data["children"][0]["value"] == "json"
         assert data["children"][2]["value"] == "editor"
 
     def test_array_pagination(self, loaded_client):
-        data = loaded_client.get("/api/children", params={"path": "nested.b", "offset": 1, "limit": 1}).json()
+        data = loaded_client.get("/api/children", params={"path": json.dumps(["nested","b"]), "offset": 1, "limit": 1}).json()
         assert len(data["children"]) == 1
         assert data["children"][0]["value"] == 20
         assert data["hasMore"] is True
 
     def test_scalar_has_no_children(self, loaded_client):
-        data = loaded_client.get("/api/children", params={"path": "name"}).json()
+        data = loaded_client.get("/api/children", params={"path": json.dumps(["name"])}).json()
         assert data["total"] == 0
         assert data["children"] == []
 
     def test_invalid_path_returns_404(self, loaded_client):
-        resp = loaded_client.get("/api/children", params={"path": "nope"})
+        resp = loaded_client.get("/api/children", params={"path": json.dumps(["nope"])})
         assert resp.status_code == 404
 
 
@@ -294,26 +294,26 @@ class TestGetSubtree:
         assert client.get("/api/subtree").status_code == 409
 
     def test_root_depth_1(self, loaded_client):
-        data = loaded_client.get("/api/subtree", params={"path": "", "depth": 1}).json()
+        data = loaded_client.get("/api/subtree", params={"path": json.dumps([]), "depth": 1}).json()
         assert data["type"] == "object"
         # depth=1 means immediate children have node info but no grandchildren expanded
         for child in data.get("children", []):
             assert "children" not in child or child.get("childCount", 0) == 0
 
     def test_root_depth_2(self, loaded_client):
-        data = loaded_client.get("/api/subtree", params={"path": "", "depth": 2}).json()
+        data = loaded_client.get("/api/subtree", params={"path": json.dumps([]), "depth": 2}).json()
         # nested object should have children expanded
-        nested = [c for c in data["children"] if c["path"] == "nested"][0]
+        nested = [c for c in data["children"] if c["path"] == ["nested"]][0]
         assert "children" in nested
         assert len(nested["children"]) == 3
 
     def test_subtree_of_leaf(self, loaded_client):
-        data = loaded_client.get("/api/subtree", params={"path": "name"}).json()
+        data = loaded_client.get("/api/subtree", params={"path": json.dumps(["name"])}).json()
         assert data["type"] == "string"
         assert "children" not in data
 
     def test_invalid_path(self, loaded_client):
-        resp = loaded_client.get("/api/subtree", params={"path": "bogus"})
+        resp = loaded_client.get("/api/subtree", params={"path": json.dumps(["bogus"])})
         assert resp.status_code == 404
 
 
@@ -332,7 +332,7 @@ class TestSearch:
     def test_search_key_match(self, loaded_client):
         data = loaded_client.get("/api/search", params={"q": "name", "type": "key"}).json()
         paths = [r["path"] for r in data]
-        assert "name" in paths
+        assert ["name"] in paths
 
     def test_search_value_match(self, loaded_client):
         data = loaded_client.get("/api/search", params={"q": "jtree", "type": "value"}).json()
@@ -366,47 +366,47 @@ class TestSearch:
 
 class TestSetValue:
     def test_no_file_returns_409(self, client):
-        assert client.put("/api/node", params={"path": "x"}, json={"value": 1}).status_code == 409
+        assert client.put("/api/node", params={"path": json.dumps(["x"])}, json={"value": 1}).status_code == 409
 
     def test_set_string(self, loaded_client):
-        resp = loaded_client.put("/api/node", params={"path": "name"}, json={"value": "new_name"})
+        resp = loaded_client.put("/api/node", params={"path": json.dumps(["name"])}, json={"value": "new_name"})
         assert resp.status_code == 200
-        node = loaded_client.get("/api/node", params={"path": "name"}).json()
+        node = loaded_client.get("/api/node", params={"path": json.dumps(["name"])}).json()
         assert node["value"] == "new_name"
 
     def test_set_number(self, loaded_client):
-        loaded_client.put("/api/node", params={"path": "version"}, json={"value": 42})
-        node = loaded_client.get("/api/node", params={"path": "version"}).json()
+        loaded_client.put("/api/node", params={"path": json.dumps(["version"])}, json={"value": 42})
+        node = loaded_client.get("/api/node", params={"path": json.dumps(["version"])}).json()
         assert node["value"] == 42
 
     def test_set_null(self, loaded_client):
-        loaded_client.put("/api/node", params={"path": "name"}, json={"value": None})
-        node = loaded_client.get("/api/node", params={"path": "name"}).json()
+        loaded_client.put("/api/node", params={"path": json.dumps(["name"])}, json={"value": None})
+        node = loaded_client.get("/api/node", params={"path": json.dumps(["name"])}).json()
         assert node["type"] == "null"
 
     def test_set_complex_value(self, loaded_client):
         """Replace a scalar with an object."""
-        loaded_client.put("/api/node", params={"path": "name"}, json={"value": {"first": "j", "last": "t"}})
-        node = loaded_client.get("/api/node", params={"path": "name"}).json()
+        loaded_client.put("/api/node", params={"path": json.dumps(["name"])}, json={"value": {"first": "j", "last": "t"}})
+        node = loaded_client.get("/api/node", params={"path": json.dumps(["name"])}).json()
         assert node["type"] == "object"
         assert node["childCount"] == 2
 
     def test_set_root(self, loaded_client):
-        loaded_client.put("/api/node", params={"path": ""}, json={"value": [1, 2, 3]})
-        node = loaded_client.get("/api/node", params={"path": ""}).json()
+        loaded_client.put("/api/node", params={"path": json.dumps([])}, json={"value": [1, 2, 3]})
+        node = loaded_client.get("/api/node", params={"path": json.dumps([])}).json()
         assert node["type"] == "array"
         assert node["childCount"] == 3
 
     def test_set_invalid_path(self, loaded_client):
-        resp = loaded_client.put("/api/node", params={"path": "no.such.path"}, json={"value": 1})
+        resp = loaded_client.put("/api/node", params={"path": json.dumps(["no","such","path"])}, json={"value": 1})
         assert resp.status_code == 404
 
     def test_set_readonly_returns_403(self, readonly_client):
-        resp = readonly_client.put("/api/node", params={"path": "name"}, json={"value": "x"})
+        resp = readonly_client.put("/api/node", params={"path": json.dumps(["name"])}, json={"value": "x"})
         assert resp.status_code == 403
 
     def test_set_missing_body(self, loaded_client):
-        resp = loaded_client.put("/api/node", params={"path": "name"})
+        resp = loaded_client.put("/api/node", params={"path": json.dumps(["name"])})
         assert resp.status_code == 422
 
 
@@ -416,66 +416,66 @@ class TestSetValue:
 
 class TestAddChild:
     def test_no_file_returns_409(self, client):
-        assert client.post("/api/node", params={"path": ""}, json={"key": "x"}).status_code == 409
+        assert client.post("/api/node", params={"path": json.dumps([])}, json={"key": "x"}).status_code == 409
 
     def test_add_to_object(self, loaded_client):
-        resp = loaded_client.post("/api/node", params={"path": ""}, json={"key": "newkey", "value": "hello"})
+        resp = loaded_client.post("/api/node", params={"path": json.dumps([])}, json={"key": "newkey", "value": "hello"})
         assert resp.status_code == 200
-        node = loaded_client.get("/api/node", params={"path": "newkey"}).json()
+        node = loaded_client.get("/api/node", params={"path": json.dumps(["newkey"])}).json()
         assert node["value"] == "hello"
 
     def test_add_to_array(self, loaded_client):
-        resp = loaded_client.post("/api/node", params={"path": "tags"}, json={"value": "new_tag"})
+        resp = loaded_client.post("/api/node", params={"path": json.dumps(["tags"])}, json={"value": "new_tag"})
         assert resp.status_code == 200
-        children = loaded_client.get("/api/children", params={"path": "tags"}).json()
+        children = loaded_client.get("/api/children", params={"path": json.dumps(["tags"])}).json()
         assert children["total"] == 4
 
     def test_add_default_string(self, loaded_client):
         """Adding with type=string and no value should default to empty string."""
-        loaded_client.post("/api/node", params={"path": ""}, json={"key": "def_str", "type": "string"})
-        node = loaded_client.get("/api/node", params={"path": "def_str"}).json()
+        loaded_client.post("/api/node", params={"path": json.dumps([])}, json={"key": "def_str", "type": "string"})
+        node = loaded_client.get("/api/node", params={"path": json.dumps(["def_str"])}).json()
         assert node["value"] == ""
 
     def test_add_default_object(self, loaded_client):
-        loaded_client.post("/api/node", params={"path": ""}, json={"key": "def_obj", "type": "object"})
-        node = loaded_client.get("/api/node", params={"path": "def_obj"}).json()
+        loaded_client.post("/api/node", params={"path": json.dumps([])}, json={"key": "def_obj", "type": "object"})
+        node = loaded_client.get("/api/node", params={"path": json.dumps(["def_obj"])}).json()
         assert node["type"] == "object"
 
     def test_add_default_array(self, loaded_client):
-        loaded_client.post("/api/node", params={"path": ""}, json={"key": "def_arr", "type": "array"})
-        node = loaded_client.get("/api/node", params={"path": "def_arr"}).json()
+        loaded_client.post("/api/node", params={"path": json.dumps([])}, json={"key": "def_arr", "type": "array"})
+        node = loaded_client.get("/api/node", params={"path": json.dumps(["def_arr"])}).json()
         assert node["type"] == "array"
 
     def test_add_default_number(self, loaded_client):
-        loaded_client.post("/api/node", params={"path": ""}, json={"key": "def_num", "type": "number"})
-        node = loaded_client.get("/api/node", params={"path": "def_num"}).json()
+        loaded_client.post("/api/node", params={"path": json.dumps([])}, json={"key": "def_num", "type": "number"})
+        node = loaded_client.get("/api/node", params={"path": json.dumps(["def_num"])}).json()
         assert node["value"] == 0
 
     def test_add_default_boolean(self, loaded_client):
-        loaded_client.post("/api/node", params={"path": ""}, json={"key": "def_bool", "type": "boolean"})
-        node = loaded_client.get("/api/node", params={"path": "def_bool"}).json()
+        loaded_client.post("/api/node", params={"path": json.dumps([])}, json={"key": "def_bool", "type": "boolean"})
+        node = loaded_client.get("/api/node", params={"path": json.dumps(["def_bool"])}).json()
         assert node["value"] is False
 
     def test_add_null_type(self, loaded_client):
-        loaded_client.post("/api/node", params={"path": ""}, json={"key": "def_null", "type": "null"})
-        node = loaded_client.get("/api/node", params={"path": "def_null"}).json()
+        loaded_client.post("/api/node", params={"path": json.dumps([])}, json={"key": "def_null", "type": "null"})
+        node = loaded_client.get("/api/node", params={"path": json.dumps(["def_null"])}).json()
         assert node["type"] == "null"
 
     def test_add_duplicate_key_fails(self, loaded_client):
-        resp = loaded_client.post("/api/node", params={"path": ""}, json={"key": "name", "value": "dup"})
+        resp = loaded_client.post("/api/node", params={"path": json.dumps([])}, json={"key": "name", "value": "dup"})
         assert resp.status_code == 400
         assert "already exists" in resp.json()["detail"]
 
     def test_add_to_scalar_fails(self, loaded_client):
-        resp = loaded_client.post("/api/node", params={"path": "name"}, json={"key": "x", "value": 1})
+        resp = loaded_client.post("/api/node", params={"path": json.dumps(["name"])}, json={"key": "x", "value": 1})
         assert resp.status_code == 400
 
     def test_add_to_object_missing_key_fails(self, loaded_client):
-        resp = loaded_client.post("/api/node", params={"path": ""}, json={"value": "orphan"})
+        resp = loaded_client.post("/api/node", params={"path": json.dumps([])}, json={"value": "orphan"})
         assert resp.status_code == 400
 
     def test_add_readonly_returns_403(self, readonly_client):
-        resp = readonly_client.post("/api/node", params={"path": ""}, json={"key": "x"})
+        resp = readonly_client.post("/api/node", params={"path": json.dumps([])}, json={"key": "x"})
         assert resp.status_code == 403
 
 
@@ -485,36 +485,36 @@ class TestAddChild:
 
 class TestDeleteNode:
     def test_no_file_returns_409(self, client):
-        assert client.delete("/api/node", params={"path": "x"}).status_code == 409
+        assert client.delete("/api/node", params={"path": json.dumps(["x"])}).status_code == 409
 
     def test_delete_leaf(self, loaded_client):
-        resp = loaded_client.delete("/api/node", params={"path": "name"})
+        resp = loaded_client.delete("/api/node", params={"path": json.dumps(["name"])})
         assert resp.status_code == 200
-        assert loaded_client.get("/api/node", params={"path": "name"}).status_code == 404
+        assert loaded_client.get("/api/node", params={"path": json.dumps(["name"])}).status_code == 404
 
     def test_delete_subtree(self, loaded_client):
-        resp = loaded_client.delete("/api/node", params={"path": "nested"})
+        resp = loaded_client.delete("/api/node", params={"path": json.dumps(["nested"])})
         assert resp.status_code == 200
-        assert loaded_client.get("/api/node", params={"path": "nested"}).status_code == 404
+        assert loaded_client.get("/api/node", params={"path": json.dumps(["nested"])}).status_code == 404
 
     def test_delete_array_element(self, loaded_client):
-        loaded_client.delete("/api/node", params={"path": "tags.1"})
-        children = loaded_client.get("/api/children", params={"path": "tags"}).json()
+        loaded_client.delete("/api/node", params={"path": json.dumps(["tags",1])})
+        children = loaded_client.get("/api/children", params={"path": json.dumps(["tags"])}).json()
         assert children["total"] == 2
         # Element 0 should be "json", element 1 (was 2) should be "editor"
         assert children["children"][0]["value"] == "json"
         assert children["children"][1]["value"] == "editor"
 
     def test_delete_root_fails(self, loaded_client):
-        resp = loaded_client.delete("/api/node", params={"path": ""})
+        resp = loaded_client.delete("/api/node", params={"path": json.dumps([])})
         assert resp.status_code == 400
 
     def test_delete_nonexistent_fails(self, loaded_client):
-        resp = loaded_client.delete("/api/node", params={"path": "nope"})
+        resp = loaded_client.delete("/api/node", params={"path": json.dumps(["nope"])})
         assert resp.status_code == 400 or resp.status_code == 404
 
     def test_delete_readonly_returns_403(self, readonly_client):
-        resp = readonly_client.delete("/api/node", params={"path": "name"})
+        resp = readonly_client.delete("/api/node", params={"path": json.dumps(["name"])})
         assert resp.status_code == 403
 
 
@@ -524,44 +524,44 @@ class TestDeleteNode:
 
 class TestRename:
     def test_no_file_returns_409(self, client):
-        assert client.post("/api/rename", params={"path": "x"}, json={"newKey": "y"}).status_code == 409
+        assert client.post("/api/rename", params={"path": json.dumps(["x"])}, json={"newKey": "y"}).status_code == 409
 
     def test_rename_key(self, loaded_client):
-        resp = loaded_client.post("/api/rename", params={"path": "name"}, json={"newKey": "title"})
+        resp = loaded_client.post("/api/rename", params={"path": json.dumps(["name"])}, json={"newKey": "title"})
         assert resp.status_code == 200
-        assert loaded_client.get("/api/node", params={"path": "title"}).status_code == 200
-        assert loaded_client.get("/api/node", params={"path": "name"}).status_code == 404
+        assert loaded_client.get("/api/node", params={"path": json.dumps(["title"])}).status_code == 200
+        assert loaded_client.get("/api/node", params={"path": json.dumps(["name"])}).status_code == 404
 
     def test_rename_to_existing_key_fails(self, loaded_client):
-        resp = loaded_client.post("/api/rename", params={"path": "name"}, json={"newKey": "version"})
+        resp = loaded_client.post("/api/rename", params={"path": json.dumps(["name"])}, json={"newKey": "version"})
         assert resp.status_code == 400
         assert "already exists" in resp.json()["detail"]
 
     def test_rename_root_fails(self, loaded_client):
-        resp = loaded_client.post("/api/rename", params={"path": ""}, json={"newKey": "x"})
+        resp = loaded_client.post("/api/rename", params={"path": json.dumps([])}, json={"newKey": "x"})
         assert resp.status_code == 400
 
     def test_rename_array_element_fails(self, loaded_client):
-        resp = loaded_client.post("/api/rename", params={"path": "tags.0"}, json={"newKey": "x"})
+        resp = loaded_client.post("/api/rename", params={"path": json.dumps(["tags",0])}, json={"newKey": "x"})
         assert resp.status_code == 400
 
     def test_rename_readonly_returns_403(self, readonly_client):
-        resp = readonly_client.post("/api/rename", params={"path": "name"}, json={"newKey": "x"})
+        resp = readonly_client.post("/api/rename", params={"path": json.dumps(["name"])}, json={"newKey": "x"})
         assert resp.status_code == 403
 
     def test_rename_missing_body(self, loaded_client):
-        resp = loaded_client.post("/api/rename", params={"path": "name"})
+        resp = loaded_client.post("/api/rename", params={"path": json.dumps(["name"])})
         assert resp.status_code == 422
 
     def test_rename_preserves_order(self, loaded_client):
         """Renamed key should remain in the same position."""
-        before = loaded_client.get("/api/children", params={"path": ""}).json()
+        before = loaded_client.get("/api/children", params={"path": json.dumps([])}).json()
         before_paths = [c["path"] for c in before["children"]]
-        loaded_client.post("/api/rename", params={"path": "name"}, json={"newKey": "title"})
-        after = loaded_client.get("/api/children", params={"path": ""}).json()
+        loaded_client.post("/api/rename", params={"path": json.dumps(["name"])}, json={"newKey": "title"})
+        after = loaded_client.get("/api/children", params={"path": json.dumps([])}).json()
         after_paths = [c["path"] for c in after["children"]]
-        idx = before_paths.index("name")
-        assert after_paths[idx] == "title"
+        idx = before_paths.index(["name"])
+        assert after_paths[idx] == ["title"]
 
 
 # ============================================================================
@@ -573,7 +573,7 @@ class TestSave:
         assert client.post("/api/save").status_code == 409
 
     def test_save_persists_changes(self, loaded_client, sample_json_file):
-        loaded_client.put("/api/node", params={"path": "version"}, json={"value": 999})
+        loaded_client.put("/api/node", params={"path": json.dumps(["version"])}, json={"value": 999})
         resp = loaded_client.post("/api/save")
         assert resp.status_code == 200
         # Verify file on disk
@@ -582,7 +582,7 @@ class TestSave:
         assert disk_data["version"] == 999
 
     def test_save_clears_dirty(self, loaded_client):
-        loaded_client.put("/api/node", params={"path": "version"}, json={"value": 999})
+        loaded_client.put("/api/node", params={"path": json.dumps(["version"])}, json={"value": 999})
         loaded_client.post("/api/save")
         status = loaded_client.get("/api/status").json()
         assert status["dirty"] is False
@@ -640,7 +640,7 @@ class TestDownload:
         assert data["tags"] == ["json", "viewer", "editor"]
 
     def test_download_reflects_mutations(self, loaded_client):
-        loaded_client.put("/api/node", params={"path": "version"}, json={"value": 42})
+        loaded_client.put("/api/node", params={"path": json.dumps(["version"])}, json={"value": 42})
         data = loaded_client.get("/api/download").json()
         assert data["version"] == 42
 
@@ -665,36 +665,36 @@ class TestUndoRedo:
         assert resp.status_code == 400
 
     def test_undo_set_value(self, loaded_client):
-        loaded_client.put("/api/node", params={"path": "version"}, json={"value": 99})
+        loaded_client.put("/api/node", params={"path": json.dumps(["version"])}, json={"value": 99})
         loaded_client.post("/api/undo")
-        node = loaded_client.get("/api/node", params={"path": "version"}).json()
+        node = loaded_client.get("/api/node", params={"path": json.dumps(["version"])}).json()
         assert node["value"] == 1
 
     def test_redo_set_value(self, loaded_client):
-        loaded_client.put("/api/node", params={"path": "version"}, json={"value": 99})
+        loaded_client.put("/api/node", params={"path": json.dumps(["version"])}, json={"value": 99})
         loaded_client.post("/api/undo")
         loaded_client.post("/api/redo")
-        node = loaded_client.get("/api/node", params={"path": "version"}).json()
+        node = loaded_client.get("/api/node", params={"path": json.dumps(["version"])}).json()
         assert node["value"] == 99
 
     def test_undo_add_child(self, loaded_client):
-        loaded_client.post("/api/node", params={"path": ""}, json={"key": "temp", "value": "x"})
-        assert loaded_client.get("/api/node", params={"path": "temp"}).status_code == 200
+        loaded_client.post("/api/node", params={"path": json.dumps([])}, json={"key": "temp", "value": "x"})
+        assert loaded_client.get("/api/node", params={"path": json.dumps(["temp"])}).status_code == 200
         loaded_client.post("/api/undo")
-        assert loaded_client.get("/api/node", params={"path": "temp"}).status_code == 404
+        assert loaded_client.get("/api/node", params={"path": json.dumps(["temp"])}).status_code == 404
 
     def test_undo_delete(self, loaded_client):
-        loaded_client.delete("/api/node", params={"path": "name"})
-        assert loaded_client.get("/api/node", params={"path": "name"}).status_code == 404
+        loaded_client.delete("/api/node", params={"path": json.dumps(["name"])})
+        assert loaded_client.get("/api/node", params={"path": json.dumps(["name"])}).status_code == 404
         loaded_client.post("/api/undo")
-        node = loaded_client.get("/api/node", params={"path": "name"}).json()
+        node = loaded_client.get("/api/node", params={"path": json.dumps(["name"])}).json()
         assert node["value"] == "jtree"
 
     def test_undo_rename(self, loaded_client):
-        loaded_client.post("/api/rename", params={"path": "name"}, json={"newKey": "title"})
+        loaded_client.post("/api/rename", params={"path": json.dumps(["name"])}, json={"newKey": "title"})
         loaded_client.post("/api/undo")
-        assert loaded_client.get("/api/node", params={"path": "name"}).status_code == 200
-        assert loaded_client.get("/api/node", params={"path": "title"}).status_code == 404
+        assert loaded_client.get("/api/node", params={"path": json.dumps(["name"])}).status_code == 200
+        assert loaded_client.get("/api/node", params={"path": json.dumps(["title"])}).status_code == 404
 
     def test_undo_redo_status_flags(self, loaded_client):
         """canUndo / canRedo should track stack state."""
@@ -702,7 +702,7 @@ class TestUndoRedo:
         assert status["canUndo"] is False
         assert status["canRedo"] is False
 
-        loaded_client.put("/api/node", params={"path": "version"}, json={"value": 99})
+        loaded_client.put("/api/node", params={"path": json.dumps(["version"])}, json={"value": 99})
         status = loaded_client.get("/api/status").json()
         assert status["canUndo"] is True
         assert status["canRedo"] is False
@@ -713,20 +713,20 @@ class TestUndoRedo:
         assert status["canRedo"] is True
 
     def test_new_mutation_clears_redo(self, loaded_client):
-        loaded_client.put("/api/node", params={"path": "version"}, json={"value": 99})
+        loaded_client.put("/api/node", params={"path": json.dumps(["version"])}, json={"value": 99})
         loaded_client.post("/api/undo")
         # New mutation should clear redo stack
-        loaded_client.put("/api/node", params={"path": "version"}, json={"value": 50})
+        loaded_client.put("/api/node", params={"path": json.dumps(["version"])}, json={"value": 50})
         resp = loaded_client.post("/api/redo")
         assert resp.status_code == 400  # nothing to redo
 
     def test_multiple_undo(self, loaded_client):
-        loaded_client.put("/api/node", params={"path": "version"}, json={"value": 10})
-        loaded_client.put("/api/node", params={"path": "version"}, json={"value": 20})
-        loaded_client.put("/api/node", params={"path": "version"}, json={"value": 30})
+        loaded_client.put("/api/node", params={"path": json.dumps(["version"])}, json={"value": 10})
+        loaded_client.put("/api/node", params={"path": json.dumps(["version"])}, json={"value": 20})
+        loaded_client.put("/api/node", params={"path": json.dumps(["version"])}, json={"value": 30})
         loaded_client.post("/api/undo")
         loaded_client.post("/api/undo")
-        node = loaded_client.get("/api/node", params={"path": "version"}).json()
+        node = loaded_client.get("/api/node", params={"path": json.dumps(["version"])}).json()
         assert node["value"] == 10
 
 
@@ -736,39 +736,39 @@ class TestUndoRedo:
 
 class TestMove:
     def test_no_file_returns_409(self, client):
-        assert client.post("/api/move", params={"path": ""}, json={"fromIndex": 0, "toIndex": 1}).status_code == 409
+        assert client.post("/api/move", params={"path": json.dumps([])}, json={"fromIndex": 0, "toIndex": 1}).status_code == 409
 
     def test_move_array_element(self, loaded_client):
         """Move tags[0] ('json') to position 2."""
-        resp = loaded_client.post("/api/move", params={"path": "tags"}, json={"fromIndex": 0, "toIndex": 2})
+        resp = loaded_client.post("/api/move", params={"path": json.dumps(["tags"])}, json={"fromIndex": 0, "toIndex": 2})
         assert resp.status_code == 200
-        children = loaded_client.get("/api/children", params={"path": "tags"}).json()
+        children = loaded_client.get("/api/children", params={"path": json.dumps(["tags"])}).json()
         values = [c["value"] for c in children["children"]]
         assert values == ["viewer", "editor", "json"]
 
     def test_move_same_position(self, loaded_client):
         """Move to same index should be a no-op."""
-        resp = loaded_client.post("/api/move", params={"path": "tags"}, json={"fromIndex": 1, "toIndex": 1})
+        resp = loaded_client.post("/api/move", params={"path": json.dumps(["tags"])}, json={"fromIndex": 1, "toIndex": 1})
         assert resp.status_code == 200
 
     def test_move_on_object_fails(self, loaded_client):
-        resp = loaded_client.post("/api/move", params={"path": ""}, json={"fromIndex": 0, "toIndex": 1})
+        resp = loaded_client.post("/api/move", params={"path": json.dumps([])}, json={"fromIndex": 0, "toIndex": 1})
         assert resp.status_code == 400
 
     def test_move_out_of_range(self, loaded_client):
-        resp = loaded_client.post("/api/move", params={"path": "tags"}, json={"fromIndex": 0, "toIndex": 99})
+        resp = loaded_client.post("/api/move", params={"path": json.dumps(["tags"])}, json={"fromIndex": 0, "toIndex": 99})
         assert resp.status_code == 400
 
     def test_move_negative_index(self, loaded_client):
-        resp = loaded_client.post("/api/move", params={"path": "tags"}, json={"fromIndex": -1, "toIndex": 0})
+        resp = loaded_client.post("/api/move", params={"path": json.dumps(["tags"])}, json={"fromIndex": -1, "toIndex": 0})
         assert resp.status_code == 400
 
     def test_move_readonly_returns_403(self, readonly_client):
-        resp = readonly_client.post("/api/move", params={"path": "tags"}, json={"fromIndex": 0, "toIndex": 1})
+        resp = readonly_client.post("/api/move", params={"path": json.dumps(["tags"])}, json={"fromIndex": 0, "toIndex": 1})
         assert resp.status_code == 403
 
     def test_move_missing_body(self, loaded_client):
-        resp = loaded_client.post("/api/move", params={"path": "tags"})
+        resp = loaded_client.post("/api/move", params={"path": json.dumps(["tags"])})
         assert resp.status_code == 422
 
 
@@ -778,30 +778,30 @@ class TestMove:
 
 class TestCopy:
     def test_no_file_returns_409(self, client):
-        assert client.get("/api/copy", params={"path": ""}).status_code == 409
+        assert client.get("/api/copy", params={"path": json.dumps([])}).status_code == 409
 
     def test_copy_leaf(self, loaded_client):
-        data = loaded_client.get("/api/copy", params={"path": "name"}).json()
+        data = loaded_client.get("/api/copy", params={"path": json.dumps(["name"])}).json()
         assert data["key"] == "name"
         assert data["value"] == "jtree"
 
     def test_copy_subtree(self, loaded_client):
-        data = loaded_client.get("/api/copy", params={"path": "nested"}).json()
+        data = loaded_client.get("/api/copy", params={"path": json.dumps(["nested"])}).json()
         assert data["key"] == "nested"
         assert isinstance(data["value"], dict)
         assert data["value"]["a"] == 1
 
     def test_copy_root(self, loaded_client):
-        data = loaded_client.get("/api/copy", params={"path": ""}).json()
+        data = loaded_client.get("/api/copy", params={"path": json.dumps([])}).json()
         assert data["key"] == "root"
         assert isinstance(data["value"], dict)
 
     def test_copy_array_element(self, loaded_client):
-        data = loaded_client.get("/api/copy", params={"path": "tags.0"}).json()
+        data = loaded_client.get("/api/copy", params={"path": json.dumps(["tags",0])}).json()
         assert data["value"] == "json"
 
     def test_copy_invalid_path(self, loaded_client):
-        resp = loaded_client.get("/api/copy", params={"path": "nope"})
+        resp = loaded_client.get("/api/copy", params={"path": json.dumps(["nope"])})
         assert resp.status_code == 404
 
 # ============================================================================
@@ -810,51 +810,51 @@ class TestCopy:
 
 class TestPaste:
     def test_no_file_returns_409(self, client):
-        assert client.post("/api/paste", params={"path": ""}, json={"value": 1}).status_code == 409
+        assert client.post("/api/paste", params={"path": json.dumps([])}, json={"value": 1}).status_code == 409
 
     def test_paste_into_object(self, loaded_client):
-        resp = loaded_client.post("/api/paste", params={"path": ""}, json={"key": "pasted_key", "value": "hello"})
+        resp = loaded_client.post("/api/paste", params={"path": json.dumps([])}, json={"key": "pasted_key", "value": "hello"})
         assert resp.status_code == 200
         assert resp.json()["key"] == "pasted_key"
-        node = loaded_client.get("/api/node", params={"path": "pasted_key"}).json()
+        node = loaded_client.get("/api/node", params={"path": json.dumps(["pasted_key"])}).json()
         assert node["value"] == "hello"
 
     def test_paste_into_array(self, loaded_client):
-        resp = loaded_client.post("/api/paste", params={"path": "tags"}, json={"value": "pasted_tag"})
+        resp = loaded_client.post("/api/paste", params={"path": json.dumps(["tags"])}, json={"value": "pasted_tag"})
         assert resp.status_code == 200
-        children = loaded_client.get("/api/children", params={"path": "tags"}).json()
+        children = loaded_client.get("/api/children", params={"path": json.dumps(["tags"])}).json()
         assert children["total"] == 4
 
     def test_paste_auto_dedup_key(self, loaded_client):
         """Pasting with key='name' when 'name' exists should auto-rename."""
-        resp = loaded_client.post("/api/paste", params={"path": ""}, json={"key": "name", "value": "dup"})
+        resp = loaded_client.post("/api/paste", params={"path": json.dumps([])}, json={"key": "name", "value": "dup"})
         assert resp.status_code == 200
         key = resp.json()["key"]
         assert key.startswith("name_copy")
-        node = loaded_client.get("/api/node", params={"path": key}).json()
+        node = loaded_client.get("/api/node", params={"path": json.dumps([key])}).json()
         assert node["value"] == "dup"
 
     def test_paste_default_key(self, loaded_client):
         """Pasting without key should default to 'pasted'."""
-        resp = loaded_client.post("/api/paste", params={"path": ""}, json={"value": "x"})
+        resp = loaded_client.post("/api/paste", params={"path": json.dumps([])}, json={"value": "x"})
         assert resp.status_code == 200
         assert "pasted" in resp.json()["key"]
 
     def test_paste_into_scalar_fails(self, loaded_client):
-        resp = loaded_client.post("/api/paste", params={"path": "name"}, json={"value": 1})
+        resp = loaded_client.post("/api/paste", params={"path": json.dumps(["name"])}, json={"value": 1})
         assert resp.status_code == 400
 
     def test_paste_complex_value(self, loaded_client):
         """Paste an entire subtree."""
         subtree = {"x": [1, 2], "y": {"z": True}}
-        resp = loaded_client.post("/api/paste", params={"path": ""}, json={"key": "complex", "value": subtree})
+        resp = loaded_client.post("/api/paste", params={"path": json.dumps([])}, json={"key": "complex", "value": subtree})
         assert resp.status_code == 200
-        node = loaded_client.get("/api/node", params={"path": "complex"}).json()
+        node = loaded_client.get("/api/node", params={"path": json.dumps(["complex"])}).json()
         assert node["type"] == "object"
         assert node["childCount"] == 2
 
     def test_paste_readonly_returns_403(self, readonly_client):
-        resp = readonly_client.post("/api/paste", params={"path": ""}, json={"key": "x", "value": 1})
+        resp = readonly_client.post("/api/paste", params={"path": json.dumps([])}, json={"key": "x", "value": 1})
         assert resp.status_code == 403
 
 
@@ -888,24 +888,24 @@ class TestMalformedInput:
 class TestCopyPasteWorkflow:
     def test_copy_and_paste_subtree(self, loaded_client):
         """Full copy → paste workflow: copy nested, paste into empty_obj."""
-        copy_data = loaded_client.get("/api/copy", params={"path": "nested"}).json()
+        copy_data = loaded_client.get("/api/copy", params={"path": json.dumps(["nested"])}).json()
         resp = loaded_client.post(
             "/api/paste",
-            params={"path": "empty_obj"},
+            params={"path": json.dumps(["empty_obj"])},
             json={"key": copy_data["key"], "value": copy_data["value"]},
         )
         assert resp.status_code == 200
         # Verify the paste landed
-        node = loaded_client.get("/api/node", params={"path": "empty_obj.nested"}).json()
+        node = loaded_client.get("/api/node", params={"path": json.dumps(["empty_obj","nested"])}).json()
         assert node["type"] == "object"
         assert node["childCount"] == 3
 
     def test_copy_paste_then_undo(self, loaded_client):
         """Paste and then undo should remove the pasted node."""
-        loaded_client.post("/api/paste", params={"path": ""}, json={"key": "temp", "value": 42})
-        assert loaded_client.get("/api/node", params={"path": "temp"}).status_code == 200
+        loaded_client.post("/api/paste", params={"path": json.dumps([])}, json={"key": "temp", "value": 42})
+        assert loaded_client.get("/api/node", params={"path": json.dumps(["temp"])}).status_code == 200
         loaded_client.post("/api/undo")
-        assert loaded_client.get("/api/node", params={"path": "temp"}).status_code == 404
+        assert loaded_client.get("/api/node", params={"path": json.dumps(["temp"])}).status_code == 404
 
 
 # ============================================================================
@@ -1053,17 +1053,17 @@ class TestExpandAllViewCentering:
 
         # BFS expand-all on "sections" (same algorithm as frontend expandAll)
         from collections import deque
-        to_expand = deque(["sections"])
+        to_expand = deque([["sections"]])
         visited = set()
         truncated = []
 
         while to_expand:
             path = to_expand.popleft()
-            if path in visited:
+            if tuple(path) in visited:
                 continue
-            visited.add(path)
+            visited.add(tuple(path))
             resp = client.get("/api/children", params={
-                "path": path, "offset": 0, "limit": 200
+                "path": json.dumps(path), "offset": 0, "limit": 200
             })
             assert resp.status_code == 200
             result = resp.json()
@@ -1121,7 +1121,7 @@ class TestNavigatorSidebar:
         """Sidebar tree should be buildable from /api/children, and we verify
         that container nodes (objects/arrays) are distinguishable from leaves."""
         resp = loaded_client.get("/api/children", params={
-            "path": "", "offset": 0, "limit": 200
+            "path": json.dumps([]), "offset": 0, "limit": 200
         })
         assert resp.status_code == 200
         children = resp.json()["children"]
@@ -1147,30 +1147,30 @@ class TestNavigatorSidebar:
         # Navigate: root -> nested -> c -> deep
         # Step 1: get root children, find "nested"
         resp = loaded_client.get("/api/children", params={
-            "path": "", "offset": 0, "limit": 200
+            "path": json.dumps([]), "offset": 0, "limit": 200
         })
         root_children = resp.json()["children"]
-        nested = [c for c in root_children if c["path"] == "nested"]
+        nested = [c for c in root_children if c["path"] == ["nested"]]
         assert len(nested) == 1
         assert nested[0]["type"] == "object"
 
         # Step 2: get nested's children, find "c"
         resp = loaded_client.get("/api/children", params={
-            "path": "nested", "offset": 0, "limit": 200
+            "path": json.dumps(["nested"]), "offset": 0, "limit": 200
         })
         assert resp.status_code == 200
         nested_children = resp.json()["children"]
-        c_node = [c for c in nested_children if c["path"] == "nested.c"]
+        c_node = [c for c in nested_children if c["path"] == ["nested", "c"]]
         assert len(c_node) == 1
         assert c_node[0]["type"] == "object"
 
         # Step 3: get c's children - should have "deep" (a leaf)
         resp = loaded_client.get("/api/children", params={
-            "path": "nested.c", "offset": 0, "limit": 200
+            "path": json.dumps(["nested","c"]), "offset": 0, "limit": 200
         })
         assert resp.status_code == 200
         c_children = resp.json()["children"]
-        deep = [c for c in c_children if c["path"] == "nested.c.deep"]
+        deep = [c for c in c_children if c["path"] == ["nested", "c", "deep"]]
         assert len(deep) == 1
         assert deep[0]["type"] == "boolean"
 

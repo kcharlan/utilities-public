@@ -2,6 +2,7 @@
 import json
 import os
 import sys
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 import pytest
@@ -59,7 +60,11 @@ def _reset_manager():
 @pytest.fixture()
 def client():
     """Synchronous HTTPX client wrapping the FastAPI app."""
-    return ASGISyncClient(app)
+    class ThreadedClient(ASGISyncClient):
+        def request(self, *args, **kwargs):
+            with ThreadPoolExecutor(max_workers=1) as executor:
+                return executor.submit(super().request, *args, **kwargs).result()
+    return ThreadedClient(app)
 
 
 @pytest.fixture()
