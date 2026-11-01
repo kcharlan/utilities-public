@@ -1,6 +1,6 @@
 # Tax2
 
-Tax2 3.0.2 builds a private, self-contained estimated-tax calculator from federal and
+Tax2 3.0.3 builds a private, self-contained estimated-tax calculator from federal and
 state YAML rules. Open the resulting HTML file in a browser to calculate tax
 and download QIF payments, a Markdown rate schedule, or a CSV lookup table.
 All rules, scripts, styles and license notices are embedded; the page uses local
@@ -73,6 +73,9 @@ cannot be classified fails closed. An unrelated output leaf symlink is replaced
 as an entry, without writing through it to its target.
 
 Rerun after changing rules or config: browser refresh only reloads the snapshot.
+Rules with a numeric final bracket threshold or a bracket rate of at least 1
+produce a warning identifying the file, component and filing status; the build
+continues with the supplied values.
 No server restart is involved.
 The page shows its UTC build timestamp; its initial tax year and transaction
 date use the browser's local date when opened.
