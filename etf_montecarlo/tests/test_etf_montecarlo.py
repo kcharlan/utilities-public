@@ -486,6 +486,40 @@ def test_typical_payments_per_year_uses_median_annual_count() -> None:
     assert module.typical_payments_per_year(payments) == 4
 
 
+def test_partial_calendar_years_infer_quarterly_frequency() -> None:
+    module = load_module()
+    payments = tuple(module.DividendPayment(date(2030, month, 1), 1.0) for month in (4, 7, 10)) + (
+        module.DividendPayment(date(2031, 1, 1), 1.0),
+    )
+    assert module.typical_payments_per_year(
+        payments, window_start=date(2030, 2, 1), window_end=date(2031, 2, 1)
+    ) == 4
+
+
+def test_complete_year_excludes_partial_year_counts() -> None:
+    module = load_module()
+    payments = tuple(
+        module.DividendPayment(date(year, month, 1), 1.0)
+        for year, months in ((2030, (10,)), (2031, (1, 4, 7, 10)), (2032, (1,)))
+        for month in months
+    )
+    assert module.typical_payments_per_year(
+        payments, window_start=date(2030, 9, 1), window_end=date(2032, 2, 1)
+    ) == 4
+
+
+def test_simulation_uses_window_aware_frequency(monkeypatch: pytest.MonkeyPatch) -> None:
+    module = load_module()
+    payments = tuple(module.DividendPayment(date(2030, month, 1), 1.0) for month in (4, 7, 10)) + (
+        module.DividendPayment(date(2031, 1, 1), 1.0),
+    )
+    monkeypatch.setattr(module, "fetch_dividend_history", lambda symbol: module.DividendHistory(symbol, payments))
+    settings = module.Settings((module.Holding("TEST0000", 1),), 1, 5, 0, None)
+    simulations, _ = module.simulate(settings, as_of=date(2031, 2, 1))
+    assert simulations[0].payments_per_year == 4
+    assert (simulations[0].per_share_samples == 4.0).all()
+
+
 def test_empirical_dividend_bootstrap_is_deterministic() -> None:
     module = load_module()
     amounts = np.asarray(PAYMENT_SENTINELS, dtype=float)

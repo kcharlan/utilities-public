@@ -32,7 +32,7 @@ Configuration is validated in full before network access. Boolean schema version
 
 ## Method and limitations
 
-For each holding, the launcher keeps dividend payments dated within the configured trailing date window, ending on the day the command runs. It counts payments in each represented calendar year and uses the rounded median annual count as the number of payments in a simulated year. Every trial samples that many payment amounts with replacement from the holding's filtered empirical history. The P5, P25, P50, P75, and P95 annual-income results are reported per share and after multiplication by the private share count.
+For each holding, the launcher keeps dividend payments dated within the configured trailing date window, ending on the day the command runs. It uses the rounded median payment count from complete calendar years in the window. If none have payments, it estimates annual frequency from the median spacing between payment dates; a single distinct date assumes one annual payment. Every trial samples that many payment amounts with replacement from the holding's filtered empirical history. The P5, P25, P50, P75, and P95 annual-income results are reported per share and after multiplication by the private share count.
 
 Holdings are bootstrapped independently; the aggregate portfolio distribution sums their trial-level scaled income. The model therefore does not preserve cross-holding dividend timing or dependence. It also does not model taxes, fees, dividend growth, cuts outside the observed history, reinvestment, or price returns. This is a historical bootstrap, not a forecast or financial advice.
 
