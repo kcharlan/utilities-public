@@ -142,11 +142,21 @@ def test_pdf_rerun_uses_only_new_page_images(monkeypatch, tmp_path):
 
 
 def test_xlsx_load_failure_returns_failure(monkeypatch, tmp_path):
+    import zipfile
     module = load_docpipe_module()
     input_path = tmp_path / 'bad.xlsx'
-    input_path.write_bytes(b'not a workbook')
-    assert module.run_convert(make_args(input_path, tmp_path / 'out', False)) != 0
+    with zipfile.ZipFile(input_path, 'w') as archive:
+        archive.writestr('synthetic.txt', 'not a workbook')
+    attempted = []
+    def fail_workbook(path, **kwargs):
+        attempted.append(path)
+        raise ValueError('synthetic workbook failure')
+    monkeypatch.setattr(module.openpyxl, 'load_workbook', fail_workbook)
+    result = module.run_convert(make_args(input_path, tmp_path / 'out', False))
+    assert attempted == [str(input_path)]
+    assert result != 0
     assert not (tmp_path / 'out' / 'bad.opencode.md').exists()
+    assert not (tmp_path / 'out' / 'bad.opencode.json').exists()
 
 
 def test_pdf_without_text_extractor_is_failure(monkeypatch, tmp_path):
