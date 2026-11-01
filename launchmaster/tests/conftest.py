@@ -31,6 +31,12 @@ PROJECT_ROOT = Path(__file__).parent.parent
 LAUNCHMASTER_SCRIPT = PROJECT_ROOT / "launchmaster"
 
 
+@pytest.fixture(scope="session")
+def base_url(pytestconfig):
+    """Match Playwright's fallback without its deprecated instance fixture."""
+    return pytestconfig.getoption("--base-url") or pytestconfig.getini("base_url") or None
+
+
 # ── Server fixture for integration/E2E tests ─────────────────────────────────
 
 def _find_free_port():
@@ -218,7 +224,7 @@ def restore_settings(server):
         request = urllib.request.Request(
             f"{server}/api/settings",
             data=json.dumps(snapshot).encode(),
-            headers={"Content-Type": "application/json"},
+            headers={"Content-Type": "application/json", "Origin": server},
             method="PUT",
         )
         with urllib.request.urlopen(request):
