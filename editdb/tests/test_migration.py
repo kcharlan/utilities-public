@@ -80,6 +80,19 @@ def test_failed_migration_restores_schema_exactly(database):
         assert db.execute('SELECT label FROM item_view').fetchall() == [('one',)]
 
 
+def test_drop_column_referenced_by_view_is_rejected_without_schema_changes(database):
+    client, path = database
+    with sqlite3.connect(path) as db:
+        db.execute('CREATE VIEW spare_view AS SELECT spare FROM items')
+        before = db.execute('SELECT * FROM sqlite_master ORDER BY rowid').fetchall()
+    response = migrate(client, [('id', 'id', 'INTEGER', False), ('label', 'label', 'TEXT', False),
+                                ('amount', 'amount', 'INTEGER', False), ('spare', 'spare', 'TEXT', True)])
+    assert response.status_code == 400
+    with sqlite3.connect(path) as db:
+        assert db.execute('SELECT * FROM sqlite_master ORDER BY rowid').fetchall() == before
+        assert db.execute('SELECT spare FROM spare_view').fetchall() == [('x',)]
+
+
 def test_failed_copy_rolls_back_earlier_rename_and_schema(database):
     client, path = database
     with sqlite3.connect(path) as db:

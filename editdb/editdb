@@ -225,7 +225,6 @@ class DBManager:
         try:
             conn.isolation_level = None
             conn.execute("PRAGMA foreign_keys = OFF;")
-            conn.execute("PRAGMA legacy_alter_table = ON")
             conn.execute("BEGIN IMMEDIATE")
             existing = {row['name']: row['type'] for row in conn.execute(f'PRAGMA table_info({quote_identifier(table_name)})')}
             old_names = [col.old_name for col in columns if col.old_name]
@@ -275,6 +274,10 @@ class DBManager:
                         raise ValueError('Cannot preserve hidden rowid: all aliases are shadowed')
                     quoted = quote_identifier(rowid) + ', ' + quoted
                 conn.execute(f'INSERT INTO {quote_identifier(temp_name)} ({quoted}) SELECT {quoted} FROM {table}')
+                # Only the replacement rename needs legacy mode while views refer
+                # to the temporarily absent original table. Native alterations
+                # above must retain SQLite's dependency validation.
+                conn.execute('PRAGMA legacy_alter_table = ON')
                 conn.execute(f'DROP TABLE {table}')
                 conn.execute(f'ALTER TABLE {quote_identifier(temp_name)} RENAME TO {table}')
                 if sequence is not None:
