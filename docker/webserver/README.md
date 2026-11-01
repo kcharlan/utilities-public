@@ -255,7 +255,7 @@ or installed-application acceptance.
     *   Check the logs of the specific API service (`app_py` or `app_node`) for application-level errors.
 *   **Custom endpoint posts 404/Not found:**
     *   Ensure the endpoint in `/configure` is Enabled and uses the correct `Strip path` setting for your upstream.
-    *   If your upstream emits absolute paths (e.g., redirects or forms posting to `/search`), keep `Strip path` on; the proxy will use sticky routing to forward those to the same upstream.
+    *   If your upstream emits absolute paths (e.g., redirects or forms posting to `/search`), keep `Strip path` on and ensure requests carry a same-origin Referer under the endpoint's prefix. Without that Referer, requests must use the configured prefix.
     *   If your upstream runs on the host and your target uses `http://localhost:PORT`, set `HOST_DOCKER_GATEWAY` if `host.docker.internal` is not available on your platform.
 *   **Unsupported Media Type on form posts:** The proxy streams `application/x-www-form-urlencoded` bodies without parsing. If you still see 415 errors, clear caches and rebuild the `index` service to ensure it is up to date.
 

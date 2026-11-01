@@ -1279,7 +1279,7 @@ function getFileBrowserStyles() {
 function getRequestPath(req) {
   try {
     const url = new URL(req.raw.url, 'http://localhost');
-    return decodeURIComponent(url.pathname) || '/';
+    return url.pathname || '/';
   } catch {
     return '/';
   }
@@ -1425,8 +1425,14 @@ app.delete('/configure/api/endpoints/:id', async (req, reply) => {
 
 app.all('/*', async (req, reply) => {
   const pathname = getRequestPath(req);
+  let canonicalPath;
+  try {
+    canonicalPath = decodeURIComponent(pathname);
+  } catch {
+    return reply.code(400).send({ error: 'Invalid path' });
+  }
 
-  if (pathname === '/configure' || pathname === '/configure/') {
+  if (canonicalPath === '/configure' || canonicalPath === '/configure/') {
     if (req.method === 'GET' || req.method === 'HEAD') {
       await serveConfigureUi(reply, store);
     } else {
@@ -1435,8 +1441,8 @@ app.all('/*', async (req, reply) => {
     return;
   }
 
-  if (RESERVED_PREFIXES.some((prefix) => pathMatches(pathname, prefix))) {
-    if (pathMatches(pathname, '/files') && ['GET', 'HEAD'].includes(req.method)) {
+  if (RESERVED_PREFIXES.some((prefix) => pathMatches(canonicalPath, prefix))) {
+    if (pathMatches(canonicalPath, '/files') && ['GET', 'HEAD'].includes(req.method)) {
       return serveFileBrowser(req, reply);
     }
     return reply.code(404).send({ error: 'Not found' });
