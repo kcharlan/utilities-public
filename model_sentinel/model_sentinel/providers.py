@@ -10,13 +10,13 @@ from datetime import datetime
 from http.client import HTTPException
 from typing import Any, Final, TypeAlias
 from urllib.error import HTTPError, URLError
+from urllib.parse import urlsplit
 from urllib.request import (
     HTTPRedirectHandler,
     HTTPSHandler,
     OpenerDirector,
     Request,
     build_opener,
-    urlopen,
 )
 
 from . import __version__
@@ -104,7 +104,7 @@ def _is_timeout(exc: BaseException) -> bool:
 
 
 def _open_catalog(request: Request, timeout: float) -> Any:
-    return urlopen(request, timeout=timeout, context=ssl.create_default_context())
+    return endpoint_opener().open(request, timeout=timeout)
 
 
 def fetch_raw_models(
@@ -114,6 +114,14 @@ def fetch_raw_models(
     *,
     timeout: float = 30.0,
 ) -> list[dict[str, Any]]:
+    try:
+        url = urlsplit(provider.models_url)
+        valid_url = url.scheme == "https" and bool(url.hostname) and url.username is None and url.password is None
+        url.port
+    except ValueError:
+        valid_url = False
+    if not valid_url:
+        raise ProviderFetchError(f"{provider.label} request failed: HTTPS required")
     request = Request(
         provider.models_url,
         headers={

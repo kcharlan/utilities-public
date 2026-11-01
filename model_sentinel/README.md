@@ -249,6 +249,9 @@ redirects, and never retry with credentials. This is a local policy choice;
 Model Sentinel does not assume the provider guarantees anonymous access, and an
 authentication failure appears as a failed path.
 
+Catalog requests require HTTPS and do not follow redirects, so a provider that
+moves its catalog must be updated in the provider configuration before scanning.
+
 Each capture is saved in the runtime database with the catalog scrape it belongs
 to: one row per catalog model mapping, one per endpoint-list path with its
 outcome and sanitized error, each endpoint's stable state (stored once and
@@ -400,6 +403,10 @@ For each selected provider with a saved baseline, that will:
 If a provider has no baseline, compare-only mode reports that condition and
 does not fetch that provider. Create the baseline explicitly with
 `scan --save`.
+
+A provider returning an empty catalog after a non-empty baseline is reported
+as an error and its saved baseline is retained. Catalog and history writes
+are committed together; a failed provider does not stop scans of others.
 
 ### Scan and Save Options
 

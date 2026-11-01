@@ -43,7 +43,7 @@ def test_provider_error_omits_escaped_credential_echoes(tmp_path, monkeypatch, e
     error = HTTPError(provider.models_url, 401, encoding(SECRET), {}, body)
     def fail(*args, **kwargs):
         raise error
-    monkeypatch.setattr(providers, "urlopen", fail)
+    monkeypatch.setattr(providers, "_open_catalog", fail)
     with pytest.raises(providers.ProviderFetchError) as caught:
         providers.fetch_raw_models(provider, SECRET, resolve_profile(provider.kind))
     assert "HTTP 401" in str(caught.value)
@@ -61,7 +61,7 @@ def test_provider_error_suppresses_unsafe_exception_chain(tmp_path, monkeypatch,
         if category == "network":
             raise URLError(SECRET)
         return io.BytesIO(SECRET.encode())
-    monkeypatch.setattr(providers, "urlopen", fail)
+    monkeypatch.setattr(providers, "_open_catalog", fail)
     if category == "json":
         def invalid_json(*args):
             raise json.JSONDecodeError(SECRET, SECRET, 0)
@@ -805,16 +805,11 @@ def _catalog_server():
         yield ProviderConfig(**{**FAKE_PROVIDER.__dict__, "base_url": f"http://127.0.0.1:{port}/api/v1"}), seen
 
 
-def test_catalog_transport_compatibility_follows_redirects_with_bearer() -> None:
+def test_catalog_transport_rejects_insecure_url_before_redirect() -> None:
     with _catalog_server() as (provider, seen):
-        models = providers.fetch_raw_models(provider, "fake-bearer-not-a-secret", OPENROUTER_PROFILE)
-    assert models == [{"id": "fake-org/test-model-a"}]
-    assert [path for path, _ in seen] == ["/api/v1/models", "/api/v1/models-moved"]
-    for _, headers in seen:
-        lowered = {name.lower(): value for name, value in headers.items()}
-        assert lowered["authorization"] == "Bearer fake-bearer-not-a-secret"
-        assert lowered["accept"] == "application/json"
-        assert lowered["user-agent"] == f"model_sentinel/{__version__}"
+        with pytest.raises(providers.ProviderFetchError, match="HTTPS required"):
+            providers.fetch_raw_models(provider, "fake-bearer-not-a-secret", OPENROUTER_PROFILE)
+    assert seen == []
 
 
 @pytest.mark.parametrize(
@@ -833,15 +828,14 @@ def test_catalog_transport_compatibility_follows_redirects_with_bearer() -> None
     ],
 )
 def test_catalog_transport_compatibility_messages(monkeypatch, failure, message, status) -> None:
-    def fake_urlopen(request, *, timeout, context):
+    def fake_urlopen(request, timeout):
         assert timeout == 30.0
-        assert context.verify_mode == providers.ssl.CERT_REQUIRED
         result = failure()
         if isinstance(result, BaseException):
             raise result
         return result
 
-    monkeypatch.setattr(providers, "urlopen", fake_urlopen)
+    monkeypatch.setattr(providers, "_open_catalog", fake_urlopen)
     with pytest.raises(providers.ProviderFetchError) as caught:
         providers.fetch_raw_models(FAKE_PROVIDER, SECRET, OPENROUTER_PROFILE)
     assert str(caught.value) == message

@@ -128,13 +128,12 @@ def test_run_scan_builds_exact_live_edge_outside_provider_result(
 
         def create_scrape(self, **kwargs):
             assert kwargs["saved_snapshot"] is save
+            self.saved = kwargs["snapshot_models"] is not None
+            self.recorded = bool(kwargs["deltas"])
+            if save:
+                assert kwargs["snapshot_models"] == (new_model,)
+                assert kwargs["deltas"] == (delta,)
             return 11
-
-        def save_snapshot_models(self, **kwargs):
-            self.saved = True
-
-        def record_field_changes(self, **kwargs):
-            self.recorded = True
 
     store = FakeStore()
     loaded = type(
@@ -2834,7 +2833,7 @@ def test_endpoint_healthcheck_status_and_counts_synthetic_acceptance(
         requests.append(args)
         raise AssertionError("healthcheck attempted a provider request")
 
-    monkeypatch.setattr(providers, "urlopen", no_network)
+    monkeypatch.setattr(providers, "_open_catalog", no_network)
     monkeypatch.setattr(providers, "endpoint_opener", no_network)
     monkeypatch.setattr(cli, "fetch_raw_models", no_network)
     monkeypatch.setattr(cli, "fetch_endpoint_lists", no_network)

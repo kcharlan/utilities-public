@@ -3,7 +3,10 @@ from pathlib import Path
 from contextlib import contextmanager
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import json
+import os
 import sqlite3
+import ssl
+import subprocess
 import threading
 
 
@@ -28,7 +31,7 @@ def write_credential_config(root: Path, *, source: str = "file") -> Path:
                 "ENABLED": enabled,
                 "LABEL": provider_id,
                 "KIND": "openrouter",
-                "BASE_URL": "http://127.0.0.1:1",
+                "BASE_URL": "https://127.0.0.1:1",
                 "MODELS_PATH": "/models",
                 "API_KEY_ENV": f"{provider_id.upper()}_KEY",
                 "PRICE_MULTIPLIER": 1,
@@ -40,7 +43,7 @@ def write_credential_config(root: Path, *, source: str = "file") -> Path:
 
 
 @contextmanager
-def synthetic_provider_server(runtime_home: Path, *, raw_response: bytes | None = None):
+def synthetic_provider_server(runtime_home: Path, *, raw_response: bytes | None = None, env=None):
     """Serve invented models on loopback and record the actual bearer headers."""
     authorizations: list[str | None] = []
 
@@ -62,10 +65,20 @@ def synthetic_provider_server(runtime_home: Path, *, raw_response: bytes | None 
             pass
 
     server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+    cert = runtime_home / "synthetic-cert.pem"
+    key = runtime_home / "synthetic-key.pem"
+    subprocess.run(["openssl", "req", "-x509", "-newkey", "rsa:2048", "-nodes", "-keyout", str(key), "-out", str(cert), "-days", "1", "-subj", "/CN=127.0.0.1", "-addext", "subjectAltName=IP:127.0.0.1"], check=True, capture_output=True)
+    context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+    context.load_cert_chain(cert, key)
+    server.socket = context.wrap_socket(server.socket, server_side=True)
+    previous = os.environ.get("SSL_CERT_FILE")
+    os.environ["SSL_CERT_FILE"] = str(cert)
+    if env is not None:
+        env["SSL_CERT_FILE"] = str(cert)
     settings = runtime_home / "providers.env"
     settings.write_text(
         settings.read_text(encoding="utf-8").replace(
-            "http://127.0.0.1:1", f"http://127.0.0.1:{server.server_port}"
+            "https://127.0.0.1:1", f"https://127.0.0.1:{server.server_port}"
         ), encoding="utf-8",
     )
     thread = threading.Thread(target=server.serve_forever, daemon=True)
@@ -76,6 +89,10 @@ def synthetic_provider_server(runtime_home: Path, *, raw_response: bytes | None 
         server.shutdown()
         server.server_close()
         thread.join(timeout=5)
+        if previous is None:
+            os.environ.pop("SSL_CERT_FILE", None)
+        else:
+            os.environ["SSL_CERT_FILE"] = previous
 
 
 def synthetic_protocol_response(failure: str, echo: str) -> bytes:
