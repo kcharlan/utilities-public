@@ -89,6 +89,9 @@ def test_refresh_custom_parent_is_never_created_or_hardened(config, tmp_path, ki
     parent = tmp_path / "custom_parent"
     if kind != "missing":
         parent.mkdir(mode=0o755 if kind == "shared" else 0o700)
+    if kind == "shared":
+        parent.chmod(0o755)
+        assert stat.S_IMODE(parent.stat().st_mode) == 0o755
     if kind == "git":
         (parent / ".git").write_text("synthetic Git marker")
     path = parent / "synthetic_credentials.env"
@@ -111,6 +114,8 @@ def test_refresh_creates_and_hardens_only_runtime_parent(config):
     parent.chmod(0o755)
     unrelated = parent / "synthetic_unrelated"
     unrelated.mkdir(mode=0o755)
+    unrelated.chmod(0o755)
+    assert stat.S_IMODE(unrelated.stat().st_mode) == 0o755
     refresh(config)
     assert stat.S_IMODE(parent.stat().st_mode) == 0o700
     assert stat.S_IMODE(unrelated.stat().st_mode) == 0o755

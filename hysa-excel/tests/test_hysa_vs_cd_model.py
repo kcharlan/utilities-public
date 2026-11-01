@@ -192,6 +192,8 @@ def test_default_output_is_written_to_runtime_home(tmp_path: Path) -> None:
 def test_runtime_home_symlink_is_rejected_without_touching_target(tmp_path: Path) -> None:
     target = tmp_path / "target-runtime"
     target.mkdir(mode=0o755)
+    target.chmod(0o755)
+    assert stat.S_IMODE(target.stat().st_mode) == 0o755
     runtime = tmp_path / "runtime"
     runtime.symlink_to(target, target_is_directory=True)
 

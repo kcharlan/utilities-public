@@ -269,6 +269,8 @@ def test_default_runtime_home_symlink_is_rejected(
     module = load_module()
     target = tmp_path / "target-runtime"
     target.mkdir(mode=0o755)
+    target.chmod(0o755)
+    assert stat.S_IMODE(target.stat().st_mode) == 0o755
     runtime_link = tmp_path / "runtime-link"
     runtime_link.symlink_to(target, target_is_directory=True)
     monkeypatch.setenv("ETF_MONTECARLO_HOME", str(runtime_link))
@@ -303,6 +305,8 @@ def test_config_path_with_symlinked_ancestor_is_rejected_without_touching_target
     target_root = tmp_path / "target-root"
     target_parent = target_root / "private"
     target_parent.mkdir(parents=True, mode=0o755)
+    target_parent.chmod(0o755)
+    assert stat.S_IMODE(target_parent.stat().st_mode) == 0o755
     ancestor_link = tmp_path / "ancestor-link"
     ancestor_link.symlink_to(target_root, target_is_directory=True)
     config_path = ancestor_link / "private" / "config.json"
@@ -417,6 +421,8 @@ def test_output_path_with_symlinked_ancestor_is_rejected_before_finance_access(
     config_path = tmp_path / "private" / "config.json"
     target_parent = tmp_path / "target-results"
     target_parent.mkdir(mode=0o755)
+    target_parent.chmod(0o755)
+    assert stat.S_IMODE(target_parent.stat().st_mode) == 0o755
     ancestor_link = tmp_path / "results-link"
     ancestor_link.symlink_to(target_parent, target_is_directory=True)
     output_path = ancestor_link / "results.csv"
