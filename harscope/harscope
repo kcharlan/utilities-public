@@ -98,8 +98,11 @@ class HARManager:
         if not os.path.exists(path):
             raise FileNotFoundError(f"File not found: {path}")
         file_size = os.path.getsize(path)
-        with open(path, 'r', encoding='utf-8') as f:
-            content = f.read()
+        with open(path, 'rb') as f:
+            raw = f.read(MAX_HAR_BYTES + 1)
+        if len(raw) > MAX_HAR_BYTES:
+            raise ValueError('File exceeds size limit')
+        content = raw.decode('utf-8')
         self.file_name = os.path.basename(path)
         self.file_size = file_size
         self._parse_content(content)
@@ -110,6 +113,7 @@ class HARManager:
         self._parse_content(content)
 
     def _parse_content(self, content: str):
+        self._loaded = False
         try:
             data = json.loads(content)
         except json.JSONDecodeError as e:
@@ -127,8 +131,9 @@ class HARManager:
             'pages': log.get('pages', []),
         }
         self.entries = log.get('entries', [])
-        self._loaded = True
+        self._loaded = False
         self._build_indexes()
+        self._loaded = True
 
     def _build_indexes(self):
         self._domain_index.clear()
@@ -453,7 +458,7 @@ class SecurityScanner:
     SENSITIVE_KEYS = re.compile(
         r'^(authorization|cookie|set-cookie|x-api-key|x-auth-token|x-csrf-token|'
         r'x-xsrf-token|proxy-authorization|token|access_token|refresh_token|'
-        r'auth_token|api_key|apikey|api-key|client_secret|password|passwd|secret|'
+        r'auth_token|api_key|apikey|api-key|client_secret|password|new_password|passwd|secret|'
         r'session_id|sessionid|sessionId|convexSessionId|private_key|secret_key)$', re.I
     )
 
@@ -495,7 +500,7 @@ class SecurityScanner:
         'compression', '_resourceType', '_priority', 'comment',
     })
     # Prefix paths that should skip all children
-    SKIP_PATH_PREFIXES = ('.timings.', '._initiator.')
+    SKIP_PATH_PREFIXES = ('.timings.',)
 
     # Max string length for full pattern scan. Strings longer than this still get
     # the first MAX_SCAN_LEN chars scanned for patterns and token heuristics.
@@ -517,7 +522,7 @@ class SecurityScanner:
         self.manual_redactions.clear()
 
         for i, entry in enumerate(har.entries):
-            self._walk(entry, f'entries[{i}]', i)
+            self._walk(entry, f'entries[{i}]', i, segments=['log', 'entries', i])
 
             # Structural checks that don't fit the recursive model
             req = entry.get('request', {})
@@ -527,10 +532,10 @@ class SecurityScanner:
             # HTTP vs HTTPS
             if url.startswith('http://'):
                 self._add_finding(i, 'warning', 'HTTP', f'entries[{i}].request.url',
-                                  'Unencrypted HTTP request', url[:80])
+                                  'Unencrypted HTTP request', url, ['log', 'entries', i, 'request', 'url'])
 
             # Cookie security flags
-            for c in resp.get('cookies', []):
+            for cookie_index, c in enumerate(resp.get('cookies', [])):
                 name = c.get('name', '')
                 value = str(c.get('value', ''))
                 if self.SENSITIVE_KEY_CONTEXT.search(name):
@@ -538,14 +543,18 @@ class SecurityScanner:
                         continue
                     if not c.get('httpOnly', False):
                         self._add_finding(i, 'warning', 'Cookie Flags', f'entries[{i}].response.cookies.{name}',
-                                          f'Sensitive cookie "{name}" missing httpOnly flag', name)
+                                          f'Sensitive cookie "{name}" missing httpOnly flag', value,
+                                          ['log', 'entries', i, 'response', 'cookies', cookie_index, 'value'])
                     if not c.get('secure', False):
                         self._add_finding(i, 'warning', 'Cookie Flags', f'entries[{i}].response.cookies.{name}',
-                                          f'Sensitive cookie "{name}" missing secure flag', name)
+                                          f'Sensitive cookie "{name}" missing secure flag', value,
+                                          ['log', 'entries', i, 'response', 'cookies', cookie_index, 'value'])
 
+        self._walk(har.raw_data.get('log', {}).get('pages', []), 'log.pages', -1,
+                   segments=['log', 'pages'])
         return self.findings
 
-    def _walk(self, node, path: str, entry_index: int, depth: int = 0):
+    def _walk(self, node, path: str, entry_index: int, depth: int = 0, segments=None):
         """Recursively walk the JSON tree, scanning every string value."""
         if depth > 20:
             return
@@ -559,12 +568,14 @@ class SecurityScanner:
                 nv_value = str(node['value'])
                 if nv_value and nv_value != '[REDACTED]':
                     nv_handled = True
-                    if self.SENSITIVE_KEYS.match(nv_name):
+                    if (self.SENSITIVE_KEYS.match(nv_name) or
+                            ('cookies[' in path and (self.SENSITIVE_KEY_CONTEXT.search(nv_name) or
+                                                   re.search(r'(?:^|[._-])sid(?:$|[._-])', nv_name, re.I)))):
                         self._add_finding(entry_index, 'critical', 'Sensitive Field',
                                           f'{path}.{nv_name}',
-                                          f'Sensitive field "{nv_name}"', nv_value)
+                                          f'Sensitive field "{nv_name}"', nv_value, segments + ['value'])
                     # Scan the value using the semantic name as context
-                    self._scan_string(nv_value, nv_name, f'{path}.{nv_name}', entry_index, depth)
+                    self._scan_string(nv_value, nv_name, f'{path}.{nv_name}', entry_index, depth, segments + ['value'])
 
             for key, value in node.items():
                 # Skip 'name' and 'value' keys if we already handled them above
@@ -572,18 +583,18 @@ class SecurityScanner:
                     continue
                 child_path = f'{path}.{key}'
                 if isinstance(value, str):
-                    self._scan_string(value, key, child_path, entry_index, depth)
+                    self._scan_string(value, key, child_path, entry_index, depth, segments + [key])
                 else:
-                    self._walk(value, child_path, entry_index, depth + 1)
+                    self._walk(value, child_path, entry_index, depth + 1, segments + [key])
         elif isinstance(node, list):
             for idx, value in enumerate(node):
                 child_path = f'{path}[{idx}]'
                 if isinstance(value, str):
-                    self._scan_string(value, '', child_path, entry_index, depth)
+                    self._scan_string(value, '', child_path, entry_index, depth, segments + [idx])
                 else:
-                    self._walk(value, child_path, entry_index, depth + 1)
+                    self._walk(value, child_path, entry_index, depth + 1, segments + [idx])
 
-    def _scan_string(self, value: str, key: str, path: str, entry_index: int, depth: int = 0):
+    def _scan_string(self, value: str, key: str, path: str, entry_index: int, depth: int = 0, segments=None):
         """Scan a single string value found at the given JSON path."""
         if not value or len(value) < 3:
             return
@@ -613,19 +624,27 @@ class SecurityScanner:
         # Skip pattern/token scanning on the raw text — the parsed recursion
         # will find secrets at more specific per-key paths, avoiding duplicates.
         stripped = value.strip()
-        if len(stripped) > 2 and stripped[0] in ('{', '['):
+        if len(stripped) > 2 and stripped[0] in ('{', '[', '"'):
             try:
                 parsed = json.loads(stripped)
                 if isinstance(parsed, (dict, list)):
-                    self._walk(parsed, path + '(parsed)', entry_index, depth=depth + 1)
+                    self._walk(parsed, path + '(parsed)', entry_index, depth=depth + 1, segments=segments + [None])
                     return  # individual keys scanned at more specific paths
+                if isinstance(parsed, str) and parsed != value and depth < 20:
+                    self._scan_string(parsed, key, path + '(parsed)', entry_index, depth + 1, segments + [None])
+                    return
             except (json.JSONDecodeError, RecursionError):
                 pass
 
         # If the key name itself indicates a sensitive field, flag the value
         if key and self.SENSITIVE_KEYS.match(key):
             self._add_finding(entry_index, 'critical', 'Sensitive Field', path,
-                              f'Sensitive field "{key}"', value)
+                              f'Sensitive field "{key}"', value, segments)
+
+        # Query parameters can occur in URLs, redirect headers, initiators and titles.
+        for match in re.finditer(r'(?i)(?:^|[?&;\s])(?:new_)?(?:password|token|secret|api_key|access_token)=([^&#;\s]+)', value):
+            self._add_finding(entry_index, 'critical', 'Sensitive Field', path,
+                              'Sensitive parameter', match.group(1), segments)
 
         # Run all patterns against the string (up to MAX_SCAN_LEN)
         scan_text = value[:self.MAX_SCAN_LEN]
@@ -633,7 +652,7 @@ class SecurityScanner:
             for match in pattern.finditer(scan_text):
                 matched = match.group()
                 self._add_finding(entry_index, severity, category, path,
-                                  desc_template, matched)
+                                  desc_template, matched, segments, value)
 
         # --- Value-first opaque token detection ---
         # Detect ANY long opaque token by its value characteristics,
@@ -672,7 +691,7 @@ class SecurityScanner:
                 if should_flag:
                     cat = 'Token' if key_hints else 'Opaque Token'
                     desc = f'Token-like value in "{key}"' if key else 'Opaque token value'
-                    self._add_finding(entry_index, severity, cat, path, desc, value)
+                    self._add_finding(entry_index, severity, cat, path, desc, value, segments)
 
         # If this looks like base64-encoded content, try decoding and scanning.
         # No key name gate - any field could contain base64 secrets.
@@ -685,7 +704,7 @@ class SecurityScanner:
                         for pattern, category, severity, desc_template in self.PATTERNS:
                             for match in pattern.finditer(decoded):
                                 self._add_finding(entry_index, severity, category, path + '(base64)',
-                                                  desc_template + ' (in base64 content)', match.group())
+                                                  desc_template + ' (in base64 content)', match.group(), segments, value)
                 except Exception:
                     pass
 
@@ -695,7 +714,7 @@ class SecurityScanner:
         return severity in ('critical', 'warning')
 
     def _add_finding(self, entry_index: int, severity: str, category: str,
-                     location: str, description: str, value: str):
+                     location: str, description: str, value: str, segments=None, full_value=None):
         preview = self._preview_value(value)
 
         # Consolidate findings per (entryIndex, location) - merge descriptions
@@ -703,6 +722,7 @@ class SecurityScanner:
         consolidation_key = (entry_index, location)
         if consolidation_key in self._consolidated:
             existing = self._consolidated[consolidation_key]
+            existing['_values'].add(value)
             # Upgrade severity if new finding is more severe
             sev_rank = {'critical': 0, 'warning': 1, 'info': 2}
             if sev_rank.get(severity, 2) < sev_rank.get(existing['severity'], 2):
@@ -730,6 +750,9 @@ class SecurityScanner:
             # Internal tracking fields (not sent to frontend)
             'categories': {category},
             'descriptions': {description},
+            '_segments': segments,
+            '_values': {value},
+            '_full_value': full_value if full_value is not None else value,
         }
         self._consolidated[consolidation_key] = finding
         self._findings_by_id[self._next_id] = finding
@@ -738,9 +761,7 @@ class SecurityScanner:
 
     @staticmethod
     def _preview_value(value: str) -> str:
-        if len(value) <= 40:
-            return value
-        return value[:37] + '...'
+        return f'string ({len(value)} characters)'
 
     def get_summary(self) -> dict:
         counts = Counter(f['severity'] for f in self.findings)
@@ -765,7 +786,7 @@ class SecurityScanner:
             cat_sev[cat][sev] += 1
             cat_sev[cat]['total'] += 1
             # Map finding to domain via entry index
-            if f['entryIndex'] < len(har._summaries):
+            if 0 <= f['entryIndex'] < len(har._summaries):
                 domain = har._summaries[f['entryIndex']]['domain']
                 cat_domains[cat][domain] += 1
 
@@ -823,7 +844,7 @@ class SecurityScanner:
         # --- Domain-level findings breakdown ---
         domain_sev = defaultdict(lambda: {'critical': 0, 'warning': 0, 'info': 0, 'total': 0})
         for f in self.findings:
-            if f['entryIndex'] < len(har._summaries):
+            if 0 <= f['entryIndex'] < len(har._summaries):
                 domain = har._summaries[f['entryIndex']]['domain']
                 domain_sev[domain][f['severity']] += 1
                 domain_sev[domain]['total'] += 1
@@ -845,7 +866,7 @@ class SecurityScanner:
         domains_with_findings = len(set(
             har._summaries[f['entryIndex']]['domain']
             for f in self.findings
-            if f['entryIndex'] < len(har._summaries)
+            if 0 <= f['entryIndex'] < len(har._summaries)
         ))
 
         # WebSocket coverage
@@ -877,7 +898,7 @@ class SecurityScanner:
         for f in self.findings:
             if f['severity'] == 'critical':
                 entry_ctx = {}
-                if f['entryIndex'] < len(har._summaries):
+                if 0 <= f['entryIndex'] < len(har._summaries):
                     s = har._summaries[f['entryIndex']]
                     path = urlparse(s['url']).path or '/'
                     if len(path) > 50:
@@ -968,7 +989,7 @@ class SecurityScanner:
         preview = self._preview_value(value)
         self.manual_redactions[(entry_index, location)] = {
             'entryIndex': entry_index, 'location': location,
-            'preview': preview, 'redact': redact,
+            'preview': preview, 'redact': redact, '_value': value,
         }
 
     def remove_manual_redaction(self, entry_index, location):
@@ -1173,6 +1194,73 @@ def _navigate_json_path(obj, keys):
 
 class ExportEngine:
     @staticmethod
+    def _at_path(node, segments, replace=False):
+        if not segments:
+            return '[REDACTED]' if replace else node
+        segment, rest = segments[0], segments[1:]
+        if segment is None:
+            parsed = json.loads(node)
+            result = ExportEngine._at_path(parsed, rest, replace)
+            return json.dumps(result, separators=(',', ':')) if replace else result
+        if replace:
+            node[segment] = ExportEngine._at_path(node[segment], rest, True)
+            return node
+        return ExportEngine._at_path(node[segment], rest)
+
+    @staticmethod
+    def _secrets(scanner):
+        values = set()
+        for finding in scanner.findings:
+            if finding['redact'] and finding.get('_segments') is not None:
+                values.update(finding['_values'])
+        for manual in scanner.manual_redactions.values():
+            if manual['redact'] and manual.get('_value'):
+                values.add(manual['_value'])
+        return sorted((v for v in values if v and v != '[REDACTED]'), key=len, reverse=True)
+
+    @staticmethod
+    def _sweep(node, secrets, depth=0):
+        if depth > 40:
+            raise ValueError('Redaction nesting limit exceeded')
+        if isinstance(node, dict):
+            for key in node:
+                if isinstance(key, str) and ExportEngine._sweep(key, secrets, depth + 1) != key:
+                    raise ValueError('Selected value occurs in an object key; export would change the HAR structure')
+            return {k: ExportEngine._sweep(v, secrets, depth + 1) for k, v in node.items()}
+        if isinstance(node, list):
+            return [ExportEngine._sweep(v, secrets, depth + 1) for v in node]
+        if not isinstance(node, str):
+            return node
+        if node == '[REDACTED]':
+            return node
+        try:
+            parsed = json.loads(node)
+        except (ValueError, RecursionError):
+            parsed = None
+        if isinstance(parsed, (dict, list, str)) and parsed != node:
+            swept = ExportEngine._sweep(parsed, secrets, depth + 1)
+            if swept != parsed:
+                return json.dumps(swept, separators=(',', ':'))
+        if len(node) >= 16 and re.fullmatch(r'[A-Za-z0-9+/]+={0,2}', node):
+            try:
+                decoded = base64.b64decode(node, validate=True).decode('utf-8')
+            except (ValueError, UnicodeDecodeError):
+                decoded = None
+            if decoded is not None:
+                swept = ExportEngine._sweep(decoded, secrets, depth + 1)
+                if swept != decoded:
+                    return base64.b64encode(swept.encode('utf-8')).decode('ascii')
+        for secret in secrets:
+            node = node.replace(secret, '[REDACTED]')
+            if '%' in node:
+                parts = []
+                for char in secret:
+                    encoded = ''.join(f'%{byte:02x}' for byte in char.encode('utf-8'))
+                    parts.append(f'(?:{re.escape(char)}|(?i:{encoded}))')
+                node = re.sub(''.join(parts), lambda _: '[REDACTED]', node)
+        return node
+
+    @staticmethod
     def sanitized_har(har: HARManager, scanner: SecurityScanner) -> dict:
         data = copy.deepcopy(har.raw_data)
         entries = data['log']['entries']
@@ -1181,21 +1269,43 @@ class ExportEngine:
             if not finding['redact']:
                 continue
             idx = finding['entryIndex']
-            if idx >= len(entries):
-                continue
-            entry = entries[idx]
             loc = finding['location']
-            ExportEngine._redact_location(entry, loc, finding)
+            if finding.get('_segments') is not None:
+                try:
+                    ExportEngine._at_path(data, finding['_segments'], True)
+                except (KeyError, IndexError, TypeError, ValueError) as exc:
+                    raise ValueError('Redaction location could not be applied') from exc
+            else:
+                if idx < 0 or idx >= len(entries):
+                    raise ValueError('Redaction location could not be applied')
+                ExportEngine._redact_location(entries[idx], loc, finding)
 
         # Apply manual redactions
         for key, manual in scanner.manual_redactions.items():
             if not manual['redact']:
                 continue
             entry_index, location = key
-            if entry_index >= len(entries):
-                continue
+            if (entry_index < 0 or entry_index >= len(entries) or
+                    ExportEngine._read_location_value(har.entries[entry_index], location) is None):
+                raise ValueError('Manual redaction location could not be applied')
             ExportEngine._redact_location(entries[entry_index], location, manual)
+            if ExportEngine._read_location_value(entries[entry_index], location) != '[REDACTED]':
+                raise ValueError('Manual redaction location could not be verified')
 
+        secrets = ExportEngine._secrets(scanner)
+        data = ExportEngine._sweep(data, secrets)
+        if ExportEngine._sweep(data, secrets) != data:
+            raise ValueError('Redaction verification failed')
+        serialized = json.dumps(data, ensure_ascii=False)
+        if any(secret in serialized for secret in secrets):
+            raise ValueError('Redaction verification failed')
+        check_manager = HARManager()
+        check_manager.from_content(serialized, 'sanitized.har')
+        check = SecurityScanner()
+        check.scan(check_manager)
+        for finding in check.findings:
+            if any(secret in value for secret in secrets for value in finding.get('_values', ())):
+                raise ValueError('Redaction rescan found a selected value')
         return data
 
     @staticmethod
@@ -1408,7 +1518,7 @@ class ExportEngine:
         for f in scanner.findings:
             side, area, key = parse_loc(f['location'])
             entry_ctx = {}
-            if f['entryIndex'] < len(har._summaries):
+            if 0 <= f['entryIndex'] < len(har._summaries):
                 s = har._summaries[f['entryIndex']]
                 entry_ctx = {'domain': s['domain'], 'method': s['method'],
                              'path': urlparse(s['url']).path or '/', 'status': s['status']}
@@ -1425,7 +1535,7 @@ class ExportEngine:
         for (entry_index, loc), m in scanner.manual_redactions.items():
             side, area, key = parse_loc(loc)
             entry_ctx = {}
-            if entry_index < len(har._summaries):
+            if 0 <= entry_index < len(har._summaries):
                 s = har._summaries[entry_index]
                 entry_ctx = {'domain': s['domain'], 'method': s['method'],
                              'path': urlparse(s['url']).path or '/', 'status': s['status']}
@@ -1446,7 +1556,7 @@ class ExportEngine:
         summaries = har._summaries
 
         def entry_context(idx):
-            if idx < len(summaries):
+            if 0 <= idx < len(summaries):
                 s = summaries[idx]
                 path = urlparse(s['url']).path or '/'
                 if len(path) > 50:
@@ -1489,6 +1599,7 @@ class ExportEngine:
                 'severity': f.get('severity'),
                 'category': f.get('category'),
                 'entry': entry_context(f['entryIndex']),
+                'segments': f.get('_segments'),
             })
         for (entry_index, loc), m in scanner.manual_redactions.items():
             side, area, key = parse_loc(loc)
@@ -1553,14 +1664,20 @@ class ExportEngine:
                 'entry': d.get('entry', {}),
             }
 
-            if entry_index < 0 or entry_index >= len(entries):
+            segments = d.get('segments')
+            if segments is not None:
+                try:
+                    value = ExportEngine._at_path(har_data, segments)
+                except (KeyError, IndexError, TypeError, ValueError):
+                    value = None
+            elif entry_index < 0 or entry_index >= len(entries):
                 result['status'] = 'error'
                 result['detail'] = f'Entry index {entry_index} out of range'
                 results.append(result)
                 continue
-
-            entry = entries[entry_index]
-            value = ExportEngine._read_location_value(entry, location)
+            else:
+                entry = entries[entry_index]
+                value = ExportEngine._read_location_value(entry, location)
 
             if value is None:
                 result['status'] = 'error'
@@ -1585,6 +1702,22 @@ class ExportEngine:
 
             results.append(result)
 
+        # An EDL records decisions, not secret values. Rescan the entire HAR so
+        # validation cannot certify a capture with a newly exposed secret.
+        try:
+            manager = HARManager()
+            manager.from_content(json.dumps(har_data), 'validated.har')
+            rescanner = SecurityScanner()
+            rescanner.scan(manager)
+            kept = {tuple(d['segments']) for d in edl_data.get('decisions', [])
+                    if d.get('action') == 'keep' and d.get('segments') is not None}
+            remaining = [f for f in rescanner.findings if f['redact']
+                         and tuple(f.get('_segments') or ()) not in kept]
+            if remaining:
+                results.append({'status': 'fail', 'detail': 'Rescan found sensitive values'})
+        except (ValueError, TypeError, KeyError) as exc:
+            results.append({'status': 'error', 'detail': f'Rescan failed: {exc}'})
+
         pass_count = sum(1 for r in results if r['status'] == 'pass')
         fail_count = sum(1 for r in results if r['status'] == 'fail')
         error_count = sum(1 for r in results if r['status'] == 'error')
@@ -1592,7 +1725,7 @@ class ExportEngine:
         return {
             'results': results,
             'summary': {
-                'total': len(results),
+                'total': len(edl_data.get('decisions', [])),
                 'pass': pass_count,
                 'fail': fail_count,
                 'error': error_count,
@@ -2273,7 +2406,7 @@ MAX_EDL_BYTES = 10 * 1024 * 1024   # 10 MB
 
 def _safe_filename(name: str) -> str:
     """Sanitize filename for use in Content-Disposition headers."""
-    return re.sub(r'[^\w.\- ]', '_', name)
+    return re.sub(r'[^A-Za-z0-9_.\- ]', '_', name)
 
 
 # local-server-guard:begin
@@ -2358,6 +2491,8 @@ async def api_open(req: OpenRequest):
         raise HTTPException(status_code=400, detail="Only .har files are supported")
     if not os.path.isfile(resolved):
         raise HTTPException(status_code=400, detail=f"File not found: {resolved}")
+    if os.path.getsize(resolved) > MAX_HAR_BYTES:
+        raise HTTPException(status_code=413, detail="File exceeds size limit")
     # Reject symlinks that resolve outside the original file's directory (path traversal guard)
     if os.path.islink(path):
         orig_dir = os.path.realpath(os.path.dirname(path))
@@ -2469,12 +2604,13 @@ async def api_stats():
 async def api_security():
     _require_file()
     # Strip internal tracking fields before sending to frontend
-    clean = [{k: v for k, v in f.items() if k not in ('categories', 'descriptions')}
+    clean = [{k: v for k, v in f.items() if k not in ('categories', 'descriptions') and not k.startswith('_')}
              for f in security_scanner.findings]
     return {
         'findings': clean,
         'summary': security_scanner.get_summary(),
-        'manualRedactions': list(security_scanner.manual_redactions.values()),
+        'manualRedactions': [{k: v for k, v in m.items() if not k.startswith('_')}
+                             for m in security_scanner.manual_redactions.values()],
     }
 
 
@@ -2539,7 +2675,7 @@ async def api_redaction_decisions():
     summaries = har_manager._summaries
 
     def _entry_context(idx):
-        if idx < len(summaries):
+        if 0 <= idx < len(summaries):
             s = summaries[idx]
             path = urlparse(s['url']).path or '/'
             if len(path) > 50:
@@ -2634,7 +2770,10 @@ async def api_sequence_flows():
 @app.post("/api/export/har")
 async def api_export_har():
     _require_file()
-    sanitized = ExportEngine.sanitized_har(har_manager, security_scanner)
+    try:
+        sanitized = ExportEngine.sanitized_har(har_manager, security_scanner)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
     content = json.dumps(sanitized, indent=2)
     return StreamingResponse(
         io.BytesIO(content.encode('utf-8')),
@@ -2643,10 +2782,18 @@ async def api_export_har():
     )
 
 
+def _safe_export_content(make_content):
+    try:
+        ExportEngine.sanitized_har(har_manager, security_scanner)
+        return ExportEngine._sweep(make_content(), ExportEngine._secrets(security_scanner))
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
 @app.post("/api/export/edl")
 async def api_export_edl():
     _require_file()
-    content = ExportEngine.edl_export(har_manager, security_scanner)
+    content = _safe_export_content(lambda: ExportEngine.edl_export(har_manager, security_scanner))
     # Match filename to the sanitized HAR: sanitized_X.har → sanitized_X.edl.json
     base_name = har_manager.file_name.rsplit('.', 1)[0] if '.' in har_manager.file_name else har_manager.file_name
     return StreamingResponse(
@@ -2682,7 +2829,7 @@ async def api_validate(file: UploadFile = File(...)):
 @app.post("/api/export/csv")
 async def api_export_csv():
     _require_file()
-    content = ExportEngine.csv_export(har_manager, security_scanner)
+    content = _safe_export_content(lambda: ExportEngine.csv_export(har_manager, security_scanner))
     return StreamingResponse(
         io.BytesIO(content.encode('utf-8')),
         media_type='text/csv',
@@ -2693,7 +2840,7 @@ async def api_export_csv():
 @app.post("/api/export/csv-findings")
 async def api_export_csv_findings():
     _require_file()
-    content = ExportEngine.csv_findings_export(har_manager, security_scanner)
+    content = _safe_export_content(lambda: ExportEngine.csv_findings_export(har_manager, security_scanner))
     return StreamingResponse(
         io.BytesIO(content.encode('utf-8')),
         media_type='text/csv',
@@ -2707,7 +2854,7 @@ class ReportRequest(BaseModel):
 @app.post("/api/export/report")
 async def api_export_report(req: ReportRequest):
     _require_file()
-    content = ExportEngine.summary_report(har_manager, security_scanner, req.format)
+    content = _safe_export_content(lambda: ExportEngine.summary_report(har_manager, security_scanner, req.format))
     ext = 'md' if req.format == 'md' else 'html'
     media = 'text/markdown' if req.format == 'md' else 'text/html'
     return StreamingResponse(

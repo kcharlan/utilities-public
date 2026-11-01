@@ -30,6 +30,17 @@ SecurityScanner = harscope_mod.SecurityScanner
 ExportEngine = harscope_mod.ExportEngine
 
 
+@pytest.fixture(scope='session')
+def base_url(pytestconfig):
+    """Match pytest-playwright's fallback without its deprecated method fixture."""
+    return pytestconfig.getoption('--base-url') or pytestconfig.getini('base_url') or None
+
+
+@pytest.fixture(scope='session')
+def browser_type_launch_args(browser_type_launch_args):
+    return {**browser_type_launch_args, 'headless': True}
+
+
 def _fixture_value(*parts: str) -> str:
     """Build intentional detector inputs without storing secret-shaped literals."""
     return "".join(parts)
