@@ -2,8 +2,6 @@
 
 set -euo pipefail
 
-source ~/.zshrc >/dev/null 2>&1 || true
-
 SCRIPT_DIR="${0:A:h}"
 SCRIPT_NAME="${0:t}"
 DEFAULT_ROOT_DIR="${SCRIPT_DIR:h}"
@@ -22,8 +20,8 @@ STAGE_RETRY_STATE_JSON="${STAGE_RETRY_STATE_JSON:-$AUDITS_DIR/stage_retry_state.
 
 AGENT_CLI="${AGENT_CLI:-codex}"
 CODEX_COMMAND="${CODEX_COMMAND:-codex}"
-CLAUDE_SONNET_COMMAND="${CLAUDE_SONNET_COMMAND:-cc-sonnet}"
-CLAUDE_OPUS_COMMAND="${CLAUDE_OPUS_COMMAND:-cc-opus}"
+CLAUDE_SONNET_COMMAND="${CLAUDE_SONNET_COMMAND:-claude}"
+CLAUDE_OPUS_COMMAND="${CLAUDE_OPUS_COMMAND:-claude}"
 MODEL_NAME="${MODEL_NAME:-gpt-5.6-sol}"
 SERVICE_TIER="${SERVICE_TIER:-}"
 AUTO_COMMIT_VALIDATED="${AUTO_COMMIT_VALIDATED:-false}"
@@ -645,7 +643,6 @@ run_agent_exec() {
     cli_effort="$effort"
     cli_args=(
       exec
-      --dangerously-bypass-approvals-and-sandbox
       --skip-git-repo-check
       --color never
       --json
@@ -659,7 +656,7 @@ run_agent_exec() {
       cli_args+=(-c "service_tier=\"$SERVICE_TIER\"")
     fi
 
-    "$CODEX_COMMAND" "${cli_args[@]}" < "$prompt_file" \
+    command "$CODEX_COMMAND" "${cli_args[@]}" < "$prompt_file" \
       > >(tee "$event_log" | python3 "$JSON_PROGRESS_PARSER" --stage "$stage" --state-file "$state_file" --cli-family codex --timeline-file "$timeline_file") \
       2>&1 &
   else
@@ -668,7 +665,7 @@ run_agent_exec() {
     command -v "$claude_command" >/dev/null 2>&1 || die "'$claude_command' is not available"
     cli_label="$claude_command"
     cli_effort="$(claude_cli_effort "$effort")"
-    if [[ "$claude_command" == "$CLAUDE_SONNET_COMMAND" ]]; then
+    if [[ "${effort:l}" == low || "${effort:l}" == medium ]]; then
       resolved_model="sonnet"
     else
       resolved_model="opus"
@@ -678,16 +675,15 @@ run_agent_exec() {
       --verbose
       --output-format stream-json
       --input-format text
-      --dangerously-skip-permissions
+      --model "$resolved_model"
       --add-dir "$ROOT_DIR"
-      --permission-mode bypassPermissions
       --no-session-persistence
     )
     if [[ -n "$cli_effort" ]]; then
       cli_args+=(--effort "$cli_effort")
     fi
 
-    "$claude_command" "${cli_args[@]}" < "$prompt_file" \
+    command "$claude_command" "${cli_args[@]}" < "$prompt_file" \
       > >(tee "$event_log" | python3 "$JSON_PROGRESS_PARSER" --stage "$stage" --state-file "$state_file" --cli-family claude --output-file "$output_file" --timeline-file "$timeline_file") \
       2>&1 &
   fi
@@ -1031,46 +1027,23 @@ for path in sorted(selected):
 PY
 }
 
-durable_repo_paths() {
-  python3 - "$ROOT_DIR" <<'PY'
-from __future__ import annotations
-
-import fnmatch
-import subprocess
+new_packet_docs() {
+  python3 - "$ROOT_DIR" "$PLANS_DIR" "$1" "$STATUS_JSON" <<'PY'
+import json
 import sys
 from pathlib import Path
 
-root = Path(sys.argv[1])
-patterns = [
-    "docs/implementation_packet_playbook.md",
-    "plans/packet_status.md",
-    "plans/packet_status.json",
-    "plans/packet_*.md",
-    "audits/*.md",
-    "audits/*.json",
-]
+root, plans, before_path, after_path = map(Path, sys.argv[1:])
+root, plans = root.resolve(), plans.resolve()
+def docs(path):
+    if not path.exists():
+        return set()
+    return {p.get("doc") for p in json.loads(path.read_text()).get("packets", []) if p.get("doc")}
 
-def git_lines(args: list[str]) -> list[str]:
-    proc = subprocess.run(
-        ["git", "-C", str(root), *args],
-        check=True,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        text=True,
-    )
-    return [line.strip() for line in proc.stdout.splitlines() if line.strip()]
-
-changed = set(git_lines(["diff", "--name-only", "--relative"]))
-changed.update(git_lines(["diff", "--cached", "--name-only", "--relative"]))
-changed.update(git_lines(["ls-files", "--others", "--exclude-standard"]))
-
-selected = set()
-for path in changed:
-    if any(fnmatch.fnmatch(path, pattern) for pattern in patterns):
-        selected.add(path)
-
-for path in sorted(selected):
-    print(path)
+for name in sorted(docs(after_path) - docs(before_path)):
+    path = (root / name).resolve()
+    if path.is_file() and path.is_relative_to(plans) and path.is_relative_to(root):
+        print(path.relative_to(root))
 PY
 }
 
@@ -1189,19 +1162,21 @@ commit_selected_paths() {
   filtered_paths=("${(@u)filtered_paths}")
   (( ${#filtered_paths[@]} > 0 )) || return 0
 
-  git -C "$ROOT_DIR" add -- "${filtered_paths[@]}"
-  if git -C "$ROOT_DIR" diff --cached --quiet --exit-code; then
+  git -C "$ROOT_DIR" --literal-pathspecs add -- "${filtered_paths[@]}"
+  if git -C "$ROOT_DIR" --literal-pathspecs diff --cached --quiet --exit-code -- "${filtered_paths[@]}"; then
     return 0
   fi
 
-  git -C "$ROOT_DIR" commit -m "$commit_message" >/dev/null || return $?
+  git -C "$ROOT_DIR" --literal-pathspecs commit --only -m "$commit_message" -- "${filtered_paths[@]}" >/dev/null || return $?
   commit_hash="$(git -C "$ROOT_DIR" rev-parse --short HEAD)"
   log "Committed ${#filtered_paths[@]} path(s) as $commit_hash: $commit_message"
 }
 
 auto_commit_durable_artifacts() {
   local commit_message="$1"
-  local -a commit_paths
+  shift
+  local -a commit_paths=()
+  local artifact_path relative
 
   [[ "$AUTO_COMMIT_VALIDATED" == "true" ]] || return 0
   git_repo_available || {
@@ -1209,7 +1184,18 @@ auto_commit_durable_artifacts() {
     return 0
   }
 
-  commit_paths=("${(@f)$(durable_repo_paths)}")
+  for artifact_path in "$@"; do
+    [[ -n "$artifact_path" ]] || continue
+    if [[ "$artifact_path" == /* ]]; then
+      relative="$(repo_rel_path "$artifact_path")"
+      [[ "$relative" != /* ]] || continue
+    else
+      relative="$artifact_path"
+    fi
+    if [[ -e "$ROOT_DIR/$relative" ]] || git -C "$ROOT_DIR" --literal-pathspecs ls-files --error-unmatch -- "$relative" >/dev/null 2>&1; then
+      commit_paths+=("$relative")
+    fi
+  done
   if (( ${#commit_paths[@]} == 0 )); then
     return 0
   fi
@@ -1230,8 +1216,9 @@ auto_commit_stage_delta() {
     return 0
   }
 
-  commit_paths=("${(@f)$(changed_paths_since_snapshot "$snapshot_file")}")
-  commit_paths+=("${extra_paths[@]}")
+  # A stage-wide snapshot does not declare ownership of the changed files.
+  # Only explicitly supplied paths may be committed.
+  commit_paths=("${extra_paths[@]}")
   commit_paths=("${(@u)commit_paths}")
   commit_selected_paths "$commit_message" "${commit_paths[@]}"
 }
@@ -1251,7 +1238,6 @@ auto_commit_validated_packet() {
 
   validation_audit_doc="audits/$(basename "$packet_doc" .md)_validation.md"
   commit_paths=("${(@f)$(packet_commit_paths "$packet_doc" "$validation_audit_doc")}")
-  commit_paths+=("${(@f)$(durable_repo_paths)}")
   commit_paths=("${(@u)commit_paths}")
 
   if (( ${#commit_paths[@]} == 0 )); then
@@ -1641,13 +1627,13 @@ run_full_suite_verification() {
   write_full_suite_report "$label" "$report_md" "$report_json" "$log_file" "$FULL_TEST_COMMAND" "$exit_code" "$start_epoch" "$end_epoch" "$is_final"
 
   if [[ "$exit_code" -ne 0 ]]; then
-    auto_commit_durable_artifacts "Record failed $label"
+    auto_commit_durable_artifacts "Record failed $label" "$report_md" "$report_json"
     die "$label failed with exit code $exit_code. See $(repo_rel_path "$report_md")"
   fi
 
   update_full_suite_state "$(repo_rel_path "$report_json")" "$(repo_rel_path "$log_file")" "$is_final"
   log "$label passed"
-  auto_commit_durable_artifacts "Record $label"
+  auto_commit_durable_artifacts "Record $label" "$report_md" "$report_json" "$FULL_TEST_STATE_JSON"
   honor_stop_request "$label" && return 0
 }
 
@@ -1828,13 +1814,18 @@ run_bootstrap() {
 
   local prompt_file="$RUN_DIR/bootstrap.prompt.txt"
   local output_file="$RUN_DIR/bootstrap.last_message.txt"
+  local before_status="$RUN_DIR/bootstrap.before.json"
+  local -a packet_docs
+
+  if [[ -f "$STATUS_JSON" ]]; then cp "$STATUS_JSON" "$before_status"; else rm -f "$before_status"; fi
 
   write_bootstrap_prompt "$prompt_file"
   run_agent_exec "bootstrap" "$BOOTSTRAP_EFFORT" "$prompt_file" "$output_file"
 
   require_file "$IMPLEMENTATION_PLAYBOOK"
   require_file "$STATUS_JSON"
-  auto_commit_durable_artifacts "Bootstrap packet orchestration artifacts"
+  packet_docs=("${(@f)$(new_packet_docs "$before_status")}")
+  auto_commit_durable_artifacts "Bootstrap packet orchestration artifacts" "$IMPLEMENTATION_PLAYBOOK" "$STATUS_MD" "$STATUS_JSON" "${packet_docs[@]}"
   honor_stop_request "bootstrap" && return 0
 }
 
@@ -1843,12 +1834,17 @@ run_planner() {
 
   local prompt_file="$RUN_DIR/planner.prompt.txt"
   local output_file="$RUN_DIR/planner.last_message.txt"
+  local before_status="$RUN_DIR/planner.before.json"
+  local -a packet_docs
+
+  if [[ -f "$STATUS_JSON" ]]; then cp "$STATUS_JSON" "$before_status"; else rm -f "$before_status"; fi
 
   write_planner_prompt "$prompt_file"
   run_agent_exec "planner" "$PLANNER_EFFORT" "$prompt_file" "$output_file"
 
   require_file "$STATUS_JSON"
-  auto_commit_durable_artifacts "Plan next packet horizon"
+  packet_docs=("${(@f)$(new_packet_docs "$before_status")}")
+  auto_commit_durable_artifacts "Plan next packet horizon" "$STATUS_MD" "$STATUS_JSON" "${packet_docs[@]}"
   honor_stop_request "planner" && return 0
 }
 
@@ -1966,12 +1962,16 @@ run_drift_audit() {
       log "Drift audit created repair packet $repair_packet_id: $(drift_audit_result_field "$audit_json" "summary")"
       ;;
     halt)
-      auto_commit_durable_artifacts "Record halted $audit_label"
+      auto_commit_durable_artifacts "Record halted $audit_label" "$audit_md" "$audit_json" "$DRIFT_AUDIT_STATE_JSON"
       die "Drift audit halted the run: $(drift_audit_result_field "$audit_json" "summary"). See $(repo_rel_path "$audit_md")"
       ;;
   esac
 
-  auto_commit_durable_artifacts "Record $audit_label"
+  local -a audit_paths=("$audit_md" "$audit_json" "$DRIFT_AUDIT_STATE_JSON")
+  if [[ "$result_status" == "repair_packet" ]]; then
+    audit_paths+=("$STATUS_MD" "$STATUS_JSON" "$repair_packet_doc")
+  fi
+  auto_commit_durable_artifacts "Record $audit_label" "${audit_paths[@]}"
   honor_stop_request "$audit_label" && return 0
 }
 

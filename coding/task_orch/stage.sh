@@ -3,8 +3,8 @@ set -euo pipefail
 
 # Claude Code commands — defined here because .zshrc functions aren't
 # available in non-interactive script shells.
-cc-opus()  { claude --dangerously-skip-permissions --model opus "$@"; }
-cc-sonnet(){ claude --dangerously-skip-permissions --model sonnet "$@"; }
+cc-opus()  { claude --model opus "$@"; }
+cc-sonnet(){ claude --model sonnet "$@"; }
 
 # =============================================================================
 # Dependency Resolution Launcher
@@ -36,7 +36,6 @@ resolver_prompt="Read task_orch/execution/RESOLVER.md for your full instructions
 
 set +e
 cc-opus -p "$resolver_prompt" \
-  --allowedTools "Edit,Read,Write,Bash,Glob,Grep" \
   2>&1 | tee "$LOG_FILE"
 resolver_exit=$?
 set -e

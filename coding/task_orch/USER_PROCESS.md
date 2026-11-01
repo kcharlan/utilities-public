@@ -78,7 +78,7 @@ cc-opus -p "Read task_orch/planning/PLANNER.md. You are Planner A. Begin."
 ```
 
 `cc-opus` and `cc-sonnet` are shell functions defined inside the scripts as
-`claude --dangerously-skip-permissions --model opus` (or `sonnet`); define the
+`claude --model opus` (or `sonnet`); define the
 same alias in your shell, or type the full command, for manual runs.
 
 ### 3. Review plans (if any)

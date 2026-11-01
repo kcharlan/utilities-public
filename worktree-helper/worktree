@@ -23,7 +23,7 @@ from typing import Any, Iterable, Optional
 
 STATE_DIR = Path.home() / ".worktree-helper"
 STATE_FILE = STATE_DIR / "state.json"
-VERSION = "0.1.2"
+VERSION = "0.1.3"
 BACK = object()
 
 
@@ -1699,6 +1699,12 @@ def execute_delete(request: ActionRequest) -> ActionResult:
         raise WorktreeError("The main working tree cannot be removed with git worktree remove.")
     if entry.locked:
         raise WorktreeError(f"{entry.path} is locked. Unlock it first.")
+    if not request.force:
+        if entry.detached and not git(repo, ["for-each-ref", "--contains", entry.head, "--format=%(refname)"]).stdout.strip():
+            raise WorktreeError("Detached HEAD is not reachable from a ref; use --force to remove it.")
+        ignored = git(entry.path, ["ls-files", "--others", "--ignored", "--exclude-standard", "--directory"])
+        if ignored.stdout:
+            raise WorktreeError("Worktree contains ignored files; use --force to remove it.")
     cmd = ["worktree", "remove"]
     if request.force:
         cmd.append("-f")
