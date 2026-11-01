@@ -3,10 +3,61 @@ import json
 import signal
 import uuid
 import threading
+import os
+import subprocess
+import sys
+import pytest
 from pathlib import Path
 
 
 MODULE_PATH = Path(__file__).with_name("collector.py")
+
+
+@pytest.mark.parametrize("content", ["{", "null", '{"totals": [], "clients": {}}', '{"daily_totals": {"bad-date": {"example.invalid": 2}}}', '{"clients": {"client": {"last_seq": -1}}}', '{"clients": {"client": {"last_seq": 1.5}}}'])
+def test_invalid_state_is_preserved_and_startup_fails(tmp_path, monkeypatch, content):
+    state = tmp_path / "app" / "state.json"
+    state.parent.mkdir()
+    state.write_text(content)
+    with pytest.raises(Exception):
+        load_collector(tmp_path, monkeypatch)
+    assert any(p.read_text() == content for p in state.parent.glob("state.json.*"))
+    with pytest.raises(Exception):
+        load_collector(tmp_path, monkeypatch)
+
+
+def test_collector_csv_failure_preserves_previous_file(tmp_path, monkeypatch):
+    module = load_collector(tmp_path, monkeypatch)
+    path = tmp_path / "snapshots.csv"
+    path.write_text("old data\n")
+    def fail(*args, **kwargs):
+        raise OSError("synthetic write failure")
+    monkeypatch.setattr(module.csv.DictWriter, "writerow", fail)
+    with pytest.raises(OSError):
+        module._write_csv_file(path, {"2026-01-01": {"example.invalid": 1}}, ["example.invalid"])
+    assert path.read_text() == "old data\n"
+
+
+def test_sigterm_flushes_and_exits_promptly(tmp_path):
+    env = dict(os.environ, APP_ROOT=str(tmp_path), PYTHONUNBUFFERED="1")
+    code = "import collector.collector as c; c._install_signal_handlers(); import time; print('READY', flush=True); time.sleep(60)"
+    proc = subprocess.Popen([sys.executable, "-c", code], env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+    try:
+        while "READY" not in proc.stdout.readline():
+            assert proc.poll() is None
+        proc.send_signal(signal.SIGTERM)
+        proc.wait(timeout=3)
+        assert (tmp_path / "state.json").exists()
+    finally:
+        if proc.poll() is None:
+            proc.kill()
+            proc.wait()
+
+
+def test_csv_writer_works_when_run_from_collector_directory(tmp_path):
+    env = dict(os.environ, APP_ROOT=str(tmp_path), PYTHONPATH="")
+    code = "import collector, os; from pathlib import Path; collector._write_csv_file(Path(os.environ['APP_ROOT']) / 'out.csv', {}, [])"
+    result = subprocess.run([sys.executable, "-c", code], cwd=MODULE_PATH.parent, env=env, capture_output=True, text=True)
+    assert result.returncode == 0, result.stderr
 
 
 def load_collector(tmp_path, monkeypatch, api_key=None):

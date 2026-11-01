@@ -48,6 +48,11 @@ The `/add` endpoint expects a JSON payload with the following structure:
 
 The collector stores state at `STATE_PATH` (default: `state.json` in the process working directory). The recommended Docker setup sets this to `/var/lib/llm_collector/state.json`, which is bind-mounted from the external `LLM_COLLECTOR_DATA_DIR`; the in-tree `state.json` is legacy/local-development state, not the live Docker source of truth.
 
+Malformed state is moved to a unique `.invalid-` file and startup fails. The
+collector continues to refuse an empty start while a quarantined file exists;
+restore valid state, or deliberately move the quarantined file elsewhere before
+starting fresh. Read errors also stop startup without replacing the state.
+
 Snapshots are saved under `SNAP_DIR` (default: `snapshots/` in the working
 directory) whenever `/reset` is called. The Docker setup maps that path to the
 external data directory. The reset handler immediately rolls successfully read

@@ -1,9 +1,22 @@
 import importlib.util
 import json
+import pytest
 from pathlib import Path
 
 
 MODULE_PATH = Path(__file__).with_name("rollup_snapshots.py")
+
+
+def test_csv_write_failure_preserves_previous_file(tmp_path, monkeypatch):
+    module = load_rollup_module()
+    path = tmp_path / "snapshots.csv"
+    path.write_text("old data\n")
+    def fail(*args, **kwargs):
+        raise OSError("synthetic write failure")
+    monkeypatch.setattr(module.csv.DictWriter, "writerow", fail)
+    with pytest.raises(OSError):
+        module._write_csv(path, {"2026-01-01": {"example.invalid": 1}}, ["example.invalid"])
+    assert path.read_text() == "old data\n"
 
 
 def load_rollup_module():

@@ -65,7 +65,7 @@
     return merged;
   }
   function createDelivery({storage, fetchImpl = root.fetch, collectorUrl, apiKey, now = Date.now, setTimer = setTimeout, clearTimer = clearTimeout}) {
-    let state = null, deliveryError = null, recordingError = null, queue = Promise.resolve(), drain = null, retryTimer = null, retryIndex = 0;
+    let state = null, deliveryError = null, recordingError = null, recoveryAvailable = false, recovering = false, queue = Promise.resolve(), drain = null, retryTimer = null, retryIndex = 0;
     const errorText = e => e?.message || 'Delivery failed';
     function storageCall(method, arg) {
       return new Promise((resolve, reject) => {
@@ -127,7 +127,7 @@
           headers: {'X-API-KEY':apiKey, ...(body ? {'Content-Type':'application/json'} : {})},
           ...(body ? {method:'POST',body:JSON.stringify(body)} : {}), signal:controller.signal
         }); } catch (e) { throw transportFailure(); }
-        if (!response.ok) throw Object.assign(new Error(`Collector HTTP ${response.status}`), {retryable:response.status >= 500});
+        if (!response.ok) throw Object.assign(new Error(`Collector HTTP ${response.status}`), {retryable:response.status >= 500, sequenceConflict:response.status === 409 && path === '/add'});
         try { return await response.json(); } catch (e) {
           // Fetch resolves at headers; aborts and stream transport failures can
           // still happen while consuming the body. Syntax errors do not retry.
@@ -165,18 +165,36 @@
           if (!reply || reply.ok !== true || reply.last_seq !== batch.seq || (reply.applied !== 0 && reply.applied !== sum(batch.deltas))) throw new Error('Unexpected collector acknowledgement sequence or applied count');
           await transaction(s => { s.lastAckSeq = batch.seq; s.inFlight = null; });
         }
-        deliveryError = null; retryIndex = 0;
+        deliveryError = null; recoveryAvailable = false; retryIndex = 0;
         return {ok:true};
       } catch (e) {
         deliveryError = errorText(e);
+        recoveryAvailable = !!e.sequenceConflict;
         if (e.retryable) retry();
         return {ok:false,error:deliveryError};
       }
     }
     function push() {
+      if (recovering) return Promise.resolve({ok:false,error:'Sequence recovery in progress'});
       if (retryTimer !== null) { clearTimer(retryTimer); retryTimer = null; }
       if (!drain) drain = run().finally(() => { drain = null; });
       return drain;
+    }
+    async function recoverSequence() {
+      await ready;
+      if (drain || recovering || !recoveryAvailable) throw new Error('No sequence conflict to recover');
+      recovering = true;
+      try {
+        await transaction(s => {
+          if (!s.inFlight) throw new Error('No outstanding batch');
+          s.clientId = root.crypto.randomUUID();
+          s.lastAckSeq = 0;
+          s.inFlight.client_id = s.clientId;
+          s.inFlight.seq = 1;
+        });
+        recoveryAvailable = false;
+        deliveryError = null;
+      } finally { recovering = false; }
     }
     async function increment(host, count = 1) {
       await ready;
@@ -235,9 +253,9 @@
       if (!state) return {available:false,client_id:null,seq:null,pending:null,inFlight:null,deliveryError:error};
       const pending = copy(state.queued);
       for (const [host,count] of Object.entries(state.inFlight?.deltas || {})) Object.defineProperty(pending,host,{value:integer((Object.hasOwn(pending,host) ? pending[host] : 0) + count),enumerable:true,configurable:true});
-      return {available:true,client_id:state.clientId,seq:state.lastAckSeq,pending,inFlight:copy(state.inFlight),deliveryError:error};
+      return {available:true,client_id:state.clientId,seq:state.lastAckSeq,pending,inFlight:copy(state.inFlight),deliveryError:error,recoveryAvailable};
     }
-    return {ready,increment,channelKey,recordChannelMessages,push,clearQueued,status};
+    return {ready,increment,channelKey,recordChannelMessages,push,clearQueued,status,recoverSequence};
   }
   root.LLMDelivery = {createDelivery};
 })(globalThis);

@@ -200,3 +200,14 @@ test('invalid channel identity reports channel-invalid and never counts',async()
   assert.deepEqual(await pending(bg),{});
   assert.deepEqual((await bg.status()).debug.map(x=>x.decision),['channel-invalid','channel-invalid']); bg.dispose();
 });
+
+test('Gemini channel counts only requests initiated by the Gemini origin', async () => {
+  const bg=loadBackground({config:true});
+  for (const initiator of ['https://synthetic.invalid', 'https://gemini.google.com.synthetic.invalid', undefined]) {
+    bg.fire('onBeforeRequest', {requestId:String(++nextId),method:'POST',type:'xmlhttprequest',tabId:7,
+      initiator,url:`${CHANNEL}?SID=SYNTHETIC_SID`,requestBody:channelBody(PROMPT)});
+  }
+  assert.deepEqual(await pending(bg),{});
+  post(bg,`${CHANNEL}?SID=SYNTHETIC_SID`,channelBody(PROMPT));
+  assert.deepEqual(await pending(bg),{'gemini.google.com':1}); bg.dispose();
+});
