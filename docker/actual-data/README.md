@@ -4,12 +4,11 @@ This directory contains helper scripts for running
 [Actual Budget](https://actualbudget.com/), a local-first personal finance
 application.
 
-**Privacy warning:** the current scripts bind-mount this entire directory as
-Actual's `/data`. After first use it can contain private financial data under
-`server-files/` and `user-files/`. This public repository does not ignore those
-directories, so do not run the scripts from a public working copy. Use a
-private operational copy, back up its data, and verify `git status` before
-staging any repository changes.
+**Privacy warning:** the scripts bind-mount their directory as Actual's
+`/data` and refuse to start or update from inside a Git worktree. Use a private
+operational copy outside every checkout, back up its data, and keep it private.
+Existing data under `server-files/` and `user-files/` must be moved to that
+private copy before starting it.
 
 ## Usage
 
@@ -20,7 +19,11 @@ The following helper scripts are available to manage the container:
   the interface in your browser.
 - **`./stop.sh`**: Stops and removes the `actual` container.
 - **`./update.sh`**: Pulls the latest image, recreates the container with its
-  health check, and mounts the existing data directory.
+  health check, and mounts the existing data directory. A failed pull leaves
+  the old container running; if starting the replacement or waiting for its
+  health check fails, the script
+  attempts to restore the previous container. Back up the data separately:
+  an image update can change it.
 
 ## Access
 

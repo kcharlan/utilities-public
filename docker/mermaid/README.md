@@ -42,6 +42,9 @@ To pull the latest version of the Mermaid Live Editor image and restart the cont
 ./update.sh
 ```
 
+A failed pull leaves the old container running. If starting the replacement
+fails, the script attempts to restore the previous container.
+
 ## Configuration
 
 The scripts run `ghcr.io/mermaid-js/mermaid-live-editor` using its implicit

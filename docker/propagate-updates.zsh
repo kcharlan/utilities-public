@@ -20,6 +20,10 @@ readonly REPO_ROOT="$(git -C "$SCRIPT_DIR" rev-parse --show-toplevel)"
 readonly DOCKER_SRC="$REPO_ROOT/docker"
 readonly DEPLOY_ROOT="${PROPAGATE_DEPLOY_ROOT:-$HOME/docker}"
 readonly BACKUP_PARENT="${PROPAGATE_BACKUP_ROOT:-$HOME/.utilities-deploy-backups}"
+readonly BUNDLE_PARENT="${PROPAGATE_BUNDLE_ROOT:-$HOME/.utilities-deploy-bundles}"
+SOURCE_ROOT="$DOCKER_SRC"
+BUNDLE_DIR=
+DEPLOY_COMMIT=
 
 # Every top-level docker/ project. Deploy refuses tracked projects missing here
 # so a new stack is never copied without a decision about how it updates.
@@ -85,6 +89,7 @@ typeset -rA CHECK_BUILD_SERVICES=(
 
 COMMAND=
 DRY_RUN=false
+KEEP_SOURCE_BUNDLES=false
 typeset -a SELECTED=()
 typeset -a SUMMARY=()
 typeset -i PROBLEMS=0
@@ -98,7 +103,7 @@ die() { print -ru2 -- "[propagate] ERROR: $*"; exit 1; }
 usage() {
   cat <<EOF
 Usage: $PROG refresh [--stack NAME]... [--dry-run]
-       $PROG deploy  [--stack NAME]... [--dry-run]
+       $PROG deploy  [--stack NAME]... [--dry-run] [--keep-source-bundles]
        $PROG --help
 
 refresh  Update docker/ lockfiles within their declared ranges, audit them,
@@ -114,6 +119,7 @@ deploy   Requires no uncommitted tracked changes under docker/. Copies tracked
 
 --stack NAME  Limit to one stack; repeatable. Default: every stack.
 --dry-run     Print the plan without running tools or changing files.
+--keep-source-bundles  Do not prune source bundles during this deploy.
 
 Stacks: ${(j:, :)STACKS}
 EOF
@@ -137,6 +143,10 @@ parse_args() {
   while (( $# )); do
     case "$1" in
       --dry-run) DRY_RUN=true ;;
+      --keep-source-bundles)
+        [[ "$COMMAND" == deploy ]] || usage_error "--keep-source-bundles is only valid for deploy"
+        KEEP_SOURCE_BUNDLES=true
+        ;;
       --help|-h) usage; exit 0 ;;
       --stack|--stack=*)
         if [[ "$1" == --stack=* ]]; then
@@ -242,7 +252,7 @@ refresh_lock() {
         --output-file "$audit_dir/requirements.txt" &&
         run_in "$dir" uvx --no-python-downloads pip-audit --disable-pip --no-deps \
           -r "$audit_dir/requirements.txt" || rc=$?
-      [[ "$DRY_RUN" == true ]] || rm -rf -- "$audit_dir"
+      [[ "$DRY_RUN" == true ]] || rm -r -- "${audit_dir:?}"
       return "$rc"
       ;;
     *)
@@ -274,7 +284,7 @@ check_build() {
   run_in "$compose_dir" env WEBROOT_PATH="$scratch" \
     docker compose -p "$project" down --rmi local ||
     warn "could not remove $project images; remove them with docker image rm"
-  [[ "$DRY_RUN" == true ]] || rm -rf -- "$scratch"
+  [[ "$DRY_RUN" == true ]] || rm -r -- "${scratch:?}"
   return "$rc"
 }
 
@@ -379,6 +389,86 @@ cmd_refresh() {
 typeset -a INVENTORY_PATHS=()
 typeset -A RUNNING_COMPOSE=()
 typeset -A RUNNING_CONTAINERS=()
+typeset -a BUNDLE_REFERENCES=()
+BUNDLE_REFERENCES_OK=true
+
+capture_bundle_references() {
+  local compose_json ids inspect_json paths ref
+  local -a id_list=()
+  compose_json="$(docker compose ls --all --format json)" || return 1
+  paths="$(jq -r 'if type != "array" or (all(.[]; type == "object" and (.ConfigFiles | type == "string")) | not) then error("invalid compose list") else [.[] | .ConfigFiles | split(",")[]] | .[] end' <<< "$compose_json")" || return 1
+  for ref in "${(@f)paths}"; do [[ -z "$ref" || "$ref" == /* ]] || return 1; [[ -z "$ref" ]] || BUNDLE_REFERENCES+=("${ref:A}"); done
+  ids="$(docker ps -aq)" || return 1
+  id_list=("${(@f)ids}")
+  id_list=(${id_list:#})
+  (( ${#id_list} )) || return 0
+  for ref in "${id_list[@]}"; do [[ "$ref" =~ '^[0-9a-f]{12,64}$' ]] || return 1; done
+  inspect_json="$(docker inspect "${id_list[@]}")" || return 1
+  paths="$(jq -r --argjson count "${#id_list}" 'if type != "array" or length != $count or (all(.[]; type == "object" and (.Mounts | type == "array") and (.Config | type == "object") and ((.Config.Labels // {}) | type == "object") and all(.Mounts[]; type == "object" and (.Source | type == "string")) and ((.Config.Labels["com.docker.compose.project.config_files"] // "") | type == "string")) | not) then error("invalid container inspection") else [.[] | (.Mounts[].Source), ((.Config.Labels["com.docker.compose.project.config_files"] // "") | split(",")[])] | .[] end' <<< "$inspect_json")" || return 1
+  for ref in "${(@f)paths}"; do [[ -z "$ref" || "$ref" == /* ]] || return 1; [[ -z "$ref" ]] || BUNDLE_REFERENCES+=("${ref:A}"); done
+}
+
+bundle_matches_commit() {
+  local dir="$1" sha="$2" entry scratch expected_meta actual_meta result=1
+  for entry in "$dir"/*(DN); do
+    case "${entry:t}" in docker|.ready|.complete) ;; *) return 1 ;; esac
+  done
+  [[ -d "$dir/docker" && ! -L "$dir/docker" ]] || return 1
+  [[ -z "$(find -P "$dir/docker" \( -type l -o \( ! -type f ! -type d \) \) -print -quit)" ]] || return 1
+  scratch="$(mktemp -d "${TMPDIR:-/tmp}/propagate-bundle-verify.XXXXXX")" || return 1
+  if (umask 022; git -C "$REPO_ROOT" archive "$sha" docker | tar -xf - -C "$scratch") &&
+     diff -qr "$scratch/docker" "$dir/docker" >/dev/null; then
+    if expected_meta="$(cd "$scratch/docker" && find -P . -exec stat -f '%N %Lp %u' {} + | LC_ALL=C sort)" &&
+       actual_meta="$(cd "$dir/docker" && find -P . -exec stat -f '%N %Lp %u' {} + | LC_ALL=C sort)" &&
+       [[ "$expected_meta" == "$actual_meta" ]]; then result=0; fi
+  fi
+  rm -r -- "${scratch:?}" || return 1
+  return "$result"
+}
+
+bundle_overlaps_reference() {
+  local bundle="${1:A}" ref="${2:A}"
+  [[ "$bundle" == / || "$ref" == / || "$bundle" == "$ref" || "$ref" == "$bundle"/* || "$bundle" == "$ref"/* ]]
+}
+
+prune_unused_bundles() {
+  local dir name sha stamp entry ref referenced ordered
+  local -a candidates=() sorted=()
+  for dir in "$BUNDLE_PARENT"/docker-*(N); do
+    [[ ! -L "$dir" && -d "$dir" && ! -e "$dir/.in-progress" && ! -L "$dir/.in-progress" && ! -L "$dir/.ready" && -f "$dir/.ready" && ! -L "$dir/.complete" && -f "$dir/.complete" ]] || continue
+    [[ "$dir" != "$BUNDLE_DIR" && "$(stat -f '%u' "$dir")" == "$(id -u)" && "$(stat -f '%Lp' "$dir")" == 700 ]] || continue
+    sha="$(<"$dir/.ready")"
+    [[ "$sha" =~ '^[0-9a-f]{40,64}$' && "$(<"$dir/.complete")" == "$sha" && "${dir:t}" == docker-$sha-* ]] || continue
+    git -C "$REPO_ROOT" cat-file -e "$sha^{commit}" 2>/dev/null || continue
+    bundle_matches_commit "$dir" "$sha" || { warn "retaining unverified bundle: $dir"; continue; }
+    referenced=false
+    for ref in "${BUNDLE_REFERENCES[@]}"; do
+      bundle_overlaps_reference "$dir" "$ref" && { referenced=true; break; }
+    done
+    [[ "$referenced" == false ]] || continue
+    stamp="$(LC_ALL=C perl -MTime::HiRes=stat -e 'my @s = stat($ARGV[0]); @s or die; printf "%.9f", $s[9]' "$dir")" || { warn "cannot inspect bundle timestamps; retaining bundles"; return; }
+    candidates+=("$stamp"$'\t'"${dir:t}")
+  done
+  (( ${#candidates} > 5 )) || return 0
+  ordered="$(printf '%s\n' "${candidates[@]}" | LC_ALL=C sort -t $'\t' -k1,1nr -k2,2r)" || { warn "cannot sort bundles; retaining bundles"; return; }
+  sorted=("${(@f)ordered}")
+  for entry in "${sorted[@]:5}"; do
+    name="${entry#*$'\t'}"
+    dir="$BUNDLE_PARENT/$name"
+    [[ ! -L "$dir" && -d "$dir" && ! -e "$dir/.in-progress" && ! -L "$dir/.in-progress" ]] || { warn "bundle changed before pruning: $dir"; continue; }
+    if ! capture_bundle_references; then warn "cannot inspect bundle references; retaining remaining bundles"; return; fi
+    referenced=false
+    for ref in "${BUNDLE_REFERENCES[@]}"; do
+      bundle_overlaps_reference "$dir" "$ref" && { referenced=true; break; }
+    done
+    [[ "$referenced" == false ]] || continue
+    [[ ! -L "$dir/.ready" && -f "$dir/.ready" && ! -L "$dir/.complete" && -f "$dir/.complete" && "$(stat -f '%u' "$dir")" == "$(id -u)" && "$(stat -f '%Lp' "$dir")" == 700 ]] || continue
+    sha="$(<"$dir/.ready")"
+    [[ "$sha" =~ '^[0-9a-f]{40,64}$' && "$(<"$dir/.complete")" == "$sha" && "$name" == docker-$sha-* ]] || continue
+    bundle_matches_commit "$dir" "$sha" || { warn "retaining changed bundle: $dir"; continue; }
+    rm -r -- "${dir:?}" || warn "cannot remove unused bundle: $dir"
+  done
+}
 
 # Reads the stage-0 index entries under docker/ and rejects anything other
 # than regular files and unknown top-level projects.
@@ -427,7 +517,7 @@ file_mode() { stat -f '%Lp' "$1"; }
 
 # Prints "same", "new" or "changed" for one tracked file.
 file_state() {
-  local source_file="$DOCKER_SRC/$1" destination="$DEPLOY_ROOT/$1"
+  local source_file="$SOURCE_ROOT/$1" destination="$DEPLOY_ROOT/$1"
   if [[ ! -e "$destination" && ! -L "$destination" ]]; then
     print new
   elif [[ -L "$destination" || ! -f "$destination" ]]; then
@@ -501,7 +591,7 @@ prune_docker_backups() {
     if ! find -P "$dir" -type d -exec chmod u+rwx {} +; then
       warn "cannot prepare backup for removal: $dir"; continue
     fi
-    rm -rf -- "$dir" || warn "cannot remove backup: $dir"
+    rm -r -- "${dir:?}" || warn "cannot remove backup: $dir"
   done
 }
 
@@ -510,9 +600,9 @@ install_file() {
   local relative="$1" destination="$DEPLOY_ROOT/$1" staged
   mkdir -p "${destination:h}" || return 1
   staged="${destination:h}/.${destination:t}.propagate-$$"
-  cp -p "$DOCKER_SRC/$relative" "$staged" &&
+  cp -p "$SOURCE_ROOT/$relative" "$staged" &&
     mv -f "$staged" "$destination" ||
-    { rm -f -- "$staged"; return 1; }
+    { rm -f -- "${staged:?}"; return 1; }
 }
 
 # Copies one stack's tracked files. Prints nothing for unchanged files.
@@ -557,17 +647,27 @@ stack_diverged() {
 }
 
 snapshot_running() {
-  local json line name config
+  local json line name config compose_lines container_names
   RUNNING_COMPOSE=()
   RUNNING_CONTAINERS=()
   json="$(docker compose ls --format json)" || die "docker compose ls failed; is Docker running?"
-  for line in "${(@f)$(jq -r '.[] | select(.Status | test("running")) | "\(.Name)\t\(.ConfigFiles)"' <<< "$json")}"; do
+  compose_lines="$(jq -r '
+    def valid: type == "string" and length > 0 and (test("[\\t\\r\\n]") | not);
+    if type != "array" or (all(.[]; type == "object" and
+      (.Name | valid and test("^[a-z0-9][a-z0-9_-]*$")) and
+      (.Status | valid and test("^(created|running|paused|restarting|removing|exited|dead)\\([0-9]+\\)(, *(created|running|paused|restarting|removing|exited|dead)\\([0-9]+\\))*$")) and
+      (.ConfigFiles | valid and (split(",") | all(.[]; startswith("/") and length > 1)))) | not)
+    then error("invalid compose runtime list")
+    else .[] | select(.Status | test("running")) | "\(.Name)\t\(.ConfigFiles)" end
+  ' <<< "$json")" || die "could not parse docker compose ls output"
+  for line in "${(@f)compose_lines}"; do
     [[ -n "$line" ]] || continue
     name="${line%%$'\t'*}"
     config="${line#*$'\t'}"
     RUNNING_COMPOSE[$name]="$config"
   done
-  for name in "${(@f)$(docker ps --format '{{.Names}}')}"; do
+  container_names="$(docker ps --format '{{.Names}}')" || die "docker ps failed; is Docker running?"
+  for name in "${(@f)container_names}"; do
     [[ -n "$name" ]] && RUNNING_CONTAINERS[$name]=1
   done
   return 0
@@ -576,11 +676,20 @@ snapshot_running() {
 # Prints running, stopped, or "elsewhere:<config files>".
 stack_runtime() {
   local stack="$1" project="${STACK_COMPOSE_PROJECT[$1]-}" container="${STACK_CONTAINER[$1]-}"
-  local expected config
+  local expected config bundle_dir bundle_sha
   if [[ -n "$project" && -n "${RUNNING_COMPOSE[$project]-}" ]]; then
     expected="$DEPLOY_ROOT/${STACK_COMPOSE_FILE[$stack]}"
     for config in "${(@s:,:)RUNNING_COMPOSE[$project]}"; do
       [[ "${config:A}" == "${expected:A}" ]] && { print running; return; }
+      if [[ "${config:A}" == "${BUNDLE_PARENT:A}"/*/docker/"${STACK_COMPOSE_FILE[$stack]}" ]]; then
+        bundle_dir="${config%/docker/${STACK_COMPOSE_FILE[$stack]}}"
+        if [[ ! -L "$bundle_dir" && -d "$bundle_dir" && ! -L "$bundle_dir/.ready" && -f "$bundle_dir/.ready" && "$(stat -f '%u' "$bundle_dir")" == "$(id -u)" ]]; then
+          bundle_sha="$(<"$bundle_dir/.ready")"
+          if [[ "$bundle_sha" =~ '^[0-9a-f]{40,64}$' && "${bundle_dir:t}" == docker-$bundle_sha-* ]] && git -C "$REPO_ROOT" cat-file -e "$bundle_sha^{commit}" 2>/dev/null; then
+            print running; return
+          fi
+        fi
+      fi
     done
     print "elsewhere:${RUNNING_COMPOSE[$project]}"
   elif [[ -n "$container" && -n "${RUNNING_CONTAINERS[$container]-}" ]]; then
@@ -590,11 +699,21 @@ stack_runtime() {
   fi
 }
 
+check_deploy_source() {
+  local current_dirty
+  [[ "$(git -C "$REPO_ROOT" symbolic-ref --quiet --short HEAD || true)" == main ]] || die "deploy requires the main branch"
+  [[ "$(git -C "$REPO_ROOT" rev-parse HEAD)" == "$DEPLOY_COMMIT" ]] || die "HEAD changed during deploy"
+  current_dirty="$(git -C "$REPO_ROOT" status --porcelain --untracked-files=no -- docker)" || die "could not check docker/ source state"
+  [[ -z "$current_dirty" ]] || die "docker/ has uncommitted changes; commit them before deploying"
+}
+
 cmd_deploy() {
-  local stack dirty runtime updater update_status
+  local stack dirty runtime updater update_status bundle_owner bundle_mode relative in_progress
   local -a to_update=() updated=()
   local -A copy_notes=()
   require_tools git jq docker
+  [[ "$(git -C "$REPO_ROOT" symbolic-ref --quiet --short HEAD || true)" == main ]] ||
+    die "deploy requires the main branch"
   [[ -d "$DEPLOY_ROOT" && ! -L "$DEPLOY_ROOT" ]] ||
     die "deployed copy not found (or is a symlink): $DEPLOY_ROOT"
 
@@ -603,8 +722,31 @@ cmd_deploy() {
     print -ru2 -- "$dirty"
     die "docker/ has uncommitted changes; commit them before deploying"
   fi
+  DEPLOY_COMMIT="$(git -C "$REPO_ROOT" rev-parse HEAD)"
   load_inventory
   snapshot_running
+  check_deploy_source
+  if [[ "$DRY_RUN" != true ]]; then
+    if [[ "$KEEP_SOURCE_BUNDLES" != true ]] && ! capture_bundle_references; then
+      BUNDLE_REFERENCES_OK=false
+      warn "cannot inspect bundle references; retaining all bundles"
+    fi
+    require_tools tar diff
+    [[ ! -L "$BUNDLE_PARENT" ]] || die "bundle root is a symlink: $BUNDLE_PARENT"
+    mkdir -p -m 700 "$BUNDLE_PARENT"
+    bundle_owner="$(stat -f '%u' "$BUNDLE_PARENT")"; bundle_mode="$(stat -f '%Lp' "$BUNDLE_PARENT")"
+    [[ "$bundle_owner" == "$(id -u)" && "$bundle_mode" == 700 ]] || die "bundle root must be owned by the current user and mode 700"
+    BUNDLE_DIR="$(mktemp -d "$BUNDLE_PARENT/docker-$DEPLOY_COMMIT-XXXXXX")" || die "cannot create trusted bundle"
+    print -r -- "$DEPLOY_COMMIT" > "$BUNDLE_DIR/.in-progress"
+    (umask 022; git -C "$REPO_ROOT" archive "$DEPLOY_COMMIT" docker | tar -xf - -C "$BUNDLE_DIR") || die "cannot materialize trusted bundle: $BUNDLE_DIR"
+    SOURCE_ROOT="$BUNDLE_DIR/docker"
+    [[ -z "$(find -P "$SOURCE_ROOT" -type l -print -quit)" ]] || die "trusted bundle contains a symlink"
+    for relative in "${INVENTORY_PATHS[@]}"; do
+      [[ -f "$SOURCE_ROOT/$relative" ]] && git -C "$REPO_ROOT" show "$DEPLOY_COMMIT:docker/$relative" | cmp -s - "$SOURCE_ROOT/$relative" || die "trusted bundle differs from committed file: $relative"
+    done
+    print -r -- "$DEPLOY_COMMIT" > "$BUNDLE_DIR/.ready"
+    check_deploy_source
+  fi
 
   log "Copying shared docker/ files"
   COPY_NOTE=
@@ -658,7 +800,7 @@ cmd_deploy() {
   done
 
   for stack in "${to_update[@]}"; do
-    updater="$DEPLOY_ROOT/${STACK_UPDATER[$stack]}"
+    updater="$SOURCE_ROOT/${STACK_UPDATER[$stack]}"
     if [[ "$DRY_RUN" == true ]]; then
       log "Would run $updater"
       record "$stack" planned "${copy_notes[$stack]}; would run update.sh"
@@ -670,7 +812,8 @@ cmd_deploy() {
     fi
     log "Updating $stack: $updater"
     update_status=0
-    "$updater" || update_status=$?
+    check_deploy_source
+    PROPAGATE_STACK_ROOT="$DEPLOY_ROOT/${${STACK_UPDATER[$stack]}:h}" "$updater" || update_status=$?
     if (( update_status != 0 )); then
       record "$stack" FAILED \
         "${copy_notes[$stack]}; update.sh exited $update_status${BACKUP_DIR:+; backups in $BACKUP_DIR}"
@@ -696,6 +839,23 @@ cmd_deploy() {
   [[ -z "$BACKUP_DIR" ]] || log "Backups of replaced files: $BACKUP_DIR"
   if [[ -n "$BACKUP_DIR" && "$DRY_RUN" != true ]] && (( PROBLEMS == 0 )); then
     prune_docker_backups
+  fi
+  if [[ "$DRY_RUN" != true && -n "$BUNDLE_DIR" ]] && (( PROBLEMS == 0 )); then
+    print -r -- "$DEPLOY_COMMIT" > "$BUNDLE_DIR/.complete"
+    in_progress="$BUNDLE_DIR/.in-progress"
+    if ! rm -- "${in_progress:?}"; then
+      warn "cannot mark bundle complete; retaining all bundles"
+      BUNDLE_REFERENCES_OK=false
+    fi
+    if [[ "$KEEP_SOURCE_BUNDLES" == true ]]; then
+      log "Source bundle pruning disabled for this deploy."
+    elif [[ "$BUNDLE_REFERENCES_OK" == true ]]; then
+      if capture_bundle_references; then
+        prune_unused_bundles
+      else
+        warn "cannot inspect bundle references; retaining all bundles"
+      fi
+    fi
   fi
   if [[ "$DRY_RUN" != true ]]; then
     log "Rescan dependencies in Git Fleet to confirm the refreshed versions."

@@ -2,6 +2,5 @@
 
 set -euo pipefail
 
-cd "${0:A:h}"
-./up.sh
-docker compose ps
+SCRIPT_DIR="${0:A:h}"
+"$SCRIPT_DIR/up.sh" --status
