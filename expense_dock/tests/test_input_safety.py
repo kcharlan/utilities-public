@@ -103,8 +103,9 @@ def test_retry_preserves_legacy_receipt_filename(monkeypatch, tmp_path):
     workbook.save(buffer)
     class Graph:
         def __init__(self, token): self.saved = None
+        def get_item_etag(self, *args): return '"synthetic"'
         def download_item_content(self, *args): return buffer.getvalue()
-        def upload_item_content(self, drive, item, content, content_type):
+        def upload_item_content(self, drive, item, content, content_type, etag):
             saved = load_workbook(io.BytesIO(content))['Expense Log']
             assert saved.cell(2, 12).value == name
         def close(self): pass

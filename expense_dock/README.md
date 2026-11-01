@@ -120,6 +120,7 @@ The runtime directory and `pending/` are enforced as mode `0700`; configuration,
 - Receipts larger than 4 MB use a resumable upload session; smaller files use a direct upload
 - Receipt uploads are limited to 100 MB
 - OneDrive operations target resolved shared-drive item IDs, not a local OneDrive sync folder
+- Workbook uploads use an eTag to detect concurrent edits and retry up to three times. Rewriting the workbook can still discard cached formula values; this is a known limit.
 - Help and instructions are available in the in-app Help modal
 - Action results appear as toast notifications; failures with a CSV fallback expose that directly in the toast and retry queue
 

@@ -69,7 +69,7 @@ def parse_args():
 
 RUNTIME_PATHS = build_runtime_paths()
 DATA_DIR = str(RUNTIME_PATHS.home)
-VERSION = "0.2.1"
+VERSION = "0.2.2"
 GRAPH_ROOT = "https://graph.microsoft.com/v1.0"
 AUTHORITY = "https://login.microsoftonline.com/consumers"
 GRAPH_SCOPES = ["Files.ReadWrite.All"]
@@ -613,11 +613,18 @@ class GraphClient:
         response = self._request("GET", f"/drives/{drive_id}/items/{item_id}/content", expected=(200,))
         return response.content
 
-    def upload_item_content(self, drive_id: str, item_id: str, content: bytes, content_type: str) -> dict:
+    def get_item_etag(self, drive_id: str, item_id: str) -> str:
+        response = self._request("GET", f"/drives/{drive_id}/items/{item_id}?$select=eTag", expected=(200,))
+        etag = response.json().get("eTag")
+        if not isinstance(etag, str) or not etag.strip():
+            raise GraphAPIError(500, "Workbook eTag is missing; refusing to overwrite it.")
+        return etag
+
+    def upload_item_content(self, drive_id: str, item_id: str, content: bytes, content_type: str, etag: str) -> dict:
         response = self._request(
             "PUT",
             f"/drives/{drive_id}/items/{item_id}/content",
-            headers={"Content-Type": content_type},
+            headers={"Content-Type": content_type, "If-Match": etag},
             content=content,
             expected=(200, 201),
         )
@@ -894,6 +901,26 @@ def resolve_root_and_workbook(graph: GraphClient, config: dict) -> Tuple[dict, d
     return root_item, workbook_item, drive_id
 
 
+def append_workbook_with_retry(graph: GraphClient, drive_id: str, item_id: str, worksheet: str,
+                               submission: dict, receipt_link: str, receipt_filename: str) -> Tuple[int, int]:
+    with _workbook_lock:
+        for attempt in range(4):  # Initial attempt plus at most three retries.
+            etag = graph.get_item_etag(drive_id, item_id)
+            workbook_bytes = graph.download_item_content(drive_id, item_id)
+            updated, row_number, expense_id = append_expense_row(
+                workbook_bytes, worksheet, submission, receipt_link, receipt_filename,
+            )
+            try:
+                graph.upload_item_content(
+                    drive_id, item_id, updated,
+                    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", etag,
+                )
+                return row_number, expense_id
+            except GraphAPIError as exc:
+                if exc.status_code != 412 or attempt == 3:
+                    raise
+
+
 def process_submission(config: dict, submission: dict, file_bytes: bytes, original_filename: str, content_type: str) -> dict:
     receipt_item = None
     share_link = ""
@@ -914,21 +941,10 @@ def process_submission(config: dict, submission: dict, file_bytes: bytes, origin
             content_type or "application/octet-stream",
         )
         share_link = graph.create_view_link(drive_id, receipt_item["id"])
-        with _workbook_lock:
-            workbook_bytes = graph.download_item_content(drive_id, workbook_item["id"])
-            updated_workbook, row_number, expense_id = append_expense_row(
-                workbook_bytes,
-                config["worksheet_name"],
-                submission,
-                share_link,
-                receipt_filename,
-            )
-            graph.upload_item_content(
-                drive_id,
-                workbook_item["id"],
-                updated_workbook,
-                "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-            )
+        row_number, expense_id = append_workbook_with_retry(
+            graph, drive_id, workbook_item["id"], config["worksheet_name"],
+            submission, share_link, receipt_filename,
+        )
         return {
             "ok": True,
             "uploaded": uploaded,
@@ -978,21 +994,10 @@ def retry_pending_operation(config: dict, operation_id: str) -> dict:
     graph = GraphClient(access_token)
     try:
         _, workbook_item, drive_id = resolve_root_and_workbook(graph, config)
-        with _workbook_lock:
-            workbook_bytes = graph.download_item_content(drive_id, workbook_item["id"])
-            updated_workbook, row_number, expense_id = append_expense_row(
-                workbook_bytes,
-                config["worksheet_name"],
-                entry["submission"],
-                entry["receipt_link"],
-                entry["receipt_filename"],
-            )
-            graph.upload_item_content(
-                drive_id,
-                workbook_item["id"],
-                updated_workbook,
-                "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-            )
+        row_number, expense_id = append_workbook_with_retry(
+            graph, drive_id, workbook_item["id"], config["worksheet_name"],
+            entry["submission"], entry["receipt_link"], entry["receipt_filename"],
+        )
         delete_pending_operation(operation_id)
         return {
             "ok": True,
