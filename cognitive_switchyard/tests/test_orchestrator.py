@@ -3083,6 +3083,7 @@ def test_task_autofix_and_verification_run_in_workspace(tmp_path: Path, monkeypa
     store, paths = _build_store(tmp_path)
     store.create_session(session_id="synthetic", name="Synthetic", pack="test", created_at="2026-01-01T00:00:00Z")
     _register_task(store, session_id="synthetic", task_id="001")
+    store.update_session_status("synthetic", status="running")
     workspace = tmp_path / "workspace"
     workspace.mkdir()
     seen = []
@@ -3097,6 +3098,72 @@ def test_task_autofix_and_verification_run_in_workspace(tmp_path: Path, monkeypa
     assert seen == [workspace, workspace]
     assert store.get_task("synthetic", "001").status == "ready"
     assert not any(event.event_type == "task.completed" for event in store.list_events("synthetic"))
+
+
+@pytest.mark.parametrize("phase,success", [("fixer", True), ("fixer", False), ("verifier", True), ("verifier", False)])
+@pytest.mark.parametrize("operator_status", ["paused", "aborted"])
+def test_task_autofix_preserves_operator_stop(tmp_path: Path, monkeypatch, phase, success, operator_status) -> None:
+    from cognitive_switchyard.models import FixerAttemptResult, VerificationRunResult
+    from cognitive_switchyard.orchestrator import _handle_failed_task
+
+    store, paths = _build_store(tmp_path)
+    store.create_session(session_id="synthetic", name="Synthetic", pack="test", created_at="2026-01-01T00:00:00Z")
+    _register_task(store, session_id="synthetic", task_id="001")
+    store.update_session_status("synthetic", status="running")
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    def fixer(_):
+        if phase == "fixer":
+            store.update_session_status("synthetic", status=operator_status)
+        return FixerAttemptResult(success=success if phase == "fixer" else True, summary="synthetic")
+    def verify(**_):
+        store.update_session_status("synthetic", status=operator_status)
+        return VerificationRunResult(ok=success, exit_code=0 if success else 1, output="", log_path=paths.session_paths("synthetic").verify_log)
+    monkeypatch.setattr("cognitive_switchyard.orchestrator.run_verification_command", verify)
+    monkeypatch.setattr("cognitive_switchyard.orchestrator._run_isolate_end", lambda **_: pytest.fail("stopped task must retain workspace"))
+    _handle_failed_task(store=store, session_id="synthetic", pack_manifest=_make_pack_manifest_with_autofix(tmp_path), effective_runtime_config=_make_effective_runtime_config(auto_fix_enabled=True), active_task=store.get_task("synthetic", "001"), slot_number=0, workspace_path=workspace, reason="failed", log_path=None, status_path=None, env=None, fixer_executor=fixer, runtime_event_sink=None)
+    assert store.get_session("synthetic").status == operator_status
+    assert store.get_session("synthetic").runtime_state.auto_fix_task_id == "001"
+    assert store.read_worker_recovery_metadata("synthetic", slot_number=0).workspace_path == workspace
+    assert store.get_task("synthetic", "001").status == "ready"
+
+
+@pytest.mark.parametrize("recovered", [False, True])
+def test_builtin_verifier_targets_task_workspace(tmp_path: Path, monkeypatch, recovered) -> None:
+    from dataclasses import replace
+    from cognitive_switchyard.models import FixerAttemptResult
+    from cognitive_switchyard.orchestrator import _attempt_task_auto_fix, _run_pending_verification
+
+    store, paths = _build_store(tmp_path)
+    store.create_session(session_id="synthetic", name="Synthetic", pack="test", created_at="2026-01-01T00:00:00Z")
+    _register_task(store, session_id="synthetic", task_id="001")
+    parent, workspace, bin_dir = (tmp_path / name for name in ("parent", "workspace", "bin"))
+    for directory in (parent, workspace, bin_dir):
+        directory.mkdir()
+    for directory in (parent, workspace):
+        (directory / "package.json").write_text('{}')
+    (workspace / "expected-workspace").touch()
+    npm = bin_dir / "npm"
+    npm.write_text('#!/bin/sh\nprintf "source=%s\\n" "$COGNITIVE_SWITCHYARD_SOURCE_REPO"\ntest -f expected-workspace\n')
+    npm.chmod(0o755)
+    monkeypatch.setenv("PATH", str(bin_dir) + ":" + __import__("os").environ["PATH"])
+    script = Path(__file__).resolve().parents[1] / "cognitive_switchyard/builtin_packs/claude-code/scripts/verify"
+    pack = _make_pack_manifest_with_autofix(tmp_path)
+    pack = replace(pack, verification=replace(pack.verification, command=str(script)))
+    env = {"COGNITIVE_SWITCHYARD_REPO_ROOT": str(parent), "COGNITIVE_SWITCHYARD_SOURCE_REPO": str(parent), "COGNITIVE_SWITCHYARD_PACK_ROOT": str(tmp_path)}
+    store.update_session_status("synthetic", status="running")
+    if recovered:
+        pack = replace(pack, isolation=replace(pack.isolation, type="worktree"))
+        store.write_worker_recovery_metadata("synthetic", slot_number=0, task_id="001", workspace_path=workspace, pid=None)
+        store.write_session_runtime_state("synthetic", verification_pending=True, auto_fix_context="task_failure", auto_fix_task_id="001", auto_fix_attempt=1)
+        monkeypatch.setattr("cognitive_switchyard.orchestrator._run_isolate_end", lambda **_: True)
+        _run_pending_verification(store=store, session_id="synthetic", pack_manifest=pack, effective_runtime_config=_make_effective_runtime_config(auto_fix_enabled=True), env=env, fixer_executor=None, runtime_event_sink=None)
+        assert store.get_task("synthetic", "001").status == "done"
+    else:
+        assert _attempt_task_auto_fix(store=store, session_id="synthetic", pack_manifest=pack, effective_runtime_config=_make_effective_runtime_config(auto_fix_enabled=True), task=store.get_task("synthetic", "001"), log_path=None, status_path=None, env=env, fixer_executor=lambda _: FixerAttemptResult(success=True, summary="fixed"), workspace_path=workspace)
+    assert str(workspace) in paths.session_paths("synthetic").verify_log.read_text()
+    assert f"source={parent}" in paths.session_paths("synthetic").verify_log.read_text()
+    assert env["COGNITIVE_SWITCHYARD_REPO_ROOT"] == str(parent)
 
 
 def test_recovered_isolated_autofix_pauses_without_workspace_identity(tmp_path: Path, monkeypatch) -> None:

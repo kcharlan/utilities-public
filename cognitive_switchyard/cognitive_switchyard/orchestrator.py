@@ -1311,7 +1311,7 @@ def _handle_failed_task(
             workspace_path=workspace_path, pid=None,
         )
         restored_task = store.project_task(session_id, active_task.task_id, status="ready")
-        if _attempt_task_auto_fix(
+        fix_outcome = _attempt_task_auto_fix(
             store=store,
             session_id=session_id,
             pack_manifest=pack_manifest,
@@ -1324,7 +1324,10 @@ def _handle_failed_task(
             fixer_executor=fixer_executor,
             runtime_event_sink=runtime_event_sink,
             failure_kind=failure_kind,
-        ):
+        )
+        if fix_outcome is None:
+            return
+        if fix_outcome:
             # Auto-fix succeeded — tear down the worktree with "done" status.
             if not _run_isolate_end(
                 pack_manifest=pack_manifest,
@@ -1466,14 +1469,19 @@ def _attempt_task_auto_fix(
     previous_summary: str | None = None,
     runtime_event_sink: Callable[[BackendRuntimeEvent], None] | None = None,
     failure_kind: str | None = None,
-) -> bool:
+) -> bool | None:
     session_paths = store.runtime_paths.session_paths(session_id)
     execution_root = workspace_path or session_paths.root
     if isinstance(fixer_executor, partial) and "session_root" in (fixer_executor.keywords or {}):
         fixer_executor = partial(fixer_executor, session_root=execution_root)
     previous_verification_output: str | None = None
+    expected_status = store.get_session(session_id).status
+    if expected_status not in {"running", "verifying", "auto_fixing"}:
+        return None
     for attempt in range(start_attempt, effective_runtime_config.auto_fix_max_attempts + 1):
-        store.update_session_status(session_id, status="auto_fixing")
+        if not store.try_transition_session(session_id, expected=expected_status, status="auto_fixing"):
+            return None
+        expected_status = "auto_fixing"
         store.write_session_runtime_state(
             session_id,
             verification_pending=True,
@@ -1510,17 +1518,25 @@ def _attempt_task_auto_fix(
             last_fix_summary=previous_summary,
             auto_fix_attempt=attempt,
         )
+        if store.get_session(session_id).status != "auto_fixing":
+            return None
         if not fix_result.success:
             continue
-        store.update_session_status(session_id, status="verifying")
+        if not store.try_transition_session(session_id, expected="auto_fixing", status="verifying"):
+            return None
+        expected_status = "verifying"
         verification = run_verification_command(
             session_root=execution_root,
             verify_log_path=session_paths.verify_log,
             command=pack_manifest.verification.command or "",
-            env=env,
+            env={**(env or {}), "COGNITIVE_SWITCHYARD_REPO_ROOT": str(execution_root)},
             output_line_callback=_make_verification_output_callback(runtime_event_sink, session_id),
         )
+        if store.get_session(session_id).status != "verifying":
+            return None
         if verification.ok:
+            if not store.try_transition_session(session_id, expected="verifying", status="running"):
+                return None
             _publish_state_update(runtime_event_sink, session_id)
             return True
         previous_verification_output = verification.output
@@ -1531,7 +1547,8 @@ def _attempt_task_auto_fix(
             task_id=task.task_id,
             message=f"Verification failed after task auto-fix attempt.\n{verification.output}" if verification.output else "Verification failed after task auto-fix attempt.",
         )
-    store.update_session_status(session_id, status="running")
+    if not store.try_transition_session(session_id, expected=expected_status, status="running"):
+        return None
     store.write_session_runtime_state(
         session_id,
         verification_pending=False,
@@ -1600,7 +1617,7 @@ def _resume_recovered_task_auto_fix(
     runtime_event_sink: Callable[[BackendRuntimeEvent], None] | None = None,
 ) -> None:
     task = store.get_task(session_id, runtime_state.auto_fix_task_id)
-    if _attempt_task_auto_fix(
+    fix_outcome = _attempt_task_auto_fix(
         store=store,
         session_id=session_id,
         pack_manifest=pack_manifest,
@@ -1614,7 +1631,10 @@ def _resume_recovered_task_auto_fix(
         start_attempt=runtime_state.auto_fix_attempt + 1,
         previous_summary=runtime_state.last_fix_summary,
         runtime_event_sink=runtime_event_sink,
-    ):
+    )
+    if fix_outcome is None:
+        return
+    if fix_outcome:
         if recovery_metadata is not None and not _run_isolate_end(
             pack_manifest=pack_manifest, slot_number=recovery_metadata.slot_number,
             task_id=task.task_id, workspace_path=recovery_metadata.workspace_path,
@@ -1698,7 +1718,7 @@ def _run_pending_verification(
         session_root=recovery_metadata.workspace_path if recovery_metadata else session_paths.root,
         verify_log_path=session_paths.verify_log,
         command=pack_manifest.verification.command or "",
-        env=env,
+        env=({**(env or {}), "COGNITIVE_SWITCHYARD_REPO_ROOT": str(recovery_metadata.workspace_path)} if recovery_metadata else env),
         output_line_callback=_make_verification_output_callback(runtime_event_sink, session_id),
     )
     if verification.ok:
@@ -1749,6 +1769,8 @@ def _run_pending_verification(
         _publish_state_update(runtime_event_sink, session_id)
         return None
 
+    if store.get_session(session_id).status != "verifying":
+        return OrchestratorResult(session_id=session_id, started=True, session_status=store.get_session(session_id).status)
     failed_at = _timestamp()
     store.append_event(
         session_id,
@@ -1774,6 +1796,9 @@ def _run_pending_verification(
             recovery_metadata=recovery_metadata,
             runtime_event_sink=runtime_event_sink,
         )
+        current_status = store.get_session(session_id).status
+        if current_status not in {"running", "verifying", "auto_fixing"}:
+            return OrchestratorResult(session_id=session_id, started=True, session_status=current_status)
         return None
     if not effective_runtime_config.auto_fix_enabled or fixer_executor is None:
         store.update_session_status(session_id, status="paused")
