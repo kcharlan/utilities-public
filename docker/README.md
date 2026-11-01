@@ -6,9 +6,8 @@ directory and read its README before starting it.
 
 ## Current Contents
 
-- `actual-data/` - Helper scripts for a local Actual Budget server. The scripts
-  currently mount this directory as Actual's `/data`; read its privacy warning
-  before first use.
+- `actual-data/` - Helper scripts for a local Actual Budget server. Use a
+  private operational copy outside a Git worktree for its `/data` directory.
 - `docker-disk-compact/` - Zsh utility for reclaiming Docker Desktop disk space on macOS and reporting the true on-disk size of `Docker.raw`.
 - `excalidraw/` - Docker Compose setup for a local Excalidraw instance.
 - `llm_collector/` - Request-counting browser extension, collector service,
@@ -50,7 +49,7 @@ docker/propagate-updates.zsh deploy
   `NGINX_TEST_IMAGE` and `NGINX_TEST_NODE_IMAGE`).
   `package.json`, `pyproject.toml` and exact pins are never edited. Review the
   printed diff and commit it.
-- `deploy` refuses to run while tracked `docker/` files have uncommitted
+- `deploy` requires the `main` branch and refuses to run while tracked `docker/` files have uncommitted
   changes. It copies changed tracked files into `~/docker`, backing up each
   replaced file under `~/.utilities-deploy-backups/docker-<timestamp>/`, and
   never deletes or touches local-only files such as `.env`. It then runs the
@@ -60,6 +59,16 @@ docker/propagate-updates.zsh deploy
   from a Compose file outside `~/docker`, is reported as needing manual action.
   `llm_collector` is synchronized only by its own `migrate.sh`; when its
   deployed copy differs from source, deploy reports that and skips it.
+  Each real deploy creates a private, verified snapshot of the committed
+  Docker files under `~/.utilities-deploy-bundles/`. Updaters, Compose files
+  and build inputs come from that snapshot; private configuration and mutable
+  data continue to come from the deployed directories. Some running containers
+  bind snapshot files read-only, so do not remove these snapshots while they
+  are in use. After successful deploys, pruning keeps the current snapshot,
+  all snapshots referenced by running or stopped containers or Compose
+  projects, and the five newest other verified completed snapshots. Failed,
+  in-progress, altered and unrecognized snapshots are retained. If reference inspection fails,
+  pruning is skipped and a warning is printed.
   After a successful deploy that made backups, it retains the newest two
   timestamped Docker backup directories by modification time, breaking ties
   by descending name. Failed, unchanged and dry runs do not prune backups.
@@ -88,7 +97,5 @@ directories. In particular:
 - `n8n-poc/` requires an ignored `.env` whose data directory is outside the
   checkout.
 - `webserver/` requires an ignored `.env` pointing at an external webroot.
-- `actual-data/` is the exception: its current scripts mount the project
-  directory itself. Do not run them from a public working copy that could make
-  generated financial data eligible for accidental staging; use a private
-  operational copy and verify `git status` before committing.
+- `actual-data/` mounts its script directory and refuses Git worktrees; use a
+  private operational copy and back up its data.

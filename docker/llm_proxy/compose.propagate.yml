@@ -1,0 +1,4 @@
+services:
+  llm-proxy:
+    volumes:
+      - "${PROPAGATE_PROXY_OUTPUT_DIR:?Set the deployed output directory}:/output"
