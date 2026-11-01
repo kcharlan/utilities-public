@@ -41,3 +41,42 @@ def test_import_database_failure_is_not_reported_as_skipped(monkeypatch, tmp_pat
     import pytest
     with pytest.raises(sqlite3.IntegrityError, match='synthetic database failure'):
         client.post('/api/import/csv', files={'file': ('fake.csv', 'generation_id,created_at,model_permaslug\nfake-1,2024-01-01,fake\n', 'text/csv')})
+
+
+def test_concurrent_writer_cannot_insert_between_backup_and_purge(monkeypatch, tmp_path):
+    import threading
+    module = load_module(monkeypatch, tmp_path / 'home')
+    client, db_path = build_client(module, tmp_path)
+    with sqlite3.connect(db_path) as db:
+        db.execute("INSERT INTO generations (id, created_at, created_date, created_hour, model, model_short, ingested_at) VALUES ('fake-before', '2020-01-01', '2020-01-01', 0, 'fake', 'fake', '2020-01-01')")
+    snapshot = module._snapshot_db_to_backups
+    started, finished = threading.Event(), threading.Event()
+    errors = []
+    def writer():
+        try:
+            with sqlite3.connect(db_path, timeout=5) as db:
+                started.set()
+                db.execute("INSERT INTO generations (id, created_at, created_date, created_hour, model, model_short, ingested_at) VALUES ('fake-concurrent', '2020-01-01', '2020-01-01', 0, 'fake', 'fake', '2020-01-01')")
+        except Exception as exc:
+            errors.append(exc)
+        finally:
+            finished.set()
+    thread = threading.Thread(target=writer)
+    def snapshot_then_compete(path):
+        result = snapshot(path)
+        thread.start()
+        assert started.wait(2)
+        assert not finished.wait(.25), 'writer committed before purge'
+        return result
+    monkeypatch.setattr(module, '_snapshot_db_to_backups', snapshot_then_compete)
+    try:
+        assert client.post('/api/purge?before=2099-01-01').status_code == 200
+    finally:
+        thread.join(timeout=7)
+    assert not thread.is_alive() and not errors
+    backup = next((tmp_path / 'home' / 'backups').glob('*.db'))
+    with sqlite3.connect(backup) as db:
+        backed = {row[0] for row in db.execute('SELECT id FROM generations')}
+    with sqlite3.connect(db_path) as db:
+        remaining = {row[0] for row in db.execute('SELECT id FROM generations')}
+    assert backed | remaining == {'fake-before', 'fake-concurrent'}

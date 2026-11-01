@@ -338,8 +338,16 @@ CREATE TABLE IF NOT EXISTS saved_views (
 
 
 # === ASYNC DB HELPERS ===
-async def get_db() -> aiosqlite.Connection:
+async def get_db(*, readonly: bool = False) -> aiosqlite.Connection:
     database_path = Path(_db_path)
+    if readonly:
+        state = _path_status(database_path)
+        if state is not None and not stat.S_ISREG(state.st_mode):
+            raise RuntimeError(f"SQLite database is not a regular file: {database_path}")
+        db = await aiosqlite.connect(database_path.absolute().as_uri() + "?mode=ro", uri=True)
+        db.row_factory = aiosqlite.Row
+        await db.execute("PRAGMA busy_timeout=5000")
+        return db
     prepare_private_file(database_path, "SQLite database")
     db = await aiosqlite.connect(_db_path)
     db.row_factory = aiosqlite.Row
@@ -1390,7 +1398,7 @@ async def get_summary(
     from_s, to_s = parse_time_range(range, from_, to, tz)
     extra_where, params = build_where_clause(model, provider, api_key, origin, finish_reason)
 
-    db = await get_db()
+    db = await get_db(readonly=True)
     try:
         primary = await _run_summary_query(db, from_s, to_s, extra_where, params)
         primary["from"] = from_s
@@ -1470,7 +1478,7 @@ async def get_timeseries(
         "none":     None,
     }.get(group_by)
 
-    db = await get_db()
+    db = await get_db(readonly=True)
     try:
         await db.create_function("local_timestamp", 1, lambda value: _local_timestamp(value, _tz))
         async def fetch_series(f_s, t_s):
@@ -1650,7 +1658,7 @@ async def get_generations(
         term = f"%{search}%"
         w_p += [term] * 7
 
-    db = await get_db()
+    db = await get_db(readonly=True)
     try:
         cur = await db.execute(f"SELECT COUNT(*) FROM generations {where}", w_p)
         total = (await cur.fetchone())[0]
@@ -1681,7 +1689,7 @@ async def get_generations(
 # === DIMENSIONS ENDPOINT ===
 @app.get("/api/dimensions")
 async def get_dimensions():
-    db = await get_db()
+    db = await get_db(readonly=True)
     try:
         async def fetch(sql, *args):
             cur = await db.execute(sql, args)
@@ -1715,7 +1723,7 @@ async def get_dimensions():
 # === HEALTH ENDPOINT ===
 @app.get("/api/health")
 async def health():
-    db = await get_db()
+    db = await get_db(readonly=True)
     try:
         cur = await db.execute("SELECT COUNT(*) FROM generations")
         total = (await cur.fetchone())[0]
@@ -1770,7 +1778,7 @@ async def get_breakdown(
     where += f" {extra_where}"
     w_p = w_p + params
 
-    db = await get_db()
+    db = await get_db(readonly=True)
     try:
         cur = await db.execute(f"""
             SELECT COALESCE({dim_col}, 'unknown') as dimension,
@@ -1822,7 +1830,7 @@ async def get_heatmap(
     _tz = _get_tz(tz)
     _local = "local_timestamp(created_at)"
 
-    db = await get_db()
+    db = await get_db(readonly=True)
     try:
         await db.create_function("local_timestamp", 1, lambda value: _local_timestamp(value, _tz))
         cur = await db.execute(f"""
@@ -1869,7 +1877,7 @@ async def export_csv(
     where += f" {extra_where}"
     w_p = w_p + params
 
-    db = await get_db()
+    db = await get_db(readonly=True)
     output = io.StringIO()
     try:
         writer = csv.writer(output)
@@ -1926,7 +1934,7 @@ async def export_csv(
 # === SETTINGS ENDPOINTS ===
 @app.get("/api/settings")
 async def get_settings():
-    db = await get_db()
+    db = await get_db(readonly=True)
     try:
         cur = await db.execute("SELECT key, value FROM settings")
         rows = await cur.fetchall()
@@ -1953,9 +1961,12 @@ async def update_settings(request: Request):
 
 @app.post("/api/purge")
 async def purge_data(before: str = Query(...)):
-    _snapshot_db_to_backups(_db_path)
     db = await get_db()
     try:
+        # Hold SQLite's cross-process writer lock until the snapshot and delete
+        # both finish. The snapshot uses a separate read connection.
+        await db.execute("BEGIN IMMEDIATE")
+        _snapshot_db_to_backups(_db_path)
         result = await db.execute("DELETE FROM generations WHERE created_date < ?", (before,))
         deleted = result.rowcount
         await db.execute("DELETE FROM daily_summaries WHERE date < ?", (before,))
@@ -2161,7 +2172,7 @@ async def rebuild_timestamps_endpoint(confirm: bool = Query(False)):
 # === SAVED VIEWS ENDPOINTS ===
 @app.get("/api/views")
 async def list_views():
-    db = await get_db()
+    db = await get_db(readonly=True)
     try:
         cur = await db.execute("SELECT id, name, config, created_at, updated_at FROM saved_views ORDER BY name")
         rows = await cur.fetchall()
