@@ -75,6 +75,8 @@ public enum BackendEvent: Sendable {
     case alive(Date)
 }
 
+public enum BackendEventError: Error, Sendable { case overflow }
+
 public protocol ChargerBackend: Sendable {
     func signIn(_ credentials: AnkerCredentials) async throws -> AccountSession
     func restore(_ session: AccountSession, credentials: AnkerCredentials) async
@@ -101,13 +103,19 @@ public protocol ChargerBackend: Sendable {
     /// A fresh, independent, non-replaying subscription on each access.
     /// Cancellation removes only that subscription. Events emitted before the
     /// subscription is created cannot appear in its queue.
-    var events: AsyncStream<BackendEvent> { get }
+    var events: AsyncThrowingStream<BackendEvent, Error> { get }
     /// Explicit async form for clients that hand over authentication contexts.
     /// After disconnect has invalidated old producers, cancel/await the previous
     /// consumer, subscribe afresh, then sign in or restore. Repeat this handover
     /// before EVERY restore, including reconnects. An event already queued for
     /// the old context stays in the old subscription and cannot cross handover.
     /// Backend implementations must generation-check producers across awaits.
-    func subscribeToEvents() async -> AsyncStream<BackendEvent>
+    func subscribeToEvents() async -> AsyncThrowingStream<BackendEvent, Error>
+    /// Resume delivery after overflow, including current connection status.
+    func resumeEvents() async -> AsyncThrowingStream<BackendEvent, Error>
     func disconnect() async
+}
+
+public extension ChargerBackend {
+    func resumeEvents() async -> AsyncThrowingStream<BackendEvent, Error> { await subscribeToEvents() }
 }

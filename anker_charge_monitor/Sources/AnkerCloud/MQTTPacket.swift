@@ -50,7 +50,14 @@ enum MQTTPacket: Equatable, Sendable {
     }
 }
 
-enum MQTTDecodeError: Error { case malformedPacket, unsupportedPacket }
+enum MQTTDecodeError: Error { case malformedPacket, unsupportedPacket, oversizedPacket }
+
+enum MQTTLimits {
+    // A 16-bit device frame expands to about 88 KiB as base64; allow room
+    // for its JSON envelope and topic while bounding hostile declarations.
+    static let remainingLength = 256 * 1024
+    static let queuedPackets = 32
+}
 
 /// Buffers fragmented packets and emits coalesced packets in stream order.
 struct MQTTDecoder {
@@ -69,6 +76,7 @@ struct MQTTDecoder {
                 length += Int(byte & 0x7f) * multiplier
                 if byte & 0x80 == 0 {
                     guard count == 0 || byte != 0 else { throw MQTTDecodeError.malformedPacket }
+                    guard length <= MQTTLimits.remainingLength else { throw MQTTDecodeError.oversizedPacket }
                     complete = true; break
                 }
                 guard count < 3 else { throw MQTTDecodeError.malformedPacket }

@@ -129,6 +129,12 @@ private actor EventLog {
         }
     }
 }
+private actor OverflowEventLog {
+    var events: [BackendEvent] = []
+    var failed = false
+    func append(_ event: BackendEvent) { events.append(event) }
+    func overflow() { failed = true }
+}
 private actor SleepGate {
     var delays: [Double] = []
     var waits: [Double: [UUID: CheckedContinuation<Void, Never>]] = [:]
@@ -156,7 +162,7 @@ extension AnkerCloudBackendTests {
     let link = TestMQTTLink(), gate = SleepGate(), log = EventLog()
     await link.interleaveMessages()
     let cloud = try backend(link, gate: gate)
-    let events = Task { for await event in cloud.events { await log.append(event) } }
+    let events = Task { do { for try await event in cloud.events { await log.append(event) } } catch { Issue.record("Unexpected event stream failure: \(error)") } }
     defer { events.cancel() }
     await cloud.restore(testSession, credentials: testCredentials)
     let connecting = Task { try await cloud.connect(to: testCharger) }
@@ -170,7 +176,7 @@ extension AnkerCloudBackendTests {
 @Test func connectedWaitsForEveryAcknowledgment() async throws {
     let link = TestMQTTLink(), cloud = try backend(link), log = EventLog()
     await link.configure(automatic: false)
-    let events = Task { for await event in cloud.events { await log.append(event) } }
+    let events = Task { do { for try await event in cloud.events { await log.append(event) } } catch { Issue.record("Unexpected event stream failure: \(error)") } }
     defer { events.cancel() }
     await cloud.restore(testSession, credentials: testCredentials)
     let connecting = Task { try await cloud.connect(to: testCharger) }
@@ -191,7 +197,7 @@ extension AnkerCloudBackendTests {
 @Test func failedSubackReportsErrorAndDisconnectStopsRecovery() async throws {
     let link = TestMQTTLink(), gate = SleepGate(), cloud = try backend(link, gate: gate), log = EventLog()
     await link.configure(suback: 0x80)
-    let events = Task { for await event in cloud.events { await log.append(event) } }
+    let events = Task { do { for try await event in cloud.events { await log.append(event) } } catch { Issue.record("Unexpected event stream failure: \(error)") } }
     defer { events.cancel() }
     await cloud.restore(testSession, credentials: testCredentials)
     let connecting = Task { try await cloud.connect(to: testCharger) }
@@ -209,7 +215,7 @@ extension AnkerCloudBackendTests {
 func connectTimesOut(stage: String) async throws {
     let link = TestMQTTLink(), gate = SleepGate(), transport = MQTTTransport(try syntheticIdentityPEM())
     let cloud = try backend(link, gate: gate, transport: transport), log = EventLog()
-    let events = Task { for await event in cloud.events { await log.append(event) } }
+    let events = Task { do { for try await event in cloud.events { await log.append(event) } } catch { Issue.record("Unexpected event stream failure: \(error)") } }
     defer { events.cancel() }
     await link.configure(automatic: false, stallOpen: stage == "open")
     await cloud.restore(testSession, credentials: testCredentials)
@@ -233,7 +239,7 @@ func connectTimesOut(stage: String) async throws {
 
 @Test func echoBadFrameThenReplyPreservesSession() async throws {
     let link = TestMQTTLink(), cloud = try backend(link), log = EventLog()
-    let events = Task { for await event in cloud.events { await log.append(event) } }
+    let events = Task { do { for try await event in cloud.events { await log.append(event) } } catch { Issue.record("Unexpected event stream failure: \(error)") } }
     defer { events.cancel() }
     await cloud.restore(testSession, credentials: testCredentials)
     try await cloud.connect(to: testCharger)
@@ -277,7 +283,7 @@ extension AnkerCloudBackendTests {
 @Test func trafficDefersPingAndPingrespKeepsConnection() async throws {
     let link = TestMQTTLink(), gate = SleepGate(), time = MQTTTestTime(), log = EventLog()
     let cloud = try backend(link, gate: gate, now: { time.now() })
-    let events = Task { for await event in cloud.events { await log.append(event) } }
+    let events = Task { do { for try await event in cloud.events { await log.append(event) } } catch { Issue.record("Unexpected event stream failure: \(error)") } }
     defer { events.cancel() }
     await cloud.restore(testSession, credentials: testCredentials)
     try await cloud.connect(to: testCharger)
@@ -387,6 +393,145 @@ extension AnkerCloudBackendTests {
     await cloud.disconnect()
 }
 
+@Test func repeatedShortConnectionsIncreaseReconnectDelay() async throws {
+    let links = (0..<3).map { _ in TestMQTTLink() }, gate = SleepGate()
+    let transport = MQTTTransport(try syntheticIdentityPEM()), factory = LinkFactory(links)
+    let rest = AnkerRESTClient(transport: transport, timeZone: .gmt, now: { Date() }, sleep: { _ in }, random: { $0.lowerBound })
+    let cloud = AnkerCloudBackend(rest: rest, makeIdentity: identityTracker.make, makeLink: { factory.make() }, now: { Date(timeIntervalSince1970: 1000) }, sleep: { await gate.sleep($0) })
+    await cloud.restore(testSession, credentials: testCredentials)
+    try await cloud.connect(to: testCharger)
+    links[0].input.finish()
+    try await eventually { await gate.pending(1) == 1 }
+    await gate.advance(1)
+    try await eventually { await links[1].sent.count == 3 }
+    links[1].input.finish()
+    do { try await eventually { await gate.pending(2) == 1 } }
+    catch { await cloud.disconnect(); throw error }
+    await gate.advance(2)
+    try await eventually { await links[2].sent.count == 3 }
+    await cloud.disconnect()
+}
+
+@Test func stableConnectionResetsReconnectDelay() async throws {
+    let links = (0..<3).map { _ in TestMQTTLink() }, gate = SleepGate(), time = MQTTTestTime()
+    let transport = MQTTTransport(try syntheticIdentityPEM()), factory = LinkFactory(links)
+    let rest = AnkerRESTClient(transport: transport, timeZone: .gmt, now: { Date() }, sleep: { _ in }, random: { $0.lowerBound })
+    let cloud = AnkerCloudBackend(rest: rest, makeIdentity: identityTracker.make, makeLink: { factory.make() }, now: { time.now() }, sleep: { await gate.sleep($0) })
+    await cloud.restore(testSession, credentials: testCredentials)
+    try await cloud.connect(to: testCharger)
+    links[0].input.finish()
+    try await eventually { await gate.pending(1) == 1 }; await gate.advance(1)
+    try await eventually { await links[1].sent.count == 3 }
+    time.advance(60); links[1].input.finish()
+    do { try await eventually { await gate.pending(1) == 1 } }
+    catch { await cloud.disconnect(); throw error }
+    await gate.advance(1)
+    try await eventually { await links[2].sent.count == 3 }
+    await cloud.disconnect()
+}
+
+@Test func inboxOverflowClosesLinkAndRetriesWithBackoff() async throws {
+    let links = [TestMQTTLink(), TestMQTTLink()], gate = SleepGate()
+    await links[0].configure(stallOpen: true)
+    let transport = MQTTTransport(try syntheticIdentityPEM()), factory = LinkFactory(links)
+    let rest = AnkerRESTClient(transport: transport, timeZone: .gmt, now: { Date() }, sleep: { _ in }, random: { $0.lowerBound })
+    let cloud = AnkerCloudBackend(rest: rest, makeIdentity: identityTracker.make, makeLink: { factory.make() }, now: { Date() }, sleep: { await gate.sleep($0) })
+    await cloud.restore(testSession, credentials: testCredentials)
+    let connecting = Task { try await cloud.connect(to: testCharger) }
+    try await eventually { await links[0].openWait != nil }
+    for _ in 0..<33 { links[0].input.yield(.pingresp) }
+    do { try await eventually { await gate.pending(1) == 1 } }
+    catch { await cloud.disconnect(); _ = try? await connecting.value; throw error }
+    #expect(await links[0].closed)
+    await gate.advance(1)
+    try await connecting.value
+    #expect(await links[1].sent.count == 3)
+    await cloud.disconnect()
+}
+
+@Test func stalledEventSubscriberClosesLinkAndDoesNotBlockRecovery() async throws {
+    let links = (0..<3).map { _ in TestMQTTLink() }, gate = SleepGate(), log = EventLog()
+    let transport = MQTTTransport(try syntheticIdentityPEM()), factory = LinkFactory(links)
+    let rest = AnkerRESTClient(transport: transport, timeZone: .gmt, now: { Date() }, sleep: { _ in }, random: { $0.lowerBound })
+    let cloud = AnkerCloudBackend(rest: rest, makeIdentity: identityTracker.make, makeLink: { factory.make() }, now: { Date() }, sleep: { await gate.sleep($0) })
+    let stalled = cloud.events, active = cloud.events
+    let reader = Task { do { for try await event in active { await log.append(event) } } catch { Issue.record("Unexpected event stream failure: \(error)") } }
+    defer { reader.cancel(); withExtendedLifetime(stalled) {} }
+    await cloud.restore(testSession, credentials: testCredentials)
+    try await cloud.connect(to: testCharger)
+    let initialFence = try await cloud.commandFence().fence
+    let payload = try syntheticReply().payload
+    for index in 1...70 {
+        links[0].input.yield(.publish(topic: "dt/synthetic/param_info", payload: payload))
+        try await eventually { await log.alive >= index }
+        if await links[0].closed { break }
+    }
+    do { try await eventually { await gate.pending(1) == 1 } }
+    catch { await cloud.disconnect(); throw error }
+    #expect(await links[0].closed)
+    let oldLog = OverflowEventLog()
+    let oldReader = Task {
+        do { for try await event in stalled { await oldLog.append(event) } }
+        catch BackendEventError.overflow { await oldLog.overflow() }
+        catch { Issue.record("Unexpected overflow error: \(error)") }
+    }
+    do { try await eventually { await oldLog.failed } }
+    catch { oldReader.cancel(); await oldReader.value; await cloud.disconnect(); throw error }
+    await oldReader.value
+    let old = await oldLog.events
+    #expect(old.count == 128)
+    guard old.count == 128, case .status(.connecting) = old[0],
+          case .status(.connected) = old[1] else { Issue.record("Initial event order changed"); await cloud.disconnect(); return }
+    var previous: ReceiveMark?
+    for index in 0..<63 {
+        guard case .alive = old[2 + 2 * index], case let .snapshot(_, mark) = old[3 + 2 * index] else {
+            Issue.record("Buffered event order changed"); await cloud.disconnect(); return
+        }
+        if let previous { #expect(mark.sequence > previous.sequence && mark.connection == previous.connection) }
+        previous = mark
+    }
+    #expect(previous?.connection == initialFence.connection && (previous?.sequence ?? 0) > initialFence.sequence)
+    let fresh = await cloud.resumeEvents()
+    let freshLog = OverflowEventLog()
+    let freshReader = Task {
+        do { for try await event in fresh { await freshLog.append(event) } }
+        catch { Issue.record("Unexpected fresh event error: \(error)") }
+    }
+    defer { freshReader.cancel() }
+    do { try await eventually { !(await freshLog.events.isEmpty) } }
+    catch { freshReader.cancel(); await freshReader.value; await cloud.disconnect(); throw error }
+    let first = await freshLog.events.first
+    guard case .status(.connecting) = first else { Issue.record("Missing recovery status"); await cloud.disconnect(); return }
+    await gate.advance(1)
+    try await eventually { await log.statuses.filter { $0 == .connected }.count >= 2 }
+    #expect(!(await links[1].closed))
+    let replacementFence = try await cloud.commandFence().fence
+    #expect(replacementFence.connection != initialFence.connection)
+    let cancelled = cloud.events
+    let cancelledReader = Task { do { for try await _ in cancelled {} } catch {} }
+    cancelledReader.cancel(); await cancelledReader.value
+    let priorAlive = await log.alive
+    let priorFresh = await freshLog.events.count
+    for index in 1...70 {
+        links[1].input.yield(.publish(topic: "dt/synthetic/param_info", payload: payload))
+        try await eventually {
+            let alive = await log.alive, received = await freshLog.events.count
+            return alive >= priorAlive + index && received >= priorFresh + 2 * index
+        }
+    }
+    #expect(!(await links[1].closed))
+    let newMarks = await freshLog.events.compactMap { event -> ReceiveMark? in
+        if case let .snapshot(_, mark) = event { return mark }; return nil
+    }
+    #expect(newMarks.contains { $0.connection == replacementFence.connection && $0.sequence > replacementFence.sequence })
+    links[1].input.finish()
+    try await eventually { await gate.pending(2) == 1 }
+    await gate.advance(2)
+    try await eventually { await links[2].sent.count == 3 }
+    #expect(!(await links[2].closed))
+    await cloud.disconnect()
+}
+
 @Test func laterDropBackoffContinuesAfterFirstFailedReconnect() async throws {
     let links = [TestMQTTLink(), TestMQTTLink(), TestMQTTLink()], gate = SleepGate()
     await links[1].configure(connack: 5)
@@ -412,7 +557,7 @@ extension AnkerCloudBackendTests {
     let rest = AnkerRESTClient(transport: transport, timeZone: .gmt, now: { Date(timeIntervalSince1970: 1000) }, sleep: { _ in }, random: { $0.lowerBound })
     let cloud = AnkerCloudBackend(rest: rest, makeIdentity: identityTracker.make, makeLink: { TestMQTTLink() }, now: { Date() }, sleep: { _ in })
     let log = EventLog()
-    let events = Task { for await event in cloud.events { await log.append(event) } }
+    let events = Task { do { for try await event in cloud.events { await log.append(event) } } catch { Issue.record("Unexpected event stream failure: \(error)") } }
     defer { events.cancel() }
     _ = try await cloud.signIn(testCredentials)
     try await eventually { await log.sessions == 1 }
@@ -424,7 +569,7 @@ extension AnkerCloudBackendTests {
     let rest = AnkerRESTClient(transport: MQTTLoginTransport(), timeZone: .gmt, now: { Date(timeIntervalSince1970: 1000) }, sleep: { _ in }, random: { $0.lowerBound })
     let cloud = AnkerCloudBackend(rest: rest, makeIdentity: identityTracker.make, makeLink: { TestMQTTLink() }, now: { Date() }, sleep: { _ in })
     let log = EventLog()
-    let events = Task { for await event in cloud.events { await log.append(event) } }
+    let events = Task { do { for try await event in cloud.events { await log.append(event) } } catch { Issue.record("Unexpected event stream failure: \(error)") } }
     defer { events.cancel() }
     let expired = AccountSession(authToken: "synthetic-expired", userID: "synthetic-user", expiresAt: .distantPast, nickname: "")
     await cloud.restore(expired, credentials: testCredentials)
@@ -468,7 +613,7 @@ extension AnkerCloudBackendTests {
     let rest = AnkerRESTClient(transport: RejectedMQTTTransport(), timeZone: .gmt, now: { Date() }, sleep: { _ in }, random: { $0.lowerBound })
     let gate = SleepGate(), log = EventLog()
     let cloud = AnkerCloudBackend(rest: rest, makeIdentity: identityTracker.make, makeLink: { TestMQTTLink() }, now: { Date() }, sleep: { await gate.sleep($0) })
-    let events = Task { for await event in cloud.events { await log.append(event) } }
+    let events = Task { do { for try await event in cloud.events { await log.append(event) } } catch { Issue.record("Unexpected event stream failure: \(error)") } }
     defer { events.cancel() }
     await cloud.restore(testSession, credentials: testCredentials)
     let connecting = Task { try await cloud.connect(to: testCharger) }
@@ -546,7 +691,7 @@ fileprivate func exhaustedAuthorizationAndLockoutStopRecovery(failRefresh: Bool,
     let link = TestMQTTLink(), gate = SleepGate(), log = EventLog()
     await link.configure(connack: 5)
     let cloud = AnkerCloudBackend(rest: rest, makeIdentity: identityTracker.make, makeLink: { link }, now: { Date() }, sleep: { await gate.sleep($0) })
-    let events = Task { for await event in cloud.events { await log.append(event) } }
+    let events = Task { do { for try await event in cloud.events { await log.append(event) } } catch { Issue.record("Unexpected event stream failure: \(error)") } }
     defer { events.cancel() }
     await cloud.restore(testSession, credentials: testCredentials)
     let connecting = Task { try await cloud.connect(to: testCharger) }
@@ -584,7 +729,7 @@ fileprivate func exhaustedAuthorizationAndLockoutStopRecovery(failRefresh: Bool,
 
 @Test func explicitDisconnectDoesNotTerminateAuthentication() async throws {
     let cloud = try AnkerCloudBackendTests().backend(TestMQTTLink()), log = EventLog()
-    let consumer = Task { for await event in cloud.events { await log.append(event) } }
+    let consumer = Task { do { for try await event in cloud.events { await log.append(event) } } catch { Issue.record("Unexpected event stream failure: \(error)") } }
     defer { consumer.cancel() }
     await cloud.restore(testSession, credentials: testCredentials)
     await cloud.disconnect()
@@ -602,7 +747,7 @@ fileprivate func exhaustedAuthorizationAndLockoutStopRecovery(failRefresh: Bool,
             let transport = ScriptedREST(discovery && (reply.status == 401 || reply.status == 403) ? [reply, loginReply(clock), reply] : [reply], clock: clock)
             let cloud = AnkerCloudBackend(rest: restClient(transport, clock), makeLink: { TestMQTTLink() }, now: { clock.now() }, sleep: { _ in })
             let log = EventLog()
-            let consumer = Task { for await event in cloud.events { await log.append(event) } }
+            let consumer = Task { do { for try await event in cloud.events { await log.append(event) } } catch { Issue.record("Unexpected event stream failure: \(error)") } }
             defer { consumer.cancel() }
             if discovery { await cloud.restore(testSession, credentials: testCredentials) }
             do {
@@ -621,7 +766,7 @@ fileprivate func exhaustedAuthorizationAndLockoutStopRecovery(failRefresh: Bool,
         let clock = RESTClock(), transport = SuspendedREST()
         let cloud = AnkerCloudBackend(rest: restClient(transport, clock), makeLink: { TestMQTTLink() }, now: { clock.now() }, sleep: { _ in })
         let log = EventLog()
-        let consumer = Task { for await event in cloud.events { await log.append(event) } }
+        let consumer = Task { do { for try await event in cloud.events { await log.append(event) } } catch { Issue.record("Unexpected event stream failure: \(error)") } }
         defer { consumer.cancel() }
         if discovery { await cloud.restore(testSession, credentials: testCredentials) }
         let obsolete = Task {
@@ -647,9 +792,9 @@ fileprivate func exhaustedAuthorizationAndLockoutStopRecovery(failRefresh: Bool,
     await cloud.disconnect()
     var current = await cloud.subscribeToEvents().makeAsyncIterator()
     _ = try? await cloud.signIn(testCredentials)
-    guard case .status(.verificationRequired) = await old.next() else { Issue.record("Old queue lost its first event"); return }
-    guard case .status(.signInFailed("Sign-in retry limit exceeded")) = await current.next() else { Issue.record("New queue replayed an obsolete event"); return }
-    guard case .status(.signInFailed("Sign-in retry limit exceeded")) = await old.next() else { Issue.record("Subscribers did not independently receive the new event"); return }
+    guard case .status(.verificationRequired) = try await old.next() else { Issue.record("Old queue lost its first event"); return }
+    guard case .status(.signInFailed("Sign-in retry limit exceeded")) = try await current.next() else { Issue.record("New queue replayed an obsolete event"); return }
+    guard case .status(.signInFailed("Sign-in retry limit exceeded")) = try await old.next() else { Issue.record("Subscribers did not independently receive the new event"); return }
     await cloud.disconnect()
 }
 
@@ -667,7 +812,7 @@ private actor AcceptedSessionLog {
     await transport.waitForRequests(1)
     await cloud.disconnect()
     let stream = await cloud.subscribeToEvents(), log = AcceptedSessionLog()
-    let consumer = Task { for await event in stream { await log.append(event) } }
+    let consumer = Task { do { for try await event in stream { await log.append(event) } } catch { Issue.record("Unexpected event stream failure: \(error)") } }
     defer { consumer.cancel() }
     await cloud.restore(testSession, credentials: testCredentials)
     await transport.complete(loginReply(clock, token: "synthetic-obsolete"))
@@ -751,7 +896,7 @@ extension AnkerCloudBackendTests {
 
 @Test func snapshotsCarryReceiveMarksOrderedAgainstReceipts() async throws {
     let link = TestMQTTLink(), cloud = try backend(link), log = EventLog()
-    let events = Task { for await event in cloud.events { await log.append(event) } }
+    let events = Task { do { for try await event in cloud.events { await log.append(event) } } catch { Issue.record("Unexpected event stream failure: \(error)") } }
     defer { events.cancel() }
     await cloud.restore(testSession, credentials: testCredentials)
     try await cloud.connect(to: testCharger)
@@ -778,7 +923,7 @@ extension AnkerCloudBackendTests {
 /// A reply processed while the command write is pending is not newer than its receipt.
 @Test func replyBeforeWriteCompletionIsNotNewerThanReceipt() async throws {
     let link = TestMQTTLink(), cloud = try backend(link), log = EventLog()
-    let events = Task { for await event in cloud.events { await log.append(event) } }
+    let events = Task { do { for try await event in cloud.events { await log.append(event) } } catch { Issue.record("Unexpected event stream failure: \(error)") } }
     defer { events.cancel() }
     await cloud.restore(testSession, credentials: testCredentials)
     try await cloud.connect(to: testCharger)
@@ -800,7 +945,7 @@ extension AnkerCloudBackendTests {
     let transport = MQTTTransport(try syntheticIdentityPEM()), factory = LinkFactory(links)
     let rest = AnkerRESTClient(transport: transport, timeZone: .gmt, now: { Date() }, sleep: { _ in }, random: { $0.lowerBound })
     let cloud = AnkerCloudBackend(rest: rest, makeIdentity: identityTracker.make, makeLink: { factory.make() }, now: { Date() }, sleep: { await gate.sleep($0) })
-    let events = Task { for await event in cloud.events { await log.append(event) } }
+    let events = Task { do { for try await event in cloud.events { await log.append(event) } } catch { Issue.record("Unexpected event stream failure: \(error)") } }
     defer { events.cancel() }
     await cloud.restore(testSession, credentials: testCredentials)
     try await cloud.connect(to: testCharger)
@@ -866,7 +1011,7 @@ extension AnkerCloudBackendTests {
     let transport = MQTTTransport(try syntheticIdentityPEM()), factory = LinkFactory(links)
     let rest = AnkerRESTClient(transport: transport, timeZone: .gmt, now: { Date() }, sleep: { _ in }, random: { $0.lowerBound })
     let cloud = AnkerCloudBackend(rest: rest, makeIdentity: identityTracker.make, makeLink: { factory.make() }, now: { Date() }, sleep: { await gate.sleep($0) })
-    let events = Task { for await event in cloud.events { await log.append(event) } }
+    let events = Task { do { for try await event in cloud.events { await log.append(event) } } catch { Issue.record("Unexpected event stream failure: \(error)") } }
     defer { events.cancel() }
     await cloud.restore(testSession, credentials: testCredentials)
     try await cloud.connect(to: testCharger)

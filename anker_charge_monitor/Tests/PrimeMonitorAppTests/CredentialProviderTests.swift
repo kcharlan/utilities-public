@@ -248,7 +248,10 @@ actor OrderedCredentialProvider: CredentialProvider {
     }
     @Test func settingsSaveFailureSurvivesAuthenticationAndSignOut() async throws {
         let rig = try ControllerRig(configured: false), store = MemorySessionStore(), provider = SyntheticProvider()
-        let controller = MonitorController(backend: rig.backend, secrets: store, state: StateStore(fileURL: URL(filePath: "/dev/null/synthetic-state.json")), events: SystemEvents(sources: [rig.events]), now: { rig.clock.date }, scheduler: rig.clock, makeProvider: { _ in provider })
+        let parent = rig.directory.appending(path: "synthetic-blocked-parent")
+        let controller = MonitorController(backend: rig.backend, secrets: store, state: StateStore(fileURL: parent.appending(path: "state.json")), events: SystemEvents(sources: [rig.events]), now: { rig.clock.date }, scheduler: rig.clock, makeProvider: { _ in provider })
+        try FileManager.default.createDirectory(at: rig.directory, withIntermediateDirectories: true)
+        try Data("synthetic blocker".utf8).write(to: parent)
         controller.start(); await controller.connect(using: selection)
         #expect(controller.status == .error("Couldn't save settings."))
         await controller.signOut()

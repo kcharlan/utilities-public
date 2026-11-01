@@ -6,8 +6,12 @@ import PrimeMonitorCore
 /// Acknowledgment gates and bounded certificate refresh are app adaptations.
 public actor AnkerCloudBackend: ChargerBackend {
     private nonisolated let subscriptions = EventSubscriptions()
-    public nonisolated var events: AsyncStream<BackendEvent> { subscriptions.subscribe() }
-    public func subscribeToEvents() -> AsyncStream<BackendEvent> { subscriptions.subscribe() }
+    public nonisolated var events: AsyncThrowingStream<BackendEvent, Error> { subscriptions.subscribe() }
+    public func subscribeToEvents() -> AsyncThrowingStream<BackendEvent, Error> { subscriptions.subscribe() }
+    public func resumeEvents() async -> AsyncThrowingStream<BackendEvent, Error> {
+        let ready = connected && overflowClosingAttempt != attemptID
+        return subscriptions.subscribe(initial: .status(ready ? .connected : .connecting))
+    }
     private let rest: AnkerRESTClient
     private let makeIdentity: @Sendable (String, String) throws -> TLSIdentity
     private let makeLink: @Sendable () -> any MQTTLink
@@ -20,6 +24,7 @@ public actor AnkerCloudBackend: ChargerBackend {
     private var recovery: Task<Void, Error>?
     private var draining: Task<Void, Never>?
     private var attemptID = UUID()
+    private var overflowClosingAttempt: UUID?
     private var reader: Task<Void, Never>?
     private var deadline: Task<Void, Never>?
     private var keepalive: Task<Void, Never>?
@@ -29,6 +34,8 @@ public actor AnkerCloudBackend: ChargerBackend {
     private var info: MQTTInfo?
     private var charger: ChargerInfo?
     private var connected = false
+    private var backoff = BackoffPolicy()
+    private var connectedAt: Date?
     private var pingSentAt: Date?
     private var cleanup: (id: UUID, task: Task<Void, Never>)?
     /// Links in graceful cleanup; an abort closes them at once rather than waiting
@@ -47,7 +54,17 @@ public actor AnkerCloudBackend: ChargerBackend {
         self.rest = rest; self.makeLink = makeLink; self.now = now; self.sleep = sleep
         self.makeIdentity = makeIdentity
     }
-    private func emit(_ event: BackendEvent) { subscriptions.send(event) }
+    private func emit(_ event: BackendEvent) {
+        guard subscriptions.send(event), link != nil, overflowClosingAttempt != attemptID else { return }
+        let expected = context, attempt = attemptID
+        overflowClosingAttempt = attempt
+        Task { await self.closeAfterEventOverflow(expected, attempt: attempt) }
+    }
+    private func closeAfterEventOverflow(_ expected: UUID, attempt: UUID) async {
+        guard context == expected, attemptID == attempt, let link else { return }
+        if connected { await dropped(expected, attempt: attempt) }
+        else { await link.close() }
+    }
     public static func live() -> AnkerCloudBackend {
         let sleep: @Sendable (TimeInterval) async -> Void = { try? await Task.sleep(for: .seconds($0)) }
         return AnkerCloudBackend(rest: AnkerRESTClient(transport: URLSessionTransport(), timeZone: .current, now: { Date() }, sleep: sleep, random: { Int.random(in: $0) }), makeLink: { NWMQTTLink() }, now: { Date() }, sleep: sleep)
@@ -128,7 +145,7 @@ public actor AnkerCloudBackend: ChargerBackend {
         guard context == expected else { return }; _ = await stopMQTT()
     }
     private func recover(context expected: UUID, fetch: Bool, delayBeforeFirst: Bool = false) async throws {
-        var backoff = BackoffPolicy(), refreshed = false, fetch = fetch
+        var refreshed = false, fetch = fetch
         if delayBeforeFirst { await sleep(backoff.nextDelay()); try check(expected) }
         while true {
             try check(expected)
@@ -139,7 +156,7 @@ public actor AnkerCloudBackend: ChargerBackend {
                 }
                 try await attempt(expected)
                 try check(expected)
-                connected = true; emit(.status(.connected))
+                connected = true; connectedAt = now(); emit(.status(.connected))
                 startKeepalive(expected)
                 return
             } catch {
@@ -192,7 +209,12 @@ public actor AnkerCloudBackend: ChargerBackend {
         epochCount += 1; epoch = ConnectionEpoch(epochCount)
         let link = makeLink(), inbox = MQTTInbox(); self.link = link; self.inbox = inbox
         reader = Task { [weak self] in
-            do { for try await packet in link.packets { await inbox.push(packet) }; await inbox.fail(MQTTConnectionError.closed) }
+            do {
+                for try await packet in link.packets {
+                    if !(await inbox.push(packet)) { await link.close(); break }
+                }
+                await inbox.fail(MQTTConnectionError.closed)
+            }
             catch { await inbox.fail(error) }
             await self?.dropped(expected, attempt: attempt)
         }
@@ -267,6 +289,8 @@ public actor AnkerCloudBackend: ChargerBackend {
     }
     private func dropped(_ expected: UUID, attempt: UUID) async {
         guard context == expected, attemptID == attempt, connected else { return }
+        if let connectedAt, now().timeIntervalSince(connectedAt) >= 60 { backoff.reset() }
+        connectedAt = nil
         connected = false; emit(.status(.error("MQTT connection lost")))
         await cleanupAttempt()
         guard context == expected else { return }
@@ -361,6 +385,7 @@ public actor AnkerCloudBackend: ChargerBackend {
 
     private func stopMQTT(abortive: Bool = false) async -> UUID {
         context = UUID(); let expected = context; recovery?.cancel(); recovery = nil
+        backoff.reset(); connectedAt = nil
         info = nil; charger = nil
         await cleanupAttempt(abortive: abortive)
         return expected
@@ -381,16 +406,29 @@ public actor AnkerCloudBackend: ChargerBackend {
 /// The synchronous getter and actor subscription share this one implementation.
 private final class EventSubscriptions: @unchecked Sendable {
     private let lock = NSLock()
-    private var outputs: [UUID: AsyncStream<BackendEvent>.Continuation] = [:]
-    func subscribe() -> AsyncStream<BackendEvent> {
-        let id = UUID(), (stream, output) = AsyncStream<BackendEvent>.makeStream()
+    private var outputs: [UUID: AsyncThrowingStream<BackendEvent, Error>.Continuation] = [:]
+    func subscribe(initial: BackendEvent? = nil) -> AsyncThrowingStream<BackendEvent, Error> {
+        let id = UUID(), (stream, output) = AsyncThrowingStream<BackendEvent, Error>.makeStream(bufferingPolicy: .bufferingOldest(128))
+        if let initial { _ = output.yield(initial) }
         lock.withLock { outputs[id] = output }
         output.onTermination = { [weak self] _ in self?.remove(id) }
         return stream
     }
     private func remove(_ id: UUID) { _ = lock.withLock { outputs.removeValue(forKey: id) } }
-    func send(_ event: BackendEvent) {
-        let current = lock.withLock { Array(outputs.values) }
-        for output in current { output.yield(event) }
+    func send(_ event: BackendEvent) -> Bool {
+        let current = lock.withLock { outputs }
+        var failures: [AsyncThrowingStream<BackendEvent, Error>.Continuation] = []
+        for (id, output) in current {
+            switch output.yield(event) {
+            case .dropped:
+                if lock.withLock({ outputs.removeValue(forKey: id) }) != nil { failures.append(output) }
+            case .terminated: remove(id)
+            case .enqueued: break
+            @unknown default:
+                if lock.withLock({ outputs.removeValue(forKey: id) }) != nil { failures.append(output) }
+            }
+        }
+        for output in failures { output.finish(throwing: BackendEventError.overflow) }
+        return !failures.isEmpty
     }
 }

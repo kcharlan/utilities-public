@@ -1,6 +1,6 @@
 # Anker Charge Monitor
 
-Anker Charge Monitor 0.4.1 is a native macOS menu bar app for the Anker Prime
+Anker Charge Monitor 0.4.2 is a native macOS menu bar app for the Anker Prime
 250W six-port charger (A2345). It displays charger-reported power, voltage and
 current in physical C1–C4, A1–A2 order. Reported watts are authoritative; the app
 does not substitute voltage × current. Inactive readings remain visible.
@@ -274,6 +274,14 @@ and service; it is a separate operator acceptance check, outside `make test`.
 Its reading output is private and must remain outside the repository.
 
 ### Physical and installed acceptance
+
+MQTT accepts packets with a remaining length up to 256 KiB. Its incoming stream
+and processing inbox each hold at most 32 packets; exceeding either limit closes
+the connection and retries with backoff. This leaves room for a base64-encoded
+maximum-length device frame and its envelope while bounding queued data.
+Each decoded-event subscriber holds at most 128 events. An overflow ends that
+subscription with an error and closes the affected connection; the app starts a
+fresh subscription while the backend reconnects, without reusing old confirmations.
 
 Synthetic protocol and panel tests do not establish physical charger behavior or
 installed-app interaction. The 2026-10-21 owner observation recorded in

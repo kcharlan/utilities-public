@@ -2,6 +2,18 @@
 
 set -u
 
+remove_owned() {
+    case "$1" in ''|/) return 1 ;; esac
+    [ -e "$1" ] || [ -L "$1" ] || return 0
+    /bin/rm -r -- "$1"
+}
+
+remove_owned_file() {
+    case "$1" in ''|/) return 1 ;; esac
+    [ -e "$1" ] || [ -L "$1" ] || return 0
+    /bin/rm -- "$1"
+}
+
 TMSM_HOME=${TMSM_HOME:-$HOME}
 TMSM_INSTALL_DIR=${TMSM_INSTALL_DIR:-"$TMSM_HOME/Library/Scripts/time_machine_snapshot_monitor"}
 TMSM_RUNTIME_DIR=${TMSM_RUNTIME_DIR:-"$TMSM_HOME/Library/Application Support/TimeMachineSnapshotMonitor"}
@@ -39,12 +51,12 @@ esac
 
 user_domain="gui/$("$ID_BIN" -u)"
 "$LAUNCHCTL_BIN" bootout "$user_domain" "$TMSM_PLIST_PATH" >/dev/null 2>&1 || :
-/bin/rm -f "$TMSM_PLIST_PATH"
+remove_owned_file "$TMSM_PLIST_PATH"
 
 if [ -L "$TMSM_PUBLIC_LINK" ]; then
     current_target=$(/usr/bin/readlink "$TMSM_PUBLIC_LINK" 2>/dev/null || :)
     if [ "$current_target" = "$EXPECTED_CLI" ]; then
-        /bin/rm -f "$TMSM_PUBLIC_LINK"
+        remove_owned_file "$TMSM_PUBLIC_LINK"
     else
         /bin/echo "Preserved unrelated symlink: $TMSM_PUBLIC_LINK" >&2
     fi
@@ -72,7 +84,7 @@ if [ "$purge_runtime" -eq 1 ]; then
         /bin/echo "Refusing unsafe purge path: $TMSM_RUNTIME_DIR" >&2
         exit 6
     fi
-    /bin/rm -rf -- "$TMSM_RUNTIME_DIR"
+    remove_owned "$TMSM_RUNTIME_DIR"
     /bin/echo "Uninstalled monitor and purged runtime logs/state."
 else
     /bin/echo "Uninstalled monitor. Runtime logs/state were preserved."

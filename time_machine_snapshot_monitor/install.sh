@@ -23,6 +23,18 @@ PLUTIL_BIN=${PLUTIL_BIN:-/usr/bin/plutil}
 UNAME_BIN=${UNAME_BIN:-/usr/bin/uname}
 ID_BIN=${ID_BIN:-/usr/bin/id}
 
+remove_owned() {
+    case "$1" in ''|/) return 1 ;; esac
+    [ -e "$1" ] || [ -L "$1" ] || return 0
+    /bin/rm -r -- "$1"
+}
+
+remove_owned_file() {
+    case "$1" in ''|/) return 1 ;; esac
+    [ -e "$1" ] || [ -L "$1" ] || return 0
+    /bin/rm -- "$1"
+}
+
 fail_install() {
     /bin/echo "Install failed: $1" >&2
     exit 6
@@ -86,7 +98,7 @@ prune_backups() {
         done
         [ "$count" -gt 2 ] || return
         if ! /usr/bin/find -P "$oldest" -type d -exec /bin/chmod u+rwx {} + ||
-            ! /bin/rm -rf -- "$oldest"; then
+            ! remove_owned "$oldest"; then
             /bin/echo "Warning: cannot remove backup: $oldest" >&2
             return
         fi
@@ -143,7 +155,7 @@ deploy_source_tree() {
         "$install_parent/.time_machine_snapshot_monitor.install.XXXXXX") ||
         fail_install "could not create installation staging directory"
     /bin/mkdir -p "$staging_dir/bin" "$staging_dir/lib" "$staging_dir/tests" || {
-        /bin/rm -rf -- "$staging_dir"
+        remove_owned "$staging_dir"
         fail_install "could not create installation staging tree"
     }
 
@@ -151,7 +163,7 @@ deploy_source_tree() {
         if ! /bin/cp -p \
             "$SOURCE_DIR/$relative_path" \
             "$staging_dir/$relative_path"; then
-            /bin/rm -rf -- "$staging_dir"
+            remove_owned "$staging_dir"
             fail_install "could not stage project file: $relative_path"
         fi
     done
@@ -160,28 +172,28 @@ deploy_source_tree() {
         if ! /usr/bin/cmp -s \
             "$SOURCE_DIR/$relative_path" \
             "$staging_dir/$relative_path"; then
-            /bin/rm -rf -- "$staging_dir"
+            remove_owned "$staging_dir"
             fail_install "staged project verification failed: $relative_path"
         fi
     done
 
     backup_dir=
     if [ -d "$TMSM_INSTALL_DIR" ]; then
-        admit_backup_root || { /bin/rm -rf -- "$staging_dir"; fail_install "unsafe deployment backup root"; }
+        admit_backup_root || { remove_owned "$staging_dir"; fail_install "unsafe deployment backup root"; }
         /bin/mkdir -p "$TMSM_BACKUP_ROOT" || {
-            /bin/rm -rf -- "$staging_dir"; fail_install "could not create deployment backup directory"
+            remove_owned "$staging_dir"; fail_install "could not create deployment backup directory"
         }
-        admit_backup_root || { /bin/rm -rf -- "$staging_dir"; fail_install "unsafe deployment backup root"; }
+        admit_backup_root || { remove_owned "$staging_dir"; fail_install "unsafe deployment backup root"; }
         backup_dir=$(/usr/bin/mktemp -d \
             "$TMSM_BACKUP_ROOT/time-machine-snapshot-monitor.XXXXXX") || {
-            /bin/rm -rf -- "$staging_dir"
+            remove_owned "$staging_dir"
             fail_install "could not create deployment backup"
         }
         /bin/chmod 700 "$backup_dir" 2>/dev/null || :
         if ! /bin/mv \
             "$TMSM_INSTALL_DIR" \
             "$backup_dir/time_machine_snapshot_monitor"; then
-            /bin/rm -rf -- "$staging_dir"
+            remove_owned "$staging_dir"
             fail_install "could not back up the previous installation"
         fi
     fi
@@ -196,7 +208,7 @@ deploy_source_tree() {
     fi
 
     if ! TMSM_SETUP_ONLY=1 "$TMSM_INSTALL_DIR/install.sh"; then
-        /bin/rm -rf -- "$TMSM_INSTALL_DIR"
+        remove_owned "$TMSM_INSTALL_DIR"
         if [ -n "$backup_dir" ]; then
             /bin/mv \
                 "$backup_dir/time_machine_snapshot_monitor" \
@@ -247,7 +259,7 @@ if [ -L "$TMSM_PUBLIC_LINK" ]; then
         fail_install "could not read existing public symlink"
     [ "$current_target" = "$SOURCE_CLI" ] ||
         fail_install "public symlink points elsewhere and will not be overwritten: $TMSM_PUBLIC_LINK"
-    /bin/rm -f "$TMSM_PUBLIC_LINK" ||
+    remove_owned_file "$TMSM_PUBLIC_LINK" ||
         fail_install "could not refresh public symlink"
 elif [ -e "$TMSM_PUBLIC_LINK" ]; then
     fail_install "public path already exists and will not be overwritten: $TMSM_PUBLIC_LINK"
@@ -291,7 +303,7 @@ plist_tmp=$(/usr/bin/mktemp "$PLIST_DIR/.tm-snapshot-monitor.plist.XXXXXX") ||
 EOF
 
 if ! "$PLUTIL_BIN" -lint "$plist_tmp" >/dev/null; then
-    /bin/rm -f "$plist_tmp"
+    remove_owned_file "$plist_tmp"
     fail_install "LaunchAgent plist validation failed"
 fi
 

@@ -2,6 +2,13 @@ import Foundation
 import Testing
 @testable import BrewVersionCore
 
+private final class TapScanProbe: @unchecked Sendable {
+    private let lock = NSLock()
+    private var calls: [Bool] = []
+    func scan() -> TapIndex { lock.withLock { calls.append(Thread.isMainThread) }; return .empty }
+    var observed: [Bool] { lock.withLock { calls } }
+}
+
 actor RecordingNotifier: Notifier {
     var notices: [AlertDigest] = []
     var deliveries: [AlertDelivery] = []
@@ -62,6 +69,17 @@ func watchResponse(_ version: String, etag: String? = nil, kind: PackageKind = .
     .success(HTTPResponse(status: 200, body: Data((kind == .formula ? "{\"versions\":{\"stable\":\"\(version)\"}}" : "{\"version\":\"\(version)\"}").utf8), etag: etag))
 }
 @MainActor struct WatchControllerTests {
+    @Test func catalogRefreshScansTapsOffMainOnlyWhenDue() async {
+        let f = WatchFixture(); defer { f.clean() }
+        let probe = TapScanProbe()
+        let c = WatchController(transport: StubTransport([:]), installed: nil, store: f.store, notifier: RecordingNotifier(), taps: { probe.scan() })
+        await c.refreshCatalogIfDue()
+        let afterRefresh = probe.observed
+        #expect(afterRefresh.count == 2)
+        #expect(afterRefresh.last == false)
+        await c.refreshCatalogIfDue()
+        #expect(probe.observed.count == 2)
+    }
     @Test func oneCheckPostsOneAlertForSeveralPackages() async throws {
         let f = WatchFixture(); defer { f.clean() }
         let a = PackageName("synthetic-a")!, z = PackageName("synthetic-z")!
