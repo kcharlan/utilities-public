@@ -466,15 +466,14 @@ class TestApiData:
             positions = [t["position"] for t in teams]
             assert positions == sorted(positions)
 
-    def test_espn_failure_returns_empty_conferences(self, client):
-        """When ESPN is unreachable, fetch helpers return empty data; endpoint still returns 200."""
+    def test_espn_failure_returns_error(self, client):
+        """An unavailable upstream is not a successful empty response."""
         import requests as req_lib
         with patch("mls_tracker.requests.get", side_effect=req_lib.exceptions.ConnectionError("timeout")):
             mls_tracker.cache.invalidate()
             resp = client.get("/api/data")
-            assert resp.status_code == 200
-            data = resp.json()
-            assert data["conferences"] == {}
+            assert resp.status_code == 500
+            assert resp.json() == {"detail": "Internal server error"}
 
 
 # ============================================================
@@ -533,13 +532,13 @@ class TestApiScenarios:
         assert data["target"]["name"] == "Team India"
         assert data["cutoff"]["name"] == "Team India"
 
-    def test_espn_failure_returns_404(self, client):
-        """When ESPN is unreachable, standings are empty, so the team is not found → 404."""
+    def test_espn_failure_returns_error(self, client):
+        """An unavailable upstream cannot establish whether a team exists."""
         import requests as req_lib
         with patch("mls_tracker.requests.get", side_effect=req_lib.exceptions.ConnectionError("timeout")):
             mls_tracker.cache.invalidate()
             resp = client.get("/api/scenarios?team=Team+Alpha&season=2025&cutoff=9")
-            assert resp.status_code == 404
+            assert resp.status_code == 500
 
 
 # ============================================================
@@ -697,9 +696,8 @@ class TestAuditFinding6_NeedHelpClamped:
 class TestAuditFinding8_WarningsField:
     """Finding #8: /api/data should include warnings when ESPN data is empty."""
 
-    def test_espn_failure_includes_warnings(self, client):
-        import requests as req_lib
-        with patch("mls_tracker.requests.get", side_effect=req_lib.exceptions.ConnectionError("timeout")):
+    def test_empty_standings_include_warnings(self, client):
+        with patch("mls_tracker.fetch_standings_from_espn", return_value={}):
             mls_tracker.cache.invalidate()
             resp = client.get("/api/data")
             data = resp.json()
