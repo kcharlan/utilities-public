@@ -66,6 +66,7 @@ typedef struct {
 bool metadata_text(Str value);
 /* Readonly absolute percent-encoded URI; caller frees *uri on success. */
 Err metadata_database_uri(const char *path, char **uri);
+Err metadata_sidecars_admit(const char *path, Str root, bool (*safe_path)(Str, const char *));
 /* Zero-initialize output, destroy even on failure. Optional source failures
  * become ordered errors; allocation failure is returned to the run owner. */
 Err metadata_load(const char *codex_home, CodexMetadata *out);

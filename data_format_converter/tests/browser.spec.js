@@ -1,4 +1,58 @@
 const { expect, test } = require('@playwright/test');
+
+test('XML escapes text and rejects invalid names', async ({ page }) => {
+  await page.goto('/web/index.html');
+  const result = await page.evaluate(() => {
+    const value = 'synthetic <tag> & "quoted"';
+    const xml = xmlFromJson({root: {value}});
+    let rejected = false;
+    try { xmlFromJson({root: {'item attr="synthetic"': 'x'}}); } catch { rejected = true; }
+    return { parsed: new DOMParser().parseFromString(xml, 'application/xml').documentElement.textContent, rejected };
+  });
+  expect(result).toEqual({parsed: 'synthetic <tag> & "quoted"', rejected: true});
+});
+
+test('YAML alias expansion is bounded while small aliases work', async ({ page }) => {
+  await page.goto('/web/index.html');
+  const result = await page.evaluate(() => {
+    let text = 'a: &a [x, x, x, x, x, x, x, x, x, x]\n';
+    for (const [previous, current] of [['a','b'], ['b','c'], ['c','d'], ['d','e'], ['e','f']])
+      text += `${current}: &${current} [${Array(10).fill(`*${previous}`).join(', ')}]\n`;
+    let rejected = false;
+    try { jsonFromYaml(text); } catch (error) { rejected = /expansion/i.test(error.message); }
+    return {rejected, small: jsonFromYaml('a: &a [x, y]\nb: [*a, *a]\n').b};
+  });
+  expect(result).toEqual({rejected: true, small: [['x', 'y'], ['x', 'y']]});
+});
+
+test('YAML merge expansion is bounded during parsing', async ({ page }) => {
+  await page.goto('/web/index.html');
+  const result = await page.evaluate(() => {
+    const text = `a: &a {x: y}\nb: {<<: [${Array(11000).fill('*a').join(', ')}]}\n`;
+    try { jsonFromYaml(text); return false; } catch { return true; }
+  });
+  expect(result).toBe(true);
+});
+
+test('wide recursive YAML aliases do not accumulate pending work', async ({ page }) => {
+  await page.goto('/web/index.html');
+  const result = await page.evaluate(() => {
+    const push = Array.prototype.push;
+    let largest = 0;
+    Array.prototype.push = function (...items) {
+      const size = push.apply(this, items);
+      largest = Math.max(largest, size);
+      return size;
+    };
+    try {
+      const text = `a: &a [${Array(10).fill('*a').join(', ')}]\n`;
+      try { jsonFromYaml(text); return {rejected: false, largest}; }
+      catch (error) { return {rejected: /expansion/i.test(error.message), largest}; }
+    } finally { Array.prototype.push = push; }
+  });
+  expect(result.rejected).toBe(true);
+  expect(result.largest).toBeLessThan(100000);
+});
 const { execFileSync } = require('node:child_process');
 const path = require('node:path');
 const { pathToFileURL } = require('node:url');

@@ -265,10 +265,13 @@ Err discover_logs(const char *home, Discovery *out) {
         Omap plain = {0};
         for (size_t i = 0; !err.code && i < candidates.count; i++) {
             Str spelling = {candidates.items[i], (uint32_t)strlen(candidates.items[i])};
-            if (log_name_format(spelling) == LOG_NAME_PLAIN) err = omap_put(&plain, spelling, (void *)1);
+            struct stat st;
+            if (log_name_format(spelling) == LOG_NAME_PLAIN && !stat(spelling.p, &st) && S_ISREG(st.st_mode)) err = omap_put(&plain, spelling, (void *)1);
         }
         for (size_t i = 0; !err.code && i < candidates.count; i++) {
             Str spelling = {candidates.items[i], (uint32_t)strlen(candidates.items[i])};
+            struct stat candidate_stat;
+            if (!stat(spelling.p, &candidate_stat) && !S_ISREG(candidate_stat.st_mode)) continue;
             /* Codex writes NAME.jsonl.zst beside NAME.jsonl and removes the plain
              * log later; until then the plain copy may still be growing. */
             if (log_name_format(spelling) == LOG_NAME_ZSTD &&

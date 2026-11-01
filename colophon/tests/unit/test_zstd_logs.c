@@ -221,7 +221,8 @@ TEST(zstd_reader_rejects_file_shrunk_at_completed_frame_boundary) {
     Seen seen = {0};
     ReaderResult result = {0};
     ASSERT_EQ(ERR_IO, read_snapshot_bytes(".jsonl.zst", &b, frozen_size, &seen, &result).code);
-    ASSERT_EQ(1u, seen.lines);
+    /* The fingerprint detects the short snapshot before any lines are consumed. */
+    ASSERT_EQ(0u, seen.lines);
     reader_result_destroy(&result);
     free(b.p);
 }

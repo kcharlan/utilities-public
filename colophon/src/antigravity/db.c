@@ -50,15 +50,7 @@ static int authorize(void *ctx,int action,const char *a,const char *b,const char
 static Err db_open(Str root,const char *path,Access *access,sqlite3 **out){
     *out=NULL;
     if(!antigravity_safe_path(root,path))return err_make(ERR_IO,"Antigravity source symlink excluded");
-    const char *suffixes[]={"-wal","-shm","-journal"};
-    for(size_t i=0;i<3;i++){
-        size_t n=strlen(path)+strlen(suffixes[i])+1;char *p=malloc(n);if(!p)return err_make(ERR_NOMEM,"Antigravity sidecar path allocation failed");
-        snprintf(p,n,"%s%s",path,suffixes[i]);bool safe=antigravity_safe_path(root,p);
-        struct stat sidecar;int status=safe?lstat(p,&sidecar):-1,error=errno;free(p);
-        if(!safe)return err_make(ERR_IO,"Antigravity SQLite sidecar symlink excluded");
-        if(status&&error!=ENOENT)return err_make(ERR_IO,"Antigravity SQLite sidecar inaccessible");
-        if(!status&&!S_ISREG(sidecar.st_mode))return err_make(ERR_IO,"Antigravity SQLite sidecar is not a regular file");
-    }
+    TRY(metadata_sidecars_admit(path,root,antigravity_safe_path));
     char *uri=NULL;sqlite3 *db=NULL;Err e=metadata_database_uri(path,&uri);
     if(!e.code&&sqlite3_open_v2(uri,&db,SQLITE_OPEN_READONLY|SQLITE_OPEN_URI,NULL)!=SQLITE_OK)e=sql_error(db);free(uri);
     if(!e.code&&sqlite3_busy_timeout(db,1000)!=SQLITE_OK)e=sql_error(db);

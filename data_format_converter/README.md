@@ -50,6 +50,8 @@ tokenization contract. The page never reads an API key or uploads pasted data.
   is converted to JavaScript number/boolean values when parsed.
 - TOML cannot represent `null`; if any converted value is `null`, the
   structured conversion run reports an error.
+- YAML inputs are limited to 100,000 units of expanded values and string
+  characters, counting repeated aliases each time they occur.
 - YAML uses core implicit numbers: binary and separator forms such as `0b101`
   and `1_000` remain strings. Explicit numeric tags retain legacy parsing,
   including `!!int 1_000` and `!!float 1_000.5`
@@ -124,8 +126,12 @@ Important conversion behavior:
   when converting to XML.
 - XML element values load as strings through `xmltodict`; an XML round trip may
   therefore not preserve scalar Python types.
-- The XML serializers interpolate element names and string values directly.
-  Use trusted, simple data; they are not hardened XML generators.
+- XML text is escaped, and conversions reject element names or characters
+  that cannot form a well-formed XML document.
+- YAML expansion is limited to 100,000 units of values and string characters,
+  counting repeated aliases each time they occur.
+- Input and output must identify different files, including through links.
+  Output replaces the destination only after conversion and writing succeed.
 - TOML conversion fails with exit code `4` when the data contains `null`/`None`.
 - JSON (pretty and compact) and XML serialize dates, datetimes, and times as
   `isoformat()` strings, including nested values

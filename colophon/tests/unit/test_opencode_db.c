@@ -338,3 +338,13 @@ TEST(opencode_db_effective_clocks_reach_corpus_and_usage_without_changing_raw_fa
         corpus_destroy(&c);opencode_store_destroy(&s);opencode_fixture_close(&f);
     }
 }
+TEST(opencode_db_rejects_nonregular_sqlite_sidecars) {
+    OpencodeFixture f;opencode_fixture_open(&f);
+    ASSERT_EQ(SQLITE_OK,sqlite3_close(f.writer));f.writer=NULL;
+    char path[300];snprintf(path,sizeof path,"%s-journal",f.path);
+    ASSERT_EQ(0,symlink("/synthetic/missing",path));
+    sqlite3 *db=NULL;Err e=opencode_db_open(f.path,&db);
+    bool rejected=db==NULL;if(db)sqlite3_close(db);
+    ASSERT_EQ(0,unlink(path));opencode_fixture_close(&f);
+    ASSERT_EQ(ERR_IO,e.code);ASSERT_TRUE(rejected);
+}

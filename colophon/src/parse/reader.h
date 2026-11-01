@@ -54,5 +54,7 @@ Err reader_read_log(const DiscoveredLog *snapshot, const ReaderCallbacks *callba
 Err reader_read_fd(int fd, const DiscoveredLog *snapshot, const ReaderCallbacks *callbacks, ReaderResult *out);
 /* Shared frozen-size tail fingerprint. Borrows fd; pread never changes offset. */
 Err reader_fingerprint(int fd, int64_t size, char output[65]);
+/* Check the string representation limit before accumulating a line. */
+Err reader_check_line_size(size_t length, size_t piece);
 void reader_result_destroy(ReaderResult *result);
 #endif

@@ -87,7 +87,7 @@ Err claude_store_get(ClaudeStore *store,const DiscoveredLog *key,ClaudeRecord *o
   for(size_t i=0;i<store->count;i++){
     ClaudeStored *entry=&store->entries[i];ClaudeRecord *r=&entry->record;
     if(entry->retained||!r->reader_facts||!str_equal(r->key.path,key->path)||r->key.size!=key->size||r->key.mtime_ns!=key->mtime_ns)continue;
-    int fd=open(key->path.p,O_RDONLY);if(fd<0)return io("fingerprint open");
+    int fd=open(key->path.p,O_RDONLY|O_NONBLOCK);if(fd<0)return io("fingerprint open");
     char tail[65];Err e=reader_fingerprint(fd,key->size,tail);close(fd);if(e.code)return e;
     if(memcmp(tail,r->reader.tail_sha256,65))continue;
     unsigned char *bytes=NULL;size_t n=0;e=claude_codec_encode(r,&bytes,&n);if(!e.code)e=claude_codec_decode(bytes,n,out);free(bytes);
@@ -135,7 +135,21 @@ static Err directory(ClaudeStore *store,const char *kind,Str root,Str *out){
 }
 static Err install(ClaudeStore *store,ClaudeRecord *r){
   Str dir,path;TRY(directory(store,"cache-claude",r->search_root,&dir));char name[69];cache_entry_name(r->key.path,name);TRY(join(&store->arena,dir,name,&path));
-  unsigned char *bytes=NULL;size_t n=0;TRY(claude_codec_encode(r,&bytes,&n));Err e=atomic_write(path.p,bytes,n);free(bytes);return e;
+  unsigned char *bytes=NULL;size_t n=0;TRY(claude_codec_encode(r,&bytes,&n));
+  bool same=false;int fd=open(path.p,O_RDONLY|O_NONBLOCK|O_NOFOLLOW);
+  if(fd>=0){
+    struct stat st;size_t at=0;unsigned char chunk[8192];
+    if(!fstat(fd,&st)&&S_ISREG(st.st_mode)&&st.st_size>=0&&(uint64_t)st.st_size==n){
+      same=true;
+      while(at<n){size_t want=n-at<sizeof chunk?n-at:sizeof chunk;ssize_t got=read(fd,chunk,want);
+        if(got<0&&errno==EINTR)continue;
+        if(got<=0||memcmp(chunk,bytes+at,(size_t)got)){same=false;break;}at+=(size_t)got;
+      }
+      if(same&&read(fd,chunk,1)!=0)same=false;
+    }
+    close(fd);
+  }
+  Err e=same?ERR_SUCCESS:atomic_write(path.p,bytes,n);free(bytes);return e;
 }
 static Err retain(ClaudeStore *store,ClaudeStored *entry){
   Str dir,path;TRY(directory(store,"claude-retained",entry->record.search_root,&dir));char key[69];cache_entry_name(entry->record.key.path,key);

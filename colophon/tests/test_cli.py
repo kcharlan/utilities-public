@@ -663,7 +663,7 @@ def test_help_and_version_create_no_runtime(native):
     assert "private/" not in help_result.stdout
     version = native.invoke("--version")
     assert version.returncode == 0
-    assert version.stdout == "colophon 0.5.2\n"
+    assert version.stdout == "colophon 0.5.3\n"
     assert not native.runtime.exists()
 
 def test_sandbox_allows_active_reads_and_scratch_only_writes(tmp_path):
@@ -1045,3 +1045,56 @@ def test_claude_history_collision_preserves_codex_filename_fallback(native):
     payload = native.payload()
     assert [(s["id"], s["provider"]) for s in payload["sessions"]] == [(UUID, "codex")]
     assert payload["diagnostics"]["claude_session_id_collisions"] == [UUID]
+
+
+def test_metadata_display_strings_are_bounded_at_utf8_boundaries(native):
+    import sqlite3
+    long_text = 'x' * 65532 + '🪁' + 'tail'
+    rows = native.session_rows()
+    rows[0]['payload']['originator'] = long_text
+    native.write_session(rows)
+    with sqlite3.connect(native.codex / 'state_5.sqlite') as db:
+        db.execute('CREATE TABLE threads (id, git_branch)')
+        db.execute('INSERT INTO threads VALUES (?, ?)', (SESSION, long_text))
+    result = native.build()
+    assert result.returncode == 0, result.stderr
+    session, = native.payload()['sessions']
+    for field in ('originator', 'branch'):
+        value = session[field]
+        assert value.endswith('…')
+        assert len(value.encode('utf-8')) <= 65536
+        assert value == 'x' * 65532 + '…'
+    assert session['cwd'] == '/synthetic/kite'
+
+
+def test_oversized_catalog_response_is_not_cached(native):
+    class Handler(BaseHTTPRequestHandler):
+        def do_GET(self):
+            prefix = b'{"openai":{"models":{}}}'
+            size = 32 * 1024 * 1024 + 1
+            self.send_response(200)
+            self.send_header('Content-Length', str(size))
+            self.end_headers()
+            try:
+                self.wfile.write(prefix)
+                remaining = size - len(prefix)
+                while remaining:
+                    chunk = min(remaining, 65536)
+                    self.wfile.write(b' ' * chunk)
+                    remaining -= chunk
+            except (BrokenPipeError, ConnectionResetError):
+                pass
+        def log_message(self, *args):
+            pass
+    server = ThreadingHTTPServer(('127.0.0.1', 0), Handler)
+    thread = threading.Thread(target=server.serve_forever)
+    thread.start()
+    try:
+        native.env['COLOPHON_PRICING_URL'] = f'http://127.0.0.1:{server.server_port}/synthetic'
+        result = native.build(offline=False)
+        assert result.returncode == 0, result.stderr
+        assert not (native.runtime / 'pricing-cache.json').exists()
+    finally:
+        server.shutdown()
+        thread.join()
+        server.server_close()
