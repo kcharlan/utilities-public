@@ -115,6 +115,8 @@ The runtime directory and `pending/` are enforced as mode `0700`; configuration,
 - Receipt filenames are normalized to `YYYY-MM-DD_Vendor_Amount_ShortPurpose_SHA256.ext`
 - If the content-hashed receipt filename already exists in the target month folder, Expense Dock reuses it instead of uploading again
 - If the workbook already contains the same receipt link or receipt filename, the submission is treated as already logged (no duplicate row)
+- Pending retries retain their saved receipt filenames. Manually resubmitting an old receipt created before content hashes were added cannot be reliably matched to its historical filename and may create another entry.
+- Filenames are limited to 240 UTF-8 bytes, including the full content hash. Extensions must contain 1–15 ASCII letters or digits; other extensions become `.bin`.
 - Receipts larger than 4 MB use a resumable upload session; smaller files use a direct upload
 - Receipt uploads are limited to 100 MB
 - OneDrive operations target resolved shared-drive item IDs, not a local OneDrive sync folder

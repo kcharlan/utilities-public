@@ -307,13 +307,17 @@ def format_amount_filename(amount: float) -> str:
 
 def build_receipt_filename(submission: dict, original_filename: str, content: bytes) -> str:
     _, ext = os.path.splitext(original_filename or "")
-    ext = ext or ".bin"
+    if not re.fullmatch(r"\.[A-Za-z0-9]{1,15}", ext):
+        ext = ".bin"
     vendor = sanitize_filename_segment(submission["vendor"], "Vendor")
     purpose = sanitize_filename_segment(submission.get("filename_purpose") or submission["business_purpose"], "Expense")
     if len(purpose) > 80:
         purpose = purpose[:80].rstrip(" .-_")
     digest = hashlib.sha256(content).hexdigest()
-    return f"{submission['date']}_{vendor}_{format_amount_filename(submission['amount'])}_{purpose}_{digest}{ext}"
+    suffix = f"_{digest}{ext}"
+    prefix = f"{submission['date']}_{vendor}_{format_amount_filename(submission['amount'])}_{purpose}"
+    prefix = prefix.encode("utf-8")[:240 - len(suffix)].decode("utf-8", errors="ignore").rstrip(" .-_")
+    return prefix + suffix
 
 
 def parse_submission(payload: dict) -> dict:
