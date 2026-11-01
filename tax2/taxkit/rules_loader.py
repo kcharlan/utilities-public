@@ -1,6 +1,7 @@
 from __future__ import annotations
 import yaml
 import json
+import logging
 from .models import (
     Bracket,
     Credit,
@@ -11,18 +12,20 @@ from .models import (
     TaxRules,
 )
 
+logger = logging.getLogger(__name__)
+
 def load_rules(path: str) -> TaxRules:
     """Normalize legacy rules and reject unsupported page structures by filename."""
     try:
         rules = _load_rules(path)
-        _validate_rules(rules)
+        _validate_rules(rules, path)
         json.dumps(rules.model_dump(mode="json"), allow_nan=False)
         return rules
     except Exception as exc:
         raise ValueError(f"Invalid rules file {path}: {exc}") from exc
 
 
-def _validate_rules(rules: TaxRules) -> None:
+def _validate_rules(rules: TaxRules, path: str) -> None:
     required = (FilingStatus.single, FilingStatus.married_joint)
     if any(status not in rules.filing_statuses for status in required):
         raise ValueError("Both single and married_joint filing statuses are required")
@@ -42,11 +45,17 @@ def _validate_rules(rules: TaxRules) -> None:
             for index, bracket in enumerate(brackets):
                 if bracket.rate < 0:
                     raise ValueError("Bracket rates must be nonnegative")
+                if bracket.rate >= 1:
+                    logger.warning("Rules file %s component %s filing status %s has bracket rate %s >= 1",
+                                   path, component.name, status.value, bracket.rate)
                 cap = bracket.up_to
                 if cap is None:
                     if index != len(brackets) - 1:
                         raise ValueError("Null bracket threshold must be last")
                 else:
+                    if index == len(brackets) - 1:
+                        logger.warning("Rules file %s component %s filing status %s has numeric final up_to %s",
+                                       path, component.name, status.value, cap)
                     if cap < 0 or (previous is not None and cap <= previous):
                         raise ValueError("Bracket thresholds must be nonnegative and strictly ascending")
                     previous = cap
