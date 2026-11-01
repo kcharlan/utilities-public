@@ -3,8 +3,8 @@ set -euo pipefail
 
 # Claude Code commands — defined here because .zshrc functions aren't
 # available in non-interactive script shells.
-cc-opus()  { claude --dangerously-skip-permissions --model opus "$@"; }
-cc-sonnet(){ claude --dangerously-skip-permissions --model sonnet "$@"; }
+cc-opus()  { claude --model opus "$@"; }
+cc-sonnet(){ claude --model sonnet "$@"; }
 
 # =============================================================================
 # Planner Launcher
@@ -67,7 +67,6 @@ for i in $(seq 1 "$NUM_PLANNERS"); do
   log "Launching Planner $planner_id → $log_file"
 
   cc-opus -p "${planner_prompt_base} ${planner_id}. Begin." \
-    --allowedTools "Edit,Read,Write,Bash,Glob,Grep" \
     > "$log_file" 2>&1 &
   pids+=($!)
 done

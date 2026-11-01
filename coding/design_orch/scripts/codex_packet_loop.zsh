@@ -2,8 +2,6 @@
 
 set -euo pipefail
 
-source ~/.zshrc >/dev/null 2>&1 || true
-
 SCRIPT_DIR="${0:A:h}"
 SCRIPT_NAME="${0:t}"
 DEFAULT_ROOT_DIR="${SCRIPT_DIR:h}"
@@ -22,8 +20,8 @@ STAGE_RETRY_STATE_JSON="${STAGE_RETRY_STATE_JSON:-$AUDITS_DIR/stage_retry_state.
 
 AGENT_CLI="${AGENT_CLI:-codex}"
 CODEX_COMMAND="${CODEX_COMMAND:-codex}"
-CLAUDE_SONNET_COMMAND="${CLAUDE_SONNET_COMMAND:-cc-sonnet}"
-CLAUDE_OPUS_COMMAND="${CLAUDE_OPUS_COMMAND:-cc-opus}"
+CLAUDE_SONNET_COMMAND="${CLAUDE_SONNET_COMMAND:-claude}"
+CLAUDE_OPUS_COMMAND="${CLAUDE_OPUS_COMMAND:-claude}"
 MODEL_NAME="${MODEL_NAME:-gpt-5.6-sol}"
 SERVICE_TIER="${SERVICE_TIER:-}"
 AUTO_COMMIT_VALIDATED="${AUTO_COMMIT_VALIDATED:-false}"
@@ -645,7 +643,6 @@ run_agent_exec() {
     cli_effort="$effort"
     cli_args=(
       exec
-      --dangerously-bypass-approvals-and-sandbox
       --skip-git-repo-check
       --color never
       --json
@@ -659,7 +656,7 @@ run_agent_exec() {
       cli_args+=(-c "service_tier=\"$SERVICE_TIER\"")
     fi
 
-    "$CODEX_COMMAND" "${cli_args[@]}" < "$prompt_file" \
+    command "$CODEX_COMMAND" "${cli_args[@]}" < "$prompt_file" \
       > >(tee "$event_log" | python3 "$JSON_PROGRESS_PARSER" --stage "$stage" --state-file "$state_file" --cli-family codex --timeline-file "$timeline_file") \
       2>&1 &
   else
@@ -668,7 +665,7 @@ run_agent_exec() {
     command -v "$claude_command" >/dev/null 2>&1 || die "'$claude_command' is not available"
     cli_label="$claude_command"
     cli_effort="$(claude_cli_effort "$effort")"
-    if [[ "$claude_command" == "$CLAUDE_SONNET_COMMAND" ]]; then
+    if [[ "${effort:l}" == low || "${effort:l}" == medium ]]; then
       resolved_model="sonnet"
     else
       resolved_model="opus"
@@ -678,16 +675,15 @@ run_agent_exec() {
       --verbose
       --output-format stream-json
       --input-format text
-      --dangerously-skip-permissions
+      --model "$resolved_model"
       --add-dir "$ROOT_DIR"
-      --permission-mode bypassPermissions
       --no-session-persistence
     )
     if [[ -n "$cli_effort" ]]; then
       cli_args+=(--effort "$cli_effort")
     fi
 
-    "$claude_command" "${cli_args[@]}" < "$prompt_file" \
+    command "$claude_command" "${cli_args[@]}" < "$prompt_file" \
       > >(tee "$event_log" | python3 "$JSON_PROGRESS_PARSER" --stage "$stage" --state-file "$state_file" --cli-family claude --output-file "$output_file" --timeline-file "$timeline_file") \
       2>&1 &
   fi
@@ -1189,12 +1185,12 @@ commit_selected_paths() {
   filtered_paths=("${(@u)filtered_paths}")
   (( ${#filtered_paths[@]} > 0 )) || return 0
 
-  git -C "$ROOT_DIR" add -- "${filtered_paths[@]}"
-  if git -C "$ROOT_DIR" diff --cached --quiet --exit-code; then
+  git -C "$ROOT_DIR" --literal-pathspecs add -- "${filtered_paths[@]}"
+  if git -C "$ROOT_DIR" --literal-pathspecs diff --cached --quiet --exit-code -- "${filtered_paths[@]}"; then
     return 0
   fi
 
-  git -C "$ROOT_DIR" commit -m "$commit_message" >/dev/null || return $?
+  git -C "$ROOT_DIR" --literal-pathspecs commit --only -m "$commit_message" -- "${filtered_paths[@]}" >/dev/null || return $?
   commit_hash="$(git -C "$ROOT_DIR" rev-parse --short HEAD)"
   log "Committed ${#filtered_paths[@]} path(s) as $commit_hash: $commit_message"
 }
@@ -1230,8 +1226,9 @@ auto_commit_stage_delta() {
     return 0
   }
 
-  commit_paths=("${(@f)$(changed_paths_since_snapshot "$snapshot_file")}")
-  commit_paths+=("${extra_paths[@]}")
+  # A stage-wide snapshot does not declare ownership of the changed files.
+  # Only explicitly supplied paths may be committed.
+  commit_paths=("${extra_paths[@]}")
   commit_paths=("${(@u)commit_paths}")
   commit_selected_paths "$commit_message" "${commit_paths[@]}"
 }
@@ -1251,7 +1248,6 @@ auto_commit_validated_packet() {
 
   validation_audit_doc="audits/$(basename "$packet_doc" .md)_validation.md"
   commit_paths=("${(@f)$(packet_commit_paths "$packet_doc" "$validation_audit_doc")}")
-  commit_paths+=("${(@f)$(durable_repo_paths)}")
   commit_paths=("${(@u)commit_paths}")
 
   if (( ${#commit_paths[@]} == 0 )); then

@@ -44,9 +44,9 @@ generated directories are not part of this snapshot.
 - a test environment matching `FULL_TEST_COMMAND` (default:
   `.venv/bin/python -m pytest tests -v`)
 
-The loop invokes agents with approval/sandbox bypass flags. Review the script
-and run it only in a repository and environment where that access is
-appropriate.
+Agent launches inherit normal user settings and permissions. Follow the standing
+authorization rules and do not bypass denied permissions. Auto-commit is off by
+default; enable it explicitly only when commits are authorized.
 
 ## Use in another project
 

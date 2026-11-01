@@ -50,8 +50,9 @@ This is a source-project snapshot, not a drop-in generic orchestrator.
   prompt.
 
 Customize those assumptions in the scripts and prompt contracts before using
-the scaffold in a different repository. The commands launch Claude with
-permission bypass enabled, create and delete worktrees and temporary branches,
+the scaffold in a different repository. Agent launches retain normal user
+settings and permissions; follow the standing authorization rules and do not
+bypass denials. The commands create and delete worktrees and temporary branches,
 commit worker changes, and squash-merge successful work; review them before
 running.
 
