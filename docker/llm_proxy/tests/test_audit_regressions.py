@@ -161,3 +161,43 @@ async def test_multiple_tool_calls_have_distinct_indices(httpx_mock):
     request = ChatCompletionRequest(model="fake", messages=[], tools=[{"type":"function", "function":{"name":"allowed"}}])
     response = await T3ChatAdapter().chat_completion(request, {"cookies":"fake=1", "convex_session_id":"fake"})
     assert [call["index"] for call in response.choices[0].message.tool_calls] == [0, 1]
+
+
+@pytest.mark.asyncio
+async def test_untrusted_synthetic_tls_is_rejected(tmp_path, monkeypatch):
+    import asyncio
+    import ssl
+    import subprocess
+
+    from llm_proxy.providers import chatjimmy
+
+    key = tmp_path / "key.pem"
+    cert = tmp_path / "cert.pem"
+    subprocess.run([
+        "openssl", "req", "-x509", "-newkey", "rsa:2048", "-nodes", "-days", "1",
+        "-subj", "/CN=localhost", "-keyout", str(key), "-out", str(cert),
+    ], check=True, capture_output=True)
+    context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+    context.load_cert_chain(cert, key)
+
+    async def respond(reader, writer):
+        await reader.readuntil(b"\r\n\r\n")
+        writer.write(b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\nHi")
+        await writer.drain()
+        writer.close()
+        await writer.wait_closed()
+
+    server = await asyncio.start_server(respond, "127.0.0.1", 0, ssl=context)
+    port = server.sockets[0].getsockname()[1]
+    monkeypatch.setattr(chatjimmy, "CHATJIMMY_CHAT_URL", f"https://127.0.0.1:{port}/api/chat")
+    monkeypatch.delenv("SSL_CERT_FILE", raising=False)
+    monkeypatch.delenv("SSL_CERT_DIR", raising=False)
+    local = FastAPI()
+    local.include_router(ChatJimmyAdapter().create_router())
+    try:
+        async with httpx.AsyncClient(transport=httpx.ASGITransport(app=local), base_url="http://test") as client:
+            response = await client.post("/v1/chat/completions", json={"model":"fake", "messages":[]})
+        assert response.status_code == 502
+    finally:
+        server.close()
+        await server.wait_closed()
