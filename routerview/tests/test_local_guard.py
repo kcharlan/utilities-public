@@ -1,9 +1,19 @@
 import sys
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent))
 
 import sqlite3
 from test_csv_import import build_client, load_module
+from tools.testkit import assert_local_server_guard
+
+
+def test_shared_guard_contract(monkeypatch, tmp_path):
+    module = load_module(monkeypatch, tmp_path / 'home')
+    build_client(module, tmp_path)
+    with ThreadPoolExecutor(max_workers=1) as executor:
+        executor.submit(assert_local_server_guard, module.app, get_path='/api/health',
+                        post_path='/api/purge').result()
 
 
 def test_purge_rejects_foreign_host_and_origin(monkeypatch, tmp_path):

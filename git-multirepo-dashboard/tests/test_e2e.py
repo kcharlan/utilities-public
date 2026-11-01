@@ -1316,17 +1316,17 @@ def test_card_sparkline_appears_on_hover_and_keyboard_focus(server, page):
 
 def test_activity_chart_renders_with_no_history_and_one_day(server, page):
     today = date.today().isoformat()
+    history_rows = []
     page.route('**/api/repos/synthetic', lambda route: route.fulfill(json={
         'id': 'synthetic', 'name': 'Synthetic', 'path': '/tmp/synthetic',
         'path_exists': True, 'working_state': {}}))
-    page.route('**/api/repos/synthetic/history*', lambda route: route.fulfill(json={'data': []}))
+    page.route('**/api/repos/synthetic/history*', lambda route: route.fulfill(json={'data': history_rows}))
     _open_app(page, server + '#/repo/synthetic')
     page.get_by_role('button', name='All', exact=True).click()
     expect(page.locator('.svgc-wrapper')).to_be_visible()
     _assert_charts_finite(page)
-    page.unroute('**/api/repos/synthetic/history*')
-    page.route('**/api/repos/synthetic/history*', lambda route: route.fulfill(json={'data': [
-        {'date': today, 'commits': 1, 'insertions': 3, 'deletions': 1}]}))
+    history_rows.append({'date': today, 'commits': 1, 'insertions': 3, 'deletions': 1})
+    assert page.evaluate("async () => (await fetch('/api/repos/synthetic/history?days=90')).status") == 200
     page.reload()
     page.get_by_role('button', name='All', exact=True).click()
     paths = page.locator('.svgc-wrapper path')
