@@ -538,6 +538,7 @@ def main():
         sys.exit(1)
         
     try:
+        os.makedirs(output_dir, exist_ok=True)
         with tempfile.TemporaryDirectory(prefix=".linearize-", dir=output_dir) as staging:
             staged_assets = os.path.join(staging, "assets")
             os.mkdir(staged_assets)
