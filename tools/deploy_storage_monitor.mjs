@@ -5,7 +5,8 @@ import path from 'node:path';
 import {execFileSync} from 'node:child_process';
 import {fileURLToPath} from 'node:url';
 import {regular, inspectAncestors, externalDirectory, sha, exists, atomicFile,
-  parseIndexSnapshot, parseStagedListing, normalizeEntries, hashInventory, pruneBackups} from './deployment_files.mjs';
+  parseIndexSnapshot, parseStagedListing, normalizeEntries, hashInventory, pruneBackups, requireMain, restoreWithRecovery} from './deployment_files.mjs';
+import {runTransaction} from './transaction.mjs';
 
 const launcherName = 'storage_monitor/storage_monitor';
 const nativeInput = name => name === 'storage_monitor/native/Makefile' || name.startsWith('storage_monitor/native/src/');
@@ -112,7 +113,7 @@ function build(inputs, repo, expectedProtocol) {
     return {bytes,walkerVersion};
   } finally { fs.rmSync(scratch,{recursive:true,force:true}); }
 }
-export function main(argv=process.argv.slice(2)) {
+export async function main(argv=process.argv.slice(2)) {
   let repo=path.resolve(path.dirname(fileURLToPath(import.meta.url)),'..');
   let scripts=path.resolve(process.env.UTILITIES_SCRIPTS_DIR || path.join(os.homedir(),'Library/Scripts'));
   let audit=false,dry=false,rebuild=false,snapshot,rollback;
@@ -130,8 +131,9 @@ export function main(argv=process.argv.slice(2)) {
   if (Number(audit)+Number(dry)+Number(Boolean(rollback))>1 || (snapshot&&!audit) || (rebuild&&(audit||rollback))) throw new Error('Incompatible deployment options');
   repo=fs.realpathSync(repo); scripts=externalDirectory(scripts,repo);
   const [launcher,walker,receipt]=files.map(n=>path.join(scripts,n));
+  if(!audit&&!dry&&!rollback) requireMain(repo);
   for (const file of [launcher,walker,receipt]) if (exists(file)) regular(file);
-  if (rollback) { const saved=readBackup(rollback); fs.mkdirSync(scripts,{recursive:true}); backup(scripts,repo); restore(saved,scripts); console.log('Storage Monitor rollback restored'); return; }
+  if (rollback) { const saved=readBackup(rollback); fs.mkdirSync(scripts,{recursive:true}); const recovery=backup(scripts,repo); console.log('Recovery backup: '+recovery); restoreWithRecovery(()=>restore(saved,scripts),()=>restore(readBackup(recovery),scripts),recovery); console.log('Storage Monitor rollback restored'); return; }
   const inputs=inventory(repo,snapshot,!audit);
   if (audit) {
     const r=readReceipt(receipt);
@@ -160,19 +162,23 @@ export function main(argv=process.argv.slice(2)) {
   }
   if (dry) { console.log('Dry run: no files changed'); return; }
   if (!reason && launcherCurrent) { console.log('Storage Monitor already current; nothing changed'); return; }
-  const built=reason?build(inputs,repo,expectedProtocol):{bytes:fs.readFileSync(walker),walkerVersion:r.walkerVersion};
-  fs.mkdirSync(scripts,{recursive:true,mode:0o755});
-  const saved=backup(scripts,repo);
-  try {
+  let saved;
+  await runTransaction({name:'Storage Monitor',admit:()=>{},isCurrent:()=>false,
+    build:()=>({value:reason?build(inputs,repo,expectedProtocol):{bytes:fs.readFileSync(walker),walkerVersion:r.walkerVersion}}),
+    install:(built,registerRecovery)=>{
+    fs.mkdirSync(scripts,{recursive:true,mode:0o755});
+    saved=backup(scripts,repo);console.log('Recovery backup: '+saved);
+    registerRecovery(()=>restore(readBackup(saved),scripts));
     atomicFile(walker,built.bytes,0o755,'.storage-monitor-stage-');
     atomicFile(launcher,inputs.launcher,0o755,'.storage-monitor-stage-');
     const receiptBytes=Buffer.from(JSON.stringify({schema:1,launcherHash:inputs.launcherHash,launcherMode:0o755,nativeSourceHash:inputs.nativeSourceHash,walkerHash:sha(built.bytes),walkerMode:0o755,walkerVersion:built.walkerVersion,protocol:expectedProtocol})+'\n');
     atomicFile(receipt,receiptBytes,0o600,'.storage-monitor-stage-');
     if (version(walker,expectedProtocol)!==built.walkerVersion) throw new Error('Walker version activation check failed');
-  } catch(error) { restore(readBackup(saved),scripts); throw error; }
+    },verify:()=>{}
+  });
   pruneBackups(path.dirname(saved));
   console.log('Storage Monitor deployed; rollback backup: '+saved);
 }
 if (process.argv[1] && path.resolve(process.argv[1])===fileURLToPath(import.meta.url)) {
-  try { main(); } catch(error) { console.error('Storage Monitor deployment failed: '+error.message); process.exitCode=1; }
+  main().catch(error=>{ console.error('Storage Monitor deployment failed: '+error.message); process.exitCode=1; });
 }

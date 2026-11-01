@@ -291,6 +291,7 @@ audited_scopes=(
   storage_monitor
   tools/deploy_storage_monitor.mjs
   tools/deployment_files.mjs
+  tools/transaction.mjs
   tools/deploy_copies.mjs
   tools/deployment_copies.json
   ':(glob)**/.gitignore'
@@ -662,20 +663,20 @@ audit_native_deployment() {
 audit_native_deployment colophon tools/deploy_colophon.mjs \
   native-source-inventory native 'colophon native' \
   'colophon native deployment unverified (source, binary or receipt drift)' \
-  colophon/Makefile tools/deploy_colophon.mjs tools/deployment_files.mjs
+  colophon/Makefile tools/deploy_colophon.mjs tools/deployment_files.mjs tools/transaction.mjs
 
 audit_native_deployment brew_version tools/deploy_brew_version.mjs \
   brew-version-source-inventory brew 'brew-version native' \
   'brew-version native deployment unverified (source, command, app or receipt drift)' \
   brew_version/Package.swift brew_version/Makefile brew_version/Resources/Info.plist \
   brew_version/Tests/BrewVersionCLITests/Fixtures/expected-help.txt \
-  tools/deploy_brew_version.mjs tools/deployment_files.mjs
+  tools/deploy_brew_version.mjs tools/deployment_files.mjs tools/transaction.mjs
 
 audit_native_deployment storage_monitor tools/deploy_storage_monitor.mjs \
   storage-monitor-source-inventory storage storage_monitor \
   'storage_monitor deployment unverified (source, launcher, walker or receipt drift)' \
   storage_monitor/storage_monitor storage_monitor/native/Makefile \
-  tools/deploy_storage_monitor.mjs tools/deployment_files.mjs
+  tools/deploy_storage_monitor.mjs tools/deployment_files.mjs tools/transaction.mjs
 
 audit_native_deployment anker_charge_monitor tools/deploy_anker_charge_monitor.mjs \
   anker-charge-monitor-source-inventory anker 'anker-charge-monitor native' \
@@ -683,7 +684,7 @@ audit_native_deployment anker_charge_monitor tools/deploy_anker_charge_monitor.m
   anker_charge_monitor/Package.swift anker_charge_monitor/Makefile \
   anker_charge_monitor/Resources/Info.plist anker_charge_monitor/tools/install.sh \
   anker_charge_monitor/tools/resolve_signing_identity.sh \
-  tools/deploy_anker_charge_monitor.mjs tools/deploy_brew_version.mjs tools/deployment_files.mjs
+  tools/deploy_anker_charge_monitor.mjs tools/deploy_brew_version.mjs tools/deployment_files.mjs tools/transaction.mjs
 
 audit_native_deployment telltale tools/deploy_telltale.mjs \
   telltale-source-inventory telltale 'telltale native' \
@@ -692,7 +693,7 @@ audit_native_deployment telltale tools/deploy_telltale.mjs \
   telltale/Resources/Fonts/BarlowSemiCondensed-Medium.ttf \
   telltale/Resources/Fonts/BarlowSemiCondensed-Regular.ttf telltale/Resources/Fonts/OFL.txt \
   telltale/tools/install.sh telltale/tools/resolve_signing_identity.sh \
-  tools/deploy_telltale.mjs tools/deploy_brew_version.mjs tools/deployment_files.mjs
+  tools/deploy_telltale.mjs tools/deploy_brew_version.mjs tools/deployment_files.mjs tools/transaction.mjs
 
 for mapping in "${copy_mappings[@]}"; do
   source_relative="${mapping%%|*}"

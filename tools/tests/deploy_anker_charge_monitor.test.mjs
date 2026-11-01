@@ -20,14 +20,14 @@ function fixture(t) {
   const darwin=fakeDarwinTemp(base,bin);
   const write=(name,bytes,mode=0o644)=>{const file=path.join(project,name);fs.mkdirSync(path.dirname(file),{recursive:true});fs.writeFileSync(file,bytes,{mode});fs.chmodSync(file,mode);};
   fs.mkdirSync(path.join(repo,'tools'));
-  for(const name of ['deploy_anker_charge_monitor.mjs','deployment_files.mjs','deploy_brew_version.mjs'])fs.copyFileSync(path.join(repoRoot,'tools',name),path.join(repo,'tools',name));
+  for(const name of ['deploy_anker_charge_monitor.mjs','deployment_files.mjs','deploy_brew_version.mjs','transaction.mjs'])fs.copyFileSync(path.join(repoRoot,'tools',name),path.join(repo,'tools',name));
   for(const name of ['install.sh','resolve_signing_identity.sh'])write('tools/'+name,fs.readFileSync(path.join(repoRoot,'anker_charge_monitor/tools',name)),0o755);
   write('Package.swift','// conspicuously synthetic package\n');write('Resources/Info.plist',plist);
   write('Makefile',`release:\n\tmkdir -p 'build/release/Anker Charge Monitor.app/Contents/MacOS'\n\tclang -mmacosx-version-min=27.0 Sources/main.c -o 'build/release/Anker Charge Monitor.app/Contents/MacOS/PrimeMonitor'\n\tcp Resources/Info.plist 'build/release/Anker Charge Monitor.app/Contents/Info.plist'\n`);
   const env={...process.env,HOME:home,TMPDIR:base,PATH:bin+':'+process.env.PATH,
     GIT_CONFIG_COUNT:'2',GIT_CONFIG_KEY_0:'maintenance.auto',GIT_CONFIG_VALUE_0:'false',GIT_CONFIG_KEY_1:'gc.auto',GIT_CONFIG_VALUE_1:'0'};
   const git=(...args)=>execFileSync('git',['-C',repo,...args],{stdio:'pipe',env});
-  git('init','-q');git('config','user.name','Synthetic Test');git('config','user.email','synthetic@example.invalid');
+  git('init','-q','-b','main');git('config','user.name','Synthetic Test');git('config','user.email','synthetic@example.invalid');
   const release=label=>{write('Sources/main.c',`#include <stdio.h>\nint main(void){puts("synthetic ${label} must never execute");return 91;}\n`);git('add','.');git('commit','-qm','Synthetic '+label);};
   release('first');
   fs.writeFileSync(path.join(bin,'security'),`#!/bin/bash\n[ "\${SYNTHETIC_MISSING:-0}" = 0 ] || exit 0\necho ' Matching identities'\necho ' 1) ${fingerprint} "CodexBar Local"'\nif [ "\${SYNTHETIC_AMBIGUOUS:-0}" = 1 ]; then echo ' 2) ${'B'.repeat(40)} "CodexBar Local"'; fi\n`,{mode:0o755});
@@ -191,4 +191,24 @@ test('forward deployment prunes older backups while rollback and dry run preserv
   for (const name of ['copy-old-a','copy-old-b','copy-old-c']) {const dir=path.join(root,name);if(!fs.existsSync(dir)){fs.mkdirSync(dir);fs.writeFileSync(path.join(dir,'payload'),'invented');}}
   const before=fs.readdirSync(root).sort(); ok(f.run('--rollback',saved));
   for(const name of before) assert.ok(fs.existsSync(path.join(root,name)),name);
+});
+test('rollback restores a verified backup despite dirty build inputs', t => {
+  const f=fixture(t); ok(f.run()); const first=state(f);
+  f.release('second'); const saved=backup(ok(f.run()));
+  fs.appendFileSync(path.join(f.project,'Sources/main.c'),'// dirty input\n');
+  fs.writeFileSync(path.join(f.project,'tools/resolve_signing_identity.sh'),'#!/bin/sh\nexit 91\n');
+  ok(f.run('--rollback',saved)); assert.deepEqual(state(f),first);
+});
+test('forward deployment refuses a non-main branch before touching destinations', t => {
+  const f=fixture(t); f.git('checkout','-b','synthetic-other');
+  const before=tree(f.home), result=f.run(); assert.equal(result.status,1); assert.match(result.stderr,/require main/); assert.deepEqual(tree(f.home),before);
+});
+test('app inventory rejects drift in the transaction helper', t => {
+  const f=fixture(t); fs.writeFileSync(path.join(f.repo,'tools/transaction.mjs'),'synthetic drift');
+  assert.throws(()=>sourceInventory(f.repo),/working bytes differ/);
+});
+test('rollback replaces a damaged installed app with the verified backup',t=>{
+ const f=fixture(t);ok(f.run());const first=state(f);f.release('second');const saved=backup(ok(f.run()));
+ fs.writeFileSync(path.join(f.app,'synthetic-reject'),'synthetic damage');
+ ok(f.run('--rollback',saved));assert.deepEqual(state(f),first);
 });

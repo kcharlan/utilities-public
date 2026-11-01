@@ -4,13 +4,14 @@ import os from 'node:os';
 import path from 'node:path';
 import {execFileSync} from 'node:child_process';
 import {fileURLToPath} from 'node:url';
-import {regular,inspectAncestors,externalDirectory,sha,exists,atomicFile,parseStagedListing,normalizeEntries,hashInventory,finishCleanup,cleanupDirectories,pruneBackups} from './deployment_files.mjs';
+import {regular,inspectAncestors,externalDirectory,sha,exists,atomicFile,parseStagedListing,normalizeEntries,hashInventory,finishCleanup,cleanupDirectories,pruneBackups,requireMain} from './deployment_files.mjs';
+import {runTransaction} from './transaction.mjs';
 const safe = s => typeof s==='string' && s.trim().length>0 && s!=='.' && s!=='..' && !/[\/\\|\x00-\x1f\x7f]/.test(s);
 const relative = s => typeof s==='string' && s.length>0 && !path.posix.isAbsolute(s) && !s.includes('\\') && s.split('/').every(safe);
 const exact = (o,required,optional=[]) => o && typeof o==='object' && !Array.isArray(o) && required.every(k=>Object.hasOwn(o,k)) && Object.keys(o).every(k=>required.includes(k)||optional.includes(k));
 const git=(repo,...args)=>execFileSync('git',['-C',repo,'--literal-pathspecs',...args],{encoding:'utf8',maxBuffer:64*1024*1024});
-function manifest(repo) {
- const obj=JSON.parse(fs.readFileSync(path.join(repo,'tools/deployment_copies.json'),'utf8'));
+function manifest(repo,rollback=false) {
+ const obj=JSON.parse(rollback?git(repo,'show','HEAD:tools/deployment_copies.json'):fs.readFileSync(path.join(repo,'tools/deployment_copies.json'),'utf8'));
  if (!exact(obj,['scripts','projects']) || !Array.isArray(obj.scripts) || !Array.isArray(obj.projects) || !obj.scripts.length && !obj.projects.length) throw Error('Invalid manifest');
  if (!obj.scripts.every(e=>exact(e,['name','source'],['target','smoke'])) || !obj.projects.every(e=>exact(e,['name'],['entrypoint','smoke']))) throw Error('Invalid manifest entry');
  const names=new Set(), targets=new Set();
@@ -21,7 +22,7 @@ function manifest(repo) {
  });
 }
 function admission(repo,paths) {
- if(git(repo,'branch','--show-current').trim()!=='main') throw Error('Deployments require main');
+ requireMain(repo);
  if(git(repo,'status','--porcelain=v1','--untracked-files=all','--',...paths).trim()) throw Error('Uncommitted or untracked deployment inputs');
  const staged=git(repo,'ls-files','--stage','--sparse','-z','--',...paths);
  const head=git(repo,'ls-tree','-r','-z','HEAD','--',...paths).split('\0').filter(Boolean).map(x=>x.replace(/^(\d+) blob ([a-f0-9]+)\t/,'$1 $2 0\t')).join('\0')+'\0';
@@ -84,16 +85,18 @@ function smoke(e,root) {
   execFileSync(executable,e.smoke,{cwd:scratch,env,timeout:120000,stdio:'pipe'}); }catch(error){primary=new Error('Smoke check failed: '+error.message,{cause:error});}
  finishCleanup(primary,cleanupDirectories([scratch]),'Smoke completed, but cleanup failed');
 }
-export function main(argv=process.argv.slice(2)) {
+export async function main(argv=process.argv.slice(2)) {
  let repo=path.resolve(path.dirname(fileURLToPath(import.meta.url)),'..'),scripts=path.resolve(process.env.UTILITIES_SCRIPTS_DIR||path.join(os.homedir(),'Library/Scripts')),local=path.resolve(process.env.UTILITIES_LOCAL_ROOT||os.homedir()),dry=false,rollback,only=[];
  for(let i=0;i<argv.length;i++){const a=argv[i]; if(a==='--help'){console.log('Usage: node tools/deploy_copies.mjs [--dry-run | --rollback BACKUP] [--only NAME]... [--repo DIR] [--scripts-dir DIR] [--local-root DIR]');return;} if(a==='--dry-run')dry=true; else if(['--repo','--scripts-dir','--local-root','--rollback','--only'].includes(a)&&argv[i+1]){const v=argv[++i]; if(a==='--repo')repo=path.resolve(v); else if(a==='--scripts-dir')scripts=path.resolve(v); else if(a==='--local-root')local=path.resolve(v); else if(a==='--rollback')rollback=path.resolve(v); else only.push(v);}else throw Error('Unknown or incomplete argument'); }
  if(rollback&&(dry||only.length))throw Error('Incompatible deployment options'); repo=fs.realpathSync(repo); scripts=externalDirectory(scripts,repo); local=externalDirectory(local,repo);
- const inputs=['tools/deployment_copies.json','tools/deploy_copies.mjs','tools/deployment_files.mjs'];
- const admitted=admission(repo,inputs); if(inputs.some(name=>!admitted.some(e=>e.name===name))) throw Error('Required deployment input is untracked');
- for(const entry of admitted) inspectAncestors(path.dirname(path.join(repo,entry.name)));
- hashInventory(repo,admitted,true);
- const entries=manifest(repo); if(only.some(n=>!entries.some(e=>e.name===n)))throw Error('Unknown entry');
- for (const e of entries) {
+ const inputs=['tools/deployment_copies.json','tools/deploy_copies.mjs','tools/deployment_files.mjs','tools/transaction.mjs'];
+ if(!rollback) {
+  const admitted=admission(repo,inputs); if(inputs.some(name=>!admitted.some(e=>e.name===name))) throw Error('Required deployment input is untracked');
+  for(const entry of admitted) inspectAncestors(path.dirname(path.join(repo,entry.name)));
+  hashInventory(repo,admitted,true);
+ }
+ const entries=manifest(repo,Boolean(rollback)); if(only.some(n=>!entries.some(e=>e.name===n)))throw Error('Unknown entry');
+ if(!rollback) for (const e of entries) {
   const source=e.kind==='script'?e.source:e.name;
   const listed=parseStagedListing(git(repo,'ls-files','--stage','--sparse','-z','--',source));
   if (!listed.length || e.kind==='script' && (listed.length!==1 || listed[0].name!==source) || e.kind==='project' && e.entrypoint && !listed.some(item=>item.name===e.name+'/'+e.entrypoint)) throw Error('Manifest source or entrypoint is not tracked: '+source);
@@ -108,14 +111,17 @@ export function main(argv=process.argv.slice(2)) {
   if(rollback){ const saved=readBackup(repo,rollback,entries); items=saved.items; revision=saved.revision; }
   else { const source=inventory(repo,e); revision=git(repo,'rev-parse','HEAD').trim(); items=source.map(x=>({rel:x.rel,value:{bytes:x.bytes,mode:x.permissions}})).filter(x=>{const old=current(destination(root,x.rel));return !old||old.mode!==x.value.mode||old.hash!==sha(x.value.bytes);}); }
   if(!items.length){console.log(e.name+': already matches source');continue;} if(dry){console.log(e.name+': '+items.length+' files would change');continue;}
-  const saved=backup(repo,e,root,items,revision); const recovery=readBackup(repo,saved,entries); const created=[]; let primary;
-  try{publish(root,items,created); if(!rollback)smoke(e,root);}catch(error){ primary=error; try{publish(root,recovery.items,[]);}catch(restoreError){primary=new AggregateError([error,restoreError],error.message+'; restoration failed: '+restoreError.message);} }
-  const cleanupErrors=[]; for(const d of created.reverse())try{fs.rmdirSync(d);}catch(error){if(error.code!=='ENOTEMPTY'&&error.code!=='ENOENT')cleanupErrors.push(new Error('Cleanup failed for '+d+': '+error.message,{cause:error}));}
+  const saved=backup(repo,e,root,items,revision); const recovery=readBackup(repo,saved,entries); const created=[]; let primary,restored=false;
+  await runTransaction({name:e.name,admit:()=>{},isCurrent:()=>false,build:()=>({}),install:(_value,registerRecovery)=>{
+  registerRecovery(()=>{if(!restored){publish(root,recovery.items,[]);for(const d of created.slice().reverse())try{fs.rmdirSync(d);}catch(error){if(error.code!=='ENOTEMPTY'&&error.code!=='ENOENT')throw error;}}});
+  try{publish(root,items,created); if(!rollback)smoke(e,root);}catch(error){ primary=error; try{publish(root,recovery.items,[]);restored=true;}catch(restoreError){primary=new AggregateError([error,restoreError],error.message+'; restoration failed: '+restoreError.message);restored=true;} }
+  const cleanupErrors=[]; for(const d of created.slice().reverse())try{fs.rmdirSync(d);}catch(error){if(error.code!=='ENOTEMPTY'&&error.code!=='ENOENT')cleanupErrors.push(new Error('Cleanup failed for '+d+': '+error.message,{cause:error}));}
   if (!primary && cleanupErrors.length) {
-   try { publish(root,recovery.items,[]); } catch (error) { cleanupErrors.push(new Error('Restoration failed: '+error.message,{cause:error})); }
+   try { publish(root,recovery.items,[]);restored=true; } catch (error) { restored=true;cleanupErrors.push(new Error('Restoration failed: '+error.message,{cause:error})); }
   }
   finishCleanup(primary,cleanupErrors,'Deployment completed, but cleanup failed',primary||cleanupErrors.length?saved:undefined);
+  },verify:()=>{}});
   if(!rollback)pruneBackups(path.dirname(saved)); completed.push(e.name); console.log(e.name+': deployed');
  } }catch(error){if(completed.length)throw Error(error.message+'; completed before failure: '+completed.join(', '),{cause:error});throw error;}
 }
-if(process.argv[1]&&fs.realpathSync(process.argv[1])===fileURLToPath(import.meta.url)){try{main();}catch(error){console.error('Copy deployment failed: '+error.message);process.exitCode=1;}}
+if(process.argv[1]&&fs.realpathSync(process.argv[1])===fileURLToPath(import.meta.url)){main().catch(error=>{console.error('Copy deployment failed: '+error.message);process.exitCode=1;});}

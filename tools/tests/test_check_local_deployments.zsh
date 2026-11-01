@@ -237,6 +237,7 @@ new_fixture() {
   cp -p -- "$REPO_UNDER_TEST/tools/deploy_colophon.mjs" "$REPO_UNDER_TEST/tools/deploy_storage_monitor.mjs" "$REPO_UNDER_TEST/tools/deploy_brew_version.mjs" "$REPO_UNDER_TEST/tools/deployment_files.mjs" "$FIXTURE_REPO/tools/"
   cp -p -- "$REPO_UNDER_TEST/tools/deploy_anker_charge_monitor.mjs" "$FIXTURE_REPO/tools/"
   cp -p -- "$REPO_UNDER_TEST/tools/deploy_telltale.mjs" "$FIXTURE_REPO/tools/"
+  cp -p -- "$REPO_UNDER_TEST/tools/transaction.mjs" "$FIXTURE_REPO/tools/"
   local native_input
   for native_input in Makefile src/main.c assets/MANIFEST tools/embed.pl vendor/yyjson/yyjson.c vendor/yyjson/yyjson.h vendor/zstd/zstd.h vendor/zstd/decompress/zstd_decompress.c; do
     write_synthetic_file "$FIXTURE_REPO/colophon/$native_input" "native $native_input"
@@ -1820,6 +1821,19 @@ test_native_required_installers() {
   done
 }
 test_native_required_installers
+
+test_native_transaction_helper_required() {
+  local label
+  new_fixture
+  git -C "$FIXTURE_REPO" rm -q --cached tools/transaction.mjs
+  run_audit
+  assert_status 1 "$AUDIT_STATUS" 'transaction helper removed from index'
+  for label in 'colophon native' 'storage_monitor' 'brew-version native' 'anker-charge-monitor native' 'telltale native'; do
+    assert_contains "$AUDIT_STDERR" "$label source inventory unverified"
+    assert_not_contains "$AUDIT_STDOUT" "OK: $label deployment"
+  done
+}
+test_native_transaction_helper_required
 
 test_native_anker_charge_monitor_deployment() {
   local target source response
