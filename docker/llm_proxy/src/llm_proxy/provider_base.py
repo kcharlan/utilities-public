@@ -1,9 +1,12 @@
 import logging
+import json
 from abc import ABC, abstractmethod
 from typing import AsyncIterator
 
-from fastapi import APIRouter, Request
+import httpx
+from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import StreamingResponse
+from pydantic import ValidationError
 
 from llm_proxy.auth import decode_credentials, extract_authorization
 from llm_proxy.models import (
@@ -87,13 +90,25 @@ class ProviderAdapter(ABC):
 
         @router.post("/v1/chat/completions")
         async def chat_completions(request: Request):
-            body = await request.json()
+            try:
+                body = await request.json()
+            except (json.JSONDecodeError, UnicodeDecodeError) as exc:
+                raise HTTPException(status_code=422, detail="Invalid JSON") from exc
+            if not isinstance(body, dict):
+                raise HTTPException(status_code=422, detail="Expected a JSON object")
+            tools = body.get("tools")
+            if tools is not None and (
+                not isinstance(tools, list)
+                or any(not isinstance(t, dict) or not isinstance(t.get("function"), dict)
+                       for t in tools)
+            ):
+                raise HTTPException(status_code=422, detail="Invalid tools")
 
             # Debug: log tool names from the request
             if "tools" in body:
                 tool_names = [
                     t.get("function", {}).get("name", "?")
-                    for t in body.get("tools", [])
+                    for t in tools or []
                 ]
                 logger.debug(
                     "REQUEST TOOLS: names=%s, tool_choice=%s",
@@ -101,7 +116,10 @@ class ProviderAdapter(ABC):
                     body.get("tool_choice"),
                 )
 
-            chat_request = ChatCompletionRequest(**body)
+            try:
+                chat_request = ChatCompletionRequest(**body)
+            except ValidationError as exc:
+                raise HTTPException(status_code=422, detail=exc.errors(include_url=False)) from exc
 
             if adapter.requires_auth:
                 auth_header = extract_authorization(request)
@@ -110,12 +128,23 @@ class ProviderAdapter(ABC):
                 credentials = {}
 
             if chat_request.stream:
+                iterator = adapter.chat_completion_stream(chat_request, credentials)
+                try:
+                    first = await anext(iterator, None)
+                except httpx.HTTPError as exc:
+                    raise HTTPException(status_code=502, detail="Upstream request failed") from exc
 
                 async def event_stream():
-                    async for chunk in adapter.chat_completion_stream(
-                        chat_request, credentials
-                    ):
-                        yield f"data: {chunk.model_dump_json()}\n\n"
+                    try:
+                        if first is not None:
+                            yield f"data: {first.model_dump_json()}\n\n"
+                        async for chunk in iterator:
+                            yield f"data: {chunk.model_dump_json()}\n\n"
+                    except Exception:
+                        logger.exception("Upstream stream failed")
+                        yield 'data: {"error":{"message":"Upstream stream failed","type":"upstream_error"}}\n\n'
+                    finally:
+                        await iterator.aclose()
                     yield "data: [DONE]\n\n"
 
                 return StreamingResponse(
@@ -128,7 +157,10 @@ class ProviderAdapter(ABC):
                     },
                 )
             else:
-                response = await adapter.chat_completion(chat_request, credentials)
+                try:
+                    response = await adapter.chat_completion(chat_request, credentials)
+                except httpx.HTTPError as exc:
+                    raise HTTPException(status_code=502, detail="Upstream request failed") from exc
                 return response
 
         @router.get("/v1/models")
