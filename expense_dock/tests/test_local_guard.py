@@ -5,7 +5,7 @@ from pathlib import Path
 import sys
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
-from tools.testkit import load_launcher
+from tools.testkit import assert_local_server_guard, load_launcher
 
 def load_module(monkeypatch, runtime_home):
     monkeypatch.setenv("EXPENSE_DOCK_HOME", str(runtime_home))
@@ -40,6 +40,13 @@ def test_host_and_origin_guard_real_routes(monkeypatch, tmp_path):
     assert request(app, 'POST', '/api/auth/logout', [host]) == 403
     assert request(app, 'POST', '/api/auth/logout', [host, (b'origin', b'http://example.test')]) == 403
     assert request(app, 'POST', '/api/auth/logout', [host, origin]) == 200
+
+
+def test_shared_guard_contract(monkeypatch, tmp_path):
+    module = load_module(monkeypatch, tmp_path)
+    with ThreadPoolExecutor(max_workers=1) as executor:
+        executor.submit(assert_local_server_guard, module.app, get_path='/api/status',
+                        post_path='/api/auth/logout', port=8420).result()
 
 
 def test_gets_do_not_create_runtime_files(monkeypatch, tmp_path):

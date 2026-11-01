@@ -1,13 +1,22 @@
 import sys
 import sqlite3
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 from urllib.parse import urlencode
-from tools.testkit import load_launcher, probe_http
+from tools.testkit import assert_local_server_guard, load_launcher, probe_http
 
 SCRIPT = Path(__file__).resolve().parents[1] / "storage_monitor"
+
+
+def test_shared_guard_contract(monkeypatch, tmp_path):
+    monkeypatch.setenv("STORAGE_MONITOR_HOME", str(tmp_path / "runtime"))
+    module = load_launcher(SCRIPT)
+    with ThreadPoolExecutor(max_workers=1) as executor:
+        executor.submit(assert_local_server_guard, module.app, get_path='/api/state',
+                        post_path='/api/scan').result()
 
 
 def test_guard_blocks_foreign_hosts_and_origins(monkeypatch, tmp_path):

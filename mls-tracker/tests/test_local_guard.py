@@ -1,6 +1,14 @@
-from tools.testkit import ASGISyncClient
+from concurrent.futures import ThreadPoolExecutor
+
+from tools.testkit import ASGISyncClient, assert_local_server_guard
 
 import mls_tracker
+
+
+def test_shared_guard_contract():
+    with ThreadPoolExecutor(max_workers=1) as executor:
+        executor.submit(assert_local_server_guard, mls_tracker.app,
+                        post_path='/api/refresh').result()
 
 
 def test_guard_rejects_foreign_host_and_origin_before_refresh(monkeypatch):

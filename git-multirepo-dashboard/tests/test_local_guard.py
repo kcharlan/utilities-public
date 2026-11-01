@@ -1,7 +1,16 @@
 import sqlite3
+from concurrent.futures import ThreadPoolExecutor
 from unittest.mock import AsyncMock
 
 import git_dashboard
+from tools.testkit import assert_local_server_guard
+
+
+def test_shared_guard_contract(test_app):
+    client, _ = test_app
+    with ThreadPoolExecutor(max_workers=1) as executor:
+        executor.submit(assert_local_server_guard, client.app, get_path='/api/status',
+                        post_path='/api/fleet/scan').result()
 
 
 def test_guard_rejects_foreign_host_and_origin(test_app):
