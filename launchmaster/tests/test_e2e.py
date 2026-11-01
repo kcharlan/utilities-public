@@ -1363,6 +1363,27 @@ class TestWebSocket:
         ws_dot = page.locator(".ws-dot")
         expect(ws_dot).not_to_have_class(re.compile(r"disconnected"))
 
+    def test_websocket_reconnects(self, server, page):
+        page.add_init_script("""(() => {
+            const NativeWebSocket = window.WebSocket;
+            window.testSockets = [];
+            window.WebSocket = class extends NativeWebSocket {
+                constructor(...args) {
+                    super(...args);
+                    window.testSockets.push(this);
+                }
+            };
+        })();""")
+        page.goto(server, wait_until="networkidle")
+        ws_status = page.locator(".topbar-ws-status")
+        expect(ws_status).to_contain_text("Live")
+        page.wait_for_function("window.testSockets.length === 1 && window.testSockets[0].readyState === WebSocket.OPEN")
+        page.evaluate("window.testSockets[0].close()")
+        expect(ws_status).not_to_contain_text("Live")
+        page.wait_for_function("window.testSockets.length >= 2 && window.testSockets[1].readyState === WebSocket.OPEN")
+        expect(ws_status).to_contain_text("Live")
+        expect(page.locator(".ws-dot")).not_to_have_class(re.compile(r"disconnected"))
+
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # 11. Apple Jobs Toggle
