@@ -96,7 +96,9 @@ jtree [file.json] [--port 8100] [--readonly]
 
 ### Current Limitations
 - `--readonly` applies to the initial file. Opening another file through the UI creates an editable document; it is not a session-wide restriction.
-- Node paths use `.` as their separator, so object keys containing literal periods cannot be navigated or edited reliably
+- Node paths use JSON arrays of object-key strings and numeric array indices, so keys containing periods remain distinct from nested paths.
+- Loading reports duplicate keys and numbers that may lose precision when saved. Non-finite numbers and invalid Unicode are rejected.
+- Server saves use atomic replacement and preserve file mode, ownership, ACLs and accessible extended attributes on macOS; a save fails if metadata cannot be copied or verified, or the destination has multiple hard links. macOS manages `com.apple.provenance` itself.
 - Expand All traverses at most 200 immediate children per container and stops after 5,000 expanded containers
 
 ## Architecture
