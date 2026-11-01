@@ -1251,9 +1251,9 @@ class TestRedactionWorkflow:
     async def test_manual_redaction_appears_in_export(self, client):
         """Manual redactions should appear in EDL export."""
         await load_har(client)
-        loc = "entries[0].response.content.text(parsed).status"
+        loc = "entries[0].response.content.text(parsed).user"
         await client.post("/api/redaction/manual", json={
-            "entryIndex": 0, "location": loc, "value": "ok", "redact": True,
+            "entryIndex": 0, "location": loc, "value": "alice", "redact": True,
         })
         edl_resp = await client.post("/api/export/edl")
         edl = edl_resp.json()
@@ -1264,14 +1264,14 @@ class TestRedactionWorkflow:
     async def test_manual_redaction_applied_in_har_export(self, client):
         """Manual redaction should actually redact the value in exported HAR."""
         await load_har(client)
-        loc = "entries[0].response.content.text(parsed).status"
+        loc = "entries[0].response.content.text(parsed).user"
         await client.post("/api/redaction/manual", json={
-            "entryIndex": 0, "location": loc, "value": "ok", "redact": True,
+            "entryIndex": 0, "location": loc, "value": "alice", "redact": True,
         })
         har_resp = await client.post("/api/export/har")
         exported = har_resp.json()
         body = json.loads(exported["log"]["entries"][0]["response"]["content"]["text"])
-        assert body["status"] == "[REDACTED]"
+        assert body["user"] == "[REDACTED]"
 
     async def test_reload_clears_state(self, client):
         """Loading a new file should clear all previous redaction state."""
@@ -1590,7 +1590,7 @@ class TestCsvFindings:
     async def test_csv_findings_includes_manual(self, client):
         await load_har(client)
         await client.post("/api/redaction/manual", json={
-            "entryIndex": 0, "location": "test.manual", "value": "secret_val",
+            "entryIndex": 0, "location": "entries[0].response.content.text(parsed).user", "value": "alice",
         })
         resp = await client.post("/api/export/csv-findings")
         assert resp.status_code == 200

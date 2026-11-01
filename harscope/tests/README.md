@@ -9,6 +9,7 @@ real-HAR integration workflow.
 |---|---|
 | `test_api.py` | Primary pytest suite for all 26 FastAPI routes, scanner behavior, exports, validation, and robustness cases |
 | `test_e2e.py` | Chromium smoke for offline loading, page errors, and tab interaction |
+| `test_redaction_matrix.py` | Synthetic redaction shapes across all export formats and fail-closed checks |
 | `conftest.py` | ASGI client, isolated application state, and conspicuously synthetic HAR fixtures |
 | `TEST_PLAN.md` | Durable matrix and failure-mode reference for the optional real-HAR workflow |
 | `run_tests.sh` | Starts a local server and runs eight real-HAR redaction scenarios |
@@ -35,7 +36,7 @@ source /path/to/venv/bin/activate
 ./run_tests.sh /path/to/synthetic_fixture.har 8333
 ```
 
-The runner starts and cleans up its own harscope process. Its temporary exports and logs are removed on exit.
+The runner starts and cleans up its own harscope process without opening a browser. Its temporary exports and logs are removed on exit.
 
 ### What It Tests
 
