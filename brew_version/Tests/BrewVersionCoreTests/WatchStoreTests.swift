@@ -108,14 +108,15 @@ struct WatchStoreTests {
             #expect(try Data(contentsOf: f.file.appendingPathExtension("bad")) == data)
         }
     }
-    @Test func unreadableStateIsSetAside() throws {
+    @Test func readFailurePreservesStateAndBlocksWrites() throws {
         let f = WatchFixture(); defer { f.clean() }
         try f.store.save(.initial)
         let bytes = try Data(contentsOf: f.file)
         let failures = IOFailures(); failures.operation = "read"
         let loaded = WatchStore(fileURL: f.file, io: failures.io).load()
-        #expect(loaded.canSave && loaded.problem != nil)
-        #expect(try Data(contentsOf: f.file.appendingPathExtension("bad")) == bytes)
+        #expect(!loaded.canSave && loaded.problem != nil)
+        #expect(try Data(contentsOf: f.file) == bytes)
+        #expect(!FileManager.default.fileExists(atPath: f.file.appendingPathExtension("bad").path))
     }
     @Test func existingBadFileSurvives() throws {
         let f = WatchFixture(); defer { f.clean() }

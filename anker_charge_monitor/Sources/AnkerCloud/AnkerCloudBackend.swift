@@ -29,6 +29,8 @@ public actor AnkerCloudBackend: ChargerBackend {
     private var info: MQTTInfo?
     private var charger: ChargerInfo?
     private var connected = false
+    private var backoff = BackoffPolicy()
+    private var connectedAt: Date?
     private var pingSentAt: Date?
     private var cleanup: (id: UUID, task: Task<Void, Never>)?
     /// Links in graceful cleanup; an abort closes them at once rather than waiting
@@ -128,7 +130,7 @@ public actor AnkerCloudBackend: ChargerBackend {
         guard context == expected else { return }; _ = await stopMQTT()
     }
     private func recover(context expected: UUID, fetch: Bool, delayBeforeFirst: Bool = false) async throws {
-        var backoff = BackoffPolicy(), refreshed = false, fetch = fetch
+        var refreshed = false, fetch = fetch
         if delayBeforeFirst { await sleep(backoff.nextDelay()); try check(expected) }
         while true {
             try check(expected)
@@ -139,7 +141,7 @@ public actor AnkerCloudBackend: ChargerBackend {
                 }
                 try await attempt(expected)
                 try check(expected)
-                connected = true; emit(.status(.connected))
+                connected = true; connectedAt = now(); emit(.status(.connected))
                 startKeepalive(expected)
                 return
             } catch {
@@ -192,7 +194,12 @@ public actor AnkerCloudBackend: ChargerBackend {
         epochCount += 1; epoch = ConnectionEpoch(epochCount)
         let link = makeLink(), inbox = MQTTInbox(); self.link = link; self.inbox = inbox
         reader = Task { [weak self] in
-            do { for try await packet in link.packets { await inbox.push(packet) }; await inbox.fail(MQTTConnectionError.closed) }
+            do {
+                for try await packet in link.packets {
+                    if !(await inbox.push(packet)) { await link.close(); break }
+                }
+                await inbox.fail(MQTTConnectionError.closed)
+            }
             catch { await inbox.fail(error) }
             await self?.dropped(expected, attempt: attempt)
         }
@@ -267,6 +274,8 @@ public actor AnkerCloudBackend: ChargerBackend {
     }
     private func dropped(_ expected: UUID, attempt: UUID) async {
         guard context == expected, attemptID == attempt, connected else { return }
+        if let connectedAt, now().timeIntervalSince(connectedAt) >= 60 { backoff.reset() }
+        connectedAt = nil
         connected = false; emit(.status(.error("MQTT connection lost")))
         await cleanupAttempt()
         guard context == expected else { return }
@@ -361,6 +370,7 @@ public actor AnkerCloudBackend: ChargerBackend {
 
     private func stopMQTT(abortive: Bool = false) async -> UUID {
         context = UUID(); let expected = context; recovery?.cancel(); recovery = nil
+        backoff.reset(); connectedAt = nil
         info = nil; charger = nil
         await cleanupAttempt(abortive: abortive)
         return expected

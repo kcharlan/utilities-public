@@ -440,9 +440,10 @@ public enum AutomaticCheckSchedule: Equatable, Sendable {
     /// than Homebrew's API cache lifetime, Other updates too. It skips the network
     /// gate, since a path monitor can report offline while HTTP works.
     public func refreshNow() async {
-        tapIndex = taps()
+        let taps = self.taps
+        tapIndex = await Task.detached { taps() }.value
         async let watches: Void = checkNow()
-        async let catalog: Void = refreshCatalog(manual: true)
+        async let catalog: Void = refreshCatalog(manual: true, tapsAlreadyRefreshed: true)
         _ = await (watches, catalog)
     }
 
@@ -453,17 +454,20 @@ public enum AutomaticCheckSchedule: Equatable, Sendable {
         return !launchCatalogRefreshDone || CheckSchedule.isDue(lastCheck: fetched, interval: state.catalogInterval, now: now())
     }
 
-    private func refreshCatalog(manual: Bool) async {
+    private func refreshCatalog(manual: Bool, tapsAlreadyRefreshed: Bool = false) async {
         // Failed automatic attempts retry no sooner than the shortest check interval.
         let retryFloor = CheckInterval(minutes: CheckInterval.allowedMinutes.lowerBound)!
         guard canSave, !isRefreshingCatalog,
               manual || (automaticRequestsAllowed && CheckSchedule.isDue(lastCheck: lastCatalogAttempt, interval: retryFloor, now: now()))
         else { return }
-        tapIndex = taps()
         isRefreshingCatalog = true
         defer { isRefreshingCatalog = false }
         if catalog == nil { await hydrateCatalog() }
         guard manual || automaticRequestsAllowed, catalogRefreshDue(manual: manual) else { return }
+        if !tapsAlreadyRefreshed {
+            let taps = self.taps
+            tapIndex = await Task.detached { taps() }.value
+        }
         lastCatalogAttempt = now()
         // Keep the discovery snapshot and its metadata replacement in the same
         // overlap group as watched checks, including across the tap HTTP awaits.

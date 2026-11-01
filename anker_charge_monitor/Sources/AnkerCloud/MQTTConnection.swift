@@ -9,7 +9,7 @@ protocol MQTTLink: Sendable {
     func close() async
 }
 
-enum MQTTConnectionError: Error { case closed, timeout, refused, subscription, invalidCertificate }
+enum MQTTConnectionError: Error { case closed, timeout, refused, subscription, invalidCertificate, overflow }
 
 /// The write and cancel operations NWMQTTLink needs from its connection, so a test
 /// fixture can hold writes beneath the real link. Completions run on the link queue.
@@ -43,7 +43,7 @@ final class NWMQTTLink: MQTTLink, @unchecked Sendable {
 
     init(queue: DispatchQueue = DispatchQueue(label: "PrimeMonitor.MQTT")) {
         self.queue = queue
-        (packets, output) = AsyncThrowingStream.makeStream()
+        (packets, output) = AsyncThrowingStream.makeStream(bufferingPolicy: .bufferingOldest(MQTTLimits.queuedPackets))
     }
 
     /// A link already open on `connection`, whose completions run on `queue`. Tests
@@ -110,13 +110,20 @@ final class NWMQTTLink: MQTTLink, @unchecked Sendable {
 
     private func receive(_ connection: NWConnection) {
         connection.receive(minimumIncompleteLength: 1, maximumLength: 65536) { data, _, complete, error in
-            do {
-                if let data { for packet in try self.decoder.feed(Array(data)) { self.output.yield(packet) } }
-                if let error { self.finish(error) }
-                else if complete { self.finish(MQTTConnectionError.closed) }
-                else { self.receive(connection) }
-            } catch { self.finish(error) }
+            if let data { self.receiveData(data) }
+            if let error { self.finish(error) }
+            else if complete { self.finish(MQTTConnectionError.closed) }
+            else if !self.closed { self.receive(connection) }
         }
+    }
+    // Called on the link queue for each received network chunk.
+    func receiveData(_ data: Data) {
+        do {
+            for packet in try decoder.feed(Array(data)) {
+                if case .dropped = output.yield(packet) { throw MQTTConnectionError.overflow }
+            }
+        }
+        catch { finish(error) }
     }
     private func finish(_ error: Error) {
         closed = true
@@ -140,11 +147,14 @@ actor MQTTInbox {
     private var queued: [MQTTPacket] = []
     private var waiter: CheckedContinuation<MQTTPacket, Error>?
     private var failure: Error?
-    func push(_ packet: MQTTPacket) {
-        guard failure == nil else { return }
-        if let waiter { self.waiter = nil; waiter.resume(returning: packet) } else { queued.append(packet) }
+    @discardableResult func push(_ packet: MQTTPacket) -> Bool {
+        guard failure == nil else { return false }
+        if let waiter { self.waiter = nil; waiter.resume(returning: packet) }
+        else if queued.count < MQTTLimits.queuedPackets { queued.append(packet) }
+        else { fail(MQTTConnectionError.overflow); return false }
+        return true
     }
-    func fail(_ error: Error) { failure = error; waiter?.resume(throwing: error); waiter = nil; queued = [] }
+    func fail(_ error: Error) { guard failure == nil else { return }; failure = error; waiter?.resume(throwing: error); waiter = nil; queued = [] }
     func next() async throws -> MQTTPacket {
         if let failure { throw failure }
         if !queued.isEmpty { return queued.removeFirst() }

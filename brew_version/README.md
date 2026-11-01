@@ -214,9 +214,10 @@ keeps the previous state and can be retried. Closing an already acknowledged
 popover or choosing the current setting does not write. Saved conditional
 listing entries are limited to watched names; removing a watch evicts its cache.
 
-Unreadable or invalid saved state is moved to `state.json.bad` before starting
-fresh. Existing recovery files are preserved with unique suffixes. If that move
-fails, checking and mutations stay disabled until a load retry succeeds.
+Invalid saved state is moved to `state.json.bad` before starting fresh. Existing
+recovery files are preserved with unique suffixes. A read error leaves the state
+in place; a read or quarantine failure disables checking and mutations until a
+load retry succeeds.
 
 Watches default to every 30 minutes, with presets from 10 minutes to 6 hours
 and whole-minute custom intervals from 10 minutes to 24 hours. A first lookup

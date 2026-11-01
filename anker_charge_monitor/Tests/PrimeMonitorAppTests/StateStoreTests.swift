@@ -3,6 +3,16 @@ import Testing
 import PrimeMonitorCore
 @testable import PrimeMonitor
 @Suite struct StateStoreTests {
+    @Test func readFailurePreservesStatePathAndBlocksSaving() throws {
+        let root = FileManager.default.temporaryDirectory.appending(path: "prime-synthetic-" + UUID().uuidString, directoryHint: .isDirectory)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let path = root.appending(path: "state.json", directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: path, withIntermediateDirectories: true)
+        let load = StateStore(fileURL: path).load()
+        #expect(!load.canSave && load.problem != nil)
+        #expect(FileManager.default.fileExists(atPath: path.path(percentEncoded: false)))
+        #expect(!FileManager.default.fileExists(atPath: path.appendingPathExtension("bad").path(percentEncoded: false)))
+    }
     @Test func decodedPathsPreserveAtomicReplacementAndQuarantine() throws {
         let root = FileManager.default.temporaryDirectory.appending(path: "prime-synthetic-" + UUID().uuidString, directoryHint: .isDirectory)
         defer { try? FileManager.default.removeItem(at: root) }

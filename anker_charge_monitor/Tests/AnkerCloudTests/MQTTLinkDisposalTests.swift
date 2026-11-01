@@ -47,6 +47,16 @@ private func send(_ link: NWMQTTLink, recording outcomes: Outcomes) -> Task<Void
 }
 
 @Suite struct MQTTLinkDisposalTests {
+    @Test func overflowingStreamFailsAndClosesConnection() async throws {
+        let queue = DispatchQueue(label: "test.link.overflow"), connection = HeldConnection(queue: queue)
+        let link = NWMQTTLink(queue: queue, attached: connection)
+        queue.sync { link.receiveData(Data(Array(repeating: [UInt8(0xd0), 0], count: 33).flatMap { $0 })) }
+        #expect(connection.cancelCount == 1)
+        if connection.cancelCount == 0 { await link.close() }
+        var failed = false
+        do { for try await _ in link.packets {} } catch { failed = true }
+        #expect(failed)
+    }
     @Test func completedWriteResumesItsSendOnce() async throws {
         let queue = DispatchQueue(label: "test.link"), connection = HeldConnection(queue: queue)
         let link = NWMQTTLink(queue: queue, attached: connection), outcomes = Outcomes()

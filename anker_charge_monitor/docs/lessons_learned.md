@@ -560,3 +560,15 @@ in temporary space: SwiftPM lock files named after the package path (`..._anker_
 folders and one marker per compile in the Darwin user temp dir. The suite and `make snapshots` now
 run under the repository's `tools/check_no_temp_leaks.sh`, and the snapshot builder points
 SwiftPM's `TMPDIR` inside its home. See the root `docs/lessons_learned.md` entry of the same date.
+
+## 2026-11-01: Preserve recovery state across short connections and read failures
+
+A successful MQTT handshake can be followed immediately by another drop. Keep
+reconnect backoff across those short connections, reset it after a stable minute
+or an explicit lifecycle reset, and exercise repeated drops. Distinguish a state
+file read error from invalid decoded bytes: only the latter can be quarantined;
+the former must preserve the original path and block saving until recovery.
+
+MQTT's per-read limit does not bound a fragmented packet or asynchronous queues.
+Bound declared packet size and both stream and inbox, fail and close on overflow,
+and test the full path through reconnect rather than silently dropping packets.

@@ -44,3 +44,15 @@ import Testing
         #expect(throws: (any Error).self) { var decoder = MQTTDecoder(); _ = try decoder.feed(bytes) }
     }
 }
+
+@Test func decoderRejectsOversizedFragmentedHeaderBeforeBody() throws {
+    var decoder = MQTTDecoder()
+    #expect(try decoder.feed([0x30, 0x81, 0x80]) == [])
+    #expect(throws: (any Error).self) { try decoder.feed([0x10]) }
+}
+
+@Test func inboxOverflowFailsRatherThanDiscardingPackets() async throws {
+    let inbox = MQTTInbox()
+    for _ in 0..<33 { await inbox.push(.pingresp) }
+    await #expect(throws: (any Error).self) { try await inbox.next() }
+}

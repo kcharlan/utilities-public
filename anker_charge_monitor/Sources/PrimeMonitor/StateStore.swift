@@ -25,8 +25,13 @@ struct StateStore {
             .appending(path: "Library/Application Support/Prime Monitor/state.json", directoryHint: .notDirectory)
     }
     func load() -> StateLoad {
-        guard FileManager.default.fileExists(atPath: fileURL.path(percentEncoded: false)) else { return .init(state: .initial, problem: nil, canSave: true) }
-        do { return .init(state: try JSONDecoder().decode(AppState.self, from: Data(contentsOf: fileURL)), problem: nil, canSave: true) }
+        let data: Data
+        do { data = try Data(contentsOf: fileURL) }
+        catch {
+            if (error as? CocoaError)?.code == .fileReadNoSuchFile { return .init(state: .initial, problem: nil, canSave: true) }
+            return .init(state: .initial, problem: "Couldn't read saved state: \(error.localizedDescription)", canSave: false)
+        }
+        do { return .init(state: try JSONDecoder().decode(AppState.self, from: data), problem: nil, canSave: true) }
         catch {
             var quarantine = fileURL.appendingPathExtension("bad")
             while FileManager.default.fileExists(atPath: quarantine.path(percentEncoded: false)) {

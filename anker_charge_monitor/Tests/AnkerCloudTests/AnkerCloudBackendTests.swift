@@ -387,6 +387,62 @@ extension AnkerCloudBackendTests {
     await cloud.disconnect()
 }
 
+@Test func repeatedShortConnectionsIncreaseReconnectDelay() async throws {
+    let links = (0..<3).map { _ in TestMQTTLink() }, gate = SleepGate()
+    let transport = MQTTTransport(try syntheticIdentityPEM()), factory = LinkFactory(links)
+    let rest = AnkerRESTClient(transport: transport, timeZone: .gmt, now: { Date() }, sleep: { _ in }, random: { $0.lowerBound })
+    let cloud = AnkerCloudBackend(rest: rest, makeIdentity: identityTracker.make, makeLink: { factory.make() }, now: { Date(timeIntervalSince1970: 1000) }, sleep: { await gate.sleep($0) })
+    await cloud.restore(testSession, credentials: testCredentials)
+    try await cloud.connect(to: testCharger)
+    links[0].input.finish()
+    try await eventually { await gate.pending(1) == 1 }
+    await gate.advance(1)
+    try await eventually { await links[1].sent.count == 3 }
+    links[1].input.finish()
+    do { try await eventually { await gate.pending(2) == 1 } }
+    catch { await cloud.disconnect(); throw error }
+    await gate.advance(2)
+    try await eventually { await links[2].sent.count == 3 }
+    await cloud.disconnect()
+}
+
+@Test func stableConnectionResetsReconnectDelay() async throws {
+    let links = (0..<3).map { _ in TestMQTTLink() }, gate = SleepGate(), time = MQTTTestTime()
+    let transport = MQTTTransport(try syntheticIdentityPEM()), factory = LinkFactory(links)
+    let rest = AnkerRESTClient(transport: transport, timeZone: .gmt, now: { Date() }, sleep: { _ in }, random: { $0.lowerBound })
+    let cloud = AnkerCloudBackend(rest: rest, makeIdentity: identityTracker.make, makeLink: { factory.make() }, now: { time.now() }, sleep: { await gate.sleep($0) })
+    await cloud.restore(testSession, credentials: testCredentials)
+    try await cloud.connect(to: testCharger)
+    links[0].input.finish()
+    try await eventually { await gate.pending(1) == 1 }; await gate.advance(1)
+    try await eventually { await links[1].sent.count == 3 }
+    time.advance(60); links[1].input.finish()
+    do { try await eventually { await gate.pending(1) == 1 } }
+    catch { await cloud.disconnect(); throw error }
+    await gate.advance(1)
+    try await eventually { await links[2].sent.count == 3 }
+    await cloud.disconnect()
+}
+
+@Test func inboxOverflowClosesLinkAndRetriesWithBackoff() async throws {
+    let links = [TestMQTTLink(), TestMQTTLink()], gate = SleepGate()
+    await links[0].configure(stallOpen: true)
+    let transport = MQTTTransport(try syntheticIdentityPEM()), factory = LinkFactory(links)
+    let rest = AnkerRESTClient(transport: transport, timeZone: .gmt, now: { Date() }, sleep: { _ in }, random: { $0.lowerBound })
+    let cloud = AnkerCloudBackend(rest: rest, makeIdentity: identityTracker.make, makeLink: { factory.make() }, now: { Date() }, sleep: { await gate.sleep($0) })
+    await cloud.restore(testSession, credentials: testCredentials)
+    let connecting = Task { try await cloud.connect(to: testCharger) }
+    try await eventually { await links[0].openWait != nil }
+    for _ in 0..<33 { links[0].input.yield(.pingresp) }
+    do { try await eventually { await gate.pending(1) == 1 } }
+    catch { await cloud.disconnect(); _ = try? await connecting.value; throw error }
+    #expect(await links[0].closed)
+    await gate.advance(1)
+    try await connecting.value
+    #expect(await links[1].sent.count == 3)
+    await cloud.disconnect()
+}
+
 @Test func laterDropBackoffContinuesAfterFirstFailedReconnect() async throws {
     let links = [TestMQTTLink(), TestMQTTLink(), TestMQTTLink()], gate = SleepGate()
     await links[1].configure(connack: 5)
