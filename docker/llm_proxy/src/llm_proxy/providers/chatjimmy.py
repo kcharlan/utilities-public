@@ -5,6 +5,7 @@ from typing import AsyncIterator
 from uuid import uuid4
 
 import httpx
+from fastapi import HTTPException
 
 from llm_proxy.models import (
     ChatCompletionChunk,
@@ -121,7 +122,8 @@ class ChatJimmyAdapter(ProviderAdapter):
         finish_reason = None
         usage = None
 
-        async for chunk in self._stream_response(request, completion_id, created):
+        stats: dict = {}
+        async for chunk in self._stream_response(request, completion_id, created, stats):
             for choice in chunk.choices:
                 if choice.delta.content:
                     content_parts.append(choice.delta.content)
@@ -129,8 +131,7 @@ class ChatJimmyAdapter(ProviderAdapter):
                     finish_reason = choice.finish_reason
 
         # Try to get usage from the stats that were parsed during streaming
-        if hasattr(self, "_last_stats") and self._last_stats:
-            stats = self._last_stats
+        if stats:
             prompt_tokens = stats.get("prefill_tokens", 0)
             completion_tokens = stats.get("decode_tokens", 0)
             usage = Usage(
@@ -138,7 +139,6 @@ class ChatJimmyAdapter(ProviderAdapter):
                 completion_tokens=completion_tokens,
                 total_tokens=stats.get("total_tokens", prompt_tokens + completion_tokens),
             )
-            self._last_stats = None
 
         return ChatCompletionResponse(
             id=completion_id,
@@ -172,26 +172,12 @@ class ChatJimmyAdapter(ProviderAdapter):
         request: ChatCompletionRequest,
         completion_id: str,
         created: int,
+        stats: dict | None = None,
     ) -> AsyncIterator[ChatCompletionChunk]:
         """Core streaming logic: sends request to chatjimmy.ai and yields
         OpenAI-compatible chunks by parsing the custom stream format."""
 
         body = self._build_request_body(request)
-
-        # Yield initial role chunk
-        yield ChatCompletionChunk(
-            id=completion_id,
-            created=created,
-            model=request.model,
-            choices=[
-                ChatCompletionChunkChoice(
-                    index=0,
-                    delta=ChatCompletionChunkDelta(role="assistant"),
-                )
-            ],
-        )
-
-        self._last_stats = None
 
         async with httpx.AsyncClient(timeout=httpx.Timeout(30.0, read=120.0)) as client:
             async with client.stream(
@@ -207,35 +193,19 @@ class ChatJimmyAdapter(ProviderAdapter):
                         response.status_code,
                         error_body[:500],
                     )
-                    # Emit error as content so the client sees it
-                    yield ChatCompletionChunk(
-                        id=completion_id,
-                        created=created,
-                        model=request.model,
-                        choices=[
-                            ChatCompletionChunkChoice(
-                                index=0,
-                                delta=ChatCompletionChunkDelta(
-                                    content=f"[ChatJimmy error: HTTP {response.status_code}]"
-                                ),
-                            )
-                        ],
+                    raise HTTPException(
+                        status_code=response.status_code if 400 <= response.status_code < 500 else 502,
+                        detail="Upstream request failed",
                     )
-                    yield ChatCompletionChunk(
-                        id=completion_id,
-                        created=created,
-                        model=request.model,
-                        choices=[
-                            ChatCompletionChunkChoice(
-                                index=0,
-                                delta=ChatCompletionChunkDelta(),
-                                finish_reason="stop",
-                            )
-                        ],
-                    )
-                    return
 
-                async for content_text in self._parse_stream(response):
+                yield ChatCompletionChunk(
+                    id=completion_id, created=created, model=request.model,
+                    choices=[ChatCompletionChunkChoice(
+                        index=0, delta=ChatCompletionChunkDelta(role="assistant")
+                    )],
+                )
+
+                async for content_text in self._parse_stream(response, stats):
                     yield ChatCompletionChunk(
                         id=completion_id,
                         created=created,
@@ -263,7 +233,7 @@ class ChatJimmyAdapter(ProviderAdapter):
         )
 
     async def _parse_stream(
-        self, response: httpx.Response
+        self, response: httpx.Response, stats: dict | None = None
     ) -> AsyncIterator[str]:
         """Parse chatjimmy's custom stream format, yielding content text fragments.
 
@@ -278,6 +248,7 @@ class ChatJimmyAdapter(ProviderAdapter):
         buffer = ""
         first_chunk = True
         found_stats = False
+        reading_stats = False
 
         async for raw_chunk in response.aiter_text():
             buffer += raw_chunk
@@ -292,7 +263,7 @@ class ChatJimmyAdapter(ProviderAdapter):
                     continue
 
             # Check if the stats sentinel has arrived
-            stats_pos = buffer.find(STATS_START)
+            stats_pos = buffer.find(STATS_START) if not reading_stats else -1
             if stats_pos != -1:
                 # Everything before the sentinel is content
                 content = buffer[:stats_pos]
@@ -300,14 +271,17 @@ class ChatJimmyAdapter(ProviderAdapter):
                     yield content
 
                 # Parse the stats JSON
-                remainder = buffer[stats_pos + len(STATS_START):]
-                end_pos = remainder.find(STATS_END)
-                if end_pos != -1:
-                    stats_json = remainder[:end_pos]
-                    try:
-                        self._last_stats = json.loads(stats_json)
-                    except json.JSONDecodeError:
-                        logger.warning("ChatJimmy: failed to parse stats JSON")
+                buffer = buffer[stats_pos + len(STATS_START):]
+                reading_stats = True
+            if reading_stats:
+                end_pos = buffer.find(STATS_END)
+                if end_pos == -1:
+                    continue
+                try:
+                    if stats is not None:
+                        stats.update(json.loads(buffer[:end_pos]))
+                except (json.JSONDecodeError, TypeError, ValueError):
+                    logger.warning("ChatJimmy: failed to parse stats JSON")
                 found_stats = True
                 break
 
@@ -319,7 +293,7 @@ class ChatJimmyAdapter(ProviderAdapter):
                 buffer = buffer[safe_len:]
 
         # If we never found stats (unexpected), flush remaining buffer as content
-        if not found_stats and buffer:
+        if not found_stats and not reading_stats and buffer:
             # Strip trailing "%" that sometimes appears
             if buffer.endswith("%"):
                 buffer = buffer[:-1]

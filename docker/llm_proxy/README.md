@@ -97,7 +97,7 @@ The T3 adapter translates OpenAI-format tool calling because T3.chat does not su
 2. **Model output**: When the model outputs `<tool_call>` XML blocks, the proxy parses them into structured OpenAI `tool_calls` deltas for the client to execute.
 3. **Results**: When the client sends `role: "tool"` messages with results, the proxy converts them to `<tool_result>` XML that the upstream model can understand.
 
-The parser handles common model quirks like malformed JSON (extra trailing braces) and partial tags split across streaming chunks.
+The parser handles common model quirks like malformed JSON (extra trailing braces) and partial tags split across streaming chunks. It emits calls only for functions declared in the request, honors `tool_choice: "none"`, and treats other tool-call text as ordinary content. Upstream failures before streaming starts return an HTTP error; failures after streaming starts produce an SSE error event.
 
 ## BYOK Auto-Retry
 

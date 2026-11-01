@@ -262,12 +262,9 @@ class T3ChatAdapter(ProviderAdapter):
             if msg.role == "tool":
                 tool_call_id = msg.tool_call_id or "unknown"
                 content = msg.content or ""
-                formatted = (
-                    f"<tool_result>\n"
-                    f'{{"tool_call_id": "{tool_call_id}", '
-                    f'"content": {json.dumps(content)}}}\n'
-                    f"</tool_result>"
-                )
+                payload = json.dumps({"tool_call_id": tool_call_id, "content": content})
+                payload = payload.replace("<", "\\u003c").replace(">", "\\u003e")
+                formatted = f"<tool_result>\n{payload}\n</tool_result>"
                 converted.append(ChatMessage(role="user", content=formatted))
             elif msg.role == "assistant" and msg.tool_calls:
                 parts = []
@@ -355,7 +352,7 @@ class T3ChatAdapter(ProviderAdapter):
         # Inject tool definitions into the system prompt if tools are present
         extra = request.model_extra or {}
         tools = extra.get("tools", [])
-        if tools:
+        if tools and extra.get("tool_choice") != "none":
             tool_prompt = self._format_tools_for_prompt(tools)
             # Find existing system message to append to, or create one
             system_idx = None
@@ -487,20 +484,9 @@ class T3ChatAdapter(ProviderAdapter):
         """Convert a single T3 SSE event into an OpenAI chunk, or None to skip."""
         if event_type == "error":
             status = event.get("status_code", 502)
-            msg = event.get("message", "Unknown upstream error")
-            return ChatCompletionChunk(
-                id=completion_id,
-                created=created,
-                model=model,
-                choices=[
-                    ChatCompletionChunkChoice(
-                        index=0,
-                        delta=ChatCompletionChunkDelta(
-                            content=f"\n\n[Upstream error {status}: {msg}]"
-                        ),
-                        finish_reason="stop",
-                    )
-                ],
+            raise HTTPException(
+                status_code=status if 400 <= status < 500 else 502,
+                detail="Upstream request failed",
             )
 
         if event_type == "text-delta":
@@ -579,6 +565,7 @@ class T3ChatAdapter(ProviderAdapter):
         created: int,
         model: str,
         has_tools: bool,
+        allowed_names: set[str] | None = None,
     ) -> AsyncIterator[ChatCompletionChunk]:
         """Wrap SSE event iteration with tool call detection.
 
@@ -595,7 +582,8 @@ class T3ChatAdapter(ProviderAdapter):
                     return
             return
 
-        parser = ToolCallStreamParser()
+        parser = ToolCallStreamParser(allowed_names=allowed_names)
+        emitted_tool_calls = 0
 
         async for event_type, event in event_iter:
             if event_type == "text-delta":
@@ -628,7 +616,7 @@ class T3ChatAdapter(ProviderAdapter):
                                     delta=ChatCompletionChunkDelta(
                                         tool_calls=[
                                             {
-                                                "index": parser._tool_call_count - 1,
+                                                "index": emitted_tool_calls,
                                                 "id": parser.generate_tool_call_id(),
                                                 "type": "function",
                                                 "function": {
@@ -642,6 +630,7 @@ class T3ChatAdapter(ProviderAdapter):
                                 )
                             ],
                         )
+                        emitted_tool_calls += 1
 
             elif event_type == "finish":
                 # Flush any remaining buffered text
@@ -692,7 +681,19 @@ class T3ChatAdapter(ProviderAdapter):
     ) -> AsyncIterator[ChatCompletionChunk]:
         cookies, convex_session_id = self._validate_credentials(credentials)
         thread_id = str(uuid4())
-        has_tools = bool((request.model_extra or {}).get("tools"))
+        extra = request.model_extra or {}
+        tools = extra.get("tools") or []
+        allowed_names = {
+            t["function"]["name"] for t in tools
+            if isinstance(t, dict) and t.get("type") == "function"
+            and isinstance(t.get("function"), dict)
+            and isinstance(t["function"].get("name"), str)
+        }
+        choice = extra.get("tool_choice")
+        if isinstance(choice, dict):
+            selected = choice.get("function", {}).get("name")
+            allowed_names &= {selected}
+        has_tools = bool(allowed_names) and choice != "none"
 
         async with httpx.AsyncClient(
             timeout=httpx.Timeout(connect=10, read=300, write=10, pool=10),
@@ -738,7 +739,7 @@ class T3ChatAdapter(ProviderAdapter):
                     )
                     retry_iter = self._iter_t3_sse(client, cookies, retry_body, thread_id)
                     async for chunk in self._stream_with_tool_parsing(
-                        retry_iter, completion_id, created, request.model, has_tools
+                        retry_iter, completion_id, created, request.model, has_tools, allowed_names
                     ):
                         yield chunk
                     return
@@ -751,7 +752,7 @@ class T3ChatAdapter(ProviderAdapter):
                     yield (et, ev)
 
             async for chunk in self._stream_with_tool_parsing(
-                _prepend_first(), completion_id, created, request.model, has_tools
+                _prepend_first(), completion_id, created, request.model, has_tools, allowed_names
             ):
                 yield chunk
 
