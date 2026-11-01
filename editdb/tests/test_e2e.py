@@ -21,6 +21,10 @@ from tools.testkit import (assert_classes_styled, assert_exact_text, assert_font
 LAUNCHER = REPO_ROOT / 'editdb' / 'editdb'
 MARKUP = '<b>x</b> & ${y} `value` {{X}} &nbsp;'
 
+@pytest.fixture(scope='session')
+def base_url(pytestconfig):
+    return pytestconfig.getoption('--base-url') or pytestconfig.getini('base_url') or None
+
 @pytest.fixture
 def server(tmp_path):
     database = tmp_path / 'synthetic.sqlite'
@@ -32,6 +36,8 @@ def server(tmp_path):
         conn.execute('CREATE TABLE stored_kinds (id INTEGER PRIMARY KEY, absent TEXT, big INTEGER, raw BLOB, loose, lines TEXT)')
         conn.execute('INSERT INTO stored_kinds VALUES (1, NULL, 9007199254740993, ?, 1.0, ?)', (b'ABC', 'first line\nsecond line'))
         conn.execute("INSERT INTO unkeyed VALUES ('keyless synthetic')")
+        conn.execute('CREATE TABLE composite (a TEXT, b INTEGER, label TEXT, big INTEGER, real_value REAL, raw BLOB, PRIMARY KEY(a,b))')
+        conn.executemany('INSERT INTO composite VALUES (?, ?, ?, ?, ?, ?)', [('same', 9007199254740992, 'sibling', 9007199254740993, 1.0, b'\xff'), ('same', 9007199254740993, 'target', 9007199254740993, 1.0, b'\xff')])
     with socket.socket() as sock:
         sock.bind(('127.0.0.1', 0))
         port = sock.getsockname()[1]
@@ -73,6 +79,28 @@ def test_page_loads_offline(server, browser):
         assert_no_external_resources(page, blocked)
         assert_offline_page_source(page.content())
     context.close()
+
+def test_composite_big_key_and_unchanged_types(server, page, tmp_path):
+    page.goto(server)
+    page.get_by_role('button', name='composite', exact=True).click()
+    expect(page.get_by_role('columnheader', name='a TEXT').locator('svg')).to_have_count(1)
+    expect(page.get_by_role('columnheader', name='b INTEGER').locator('svg')).to_have_count(1)
+    row = page.get_by_role('row').filter(has=page.get_by_role('cell', name='target', exact=True))
+    expect(row).to_be_visible()
+    row.locator('button').first.click()
+    editing = page.locator('tbody tr').nth(1)
+    editing.locator('input').nth(2).fill('edited')
+    editing.locator('button').first.click()
+    expect(page.get_by_role('cell', name='edited', exact=True)).to_be_visible()
+    with sqlite3.connect(tmp_path / 'synthetic.sqlite') as db:
+        assert db.execute("SELECT b, label, typeof(big), quote(big), typeof(real_value), quote(real_value), typeof(raw), quote(raw) FROM composite ORDER BY b").fetchall() == [
+            (9007199254740992, 'sibling', 'integer', '9007199254740993', 'real', '1.0', 'blob', "X'FF'"),
+            (9007199254740993, 'edited', 'integer', '9007199254740993', 'real', '1.0', 'blob', "X'FF'")]
+    page.on('dialog', lambda dialog: dialog.accept())
+    page.get_by_role('row').filter(has=page.get_by_role('cell', name='edited', exact=True)).locator('button').last.click()
+    expect(page.get_by_role('cell', name='edited', exact=True)).to_have_count(0)
+    with sqlite3.connect(tmp_path / 'synthetic.sqlite') as db:
+        assert db.execute('SELECT b, label FROM composite').fetchall() == [(9007199254740992, 'sibling')]
 
 def test_app_loads_without_browser_errors_and_opens_sql_console(server, page):
     with guard_browser_errors(page, expected=('__console_capture_probe__',)):
@@ -325,6 +353,21 @@ def test_schema_type_select_shows_each_columns_declared_type(server, page, tmp_p
         with sqlite3.connect(tmp_path / 'synthetic.sqlite') as conn:
             assert [row[1:3] for row in conn.execute('PRAGMA table_info(typed)')] == [
                 ('id', 'INTEGER'), ('code', 'VARCHAR(20)'), ('stamp', 'DATETIME'), ('plain', ''), ('title', 'BLOB')]
+
+def test_type_change_warns_before_rebuild_and_cancel_prevents_write(server, page):
+    messages = []
+    with guard_browser_errors(page):
+        writes = record_writes(page)
+        page.on('dialog', lambda dialog: (messages.append(dialog.message), dialog.dismiss()))
+        page.goto(server)
+        page.get_by_role('button', name='typed').click()
+        page.get_by_role('button', name='Schema', exact=True).click()
+        page.locator('select').nth(4).select_option('BLOB')
+        page.get_by_role('button', name='Apply Changes').click()
+        assert len(messages) == 1
+        assert 'rebuild' in messages[0].lower()
+        assert 'back up' in messages[0].lower()
+        assert writes == []
 
 def test_enter_on_an_untouched_null_cell_writes_an_empty_string(server, page, tmp_path):
     with guard_browser_errors(page):
