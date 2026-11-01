@@ -476,9 +476,30 @@ func withCollector(_ body: (CollectorHarness) async throws -> Void) async throws
             #expect(await h.run(at: h.at(9, 4, 9, 25)).outcome == .succeeded)
             let during = try #require(try store.openEpisodes().first { $0.rule == RuleID.slower.rawValue })
             #expect(during.id == before.id && during.firedAt == before.firedAt)
+            #expect(during.worstValue == before.worstValue)
             // Each run opens a new store, exercising the persisted replay boundary.
             #expect(await h.run(at: h.at(9, 4, 9, 30)).outcome == .succeeded)
             #expect(try store.openEpisodes().first { $0.rule == RuleID.slower.rawValue }?.id == before.id)
+        }
+    }
+
+    @Test func clockRollbackDropsDiscardedStreakExtreme() async throws {
+        try await withCollector { h in
+            h.seedUsual()
+            h.source.add(h.synth.responses(11, throughput: 20, from: h.at(9, 4, 10, 50)))
+            #expect(await h.run(at: h.at(9, 4, 11)).outcome == .succeeded)
+            let store = try h.store()
+            #expect(try store.episodes(rule: RuleID.slower.rawValue).isEmpty)
+            let future = try store.evalPoints(provider: .codex, model: Synth.model, in: h.at(9, 4, 11)...h.at(9, 4, 11))
+            #expect(future.first?.speedIndex == 0.5)
+
+            try store.upsert(responses: h.synth.responses(30, throughput: 30, from: h.at(9, 4, 9)))
+            for minute in [10, 15, 20] {
+                #expect(await h.run(at: h.at(9, 4, 9, minute)).outcome == .succeeded)
+            }
+            let episode = try #require(try store.episodes(rule: RuleID.slower.rawValue).first)
+            #expect(episode.firedAt == h.at(9, 4, 9, 20))
+            #expect(approximately(episode.worstValue, 0.75))
         }
     }
 

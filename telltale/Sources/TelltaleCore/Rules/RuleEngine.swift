@@ -223,6 +223,8 @@ public final class RuleEngine {
                     if state.episodeID.map({ future.contains($0) }) == true {
                         try store.deleteRuleState(rule: rule.rawValue, provider: row.provider, scope: row.scope)
                     } else {
+                        // The extreme belongs to the discarded streak until an episode is open.
+                        if !state.machine.isOpen { state.extreme = nil }
                         state.machine.discardStreaks()
                         if let date = state.lastFailureAt, date > now { state.lastFailureAt = nil }
                         if let date = state.idleEndedAt, date > now { state.idleEndedAt = nil }
