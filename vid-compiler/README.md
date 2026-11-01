@@ -80,6 +80,7 @@ output directories when that final-path collision is undesirable.
   the same start time.
 - Random sampling is without replacement and caps a request at the available
   1,000-point grid.
+- Requesting zero samples produces only the tail segment.
 - A processing error is printed with the affected input and the remaining
   files continue. Missing matches, per-file failures, and unexpected worker
   exceptions retain the historical overall zero exit status.

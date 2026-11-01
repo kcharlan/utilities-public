@@ -90,6 +90,8 @@ def sample_start_times(
     sampling_range = max(0.0, total_duration - tail_length)
     max_start = max(0.0, sampling_range - sample_length)
     if method == "even":
+        if num_samples == 0:
+            return []
         if num_samples <= 1:
             return [0.0]
         step = max_start / (num_samples - 1)

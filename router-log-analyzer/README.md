@@ -233,6 +233,8 @@ Databases created with schema version 3 are migrated locally to schema version 4
 
 Router exports can contain device addresses, hostnames, public IP information, and administrative details. Keep real logs, reports, databases, baselines, and config exports outside this public repository. The tracked tests and examples use conspicuously synthetic data only. Use `--db` and `--report-dir` to place disposable state and reports in a private local directory when desired.
 
+The analyzer restricts its database and generated reports to mode `0600`, including when the process umask is permissive.
+
 ## Internet Reset Correlation
 
 The analyzer treats a completed internet disconnect/reconnect sequence followed by synchronized activity from known allowed devices as one network-level recovery incident. DHCP leases and successful WLAN reconnections inside the recovery window remain visible in raw report totals, but they are removed from device-level anomaly analysis so one router reset does not become dozens of independent findings.
