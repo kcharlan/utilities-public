@@ -28,6 +28,8 @@ The current implementation supports:
 
 The repo-local launcher is `./bench`. It runs via [uv](https://docs.astral.sh/uv/) (`brew install uv`) using a PEP 723 inline-metadata header; because benchmark-llm requires the repo checkout to run, the launcher adds the repo directory to `sys.path` and invokes the `benchmark_llm` package directly rather than installing it. On first run, uv resolves the dependency (PyYAML) into its shared cache.
 
+Process supervision also uses the checkout's `cognitive_switchyard/cognitive_switchyard/process_identity.py` standard-library helper; the complete utilities checkout must remain available. Repo-task non-model steps receive its directory as `BENCH_PROCESS_IDENTITY_ROOT`, set by the runner. The cron validator requires this path and fails if it is missing or invalid.
+
 Its runtime home holds only data (no venv):
 
 ```text

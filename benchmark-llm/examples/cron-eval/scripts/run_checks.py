@@ -2,10 +2,12 @@ from __future__ import annotations
 
 import json
 import os
+import select
 import signal
 import subprocess
 import sys
 import tempfile
+import time
 from collections import defaultdict
 from datetime import datetime
 from pathlib import Path
@@ -55,26 +57,59 @@ except Exception as exc:
 
 
 def _run_model(workspace: Path, inputs: list[dict[str, Any]]) -> dict[str, Any]:
-    with tempfile.TemporaryFile() as output:
-        process = subprocess.Popen(
-            [sys.executable, "-I", "-c", _MODEL_CHILD, str(workspace / "cron_eval.py")],
-            stdin=subprocess.PIPE, stdout=output, stderr=subprocess.DEVNULL,
-            env={key: os.environ[key] for key in ("PATH", "LANG", "LC_ALL", "TZ", "TMPDIR") if key in os.environ},
-            start_new_session=True,
-        )
+    helper_root_text = os.environ.get("BENCH_PROCESS_IDENTITY_ROOT", "")
+    helper_root = Path(helper_root_text)
+    if not helper_root_text or not helper_root.is_absolute() or not (helper_root / "cognitive_switchyard" / "process_identity.py").is_file():
+        raise RuntimeError("BENCH_PROCESS_IDENTITY_ROOT must point to the checkout's cognitive_switchyard directory")
+    sys.path.insert(0, str(helper_root))
+    from cognitive_switchyard.process_identity import OwnedProcessGroup, ProcessGroupInspectionError, signal_owned_group
+
+    with tempfile.TemporaryFile() as output, tempfile.TemporaryFile() as input_file:
+        input_file.write(json.dumps(inputs).encode())
+        input_file.seek(0)
+        process = None
+        group = None
+        termination_requested = False
+        cleaning_up = False
+        cleanup_allowed = True
+        previous_handler = signal.getsignal(signal.SIGTERM)
+
+        def terminate(signum, _frame):
+            nonlocal termination_requested
+            termination_requested = True
+            # During Popen, defer the exception until its returned PID is owned.
+            if group is not None and not cleaning_up:
+                raise SystemExit(128 + signum)
+
+        signal.signal(signal.SIGTERM, terminate)
         try:
-            process.communicate(json.dumps(inputs).encode(), timeout=60)
-        except BaseException:
-            try:
-                os.killpg(process.pid, signal.SIGKILL)
-            except ProcessLookupError:
-                pass
-            process.wait()
+            process = subprocess.Popen(
+                [sys.executable, "-I", "-c", _MODEL_CHILD, str(workspace / "cron_eval.py")],
+                stdin=input_file, stdout=output, stderr=subprocess.DEVNULL,
+                env={key: os.environ[key] for key in ("PATH", "LANG", "LC_ALL", "TZ", "TMPDIR") if key in os.environ},
+                start_new_session=True,
+            )
+            group = OwnedProcessGroup.capture(process)
+            if termination_requested:
+                raise SystemExit(128 + signal.SIGTERM)
+            deadline = time.monotonic() + 60
+            while os.waitid(os.P_PID, process.pid, os.WEXITED | os.WNOHANG | os.WNOWAIT) is None:
+                if time.monotonic() >= deadline:
+                    raise subprocess.TimeoutExpired(process.args, 60)
+                select.select([], [], [], 0.05)
+        except (PermissionError, ProcessGroupInspectionError):
+            cleanup_allowed = False
             raise
-        try:
-            os.killpg(process.pid, signal.SIGKILL)
-        except ProcessLookupError:
-            pass
+        finally:
+            cleaning_up = True
+            try:
+                if group is not None and cleanup_allowed:
+                    signal_owned_group(group, signal.SIGKILL)
+                    process.wait()
+            finally:
+                signal.signal(signal.SIGTERM, previous_handler)
+        if termination_requested:
+            raise SystemExit(128 + signal.SIGTERM)
         if process.returncode != 0:
             raise ValueError(f"model process exited {process.returncode}")
         output.seek(0)

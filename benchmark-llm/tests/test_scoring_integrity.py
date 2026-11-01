@@ -20,7 +20,9 @@ def test_model_environment_excludes_unrelated_tokens_and_ssh_socket():
 
 
 def test_hidden_files_are_staged_only_after_executor(tmp_path):
+    import shlex
     import subprocess
+    from benchmark_llm.execution import PROCESS_IDENTITY_ROOT
     from benchmark_llm.repo_task import run_repo_task
     from benchmark_llm.storage import ensure_runtime_layout
 
@@ -35,11 +37,11 @@ def test_hidden_files_are_staged_only_after_executor(tmp_path):
     bench = tmp_path / "benchmark"
     (bench / "hidden").mkdir(parents=True)
     (bench / "hidden" / "expected").write_text("synthetic")
-    model = "test ! -e \"$(dirname \"$(dirname \"$TASK_METRICS_PATH\")\")/hidden/expected\" && echo done > \"$WORKSPACE_ROOT/result\""
-    judge = "test -f \"$BENCH_HIDDEN_DIR/expected\" && printf '%s' '{\"summary\":{\"score_percent\":100},\"checks\":[]}' > \"$BENCH_RUN_DIR/score.json\""
+    model = "test -z \"${BENCH_PROCESS_IDENTITY_ROOT+x}\" && test ! -e \"$(dirname \"$(dirname \"$TASK_METRICS_PATH\")\")/hidden/expected\" && echo done > \"$WORKSPACE_ROOT/result\""
+    judge = f"test \"$BENCH_PROCESS_IDENTITY_ROOT\" = {shlex.quote(str(PROCESS_IDENTITY_ROOT))} && " + "test -f \"$BENCH_HIDDEN_DIR/expected\" && printf '%s' '{\"summary\":{\"score_percent\":100},\"checks\":[]}' > \"$BENCH_RUN_DIR/score.json\""
     config = {"id": "synthetic", "output_dir": str(tmp_path / "results"), "workspace": {"kind": "git_worktree", "source_repo": str(source)}, "visibility": {"hide": ["hidden/**"]}, "executor": {"command": model}, "steps": [{"name": "execute", "use_executor": True}, {"name": "judge", "run": judge}]}
     ensure_runtime_layout(tmp_path / "runtime")
-    run_dir = run_repo_task(bench, tmp_path / "runtime", "fake", {}, config=config)
+    run_dir = run_repo_task(bench, tmp_path / "runtime", "fake", {"BENCH_PROCESS_IDENTITY_ROOT": "synthetic-untrusted"}, config=config)
     assert (run_dir / "score.json").exists()
 
 
@@ -82,3 +84,21 @@ def test_cron_child_does_not_inherit_scoring_environment(tmp_path, monkeypatch):
     monkeypatch.setenv("PRIVATE_TOKEN", "synthetic")
     result = validator._run_model(workspace, [{"after": "2026-01-01T00:00:00+00:00"}])
     assert result["results"] == [{"kind": "fires", "value": []}]
+
+
+def test_cron_validator_requires_identity_helper(tmp_path, monkeypatch):
+    import importlib.util
+    from pathlib import Path
+    import pytest
+
+    script = Path(__file__).resolve().parents[1] / "examples/cron-eval/scripts/run_checks.py"
+    spec = importlib.util.spec_from_file_location("synthetic_validator_missing_helper", script)
+    validator = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(validator)
+    for value in (None, "relative/path", str(tmp_path / "missing")):
+        if value is None:
+            monkeypatch.delenv("BENCH_PROCESS_IDENTITY_ROOT", raising=False)
+        else:
+            monkeypatch.setenv("BENCH_PROCESS_IDENTITY_ROOT", value)
+        with pytest.raises(RuntimeError, match="BENCH_PROCESS_IDENTITY_ROOT"):
+            validator._run_model(tmp_path, [])

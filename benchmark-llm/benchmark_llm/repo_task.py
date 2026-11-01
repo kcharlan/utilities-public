@@ -10,7 +10,7 @@ from typing import Any, Callable
 
 import yaml
 
-from .execution import run_command
+from .execution import PROCESS_IDENTITY_ROOT, run_command
 from .metrics import aggregate_metrics
 from .reporting import write_report
 from .storage import record_run, write_json, write_jsonl
@@ -653,6 +653,7 @@ def run_repo_task(
                                 "BENCH_BENCHMARK_DIR": str(benchmark_dir),
                                 "BENCH_WORKSPACE": str(workspace),
                                 "BENCH_HIDDEN_DIR": str(hidden_stage_dir),
+                                "BENCH_PROCESS_IDENTITY_ROOT": str(PROCESS_IDENTITY_ROOT),
                                 "BENCH_COMMAND_METRICS_PATH": str(metrics_path),
                             },
                         )
