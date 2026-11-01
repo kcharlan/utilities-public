@@ -34,6 +34,8 @@ public struct EpisodeRow: Sendable, Equatable, Hashable {
         public static let ruleDisabled = "ruleDisabled"
         /// A speed episode reversed silently; this is not a clear.
         public static let reversed = "reversed"
+        /// An episode from a future clock reading was closed during clock rollback recovery.
+        public static let clockRollback = "clockRollback"
     }
 
     public var id: Int64?
@@ -275,14 +277,23 @@ extension Store {
     /// Inserts points; a point already stored for the same provider, model and time is an error,
     /// since history is written once.
     public func insertEvalPoints(_ points: [EvalPointRow]) throws {
+        try insertEvalPoints(points, preservingThrough: nil)
+    }
+
+    func insertEvalPoints(_ points: [EvalPointRow], preservingThrough: Date?) throws {
         guard !points.isEmpty else { return }
         try transaction {
             let statement = try prepare("""
                 INSERT INTO eval_points (provider, model, at, speed_index, mix_usual_tps, median_tps, samples, state)
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?)
                 """)
+            let replay = try prepare("""
+                INSERT INTO eval_points (provider, model, at, speed_index, mix_usual_tps, median_tps, samples, state)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(provider, model, at) DO NOTHING
+                """)
             for point in points {
-                try statement.run([
+                let target = preservingThrough.map { point.at <= $0 } == true ? replay : statement
+                try target.run([
                     .text(point.provider.rawValue), .text(point.model), .date(point.at),
                     point.speedIndex.map(SQLValue.double) ?? .null, point.mixUsual.map(SQLValue.double) ?? .null,
                     point.medianTPS.map(SQLValue.double) ?? .null, .integer(point.samples), .text(point.state.rawValue),
@@ -316,6 +327,17 @@ extension Store {
 
     func setLastEvaluatedPoint(_ point: Date, unit key: String) throws {
         try setRuleState(rule: Self.engineRule, provider: key, scope: "lastPoint", json: try StoreJSON.encode(point))
+    }
+
+    func clockCatchupThrough(unit key: String) throws -> Date? {
+        guard let json = try ruleState(rule: Self.engineRule, provider: key, scope: "clockCatchupThrough") else { return nil }
+        do { return try StoreJSON.decode(Date.self, from: json) }
+        catch { throw StoreError.invalidData("Unreadable clock catch-up point") }
+    }
+
+    func setClockCatchupThrough(_ point: Date?, unit key: String) throws {
+        if let point { try setRuleState(rule: Self.engineRule, provider: key, scope: "clockCatchupThrough", json: try StoreJSON.encode(point)) }
+        else { try deleteRuleState(rule: Self.engineRule, provider: key, scope: "clockCatchupThrough") }
     }
 
     public func backfill(unit key: String) throws -> ProviderBackfill? {

@@ -316,7 +316,16 @@ public struct CollectorRun: Sendable {
                     let settled = try store.settleFailedTurns(before: backfillFrom, provider: provider)
                     if settled > 0 { log.write("Settled \(settled) failed turn(s) from before the lookback without counting them", at: now) }
                 }
-                let points = EvaluationPoints.after(try store.lastEvaluatedPoint(unit: unit.key), through: now, earliest: backfillFrom)
+                var last = try store.lastEvaluatedPoint(unit: unit.key)
+                if let previous = last, previous > now {
+                    // A clock correction must not suspend evaluations until the old clock catches up.
+                    let current = (now.timeIntervalSince1970 / EvaluationPoints.cadence).rounded(.down) * EvaluationPoints.cadence
+                    let reset = Date(timeIntervalSince1970: current - EvaluationPoints.cadence)
+                    try engine.recoverClock(unit: unit.key, now: now, previous: previous, reset: reset)
+                    log.write("\(unit.key): clock moved backwards; resuming evaluation at the current point", at: now)
+                    last = reset
+                }
+                let points = EvaluationPoints.after(last, through: now, earliest: backfillFrom)
                 var backfilled = 0
                 for (index, start) in stride(from: 0, to: points.count, by: CollectorRun.pointsPerChunk).enumerated() {
                     let chunk = Array(points[start..<min(start + CollectorRun.pointsPerChunk, points.count)])

@@ -98,10 +98,11 @@ import UserNotifications
         guard let (report, inputs, at) = await assess() else { return nil }
         do {
             if report.lamp != .red, !report.heldAfterWake {
-                do { try Store.open(paths.database, mode: .readWriteExisting).set(.collectorAcknowledgement, nil) }
+                let database = paths.database
+                do { try await Task.detached { try Store.open(database, mode: .readWriteExisting).set(.collectorAcknowledgement, nil) }.value }
                 catch StoreError.notInitialized { }
             }
-            if !databaseUnreadable, let held = heldNotice { try save(held) }
+            if !databaseUnreadable, let held = heldNotice { try await save(held) }
             try await advanceEpisode(report, enabled: inputs.enabled, rule: inputs.rule, notice: inputs.notice, at: at)
         } catch {
             lastError = error.localizedDescription
@@ -172,13 +173,13 @@ import UserNotifications
         // The collector off by choice, or the rule off, ends an open episode silently: neither is a recovery.
         guard enabled, rule.enabled else {
             unconfirmed = false
-            if notice != nil { try save(nil) }
+            if notice != nil { try await save(nil) }
             return
         }
         guard let text = report.notice else {
             unconfirmed = false
             guard let notice, !report.heldAfterWake else { return }
-            try save(nil)
+            try await save(nil)
             if rule.notifyOnClear {
                 try await post(
                     id: Self.identifier(notice, "cleared"), title: Copy.clearedTitle(CollectorHealth.title), body: Copy.collectorRecovered, restoring: notice)
@@ -191,7 +192,7 @@ import UserNotifications
             return
         }
         let opened = HealthNoticeState(problem: text, notifiedAt: at)
-        try save(opened)
+        try await save(opened)
         if rule.notify {
             try await post(
                 id: Self.identifier(opened, "fired"), title: Copy.alertTitle(CollectorHealth.title, lamp: .red), body: opened.problem, restoring: nil)
@@ -209,7 +210,7 @@ import UserNotifications
         do {
             try await service.post(NativeNotificationPoster.request(for: notification))
         } catch {
-            try? save(previous)
+            try? await save(previous)
             throw error
         }
     }
@@ -245,13 +246,14 @@ import UserNotifications
 
     /// Writes the notice through a short-lived connection to the existing database, as the app does
     /// for settings; while storage is missing or unreadable, holds the notice in memory instead.
-    private func save(_ notice: HealthNoticeState?) throws {
+    private func save(_ notice: HealthNoticeState?) async throws {
         if databaseUnreadable {
             heldNotice = .some(notice)
             return
         }
         do {
-            try Store.open(paths.database, mode: .readWriteExisting).set(.collectorHealthNotice, notice)
+            let database = paths.database
+            try await Task.detached { try Store.open(database, mode: .readWriteExisting).set(.collectorHealthNotice, notice) }.value
             heldNotice = nil
         } catch StoreError.notInitialized {
             heldNotice = .some(notice)

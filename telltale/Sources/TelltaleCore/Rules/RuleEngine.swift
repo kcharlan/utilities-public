@@ -186,18 +186,51 @@ public final class RuleEngine {
         guard let first = pending.first, let final = pending.last else { return [] }
         do {
             return try store.transaction {
+                let catchup = try store.clockCatchupThrough(unit: unit.key)
                 let pass = try EvaluationPass(
                     engine: self, settings: settings, first: first, final: final, unit: unit,
-                    watchedComponents: Set(watchedComponents))
+                    watchedComponents: Set(watchedComponents), preservingThrough: catchup)
                 for point in pending { try pass.evaluate(at: point) }
                 try pass.finish()
                 try store.setLastEvaluatedPoint(final, unit: unit.key)
+                if let catchup, final >= catchup { try store.setClockCatchupThrough(nil, unit: unit.key) }
                 return pass.outcomes
             }
         } catch {
             // Tables cached while the rolled-back episodes existed are no longer true.
             baseline.discardCache()
             throw error
+        }
+    }
+
+    /// Rewind only clock-dependent active state; retain legitimate open episodes and history.
+    func recoverClock(unit: String, now: Date, previous: Date, reset: Date) throws {
+        try store.transaction {
+            let existing = try store.clockCatchupThrough(unit: unit)
+            try store.setClockCatchupThrough(max(previous, existing ?? previous), unit: unit)
+            let episodes = try store.openEpisodes(unit: unit)
+            let future = Set(episodes.filter { $0.firedAt > now || $0.onset > now }.compactMap(\.id))
+            for var episode in episodes where episode.id.map({ future.contains($0) }) == true {
+                episode.endedAt = max(episode.onset, episode.firedAt)
+                episode.endReason = EpisodeRow.EndReason.clockRollback
+                try store.updateEpisode(episode)
+            }
+            for rule in RuleID.allCases {
+                for row in try store.ruleStates(rule: rule.rawValue, unit: unit) {
+                    var state: ScopeState
+                    do { state = try StoreJSON.decode(ScopeState.self, from: row.json) }
+                    catch { throw StoreError.invalidData("Unreadable rule state for \(rule.rawValue) \(row.provider) \(row.scope)") }
+                    if state.episodeID.map({ future.contains($0) }) == true {
+                        try store.deleteRuleState(rule: rule.rawValue, provider: row.provider, scope: row.scope)
+                    } else {
+                        state.machine.discardStreaks()
+                        if let date = state.lastFailureAt, date > now { state.lastFailureAt = nil }
+                        if let date = state.idleEndedAt, date > now { state.idleEndedAt = nil }
+                        try store.setRuleState(rule: rule.rawValue, provider: row.provider, scope: row.scope, json: try StoreJSON.encode(state))
+                    }
+                }
+            }
+            try store.setLastEvaluatedPoint(reset, unit: unit)
         }
     }
 }
@@ -306,6 +339,7 @@ private final class EvaluationPass {
     private let statusUnavailable: Bool
     /// The first instant preloaded responses cover: a day before the first point, for incident titles.
     private let preloadStart: Date
+    private let preservingThrough: Date?
 
     private(set) var outcomes: [RuleOutcome] = []
     private var states: [StateKey: ScopeState] = [:]
@@ -328,7 +362,7 @@ private final class EvaluationPass {
 
     init(
         engine: RuleEngine, settings: RuleSettings, first: Date, final: Date, unit: EvaluationUnit,
-        watchedComponents: Set<String>
+        watchedComponents: Set<String>, preservingThrough: Date?
     ) throws {
         store = engine.store
         baseline = engine.baseline
@@ -336,6 +370,7 @@ private final class EvaluationPass {
         naming = engine.naming
         providerInfo = engine.providerInfo
         self.settings = settings
+        self.preservingThrough = preservingThrough
         let providers: [ProviderID]
         let seriesProviders: [ProviderID]
         let statusSources: [RuleStatusSource]
@@ -444,7 +479,7 @@ private final class EvaluationPass {
                 try store.deleteRuleState(rule: key.rule.rawValue, provider: key.provider, scope: key.scope)
             }
         }
-        try store.insertEvalPoints(points)
+        try store.insertEvalPoints(points, preservingThrough: preservingThrough)
     }
 
     /// Ends every open episode of a disabled rule at `point` with `ruleDisabled` and drops that

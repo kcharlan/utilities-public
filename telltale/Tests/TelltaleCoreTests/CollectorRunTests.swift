@@ -423,6 +423,81 @@ func withCollector(_ body: (CollectorHarness) async throws -> Void) async throws
         }
     }
 
+    @Test func futureEvaluationDoesNotPreventCurrentEvaluation() async throws {
+        try await withCollector { h in
+            let now = h.at(9, 4, 10)
+            #expect(await h.run(at: now.addingTimeInterval(3_600)).outcome == .succeeded)
+            #expect(await h.run(at: now).outcome == .succeeded)
+            let store = try h.store()
+            #expect(try store.lastEvaluatedPoint(unit: "codex") == now)
+            #expect(await h.run(at: now.addingTimeInterval(300)).outcome == .succeeded)
+            #expect(try store.lastEvaluatedPoint(unit: "codex") == now.addingTimeInterval(300))
+        }
+    }
+
+    @Test func clockRollbackPreservesPointsAndRestartsFutureEpisode() async throws {
+        try await withCollector { h in
+            h.seedUsual()
+            h.seedSlowdown()
+            #expect(await h.run(at: h.at(9, 4, 9)).outcome == .succeeded)
+            let future = h.at(9, 4, 9, 20)
+            #expect(await h.run(at: future).outcome == .succeeded)
+            let store = try h.store()
+            let before = try store.episodes(rule: RuleID.slower.rawValue)
+            #expect(before.count == 1 && before[0].endedAt == nil)
+            let postedBeforeRollback = await h.notifier.posted.count
+            let current = h.at(9, 4, 9, 10)
+            let points = try store.evalPoints(provider: .codex, model: Synth.model, in: current...future)
+            let existingPoint = try #require(points.first)
+            #expect(await h.run(at: current).outcome == .succeeded)
+            #expect(try store.evalPoints(provider: .codex, model: Synth.model, in: current...future) == points)
+            #expect(try store.openEpisodes().filter { $0.rule == RuleID.slower.rawValue }.isEmpty)
+            let closed = try #require(try store.episodes(rule: RuleID.slower.rawValue).first)
+            #expect(closed.endReason == EpisodeRow.EndReason.clockRollback)
+            #expect(closed.endedAt == max(closed.onset, closed.firedAt))
+            #expect(await h.notifier.posted.count == postedBeforeRollback)
+            #expect(await h.run(at: h.at(9, 4, 9, 15)).outcome == .succeeded)
+            #expect(await h.run(at: future).outcome == .succeeded)
+            let after = try store.episodes(rule: RuleID.slower.rawValue)
+            #expect(after.count == 2 && after.last?.endedAt == nil)
+            #expect(await h.notifier.posted.count == postedBeforeRollback + 1)
+            #expect(try store.clockCatchupThrough(unit: "codex") == nil)
+            #expect(throws: StoreError.self) { try store.insertEvalPoints([existingPoint]) }
+        }
+    }
+
+    @Test func clockRollbackPreservesPastOpenEpisodeAcrossRuns() async throws {
+        try await withCollector { h in
+            h.seedUsual()
+            h.seedSlowdown()
+            #expect(await h.run(at: h.at(9, 4, 9, 30)).outcome == .succeeded)
+            let store = try h.store()
+            let before = try #require(try store.openEpisodes().first { $0.rule == RuleID.slower.rawValue })
+            #expect(await h.run(at: h.at(9, 4, 9, 25)).outcome == .succeeded)
+            let during = try #require(try store.openEpisodes().first { $0.rule == RuleID.slower.rawValue })
+            #expect(during.id == before.id && during.firedAt == before.firedAt)
+            // Each run opens a new store, exercising the persisted replay boundary.
+            #expect(await h.run(at: h.at(9, 4, 9, 30)).outcome == .succeeded)
+            #expect(try store.openEpisodes().first { $0.rule == RuleID.slower.rawValue }?.id == before.id)
+        }
+    }
+
+    @Test func clockRollbackDiscardsFuturePartialStreak() async throws {
+        try await withCollector { h in
+            h.seedUsual()
+            h.seedSlowdown()
+            #expect(await h.run(at: h.at(9, 4, 9, 10)).outcome == .succeeded)
+            let store = try h.store()
+            #expect(try store.episodes(rule: RuleID.slower.rawValue).isEmpty)
+            #expect(await h.run(at: h.at(9, 4, 9, 5)).outcome == .succeeded)
+            #expect(await h.run(at: h.at(9, 4, 9, 10)).outcome == .succeeded)
+            #expect(await h.run(at: h.at(9, 4, 9, 15)).outcome == .succeeded)
+            #expect(try store.episodes(rule: RuleID.slower.rawValue).isEmpty)
+            #expect(await h.run(at: h.at(9, 4, 9, 20)).outcome == .succeeded)
+            #expect(try store.episodes(rule: RuleID.slower.rawValue).count == 1)
+        }
+    }
+
     @Test func freshDatabaseBackfillsBothWithoutAnnouncing() async throws {
         try await withCollector { h in
             let other = FakeUsageSource(provider: ProviderID(rawValue: "synthetic-other"), displayName: "Synthetic Other")

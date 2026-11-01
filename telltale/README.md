@@ -2,7 +2,7 @@
 
 ## Purpose
 
-Telltale 0.3.3 is a native macOS menu bar app that watches Codex and Claude Code usage metadata
+Telltale 0.3.4 is a native macOS menu bar app that watches Codex and Claude Code usage metadata
 and OpenAI and Claude service status and tells you when something is off. The design is in
 [`docs/telltale_design_spec.md`](docs/telltale_design_spec.md), the visual rules in
 [`docs/telltale_visual_design.md`](docs/telltale_visual_design.md), and the Claude provider
@@ -380,7 +380,7 @@ these checks by hand on `make acceptance`'s bundle (and the installed release wh
 and record each one separately, with the date and macOS build. One missed press fails the
 check.
 
-- After authorized deployment, exercise a speed reversal and check the replacement alert is new and shows its worst deviation. During a fresh evaluation compare each row with its terminal sparkline value. Check the panel footer, dashboard sidebar and installed Info.plist show 0.3.3, with build 8 in help.
+- After authorized deployment, exercise a speed reversal and check the replacement alert is new and shows its worst deviation. During a fresh evaluation compare each row with its terminal sparkline value. Check the panel footer, dashboard sidebar and installed Info.plist show 0.3.4, with build 9 in help.
 - Status item dot, Light and Dark bars: a new alert shows a filled dot and an acknowledged one a ring whose hollow centre is plain at a glance; Mark as new fills it again.
 - VoiceOver reads the version in the panel footer and dashboard sidebar; hovering each shows the build number.
 - Lens glyph, amber dot and accessibility label. Press the status item repeatedly, slowly
