@@ -283,18 +283,17 @@ def run_planning_phase(
                         "planner_task_id": planner_task_id,
                     })
                 except ArtifactParseError:
-                    # Planner returned unparseable output.  Before creating an
-                    # error entry, check whether the agent already wrote plan
-                    # files directly (agent did its own file I/O).  If so, the
-                    # return text is just a conversational summary — skip it.
+                    # The agent may have written plans directly and returned a
+                    # summary. Catalogue matches, but preserve the input because
+                    # matches can also come from other planner invocations.
                     task_prefix = _safe_intake_prefix(claimed_path)
                     agent_wrote_files = (
                         any(session_paths.staging.glob(f"{task_prefix}*.plan.md"))
                         or any(session_paths.review.glob(f"{task_prefix}*.plan.md"))
                     )
                     if agent_wrote_files:
-                        # Agent handled file management itself.  Catalogue what
-                        # it wrote so the pipeline accounts for the files.
+                        # Catalogue matching plans, but retain the input: their
+                        # existence does not prove this invocation wrote them.
                         for p in sorted(session_paths.review.glob(f"{task_prefix}*.plan.md")):
                             tid = p.name.removesuffix(".plan.md")
                             with lock:
@@ -307,7 +306,7 @@ def run_planning_phase(
                                 if tid not in staged_task_ids:
                                     staged_task_ids.append(tid)
                             _emit("file_planned", {"task_id": tid, "destination": "staging"})
-                        claimed_path.unlink(missing_ok=True)
+                        _preserve_failed_intake(claimed_path, session_paths.root)
                         _emit("planner_finished", {
                             "file": claimed_path.name,
                             "planner_task_id": planner_task_id,

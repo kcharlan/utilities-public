@@ -1288,3 +1288,39 @@ def test_invalid_resolver_output_moves_plans_to_review(tmp_path: Path) -> None:
                                   resolver_agent=lambda **kwargs: "not json", env={"COGNITIVE_SWITCHYARD_REPO_ROOT": str(tmp_path)})
     assert result.conflicts
     assert (session_paths.review / "001.plan.md").exists()
+
+
+@pytest.mark.parametrize(
+    ("first_name", "first_plan_id"),
+    [("001_first.md", "001"), ("000_first.md", "0010")],
+    ids=["matching-prefix", "overlapping-prefix"],
+)
+def test_unparseable_planner_result_retains_intake_when_existing_plan_matches_prefix(
+    tmp_path: Path, first_name: str, first_plan_id: str,
+) -> None:
+    store, runtime_paths = _build_store(tmp_path)
+    session = store.create_session(
+        session_id="fallback-retention", name="Fallback retention", pack="planning-pack",
+        created_at="2026-03-09T10:00:00Z",
+    )
+    pack_root = _write_pack(tmp_path, name="planning-pack", planning_enabled=True)
+    session_paths = runtime_paths.session_paths(session.id)
+    _write_intake(session_paths.intake, first_name, "# First task\n")
+    failed_bytes = b"# Later synthetic task\n\nKeep these bytes.\n"
+    (session_paths.intake / "001_later.md").write_bytes(failed_bytes)
+
+    def planner_agent(*, intake_path: Path, **_: object) -> str:
+        if intake_path.name == first_name:
+            return _staged_plan_text(first_plan_id)
+        return "unparseable planner output"
+
+    result = run_planning_phase(
+        store=store, session_id=session.id, pack_manifest=load_pack_manifest(pack_root),
+        planner_agent=planner_agent, effective_planner_count=1,
+        env={"COGNITIVE_SWITCHYARD_REPO_ROOT": str(tmp_path)},
+    )
+
+    assert first_plan_id in result.staged_task_ids
+    assert (session_paths.staging / f"{first_plan_id}.plan.md").is_file()
+    assert (session_paths.root / "intake_failed" / "001_later.md").read_bytes() == failed_bytes
+    assert not any(session_paths.claimed.iterdir())

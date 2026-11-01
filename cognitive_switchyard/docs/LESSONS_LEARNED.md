@@ -1,5 +1,10 @@
 # Lessons Learned
 
+## Planner Fallbacks Must Retain Inputs
+
+- What went wrong: A matching plan file was treated as proof that a failed planner invocation had handled its input, although another invocation could have created it.
+- Pattern to follow instead: Retain the original input whenever planner output cannot be parsed, including when existing plan names match its prefix.
+
 ## Process Groups and Inherited Pipes
 
 - What went wrong: Terminating a wrapper left descendants running and holding its output pipes open, so joining readers could stall the orchestrator.
