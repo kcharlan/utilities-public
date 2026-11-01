@@ -1426,6 +1426,7 @@ def test_dashboard_payload_includes_configured_idle_workers_and_latest_runtime_p
         status="running",
         started_at=_timestamp_offset(seconds=-120),
     )
+    store.write_session_runtime_state(session.id, active_clock_version=1)
     _register_task(store, session.id, task_id="002", title="Active task")
     store.project_task(
         session.id,
@@ -2669,10 +2670,16 @@ def test_worker_idle_state_publishes_immediately_when_activity_advances_even_ins
 def test_session_start_broadcasts_status_transitions_over_websocket(
     tmp_path: Path,
     repo_root: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Starting a session with planning must push at least one state_update
     showing planning status to the WebSocket before execution begins.
     This is the scenario where the user saw 'planning' but the Monitor was blank."""
+    from types import SimpleNamespace
+    from cognitive_switchyard import orchestrator
+
+    plan = "---\nPLAN_ID: 001\nPRIORITY: normal\nESTIMATED_SCOPE: synthetic.py\nDEPENDS_ON: none\nFULL_TEST_AFTER: no\n---\n\n# Synthetic task\n\nImplement synthetic task.\n"
+    monkeypatch.setattr(orchestrator, "build_agent_runtime", lambda *_args, **_kwargs: SimpleNamespace(planner_agent=lambda **_kwargs: plan))
     store, runtime_paths = _build_store(tmp_path)
     _write_fixture_runtime_pack(
         runtime_paths,
@@ -2724,9 +2731,12 @@ def test_session_start_broadcasts_status_transitions_over_websocket(
         name="Start Transitions",
         pack="claude-code",
         created_at="2026-03-09T10:00:00Z",
+        config_json=json.dumps({"environment": {"COGNITIVE_SWITCHYARD_REPO_ROOT": str(tmp_path)}}),
     )
     session_paths = runtime_paths.session_paths(session.id)
     (session_paths.intake / "001_task.md").write_text("# Task 1\n", encoding="utf-8")
+    marker = session_paths.root / "synthetic-workspace-marker"
+    marker.write_text("preserve")
 
     app = create_app(store=store, runtime_paths=runtime_paths)
 
@@ -2739,12 +2749,16 @@ def test_session_start_broadcasts_status_transitions_over_websocket(
             seen_statuses = set()
             seen_pipeline_events = False
             for _ in range(64):
-                msg = websocket.receive_json()
+                future = websocket.portal.start_task_soon(websocket._send_rx.receive)
+                try:
+                    msg = json.loads(future.result(timeout=10)["text"])
+                finally:
+                    future.cancel()
                 if msg["type"] == "state_update":
                     status = msg["data"]["session"]["status"]
                     seen_statuses.add(status)
                     # If we see "idle" or "aborted", stop
-                    if status in {"idle", "aborted"}:
+                    if status in {"idle", "aborted", "paused"}:
                         break
 
             # We must have seen "planning" status at some point
@@ -2752,6 +2766,8 @@ def test_session_start_broadcasts_status_transitions_over_websocket(
                 f"Expected to see 'planning' or 'running' status in WebSocket updates, "
                 f"but only saw: {seen_statuses}"
             )
+            assert "idle" in seen_statuses, seen_statuses
+            assert marker.read_text() == "preserve"
 
 
 def test_session_creation_seeds_intake_claude_md_from_pack_prompt(tmp_path: Path) -> None:
@@ -3308,7 +3324,7 @@ def test_build_dashboard_payload_run_elapsed_nonzero_during_active_statuses(
     )
     run_started_at = _timestamp_offset(seconds=-30)
     store.update_session_status(session.id, status=active_status, started_at=run_started_at)
-    store.write_session_runtime_state(session.id, run_number=1, run_started_at=run_started_at)
+    store.write_session_runtime_state(session.id, run_number=1, run_started_at=run_started_at, active_clock_version=1)
 
     payload = build_dashboard_payload(store, session.id, runtime_paths=runtime_paths)
 
@@ -3373,6 +3389,7 @@ def test_build_dashboard_payload_cumulative_elapsed_includes_run_during_planning
         run_number=2,
         run_started_at=run_started_at,
         accumulated_elapsed_seconds=100,
+        active_clock_version=1,
     )
 
     payload = build_dashboard_payload(store, session.id, runtime_paths=runtime_paths)
@@ -4362,3 +4379,41 @@ def test_dag_endpoint_joins_task_titles_and_statuses(tmp_path: Path) -> None:
     # A node the store does not know keeps only its graph fields.
     assert "title" not in resolved_nodes["999"]
     assert "status" not in resolved_nodes["999"]
+
+
+def test_dashboard_timers_add_checkpoint_and_live_interval_without_writes(tmp_path: Path, monkeypatch) -> None:
+    from cognitive_switchyard import server
+    store, paths = _build_store(tmp_path)
+    _write_runtime_pack(paths)
+    store.create_session(session_id="synthetic", name="Synthetic", pack="claude-code", created_at="2026-01-01T00:00:00Z")
+    store.write_session_runtime_state("synthetic", run_number=1, run_started_at="2026-01-01T00:00:00Z", accumulated_elapsed_seconds=32, last_run_elapsed_seconds=12, active_clock_version=1)
+    store.update_session_status("synthetic", status="running")
+    monkeypatch.setattr(server, "_elapsed_seconds", lambda _: 4)
+    before = store.get_session("synthetic")
+    payload = server.build_dashboard_payload(store, "synthetic", runtime_paths=paths)
+    assert payload["session"]["run_elapsed"] == 16
+    assert payload["session"]["elapsed"] == 36
+    assert store.get_session("synthetic") == before
+    for status in ("paused", "idle", "completed"):
+        store.update_session_status("synthetic", status=status)
+        before = store.get_session("synthetic")
+        payload = server.build_dashboard_payload(store, "synthetic", runtime_paths=paths)
+        assert payload["session"]["run_elapsed"] == 12
+        assert payload["session"]["elapsed"] == 32
+        assert store.get_session("synthetic") == before
+
+
+def test_dashboard_ignores_previous_run_elapsed_in_legacy_active_session(tmp_path: Path, monkeypatch) -> None:
+    from cognitive_switchyard import server
+    store, paths = _build_store(tmp_path)
+    _write_runtime_pack(paths)
+    store.create_session(session_id="legacy", name="Synthetic", pack="claude-code", created_at="2026-01-01T00:00:00Z")
+    store.write_session_runtime_state("legacy", run_number=2, run_started_at="2026-01-01T00:00:00Z", accumulated_elapsed_seconds=32, last_run_elapsed_seconds=12)
+    store.update_session_status("legacy", status="running")
+    monkeypatch.setattr(server, "_elapsed_seconds", lambda _: 4)
+    before = store.get_session("legacy")
+    payload = server.build_dashboard_payload(store, "legacy", runtime_paths=paths)
+    assert payload["session"]["run_elapsed"] == 0
+    assert payload["session"]["elapsed"] == 32
+    assert store.get_session("legacy") == before
+    assert store.session_clock_version("legacy") == 0

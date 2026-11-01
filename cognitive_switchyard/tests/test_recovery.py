@@ -706,7 +706,7 @@ def test_restart_from_verifying_or_auto_fixing_replays_verification_without_dupl
     assert [event.task_id for event in events if event.event_type == "task.completed"] == ["302"]
 
 
-def test_restart_from_auto_fixing_task_failure_replays_verification_and_keeps_task_context(
+def test_restart_from_auto_fixing_task_failure_pauses_without_verified_fixer_identity(
     tmp_path: Path,
 ) -> None:
     from cognitive_switchyard.models import FixerAttemptResult
@@ -800,21 +800,13 @@ def test_restart_from_auto_fixing_task_failure_replays_verification_and_keeps_ta
 
     completed_events = [event.task_id for event in store.list_events(session.id) if event.event_type == "task.completed"]
 
-    assert result.session_status == "idle"
-    assert store.get_task(session.id, "401").status == "done"
-    assert store.get_task(session.id, "402").status == "done"
-    assert fixer_contexts == [
-        (
-            "task_failure",
-            "401",
-            2,
-            "Previous fixer summary:\nAttempted fix one.\n\n"
-            "Try a DIFFERENT approach. The previous fixer's changes are already committed.",
-            "verification-fail\n",
-        ),
-    ]
-    assert trace_path.read_text(encoding="utf-8").splitlines() == ["run:402"]
-    assert completed_events == ["401", "402"]
+    assert result.session_status == "paused"
+    assert store.get_task(session.id, "401").status == "ready"
+    assert store.get_task(session.id, "402").status == "ready"
+    assert fixer_contexts == []
+    assert not trace_path.exists()
+    assert completed_events == []
+    assert store.get_session(session.id).runtime_state.auto_fix_task_id == "401"
 
 
 def test_cleanup_orphaned_workspaces_removes_workspace_when_plan_file_missing(tmp_path: Path) -> None:
@@ -1193,3 +1185,114 @@ def test_failed_orphan_cleanup_preserves_workspace_outside_workers(tmp_path: Pat
     result = recover_execution_session(store=store, session_id=session.id, pack_manifest=load_pack_manifest(pack))
     assert (workspace / 'keep').read_text() == 'safe'
     assert any('left non-session workspace' in warning for warning in result.warnings)
+
+
+def test_recovery_protects_autofix_workspace_checkpoint(tmp_path: Path) -> None:
+    from cognitive_switchyard.recovery import recover_execution_session
+    store, paths = _build_store(tmp_path)
+    store.create_session(session_id="synthetic", name="Synthetic", pack="test", created_at="2026-01-01T00:00:00Z")
+    _register_task(store, session_id="synthetic", task_id="001")
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    marker = workspace / "unmerged"
+    marker.write_text("synthetic work")
+    store.write_worker_recovery_metadata("synthetic", slot_number=0, task_id="001", workspace_path=workspace, pid=None)
+    store.write_session_runtime_state("synthetic", verification_pending=True, auto_fix_context="task_failure", auto_fix_task_id="001", auto_fix_attempt=1)
+    store.update_session_status("synthetic", status="verifying")
+    hook_marker = tmp_path / "cleanup-called"
+    pack = load_pack_manifest(_write_pack(tmp_path, name="protected-pack", isolate_end=f"#!/bin/sh\ntouch '{hook_marker}'\n"))
+    recover_execution_session(store=store, session_id="synthetic", pack_manifest=pack)
+    assert marker.read_text() == "synthetic work"
+    assert not hook_marker.exists()
+    assert store.read_worker_recovery_metadata("synthetic", slot_number=0).workspace_path == workspace
+
+
+def test_recovered_isolated_autofix_verifies_workspace_before_merge(tmp_path: Path) -> None:
+    from cognitive_switchyard.orchestrator import execute_session
+    store, paths = _build_store(tmp_path)
+    store.create_session(session_id="synthetic", name="Synthetic", pack="test", created_at="2026-01-01T00:00:00Z")
+    _register_task(store, session_id="synthetic", task_id="001")
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    (workspace / "synthetic-work").write_text("work")
+    merge_marker = tmp_path / "merged"
+    store.write_worker_recovery_metadata("synthetic", slot_number=0, task_id="001", workspace_path=workspace, pid=None)
+    store.write_session_runtime_state("synthetic", verification_pending=True, auto_fix_context="task_failure", auto_fix_task_id="001", auto_fix_attempt=1)
+    store.update_session_status("synthetic", status="verifying", started_at="2026-01-01T00:00:00Z")
+    pack = load_pack_manifest(_write_pack(tmp_path, name="reverify-pack", verification_enabled=True, verification_command="test -f synthetic-work", auto_fix_enabled=True, isolate_end=f"#!/bin/sh\nprintf '%s' \"$4\" > '{merge_marker}'\n"))
+    result = execute_session(store=store, session_id="synthetic", pack_manifest=pack, fixer_executor=lambda _: None, poll_interval=0.01)
+    assert result.session_status == "idle"
+    assert store.get_task("synthetic", "001").status == "done"
+    assert merge_marker.read_text() == "done"
+    assert store.read_worker_recovery_metadata("synthetic", slot_number=0) is None
+
+
+def test_recovered_inflight_fixer_with_unknown_identity_pauses(tmp_path: Path) -> None:
+    from cognitive_switchyard.orchestrator import execute_session
+    store, _ = _build_store(tmp_path)
+    store.create_session(session_id="synthetic", name="Synthetic", pack="test", created_at="2026-01-01T00:00:00Z")
+    _register_task(store, session_id="synthetic", task_id="001")
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    (workspace / "work").write_text("synthetic")
+    store.write_worker_recovery_metadata("synthetic", slot_number=0, task_id="001", workspace_path=workspace, pid=None)
+    store.write_session_runtime_state("synthetic", verification_pending=True, auto_fix_context="task_failure", auto_fix_task_id="001", auto_fix_attempt=1)
+    store.update_session_status("synthetic", status="auto_fixing", started_at="2026-01-01T00:00:00Z")
+    pack = load_pack_manifest(_write_pack(tmp_path, name="unknown-fixer", verification_enabled=True, verification_command="true", auto_fix_enabled=True, isolate_end="#!/bin/sh\nexit 0\n"))
+    result = execute_session(store=store, session_id="synthetic", pack_manifest=pack, fixer_executor=lambda _: (_ for _ in ()).throw(AssertionError("duplicate fixer")), poll_interval=0.01)
+    assert result.session_status == "paused"
+    assert (workspace / "work").read_text() == "synthetic"
+    assert store.read_worker_recovery_metadata("synthetic", slot_number=0) is not None
+    store.update_session_status("synthetic", status="running")
+    result = execute_session(store=store, session_id="synthetic", pack_manifest=pack, fixer_executor=lambda _: (_ for _ in ()).throw(AssertionError("duplicate fixer")), poll_interval=0.01)
+    assert result.session_status == "paused"
+    assert store.get_task("synthetic", "001").status == "ready"
+
+
+def test_recovered_autofix_retries_in_original_workspace(tmp_path: Path) -> None:
+    from functools import partial
+    from cognitive_switchyard.models import FixerAttemptResult
+    from cognitive_switchyard.orchestrator import execute_session
+    store, _ = _build_store(tmp_path)
+    store.create_session(session_id="synthetic", name="Synthetic", pack="test", created_at="2026-01-01T00:00:00Z")
+    _register_task(store, session_id="synthetic", task_id="001")
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    marker = tmp_path / "merged"
+    store.write_worker_recovery_metadata("synthetic", slot_number=0, task_id="001", workspace_path=workspace, pid=None)
+    store.write_session_runtime_state("synthetic", verification_pending=True, auto_fix_context="task_failure", auto_fix_task_id="001", auto_fix_attempt=1)
+    store.update_session_status("synthetic", status="verifying", started_at="2026-01-01T00:00:00Z")
+    pack = load_pack_manifest(_write_pack(tmp_path, name="retry-workspace", verification_enabled=True, verification_command="test -f fixed", auto_fix_enabled=True, isolate_end=f"#!/bin/sh\nprintf '%s' \"$4\" > '{marker}'\n"))
+    def fixer(context, *, session_root):
+        assert session_root == workspace
+        assert context.attempt == 2
+        (session_root / "fixed").write_text("synthetic")
+        return FixerAttemptResult(success=True, summary="fixed")
+    result = execute_session(store=store, session_id="synthetic", pack_manifest=pack, fixer_executor=partial(fixer, session_root=tmp_path), poll_interval=0.01)
+    assert result.session_status == "idle"
+    assert store.get_task("synthetic", "001").status == "done"
+    assert marker.read_text() == "done"
+
+
+def test_recovered_autofix_pause_stops_execution_and_preserves_workspace(tmp_path: Path) -> None:
+    from cognitive_switchyard.models import FixerAttemptResult
+    from cognitive_switchyard.orchestrator import execute_session
+    store, _ = _build_store(tmp_path)
+    store.create_session(session_id="synthetic", name="Synthetic", pack="test", created_at="2026-01-01T00:00:00Z")
+    _register_task(store, session_id="synthetic", task_id="001")
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    marker = tmp_path / "merged"
+    store.write_worker_recovery_metadata("synthetic", slot_number=0, task_id="001", workspace_path=workspace, pid=None)
+    store.write_session_runtime_state("synthetic", verification_pending=True, auto_fix_context="task_failure", auto_fix_task_id="001", auto_fix_attempt=1)
+    store.update_session_status("synthetic", status="verifying", started_at="2026-01-01T00:00:00Z")
+    pack = load_pack_manifest(_write_pack(tmp_path, name="retry-paused", verification_enabled=True, verification_command="false", auto_fix_enabled=True, isolate_end=f"#!/bin/sh\ntouch '{marker}'\n"))
+    def fixer(_):
+        store.update_session_status("synthetic", status="paused")
+        return FixerAttemptResult(success=False, summary="stopped")
+    result = execute_session(store=store, session_id="synthetic", pack_manifest=pack, fixer_executor=fixer, poll_interval=0.01)
+    assert result.session_status == "paused"
+    assert store.get_task("synthetic", "001").status == "ready"
+    assert store.get_session("synthetic").runtime_state.auto_fix_task_id == "001"
+    assert store.read_worker_recovery_metadata("synthetic", slot_number=0).workspace_path == workspace
+    assert not marker.exists()

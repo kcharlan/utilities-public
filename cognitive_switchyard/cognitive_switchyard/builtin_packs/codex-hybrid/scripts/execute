@@ -61,7 +61,6 @@ SAMPLER_PID=$!
 
 CODEX_EXIT=0
 codex exec \
-  --dangerously-bypass-approvals-and-sandbox \
   -m "$MODEL" \
   -c "model_reasoning_effort=\"$REASONING_EFFORT\"" \
   -C "$WORKSPACE_PATH" \

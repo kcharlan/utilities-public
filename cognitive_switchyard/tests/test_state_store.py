@@ -738,3 +738,11 @@ def test_started_at_preserved_for_non_created_transitions(tmp_path: Path) -> Non
     store.update_session_status("session-reset-2", status="paused")
     session = store.get_session("session-reset-2")
     assert session.started_at == "2026-03-09T11:00:00Z"
+
+
+def test_runtime_state_write_rejects_unknown_session(tmp_path: Path) -> None:
+    store, _ = _build_store(tmp_path)
+    with pytest.raises(KeyError, match="Unknown session"):
+        store.write_session_runtime_state("missing", verification_pending=True)
+    with pytest.raises(KeyError, match="Unknown session"):
+        store.project_task("missing", "synthetic", status="ready")

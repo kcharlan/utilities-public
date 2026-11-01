@@ -37,6 +37,17 @@ def recover_execution_session(
             continue
         slot_number = int(worker_dir.name)
         metadata = store.read_worker_recovery_metadata(session_id, slot_number=slot_number)
+        autofix_task_id = session.runtime_state.auto_fix_task_id
+        if (session.runtime_state.auto_fix_context == "task_failure" and metadata is not None
+                and metadata.task_id == autofix_task_id):
+            # This workspace belongs to the interrupted auto-fix, not an orphan.
+            # A non-null PID remains untrusted and must not be signalled here.
+            protected_slots.add(slot_number)
+            if metadata.pid is None:
+                task = store.get_task(session_id, metadata.task_id)
+                if task.status == "active":
+                    store.project_task(session_id, task.task_id, status="ready")
+            continue
         for plan_path in sorted(worker_dir.glob("*.plan.md")):
             task_id = plan_path.name.removesuffix(".plan.md")
             matching_metadata = metadata if metadata is not None and metadata.task_id == task_id else None
