@@ -23,6 +23,8 @@ import tempfile
 import logging
 import io
 import csv
+import zipfile
+import shutil
 from pathlib import Path
 from datetime import datetime, timezone
 from dataclasses import dataclass, field, asdict
@@ -34,7 +36,8 @@ from markdownify import markdownify as md_convert
 from pptx import Presentation
 from readability import Document as ReadabilityDocument
 
-VERSION = "0.1.1"
+VERSION = "0.1.2"
+MAX_OFFICE_EXPANDED_BYTES = 200_000_000
 
 logging.basicConfig(level=logging.INFO, format="%(message)s")
 logger = logging.getLogger("docpipe")
@@ -200,7 +203,7 @@ def _new_result(source_path: str, source_type: str, warnings: list[str] | None =
         converted_at=datetime.now(timezone.utc).isoformat(),
         converter_version=VERSION,
         segments=[],
-        warnings=warnings or [],
+        warnings=warnings if warnings is not None else [],
     )
 
 
@@ -215,8 +218,7 @@ def convert_pdf(
     result = _new_result(input_path, "pdf", warnings)
 
     if not HAS_PDFTOTEXT:
-        warnings.append("pdftotext not found, skipping PDF text extraction")
-        return result
+        raise RuntimeError("pdftotext not found; unable to extract PDF text")
 
     with tempfile.TemporaryDirectory() as tmp_dir:
         txt_path = os.path.join(tmp_dir, "pdf.txt")
@@ -247,9 +249,9 @@ def convert_pdf(
             else:
                 assets_dir = os.path.join(out_dir, f"{base_name}.assets")
                 os.makedirs(assets_dir, exist_ok=True)
-                run_cmd(["pdftoppm", "-png", "-r", "144", input_path, os.path.join(assets_dir, "page")], timeout=300)
+                run_cmd(["pdftoppm", "-png", "-r", "144", input_path, os.path.join(tmp_dir, "page")], timeout=300)
 
-                generated = sorted(Path(assets_dir).glob("page-*.png"))
+                generated = sorted(Path(tmp_dir).glob("page-*.png"))
                 if len(generated) > max_page_images:
                     warnings.append(
                         f"Extracted {len(generated)} page images, capped at {max_page_images}. Truncating output images."
@@ -265,7 +267,7 @@ def convert_pdf(
 
                     new_name = f"page-{i:03d}.png"
                     new_path = Path(assets_dir) / new_name
-                    old_path.rename(new_path)
+                    shutil.copyfile(old_path, new_path)
                     seg_idx = i - 1
                     if 0 <= seg_idx < len(result.segments):
                         result.segments[seg_idx].assets.append(
@@ -367,8 +369,7 @@ def convert_docx(input_path: str, base_name: str, out_dir: str, extract_images: 
     except Exception as exc:
         warnings.append(f"python-docx failed, falling back to Pandoc: {exc}")
         if not HAS_PANDOC:
-            warnings.append("Pandoc not found; unable to convert DOCX fallback")
-            return result
+            raise RuntimeError("Pandoc not found; unable to convert DOCX fallback") from exc
 
         with tempfile.TemporaryDirectory() as tmp_dir:
             temp_md = os.path.join(tmp_dir, "doc.md")
@@ -531,8 +532,7 @@ def convert_xlsx(input_path: str, base_name: str, out_dir: str, max_cells: int) 
     try:
         wb = openpyxl.load_workbook(input_path, data_only=True, read_only=True)
     except Exception as exc:
-        warnings.append(f"Failed to load XLSX: {exc}")
-        return result
+        raise RuntimeError(f"Failed to load XLSX: {exc}") from exc
 
     total_cells = 0
     try:
@@ -706,6 +706,10 @@ def run_convert(args: argparse.Namespace) -> int:
         logger.info("Output files exist and will be overwritten.")
 
     try:
+        if file_type in {"docx", "pptx", "xlsx"}:
+            with zipfile.ZipFile(input_path) as archive:
+                if sum(entry.file_size for entry in archive.infolist()) > MAX_OFFICE_EXPANDED_BYTES:
+                    raise ValueError("Office archive expanded size exceeds 200 MB limit")
         if file_type == "pdf":
             result = convert_pdf(input_path, base_name, out_dir, args.images, args.max_page_images)
         elif file_type == "docx":

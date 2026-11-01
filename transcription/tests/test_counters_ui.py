@@ -128,3 +128,52 @@ def test_divider_failed_transcription_counts_detected_duration(tmp_path, stub_wh
     assert not at.exception
     assert state.read_counters().counters == state.Counters(3.5, 3.5)
     assert any("synthetic failure" in area.value for area in at.text_area)
+
+
+def test_divider_new_batch_displays_new_transcript(tmp_path, stub_whisper, monkeypatch):
+    import librosa
+    import whisper
+    monkeypatch.setattr(librosa, 'load', lambda *args, **kwargs: ([0] * 7, 2))
+    class Model:
+        def transcribe(self, path):
+            return {'text': Path(path).stem}
+    monkeypatch.setattr(whisper, 'load_model', lambda name: Model())
+    first = tmp_path / 'first.wav'
+    second = tmp_path / 'second.wav'
+    first.write_bytes(b'synthetic')
+    second.write_bytes(b'synthetic')
+    at = launch('divider')
+    process(at, 'divider', first)
+    assert any(area.value == 'first' for area in at.text_area)
+    process(at, 'divider', second)
+    assert any(area.value == 'second' for area in at.text_area)
+
+
+def test_app_discloses_cloud_fallback(tmp_path, stub_whisper, monkeypatch):
+    import types
+    import sys
+    import whisper
+    monkeypatch.setenv('OPENAI_API_KEY', 'synthetic-key')
+    monkeypatch.setattr(whisper, 'load_model', lambda name: (_ for _ in ()).throw(RuntimeError('synthetic local failure')))
+    class Client:
+        def __init__(self, api_key):
+            self.audio = types.SimpleNamespace(transcriptions=types.SimpleNamespace(create=lambda **kwargs: 'synthetic cloud transcript'))
+    monkeypatch.setitem(sys.modules, 'openai', types.SimpleNamespace(OpenAI=Client))
+    path = tmp_path / 'sample.wav'
+    path.write_bytes(b'synthetic')
+    at = launch('app')
+    process(at, 'app', path)
+    assert any('OpenAI' in warning.value and 'audio' in warning.value.lower() for warning in at.warning)
+    assert any('synthetic cloud transcript' in area.value for area in at.text_area)
+
+
+@pytest.mark.parametrize('interface', ['app', 'divider'])
+def test_batch_preserves_concurrent_counter_updates(interface, tmp_path, stub_whisper, monkeypatch):
+    import librosa
+    monkeypatch.setattr(librosa, 'load', lambda *args, **kwargs: ([0] * 7, 2))
+    path = tmp_path / 'sample.wav'
+    path.write_bytes(b'synthetic')
+    at = launch(interface)
+    state.add_duration(10)
+    process(at, interface, path)
+    assert state.read_counters().counters == state.Counters(13.5, 13.5)

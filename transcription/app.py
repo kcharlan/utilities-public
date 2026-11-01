@@ -107,6 +107,7 @@ def transcribe_audio(filepath: str, model_name: str = "small") -> str:
             raise RuntimeError(f"Local whisper failed and no OPENAI_API_KEY set. Error: {e_local}") from e_local
 
     # OpenAI API fallback
+    st.warning(f"Local transcription failed; sending audio for {os.path.basename(filepath)} to OpenAI.")
     try:
         from openai import OpenAI  # type: ignore
         client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))

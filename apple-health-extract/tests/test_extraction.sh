@@ -32,16 +32,16 @@ if grep -q 'Warning' bouts.stderr; then
 fi
 cat > expected-summary.csv <<'CSV'
 id,type,start,end,duration_min,device,hr_samples,hr_avg,hr_min,hr_max,steps_total,distance_km,calories_kcal
-0,INVENTED_WORKOUT,2001-01-01 10:00:00,2001-01-01 10:10:00,10.0,SYNTHETIC_DEVICE,1,100.0,100.0,100.0,42.0,1.0,7.0
+0,INVENTED_WORKOUT,2001-01-01 15:00:00+00:00,2001-01-01 15:10:00+00:00,10.0,SYNTHETIC_DEVICE,1,100.0,100.0,100.0,42.0,1.0,7.0
 CSV
 cat > expected-detail.csv <<'CSV'
 workout_id,workout_start,workout_type,timestamp,heart_rate_bpm
-0,2001-01-01 10:00:00,INVENTED_WORKOUT,2001-01-01 10:01:30,100.0
+0,2001-01-01 15:00:00+00:00,INVENTED_WORKOUT,2001-01-01 15:01:30+00:00,100.0
 CSV
 cat > expected-bouts.csv <<'CSV'
 bout_id,bout_start,bout_end,duration_min,sourceName,device,first_min_start,last_min_end,avg_heart_rate,steps,calories,distance_km,type,workout_type
-0,2001-01-01 10:01:00-05:00,2001-01-01 10:02:00-05:00,1,SYNTHETIC_SOURCE,SYNTHETIC_DEVICE,2001-01-01 10:01:00 -0500,2001-01-01 10:02:00 -0500,100.0,42.0,7.0,1000.0,Workout,INVENTED_WORKOUT
-1,2001-01-01 11:01:00-05:00,2001-01-01 11:02:00-05:00,1,SYNTHETIC_SOURCE,SYNTHETIC_DEVICE,2001-01-01 11:01:00 -0500,2001-01-01 11:02:00 -0500,120.0,24.0,3.0,500.0,Incidental,
+0,2001-01-01 15:01:00+00:00,2001-01-01 15:02:00+00:00,1,SYNTHETIC_SOURCE,SYNTHETIC_DEVICE,2001-01-01 10:01:00 -0500,2001-01-01 10:02:00 -0500,100.0,42.0,7.0,1000.0,Workout,INVENTED_WORKOUT
+1,2001-01-01 16:01:00+00:00,2001-01-01 16:02:00+00:00,1,SYNTHETIC_SOURCE,SYNTHETIC_DEVICE,2001-01-01 11:01:00 -0500,2001-01-01 11:02:00 -0500,120.0,24.0,3.0,500.0,Incidental,
 CSV
 diff -u expected-summary.csv workout_summary.csv
 diff -u expected-detail.csv workout_heart_rate_detail.csv

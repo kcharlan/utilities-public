@@ -30,6 +30,8 @@ the measured cache footprint.
 
 Only `app.py` can fall back to the OpenAI transcription API when local Whisper fails. The launcher installs the client; enable the fallback by providing the key through the environment:
 
+The interface warns when it sends audio to OpenAI after a local failure.
+
 ```bash
 export OPENAI_API_KEY="your-key"
 ```

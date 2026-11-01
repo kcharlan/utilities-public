@@ -8,9 +8,10 @@
 # ///
 import xml.etree.ElementTree as ET
 import pandas as pd
-from datetime import timedelta
+from datetime import timedelta, timezone
 import csv
 from tqdm import tqdm
+from record_utils import deduplicate_sources
 
 # -------- CONFIGURATION --------
 XML_PATH = "export.xml"
@@ -49,21 +50,25 @@ with open(XML_PATH, "r", encoding="utf-8", errors="ignore") as file:
             elif t == HEART_RATE_TYPE:
                 heart_rate_rows.append({
                     "startDate": elem.attrib.get("startDate"),
+                    "sourceName": elem.attrib.get("sourceName"),
                     "value": float(elem.attrib.get("value", "0"))
                 })
             elif t == STEP_TYPE:
                 step_rows.append({
                     "startDate": elem.attrib.get("startDate"),
+                    "sourceName": elem.attrib.get("sourceName"),
                     "value": float(elem.attrib.get("value", "0"))
                 })
             elif t == DISTANCE_TYPE:
                 distance_rows.append({
                     "startDate": elem.attrib.get("startDate"),
+                    "sourceName": elem.attrib.get("sourceName"),
                     "value": float(elem.attrib.get("value", "0"))
                 })
             elif t == CALORIES_TYPE:
                 calories_rows.append({
                     "startDate": elem.attrib.get("startDate"),
+                    "sourceName": elem.attrib.get("sourceName"),
                     "value": float(elem.attrib.get("value", "0"))
                 })
         elem.clear()
@@ -77,8 +82,9 @@ calories_df = pd.DataFrame(calories_rows)
 if exercise_df.empty:
     raise ValueError("No Apple Exercise Time records found!")
 
-exercise_df["start_dt"] = pd.to_datetime(exercise_df["startDate"])
-exercise_df["end_dt"] = pd.to_datetime(exercise_df["endDate"])
+exercise_df["start_dt"] = pd.to_datetime(exercise_df["startDate"], utc=True)
+exercise_df["end_dt"] = pd.to_datetime(exercise_df["endDate"], utc=True)
+exercise_df = exercise_df.drop_duplicates(subset=["start_dt", "end_dt"])
 exercise_df = exercise_df.sort_values("start_dt").reset_index(drop=True)
 
 # --------- GROUP INTO BOUTS ---------
@@ -127,7 +133,9 @@ bouts_df['interval'] = pd.IntervalIndex.from_arrays(bouts_df['bout_start'], bout
 def assign_metric(records_df, bouts_df, agg='mean'):
     if records_df.empty:
         return pd.Series([None] * len(bouts_df), index=bouts_df.index)
-    record_times = pd.to_datetime(records_df['startDate'])
+    records_df = records_df.assign(start_dt=pd.to_datetime(records_df['startDate'], utc=True))
+    records_df = deduplicate_sources(records_df, ['start_dt', 'value'])
+    record_times = records_df['start_dt']
     # bug - idx = bouts_df['interval'].get_indexer(record_times)
     interval_index = pd.IntervalIndex(bouts_df['interval'])
     idx = interval_index.get_indexer(record_times)
@@ -152,8 +160,12 @@ bouts_df['distance_km'] = assign_metric(distance_df, bouts_df, 'sum')
 # --------- LABEL EACH BOUT ---------
 print("Loading workout time windows...")
 workouts_df = pd.read_csv(WORKOUT_CSV)
-workouts_df["start_dt"] = pd.to_datetime(workouts_df["start"]).dt.tz_localize("US/Eastern")
-workouts_df["end_dt"] = pd.to_datetime(workouts_df["end"]).dt.tz_localize("US/Eastern")
+def workout_time(value):
+    # astimezone uses the local timezone for legacy offset-free summaries.
+    return pd.Timestamp(value).to_pydatetime().astimezone(timezone.utc)
+
+workouts_df["start_dt"] = workouts_df["start"].map(workout_time)
+workouts_df["end_dt"] = workouts_df["end"].map(workout_time)
 
 def label_bout(bout_start, bout_end):
     for _, w in workouts_df.iterrows():

@@ -63,12 +63,7 @@ media-dater --prefix "VACATION_" --ext mov,mp4 ~/Movies/Trip
 
 ## Behavior and limitations
 
-- Counter handling depends on the Bash version: the first `((count++))` or
-  `((skipped++))` returns status 1 because its counter starts at zero. Bash
-  versions that apply `set -e` to arithmetic commands exit at that point,
-  before the dry-run preview or rename command. macOS's bundled Bash 3.2 does
-  not exit on that arithmetic status; portability requires a counter-handling
-  code fix.
+- QuickTime UTC timestamps are converted to the local timezone before naming.
 - Without `--ext`, discovery includes every non-hidden regular file, not just
   recognized image and video formats. Use `--ext` when the target contains
   unrelated files.
@@ -95,7 +90,11 @@ runs one ExifTool command equivalent to:
 
 ```bash
 exiftool \
+  -api QuickTimeUTC=1 \
   '-filename<CreateDate' \
   -d "${PREFIX}%Y%m%d_%H%M%S_%%%-02.c.%%e" \
   -@ "$argfile"
 ```
+
+Run `bash tests/test_quicktime_utc.sh` for the synthetic rename regression;
+it requires FFmpeg and ExifTool.

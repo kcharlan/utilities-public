@@ -12,6 +12,7 @@ Utilities for turning an Apple Health export (`export.xml`) into structured CSV 
 
 - `extract_workout_stats.py` – Parses workouts and health records from the export, writes summary and heart-rate detail CSVs.
 - `exercise_bouts.py` – Groups Apple Exercise Time minutes into bouts, labels them against workouts, and writes a bouts CSV.
+- `record_utils.py` – Shared source reconciliation used by both extractors.
 - `requirements.txt` – Tracked runtime dependency declarations (`pandas` and
   `tqdm`).
 - `requirements-dev.txt` – Reproduces the runtime graph used by the shell test
@@ -28,7 +29,7 @@ copy containing only the scripts and runtime requirements:
 ```bash
 mkdir -p "$HOME/.apple-health-extract/project"
 chmod 700 "$HOME/.apple-health-extract" "$HOME/.apple-health-extract/project"
-cp extract_workout_stats.py exercise_bouts.py run.sh requirements.txt \
+cp extract_workout_stats.py exercise_bouts.py record_utils.py run.sh requirements.txt \
   "$HOME/.apple-health-extract/project/"
 cd "$HOME/.apple-health-extract/project"
 ```
@@ -40,6 +41,7 @@ Run the synthetic shell tests from the source directory:
 ```bash
 bash tests/test_run_wrapper.sh
 bash tests/test_extraction.sh
+bash tests/test_timezone_duplicates.sh
 ```
 
 The extraction test accepts an optional absolute project directory to test a
@@ -110,8 +112,8 @@ Run these commands from the private operational directory:
 
 - Both scripts parse with `iterparse` and clear XML elements, but they retain the selected health records in Python lists or DataFrames. Memory use therefore grows with the number of relevant records in the export.
 - `exercise_bouts.py` counts input lines to estimate progress, while its parser advances by XML events; `extract_workout_stats.py`'s record scan assumes a fixed total of 5,000,000 XML elements. Treat both progress percentages as approximate.
-- Record values are summed as exported. `extract_workout_stats.py` divides walking/running distance totals by 1,000 before writing `distance_km`; `exercise_bouts.py` writes the summed exported values under the same heading without conversion. Check the `unit` attributes in your export before interpreting distance values.
-- `extract_workout_stats.py` strips timezone offsets from workout and record timestamps. `exercise_bouts.py` parses the export timestamps with their offsets, then interprets summary timestamps as `US/Eastern`. Exports recorded in another timezone may be labelled incorrectly.
+- When different sources report the same timestamp and value, metric samples from the first source are retained; repeated samples from that source are preserved. Exercise records with identical start and end instants form one minute. Other overlapping source records can still be counted separately. `extract_workout_stats.py` divides walking/running distance totals by 1,000 before writing `distance_km`; `exercise_bouts.py` writes the summed exported values under the same heading without conversion. Check the `unit` attributes in your export before interpreting distance values.
+- Export timestamps retain their offsets during parsing and generated timestamps are written in UTC. Legacy workout summaries without offsets are interpreted in the configured local timezone.
 - If workouts overlap, the same health record can be included in more than one workout. Exercise bouts use the first overlapping workout found in `workout_summary.csv`.
 - Expect multi-minute runtimes for multi-year exports.
 

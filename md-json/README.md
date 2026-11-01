@@ -38,7 +38,9 @@ paths when running from this source directory, or change to private storage and
 invoke the script by its absolute path. Create the private output directory
 before running; the converter does not create it.
 
-The output file is replaced if it already exists. A missing or invalid input
+The output file is replaced if it already exists. An invalid split account or
+amount exits nonzero before opening the output, preserving any existing file.
+A missing or invalid input
 file, or an unwritable output path, is reported on standard output; the script
 still exits with status 0, so check its message rather than the exit code.
 
@@ -52,7 +54,7 @@ still exits with status 0, so check its message rather than the exit code.
    `EXPENSE`, and `INCOME`. Unknown codes are written as
    `UNKNOWN_CODE_<code>`.
 5. Processes objects whose `obj_type` is `txn`. Transactions with an unknown
-   main account or no valid splits are omitted.
+   main account or no splits are omitted; malformed splits stop conversion.
 6. Expands the numbered split fields:
    - A transaction with one valid split produces two rows: one from the main
      account's perspective and one counter-entry from the split account's
@@ -86,3 +88,10 @@ The root prefix and account-type map are constants inside
 `generate_csv_from_json()` in `md_converter.py`. Edit
 `ROOT_ACCOUNT_PREFIX_TO_STRIP` if your root account has another name, or extend
 `ACCOUNT_TYPE_CODE_MAP` for additional Moneydance type codes.
+
+## Validation
+
+For the synthetic split regression, create a project environment if absent with
+`/opt/homebrew/bin/python3 -m venv .venv`, then run
+`bash tests/test_split_failure.sh`. Set `PYTHON` to another interpreter from
+this project's environment if needed.

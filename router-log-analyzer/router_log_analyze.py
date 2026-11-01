@@ -553,7 +553,7 @@ def parse_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
     parser.add_argument(
         "--version",
         action="version",
-        version="router-log-analyzer 0.5.1",
+        version="router-log-analyzer 0.5.2",
     )
     parser.add_argument(
         "--reprocess",
@@ -1503,6 +1503,12 @@ class StateStore:
                 )
         # The runtime directory is owned by one trusted local user and analyzer process;
         # preflight rejects unsafe artifact types but does not defend against path replacement.
+        if not is_memory:
+            fd = os.open(self.db_path, os.O_WRONLY | os.O_CREAT, 0o600)
+            try:
+                os.fchmod(fd, 0o600)
+            finally:
+                os.close(fd)
         self.conn = self._open_connection(":memory:" if is_memory else str(self.db_path))
         try:
             self.ensure_schema()
@@ -11567,6 +11573,19 @@ def render_html_report(report: Dict[str, Any]) -> str:
 """
 
 
+def write_private_report(path: Path, content: str) -> None:
+    fd = os.open(path, os.O_WRONLY | os.O_CREAT, 0o600)
+    try:
+        os.fchmod(fd, 0o600)
+        with os.fdopen(fd, "w", encoding="utf-8") as output:
+            fd = -1
+            output.truncate(0)
+            output.write(content)
+    finally:
+        if fd != -1:
+            os.close(fd)
+
+
 def emit_report_outputs(
     report: Dict[str, Any],
     report_formats: Sequence[str],
@@ -11580,17 +11599,17 @@ def emit_report_outputs(
         print(text_body)
         if len(report_formats) > 1:
             report_paths["text"] = (report_dir.expanduser().resolve() if report_dir else Path.cwd()) / f"{logfile_path.stem}.report.txt"
-            report_paths["text"].write_text(text_body + "\n", encoding="utf-8")
+            write_private_report(report_paths["text"], text_body + "\n")
 
     if "markdown" in report_formats:
-        report_paths["markdown"].write_text(render_markdown_report(report), encoding="utf-8")
+        write_private_report(report_paths["markdown"], render_markdown_report(report))
     if "html" in report_formats:
-        report_paths["html"].write_text(render_html_report(report), encoding="utf-8")
+        write_private_report(report_paths["html"], render_html_report(report))
     if "json" in report_formats and "text" not in report_formats:
         # Legacy --json behavior remains stdout-only unless --report requested explicitly.
-        report_paths["json"].write_text(json.dumps(report, indent=2, default=str) + "\n", encoding="utf-8")
+        write_private_report(report_paths["json"], json.dumps(report, indent=2, default=str) + "\n")
     elif "json" in report_formats and "text" in report_formats:
-        report_paths["json"].write_text(json.dumps(report, indent=2, default=str) + "\n", encoding="utf-8")
+        write_private_report(report_paths["json"], json.dumps(report, indent=2, default=str) + "\n")
 
     generated = [
         f"{fmt}: {path}"
