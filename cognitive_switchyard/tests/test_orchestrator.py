@@ -3123,6 +3123,7 @@ def test_planning_time_counts_toward_active_budget(tmp_path: Path, monkeypatch) 
     store.create_session(session_id="synthetic", name="Synthetic", pack="test", created_at="2026-01-01T00:00:00Z")
     pack = load_pack_manifest(_write_pack(tmp_path, name="planning-time", execute_script_body="#!/bin/sh\nexit 0\n"))
     def prepare(**kwargs):
+        store.update_session_status("synthetic", status="planning")
         time.sleep(1.05)
         return SessionPreparationResult(session_id=kwargs["session_id"], ready_task_ids=("001",))
     monkeypatch.setattr(orchestrator, "prepare_session_for_execution", prepare)
@@ -3173,3 +3174,32 @@ def test_pause_during_verification_is_not_overwritten(tmp_path: Path, monkeypatc
     result = _run_pending_verification(store=store, session_id="synthetic", pack_manifest=_make_pack_manifest_with_autofix(tmp_path), effective_runtime_config=_make_effective_runtime_config(auto_fix_enabled=True), env=None, fixer_executor=None, runtime_event_sink=None)
     assert store.get_session("synthetic").status == "paused"
     assert result.session_status == "paused"
+
+
+def test_session_budget_cancels_running_planner_and_preserves_intake(tmp_path: Path, monkeypatch) -> None:
+    import time
+    from cognitive_switchyard import agent_runtime, orchestrator
+    store, paths = _build_store(tmp_path)
+    store.create_session(session_id="synthetic", name="Synthetic", pack="test", created_at="2026-01-01T00:00:00Z", config_json=json.dumps({"environment": {"COGNITIVE_SWITCHYARD_REPO_ROOT": str(tmp_path)}}))
+    intake = paths.session_paths("synthetic").intake / "001_task.md"
+    intake.write_text("synthetic intake")
+    calls = tmp_path / "calls"
+    survived = tmp_path / "survived"
+    agent = tmp_path / "synthetic-agent"
+    agent.write_text(f"#!/bin/sh\necho call >> '{calls}'\n(trap '' TERM; sleep 2; touch '{survived}') &\nwait\n")
+    agent.chmod(0o755)
+    def bounded_runner(*, command, cwd, input_text, deadline=None):
+        return agent_runtime._run_bounded_process(command, cwd=cwd, env=os.environ.copy(), input_text=input_text, deadline=deadline)
+    runtime = agent_runtime.ClaudeCliRuntime(command=str(agent), subprocess_runner=bounded_runner)
+    monkeypatch.setattr(orchestrator, "build_agent_runtime", lambda *_args, **_kwargs: runtime)
+    pack = load_pack_manifest(_write_pack(tmp_path, name="planner-budget", planning_enabled=True, resolution_executor="passthrough", session_max=1, execute_script_body="#!/bin/sh\nexit 0\n"))
+    started = time.monotonic()
+    result = orchestrator.start_session(store=store, session_id="synthetic", pack_manifest=pack, poll_interval=0.01)
+    assert result.session_status == "paused"
+    assert store.get_session("synthetic").status == "paused"
+    assert time.monotonic() - started < 4
+    assert calls.read_text().splitlines() == ["call"]
+    assert (paths.session_paths("synthetic").root / "intake_failed" / intake.name).read_text() == "synthetic intake"
+    assert not store.list_active_tasks("synthetic")
+    time.sleep(2.1)
+    assert not survived.exists()

@@ -1324,3 +1324,17 @@ def test_unparseable_planner_result_retains_intake_when_existing_plan_matches_pr
     assert (session_paths.staging / f"{first_plan_id}.plan.md").is_file()
     assert (session_paths.root / "intake_failed" / "001_later.md").read_bytes() == failed_bytes
     assert not any(session_paths.claimed.iterdir())
+
+
+def test_expired_planning_deadline_does_not_claim_or_launch(tmp_path: Path) -> None:
+    import time
+    from cognitive_switchyard.planning_runtime import run_planning_phase
+    store, paths = _build_store(tmp_path)
+    store.create_session(session_id="synthetic", name="Synthetic", pack="test", created_at="2026-01-01T00:00:00Z")
+    intake = _write_intake(paths.session_paths("synthetic").intake, "001_task.md", "synthetic intake")
+    pack = load_pack_manifest(_write_pack(tmp_path, name="expired-planner", planning_enabled=True, execute_script_body="#!/bin/sh\nexit 0\n"))
+    calls = []
+    result = run_planning_phase(store=store, session_id="synthetic", pack_manifest=pack, planner_agent=lambda **_: calls.append(True), env={"COGNITIVE_SWITCHYARD_REPO_ROOT": str(tmp_path)}, session_deadline=time.monotonic() - 1)
+    assert calls == []
+    assert intake.read_text() == "synthetic intake"
+    assert result.staged_task_ids == ()

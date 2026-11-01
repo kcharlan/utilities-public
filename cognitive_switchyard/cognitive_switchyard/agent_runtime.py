@@ -97,6 +97,7 @@ class ClaudeCliRuntime:
         intake_path: Path,
         intake_text: str,
         session_root: Path,
+        deadline: float | None = None,
         **_: object,
     ) -> str:
         planning_task_id = f"__planner_{intake_path.stem}__"
@@ -107,6 +108,7 @@ class ClaudeCliRuntime:
             intake_text=intake_text,
             session_root=session_root,
             planning_task_id=planning_task_id,
+            deadline=deadline,
         )
 
     def resolver_agent(
@@ -159,6 +161,7 @@ class ClaudeCliRuntime:
         intake_text: str,
         session_root: Path,
         planning_task_id: str | None = None,
+        deadline: float | None = None,
     ) -> str:
         return self._run_phase(
             phase="planning",
@@ -173,6 +176,7 @@ class ClaudeCliRuntime:
                 "--- END INTAKE ---\n"
             ),
             task_id_override=planning_task_id,
+            deadline=deadline,
         )
 
     def _run_phase(
@@ -184,9 +188,12 @@ class ClaudeCliRuntime:
         session_root: Path,
         input_text: str,
         task_id_override: str | None = None,
+        deadline: float | None = None,
     ) -> str:
         last_error: ClaudeCliRuntimeError | None = None
         for attempt in range(1, _CLI_MAX_RETRIES + 1):
+            if deadline is not None and time.monotonic() >= deadline:
+                raise last_error or ClaudeCliRuntimeError(phase=phase, message="Session deadline exceeded", command=(), exit_code=124)
             try:
                 return self._run_phase_once(
                     phase=phase,
@@ -196,12 +203,13 @@ class ClaudeCliRuntime:
                     input_text=input_text,
                     task_id_override=task_id_override,
                     attempt=attempt,
+                    deadline=deadline,
                 )
             except ClaudeCliRuntimeError as exc:
                 last_error = exc
                 # Don't retry if the CLI ran successfully but produced
                 # empty/unparseable output — that won't improve on retry.
-                if exc.exit_code == 0:
+                if exc.exit_code == 0 or (deadline is not None and time.monotonic() >= deadline):
                     raise
                 if attempt < _CLI_MAX_RETRIES:
                     backoff = _CLI_BACKOFF_BASE * (2 ** (attempt - 1))
@@ -215,7 +223,7 @@ class ClaudeCliRuntime:
                             effective_task_id,
                             f"[{phase}] CLI failed (exit {exc.exit_code}), retry {attempt + 1}/{_CLI_MAX_RETRIES} in {backoff}s...",
                         )
-                    time.sleep(backoff)
+                    time.sleep(min(backoff, max(0, deadline - time.monotonic())) if deadline is not None else backoff)
         # All retries exhausted
         assert last_error is not None
         raise last_error
@@ -230,6 +238,7 @@ class ClaudeCliRuntime:
         input_text: str,
         task_id_override: str | None = None,
         attempt: int = 1,
+        deadline: float | None = None,
     ) -> str:
         effective_task_id = task_id_override or phase
         prompt_text = _load_prompt_bundle(prompt_path)
@@ -247,13 +256,15 @@ class ClaudeCliRuntime:
         if self._output_line_callback is not None:
             self._output_line_callback(effective_task_id, f"[{phase}] Launching Claude CLI ({model}){attempt_label}...")
             if self._has_injected_runner:
-                completed = self._subprocess_runner(command=command, cwd=session_root, input_text=full_prompt)
+                options = {"deadline": deadline} if deadline is not None else {}
+                completed = self._subprocess_runner(command=command, cwd=session_root, input_text=full_prompt, **options)
             else:
                 completed = _streaming_subprocess_runner(
                     command=command,
                     cwd=session_root,
                     input_text=full_prompt,
                     line_callback=_make_detail_extracting_callback(effective_task_id, self._output_line_callback),
+                    **({"deadline": deadline} if deadline is not None else {}),
                 )
             self._output_line_callback(
                 effective_task_id,
@@ -264,6 +275,7 @@ class ClaudeCliRuntime:
                 command=command,
                 cwd=session_root,
                 input_text=full_prompt,
+                **({"deadline": deadline} if deadline is not None else {}),
             )
         if completed.returncode != 0:
             stderr = completed.stderr or ""
@@ -322,6 +334,7 @@ class CodexCliRuntime:
         intake_text: str,
         session_root: Path,
         reasoning_effort: str | None = None,
+        deadline: float | None = None,
         **_: object,
     ) -> str:
         planning_task_id = f"__planner_{intake_path.stem}__"
@@ -333,6 +346,7 @@ class CodexCliRuntime:
             session_root=session_root,
             planning_task_id=planning_task_id,
             reasoning_effort=reasoning_effort,
+            deadline=deadline,
         )
 
     def resolver_agent(
@@ -397,6 +411,7 @@ class CodexCliRuntime:
         session_root: Path,
         planning_task_id: str | None = None,
         reasoning_effort: str | None = None,
+        deadline: float | None = None,
     ) -> str:
         return self._run_phase(
             phase="planning",
@@ -412,6 +427,7 @@ class CodexCliRuntime:
             ),
             task_id_override=planning_task_id,
             reasoning_effort=reasoning_effort,
+            deadline=deadline,
         )
 
     def _run_phase(
@@ -424,9 +440,12 @@ class CodexCliRuntime:
         input_text: str,
         task_id_override: str | None = None,
         reasoning_effort: str | None = None,
+        deadline: float | None = None,
     ) -> str:
         last_error: CodexCliRuntimeError | None = None
         for attempt in range(1, _CLI_MAX_RETRIES + 1):
+            if deadline is not None and time.monotonic() >= deadline:
+                raise last_error or CodexCliRuntimeError(phase=phase, message="Session deadline exceeded", command=(), exit_code=124)
             try:
                 return self._run_phase_once(
                     phase=phase,
@@ -437,10 +456,11 @@ class CodexCliRuntime:
                     task_id_override=task_id_override,
                     attempt=attempt,
                     reasoning_effort=reasoning_effort,
+                    deadline=deadline,
                 )
             except CodexCliRuntimeError as exc:
                 last_error = exc
-                if exc.exit_code == 0:
+                if exc.exit_code == 0 or (deadline is not None and time.monotonic() >= deadline):
                     raise
                 if attempt < _CLI_MAX_RETRIES:
                     backoff = _CLI_BACKOFF_BASE * (2 ** (attempt - 1))
@@ -454,7 +474,7 @@ class CodexCliRuntime:
                             effective_task_id,
                             f"[{phase}] CLI failed (exit {exc.exit_code}), retry {attempt + 1}/{_CLI_MAX_RETRIES} in {backoff}s...",
                         )
-                    time.sleep(backoff)
+                    time.sleep(min(backoff, max(0, deadline - time.monotonic())) if deadline is not None else backoff)
         assert last_error is not None
         raise last_error
 
@@ -469,6 +489,7 @@ class CodexCliRuntime:
         task_id_override: str | None = None,
         attempt: int = 1,
         reasoning_effort: str | None = None,
+        deadline: float | None = None,
     ) -> str:
         effective_task_id = task_id_override or phase
         prompt_text = _load_prompt_bundle(prompt_path)
@@ -491,7 +512,8 @@ class CodexCliRuntime:
         if self._output_line_callback is not None:
             self._output_line_callback(effective_task_id, f"[{phase}] Launching Codex CLI ({model}){attempt_label}...")
             if self._has_injected_runner:
-                completed = self._subprocess_runner(command=command, cwd=session_root, input_text=full_prompt)
+                options = {"deadline": deadline} if deadline is not None else {}
+                completed = self._subprocess_runner(command=command, cwd=session_root, input_text=full_prompt, **options)
             else:
                 completed = _streaming_subprocess_runner(
                     command=command,
@@ -502,6 +524,7 @@ class CodexCliRuntime:
                         self._output_line_callback,
                         detail_extractor=_extract_detail_from_codex_json,
                     ),
+                    **({"deadline": deadline} if deadline is not None else {}),
                 )
             self._output_line_callback(
                 effective_task_id,
@@ -512,6 +535,7 @@ class CodexCliRuntime:
                 command=command,
                 cwd=session_root,
                 input_text=full_prompt,
+                **({"deadline": deadline} if deadline is not None else {}),
             )
         if completed.returncode != 0:
             stderr = completed.stderr or ""
@@ -682,12 +706,14 @@ def _default_subprocess_runner(
     command: list[str],
     cwd: Path,
     input_text: str,
+    deadline: float | None = None,
 ) -> subprocess.CompletedProcess[str]:
     # Strip CLAUDECODE env var so child Claude CLI sessions don't refuse to
     # launch when the orchestrator itself is running inside Claude Code.
     env = {k: v for k, v in os.environ.items() if k != "CLAUDECODE"}
+    options = {"deadline": deadline} if deadline is not None else {}
     return _run_bounded_process(command, cwd=cwd, env=env, input_text=input_text,
-                                fail_on_stdout_truncation=True)
+                                fail_on_stdout_truncation=True, **options)
 
 
 def _streaming_subprocess_runner(
@@ -696,6 +722,7 @@ def _streaming_subprocess_runner(
     cwd: Path,
     input_text: str,
     line_callback: Callable[[str], None],
+    deadline: float | None = None,
 ) -> subprocess.CompletedProcess[str]:
     """Run a subprocess while streaming stdout lines through a callback.
 
@@ -703,8 +730,9 @@ def _streaming_subprocess_runner(
     the non-streaming runner.
     """
     env = {k: v for k, v in os.environ.items() if k != "CLAUDECODE"}
+    options = {"deadline": deadline} if deadline is not None else {}
     return _run_bounded_process(command, cwd=cwd, env=env, input_text=input_text,
-                                line_callback=line_callback, fail_on_stdout_truncation=True)
+                                line_callback=line_callback, fail_on_stdout_truncation=True, **options)
 
 
 def _decode_capture(data: bytes) -> str:
@@ -713,8 +741,10 @@ def _decode_capture(data: bytes) -> str:
 
 
 def _run_bounded_process(command, *, cwd, env, input_text="", line_callback=None, shell=False,
-                         merge_stderr=False, fail_on_stdout_truncation=False):
+                         merge_stderr=False, fail_on_stdout_truncation=False, deadline=None):
     """Capture bounded output and stop the entire process group on timeout."""
+    if deadline is not None and time.monotonic() >= deadline:
+        return subprocess.CompletedProcess(command, 124, "", "Process timed out before launch")
     proc = subprocess.Popen(command, cwd=cwd, env=env, shell=shell, start_new_session=True,
                             stdin=subprocess.PIPE, stdout=subprocess.PIPE,
                             stderr=subprocess.STDOUT if merge_stderr else subprocess.PIPE)
@@ -775,7 +805,7 @@ def _run_bounded_process(command, *, cwd, env, input_text="", line_callback=None
             thread.start()
         writer = threading.Thread(target=write_input, daemon=True)
         writer.start()
-        deadline = time.monotonic() + PROCESS_TIMEOUT_SECONDS
+        deadline = min(time.monotonic() + PROCESS_TIMEOUT_SECONDS, deadline) if deadline is not None else time.monotonic() + PROCESS_TIMEOUT_SECONDS
         timed_out = True
         while time.monotonic() < deadline:
             if not any(thread.is_alive() for thread in readers):

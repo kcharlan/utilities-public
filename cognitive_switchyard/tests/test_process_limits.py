@@ -451,3 +451,44 @@ def test_owned_group_rejects_externally_reaped_child_before_inspection(tmp_path,
         owned_group_members(group)
     assert not calls
     proc.returncode = 0
+
+
+def test_explicit_deadline_cancels_owned_process_group(tmp_path):
+    import os
+    import time
+    from cognitive_switchyard.agent_runtime import _run_bounded_process
+    script = _tree_script(tmp_path)
+    started = time.monotonic()
+    result = _run_bounded_process([str(script)], cwd=tmp_path, env=os.environ.copy(), deadline=started + 0.2)
+    assert result.returncode == 124
+    assert time.monotonic() - started < 2
+    time.sleep(1.1)
+    assert not (tmp_path / "survived").exists()
+
+
+@pytest.mark.parametrize("runtime_class", [ClaudeCliRuntime, CodexCliRuntime])
+def test_planner_deadline_prevents_retry_after_budget(tmp_path, runtime_class):
+    import time
+    prompt = tmp_path / "prompt.md"
+    prompt.write_text("synthetic")
+    calls = []
+    def runner(*, command, cwd, input_text, deadline):
+        calls.append(deadline)
+        return subprocess.CompletedProcess(command, 1, stdout="", stderr="synthetic failure")
+    runtime = runtime_class(command="synthetic", subprocess_runner=runner)
+    with pytest.raises(RuntimeError):
+        runtime._run_phase(phase="planning", model="synthetic", prompt_path=prompt, session_root=tmp_path, input_text="synthetic", deadline=time.monotonic() + 0.1)
+    assert len(calls) == 1
+
+
+def test_expired_deadline_does_not_launch_process(tmp_path):
+    import os
+    import time
+    from cognitive_switchyard.agent_runtime import _run_bounded_process
+    marker = tmp_path / "launched"
+    script = tmp_path / "synthetic.sh"
+    script.write_text(f"#!/bin/sh\ntouch '{marker}'\n")
+    script.chmod(0o755)
+    result = _run_bounded_process([str(script)], cwd=tmp_path, env=os.environ.copy(), deadline=time.monotonic() - 1)
+    assert result.returncode == 124
+    assert not marker.exists()

@@ -6,6 +6,7 @@ import hashlib
 import json
 import re
 import threading
+import time
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Callable
@@ -35,6 +36,10 @@ _logger = __import__("logging").getLogger(__name__)
 PlannerAgent = Callable[..., str]
 ResolverAgent = Callable[..., str]
 
+
+class PlanningSessionTimeout(RuntimeError):
+    pass
+
 # Files placed in intake/ that are metadata, not work items.
 _INTAKE_META_FILES = frozenset({"CLAUDE.md", "NEXT_SEQUENCE"})
 
@@ -50,6 +55,7 @@ def prepare_session_for_execution(
     env: dict[str, str] | None = None,
     on_status_change: Callable[[str], None] | None = None,
     on_pipeline_event: Callable[[str, dict], None] | None = None,
+    session_deadline: float | None = None,
 ) -> SessionPreparationResult:
     session = store.get_session(session_id)
     if session.status not in {"created", "planning", "resolving"}:
@@ -57,6 +63,8 @@ def prepare_session_for_execution(
             "Planning/resolution supports only 'created', 'planning', or 'resolving' sessions, "
             f"got {session.status!r}"
         )
+    if session_deadline is not None and time.monotonic() >= session_deadline:
+        raise PlanningSessionTimeout("Session max timeout exceeded before planning.")
 
     def _emit_pipeline_event(event_type: str, detail: dict | None = None) -> None:
         if on_pipeline_event is not None:
@@ -83,7 +91,10 @@ def prepare_session_for_execution(
         effective_planner_count=effective_planner_count,
         env=env,
         on_pipeline_event=on_pipeline_event,
+        session_deadline=session_deadline,
     )
+    if session_deadline is not None and time.monotonic() >= session_deadline:
+        raise PlanningSessionTimeout("Session max timeout exceeded during planning.")
 
     # Merge all review IDs (pre-existing + newly produced)
     all_review_ids = tuple(sorted(set(pre_review) | set(planning.review_task_ids)))
@@ -101,6 +112,8 @@ def prepare_session_for_execution(
             review_task_ids=all_review_ids,
         )
 
+    if session_deadline is not None and time.monotonic() >= session_deadline:
+        raise PlanningSessionTimeout("Session max timeout exceeded after planning.")
     _set_status("resolving")
     resolution = run_resolution_phase(
         store=store,
@@ -128,6 +141,7 @@ def run_planning_phase(
     effective_planner_count: int | None = None,
     env: dict[str, str] | None = None,
     on_pipeline_event: Callable[[str, dict], None] | None = None,
+    session_deadline: float | None = None,
 ) -> PlanningPhaseResult:
     session_paths = store.runtime_paths.session_paths(session_id)
     session = store.get_session(session_id)
@@ -220,7 +234,7 @@ def run_planning_phase(
 
         def claim_next_intake_path() -> Path | None:
             with lock:
-                if stop_event.is_set():
+                if stop_event.is_set() or (session_deadline is not None and time.monotonic() >= session_deadline):
                     return None
                 for intake_path in sorted(
                     (p for p in session_paths.intake.iterdir()

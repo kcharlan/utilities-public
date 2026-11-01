@@ -1525,7 +1525,7 @@ def build_dashboard_payload(
     pack_manifest: PackManifest | None = None,
     idle_state: dict[int, dict] | None = None,
 ) -> dict[str, Any]:
-    session = store.get_session(session_id)
+    session, clock_version = store.get_session_and_clock_version(session_id)
     summary = store.read_session_summary(session_id) if session.status == "completed" else None
     if summary is not None:
         return _build_summary_dashboard_payload(session, summary, store=store)
@@ -1614,9 +1614,12 @@ def build_dashboard_payload(
     is_active = session.status in {"planning", "resolving", "running", "verifying", "auto_fixing"}
     # Fall back to started_at if run_started_at not yet set (e.g. pre-multi-run sessions)
     run_start_ref = rs.run_started_at or session.started_at
-    current_run_elapsed = int(_elapsed_seconds(run_start_ref)) if is_active else 0
+    current_run_elapsed = int(_elapsed_seconds(run_start_ref)) if is_active and clock_version else 0
     session_elapsed = rs.accumulated_elapsed_seconds + current_run_elapsed
-    run_elapsed = rs.last_run_elapsed_seconds + current_run_elapsed
+    checkpointed_run = rs.last_run_elapsed_seconds
+    if is_active and clock_version == 0:
+        checkpointed_run = 0
+    run_elapsed = checkpointed_run + current_run_elapsed
     return {
         "session": {
             "id": session.id,

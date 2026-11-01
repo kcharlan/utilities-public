@@ -1426,6 +1426,7 @@ def test_dashboard_payload_includes_configured_idle_workers_and_latest_runtime_p
         status="running",
         started_at=_timestamp_offset(seconds=-120),
     )
+    store.write_session_runtime_state(session.id, active_clock_version=1)
     _register_task(store, session.id, task_id="002", title="Active task")
     store.project_task(
         session.id,
@@ -3323,7 +3324,7 @@ def test_build_dashboard_payload_run_elapsed_nonzero_during_active_statuses(
     )
     run_started_at = _timestamp_offset(seconds=-30)
     store.update_session_status(session.id, status=active_status, started_at=run_started_at)
-    store.write_session_runtime_state(session.id, run_number=1, run_started_at=run_started_at)
+    store.write_session_runtime_state(session.id, run_number=1, run_started_at=run_started_at, active_clock_version=1)
 
     payload = build_dashboard_payload(store, session.id, runtime_paths=runtime_paths)
 
@@ -3388,6 +3389,7 @@ def test_build_dashboard_payload_cumulative_elapsed_includes_run_during_planning
         run_number=2,
         run_started_at=run_started_at,
         accumulated_elapsed_seconds=100,
+        active_clock_version=1,
     )
 
     payload = build_dashboard_payload(store, session.id, runtime_paths=runtime_paths)
@@ -4384,7 +4386,7 @@ def test_dashboard_timers_add_checkpoint_and_live_interval_without_writes(tmp_pa
     store, paths = _build_store(tmp_path)
     _write_runtime_pack(paths)
     store.create_session(session_id="synthetic", name="Synthetic", pack="claude-code", created_at="2026-01-01T00:00:00Z")
-    store.write_session_runtime_state("synthetic", run_number=1, run_started_at="2026-01-01T00:00:00Z", accumulated_elapsed_seconds=32, last_run_elapsed_seconds=12)
+    store.write_session_runtime_state("synthetic", run_number=1, run_started_at="2026-01-01T00:00:00Z", accumulated_elapsed_seconds=32, last_run_elapsed_seconds=12, active_clock_version=1)
     store.update_session_status("synthetic", status="running")
     monkeypatch.setattr(server, "_elapsed_seconds", lambda _: 4)
     before = store.get_session("synthetic")
@@ -4399,3 +4401,19 @@ def test_dashboard_timers_add_checkpoint_and_live_interval_without_writes(tmp_pa
         assert payload["session"]["run_elapsed"] == 12
         assert payload["session"]["elapsed"] == 32
         assert store.get_session("synthetic") == before
+
+
+def test_dashboard_ignores_previous_run_elapsed_in_legacy_active_session(tmp_path: Path, monkeypatch) -> None:
+    from cognitive_switchyard import server
+    store, paths = _build_store(tmp_path)
+    _write_runtime_pack(paths)
+    store.create_session(session_id="legacy", name="Synthetic", pack="claude-code", created_at="2026-01-01T00:00:00Z")
+    store.write_session_runtime_state("legacy", run_number=2, run_started_at="2026-01-01T00:00:00Z", accumulated_elapsed_seconds=32, last_run_elapsed_seconds=12)
+    store.update_session_status("legacy", status="running")
+    monkeypatch.setattr(server, "_elapsed_seconds", lambda _: 4)
+    before = store.get_session("legacy")
+    payload = server.build_dashboard_payload(store, "legacy", runtime_paths=paths)
+    assert payload["session"]["run_elapsed"] == 0
+    assert payload["session"]["elapsed"] == 32
+    assert store.get_session("legacy") == before
+    assert store.session_clock_version("legacy") == 0

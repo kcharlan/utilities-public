@@ -8,6 +8,7 @@ import sqlite3
 from contextlib import contextmanager, nullcontext
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
+from functools import wraps
 from pathlib import Path
 from typing import Any
 
@@ -82,6 +83,21 @@ _SCHEMA = (
 )
 
 _UNSET = object()
+
+
+def _serialized_runtime_state(function):
+    @wraps(function)
+    def wrapped(self, session_id, *args, **kwargs):
+        path = self.runtime_paths.session_paths(session_id).root / ".runtime-state.lock"
+        if not path.parent.is_dir():
+            self.get_session(session_id)
+        with path.open("a") as lock:
+            fcntl.flock(lock, fcntl.LOCK_EX)
+            try:
+                return function(self, session_id, *args, **kwargs)
+            finally:
+                fcntl.flock(lock, fcntl.LOCK_UN)
+    return wrapped
 
 
 @dataclass(frozen=True)
@@ -356,6 +372,8 @@ class StateStore:
     @contextmanager
     def _task_projection_lock(self, session_id: str):
         lock_path = self.runtime_paths.session_paths(session_id).root / ".task-projection.lock"
+        if not lock_path.parent.is_dir():
+            self.get_session(session_id)
         with lock_path.open("a") as lock:
             fcntl.flock(lock, fcntl.LOCK_EX)
             try:
@@ -482,11 +500,14 @@ class StateStore:
         return self._task_from_row(row)
 
     def get_session(self, session_id: str) -> SessionRecord:
+        return self.get_session_and_clock_version(session_id)[0]
+
+    def get_session_and_clock_version(self, session_id: str) -> tuple[SessionRecord, int]:
         with self._connect() as connection:
             row = connection.execute(
                 """
                 SELECT id, name, pack, status, config_json, created_at, started_at, completed_at
-                       , runtime_state_json
+                       , runtime_state_json, active_clock_version
                 FROM sessions
                 WHERE id = ?
                 """,
@@ -494,7 +515,7 @@ class StateStore:
             ).fetchone()
         if row is None:
             raise KeyError(f"Unknown session: {session_id}")
-        return self._session_from_row(row)
+        return self._session_from_row(row), int(row["active_clock_version"])
 
     def try_transition_session(self, session_id: str, *, expected: str, status: str) -> bool:
         with self._connect() as connection:
@@ -549,6 +570,25 @@ class StateStore:
             )
             connection.commit()
 
+    def session_clock_version(self, session_id: str) -> int:
+        with self._connect() as connection:
+            row = connection.execute("SELECT active_clock_version FROM sessions WHERE id = ?", (session_id,)).fetchone()
+        if row is None:
+            raise KeyError(f"Unknown session: {session_id}")
+        return int(row["active_clock_version"])
+
+    @_serialized_runtime_state
+    def advance_session_clock(self, session_id: str, *, seconds: int, timestamp: str) -> SessionRuntimeState:
+        current = self.get_session(session_id).runtime_state
+        version = self.session_clock_version(session_id)
+        return self.write_session_runtime_state.__wrapped__(
+            self, session_id,
+            accumulated_elapsed_seconds=current.accumulated_elapsed_seconds + seconds,
+            last_run_elapsed_seconds=(current.last_run_elapsed_seconds if version else 0) + seconds,
+            run_started_at=timestamp, active_clock_version=1,
+        )
+
+    @_serialized_runtime_state
     def write_session_runtime_state(
         self,
         session_id: str,
@@ -568,6 +608,7 @@ class StateStore:
         dispatch_frozen: bool | object = _UNSET,
         dispatch_frozen_reason: str | None | object = _UNSET,
         last_verification_test_summary: str | None | object = _UNSET,
+        active_clock_version: int | object = _UNSET,
     ) -> SessionRuntimeState:
         current = self.get_session(session_id).runtime_state
         next_state = SessionRuntimeState(
@@ -651,10 +692,10 @@ class StateStore:
             connection.execute(
                 """
                 UPDATE sessions
-                SET runtime_state_json = ?
+                SET runtime_state_json = ?, active_clock_version = COALESCE(?, active_clock_version)
                 WHERE id = ?
                 """,
-                (self._encode_runtime_state(next_state), session_id),
+                (self._encode_runtime_state(next_state), None if active_clock_version is _UNSET else int(active_clock_version), session_id),
             )
             connection.commit()
         return next_state
@@ -1378,6 +1419,7 @@ def initialize_state_store(runtime_paths: RuntimePaths) -> StateStore:
             connection.execute(statement)
         _ensure_column(connection, "sessions", "started_at", "TEXT")
         _ensure_column(connection, "sessions", "runtime_state_json", "TEXT NOT NULL DEFAULT '{}'")
+        _ensure_column(connection, "sessions", "active_clock_version", "INTEGER NOT NULL DEFAULT 0")
         connection.commit()
     return StateStore(runtime_paths=runtime_paths)
 

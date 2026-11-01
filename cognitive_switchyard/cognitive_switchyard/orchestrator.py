@@ -26,7 +26,7 @@ from .models import (
     build_effective_session_runtime_config,
 )
 from .parsers import ArtifactParseError, extract_commit_description, parse_progress_line, parse_task_plan
-from .planning_runtime import _INTAKE_META_FILES, prepare_session_for_execution
+from .planning_runtime import PlanningSessionTimeout, _INTAKE_META_FILES, prepare_session_for_execution
 from .recovery import recover_execution_session
 from .scheduler import select_next_task
 from .state import StateStore
@@ -49,6 +49,65 @@ class SessionAlreadyRunning(RuntimeError):
 _held_sessions = threading.local()
 
 
+class _ActiveClock:
+    """Checkpoint active time while orchestration is blocked in a phase."""
+
+    _ACTIVE = {"planning", "resolving", "running", "verifying", "auto_fixing"}
+
+    def __init__(self, store: StateStore, session_id: str):
+        self.store = store
+        self.session_id = session_id
+        self.stop_event = threading.Event()
+        self.error: Exception | None = None
+        self.active_since: float | None = None
+        self.lock = threading.Lock()
+        self.thread = threading.Thread(target=self._run, daemon=True)
+
+    def start(self) -> None:
+        self.thread.start()
+
+    def activate(self) -> None:
+        with self.lock:
+            if self.active_since is None:
+                self.store.advance_session_clock(self.session_id, seconds=0, timestamp=_timestamp())
+                self.active_since = time.monotonic()
+
+    def _checkpoint(self, *, finishing: bool = False) -> None:
+        with self.lock:
+            now = time.monotonic()
+            active = self.store.get_session(self.session_id).status in self._ACTIVE
+            if self.active_since is None:
+                if active and not finishing:
+                    self.store.advance_session_clock(self.session_id, seconds=0, timestamp=_timestamp())
+                    self.active_since = now
+                return
+            seconds = int(now - self.active_since)
+            if seconds:
+                self.store.advance_session_clock(self.session_id, seconds=seconds, timestamp=_timestamp())
+                self.active_since += seconds
+            if not active or finishing:
+                self.active_since = None
+
+    def _run(self) -> None:
+        try:
+            while not self.stop_event.wait(0.2):
+                self._checkpoint()
+        except Exception as exc:
+            self.error = exc
+
+    def total(self) -> float:
+        with self.lock:
+            accumulated = self.store.get_session(self.session_id).runtime_state.accumulated_elapsed_seconds
+            return accumulated + (0.0 if self.active_since is None else time.monotonic() - self.active_since)
+
+    def stop(self) -> None:
+        self.stop_event.set()
+        self.thread.join()
+        if self.error is not None:
+            raise self.error
+        self._checkpoint(finishing=True)
+
+
 def _locked_session(function):
     @wraps(function)
     def wrapped(*args, **kwargs):
@@ -63,6 +122,9 @@ def _locked_session(function):
             except BlockingIOError as exc:
                 raise SessionAlreadyRunning(f"Session {session_id} is already running") from exc
             _held_sessions.paths = held | {path}
+            clock = _ActiveClock(store, session_id)
+            _held_sessions.clock = clock
+            clock.start()
             try:
                 try:
                     return function(*args, **kwargs)
@@ -73,8 +135,18 @@ def _locked_session(function):
                         store.append_event(session_id, timestamp=_timestamp(), event_type="session.error", message=str(exc))
                     raise
             finally:
-                _held_sessions.paths = held
-                fcntl.flock(lock, fcntl.LOCK_UN)
+                try:
+                    clock.stop()
+                except Exception as exc:
+                    status = store.get_session(session_id).status
+                    if status in {"created", "planning", "resolving", "running", "verifying", "auto_fixing"}:
+                        store.try_transition_session(session_id, expected=status, status="paused")
+                        store.append_event(session_id, timestamp=_timestamp(), event_type="session.error", message=f"Active-time checkpoint failed: {exc}")
+                    raise
+                finally:
+                    _held_sessions.clock = None
+                    _held_sessions.paths = held
+                    fcntl.flock(lock, fcntl.LOCK_UN)
     return wrapped
 
 
@@ -243,32 +315,18 @@ def execute_session(
         session = store.get_session(session_id)
 
     done_count_at_run_start = len(store.list_done_tasks(session_id))
+    _held_sessions.clock.activate()
     manager = WorkerManager(
         default_task_idle=effective_runtime_config.task_idle,
         default_task_max=effective_runtime_config.task_max,
         kill_grace_period=kill_grace_period,
     )
     session_paths = store.runtime_paths.session_paths(session_id)
-    accumulated_at_start = session.runtime_state.accumulated_elapsed_seconds
-    run_elapsed_at_start = session.runtime_state.last_run_elapsed_seconds
-    _session_monotonic_start = time.monotonic()
-    store.write_session_runtime_state(session_id, run_started_at=_timestamp())
-    recorded_seconds = 0
-
     while True:
-        active_seconds = int(time.monotonic() - _session_monotonic_start)
-        if active_seconds != recorded_seconds:
-            recorded_seconds = active_seconds
-            store.write_session_runtime_state(
-                session_id,
-                accumulated_elapsed_seconds=accumulated_at_start + active_seconds,
-                last_run_elapsed_seconds=run_elapsed_at_start + active_seconds,
-                run_started_at=_timestamp(),
-            )
         verified_this_iteration = False
         if (
             effective_runtime_config.session_max > 0
-            and accumulated_at_start + (time.monotonic() - _session_monotonic_start) >= effective_runtime_config.session_max
+            and _held_sessions.clock.total() >= effective_runtime_config.session_max
         ):
             return _abort_session_for_timeout(
                 store=store,
@@ -408,13 +466,12 @@ def execute_session(
                         return final_verification_result
             idle_at = _timestamp()
             # Accumulate run duration into session total
+            _held_sessions.clock.stop()
             runtime_state = store.get_session(session_id).runtime_state
-            run_seconds = int(time.monotonic() - _session_monotonic_start)
             store.update_session_status(session_id, status="idle")
             store.write_session_runtime_state(
                 session_id,
-                accumulated_elapsed_seconds=accumulated_at_start + run_seconds,
-                last_run_elapsed_seconds=max(1, run_elapsed_at_start + run_seconds),
+                last_run_elapsed_seconds=max(1, runtime_state.last_run_elapsed_seconds),
             )
             store.append_event(
                 session_id,
@@ -694,6 +751,7 @@ def start_session(
     runtime_event_sink: Callable[[BackendRuntimeEvent], None] | None = None,
 ) -> OrchestratorResult:
     session = store.get_session(session_id)
+    default_planner = planner_agent is None
     planner_agent, resolver_agent, fixer_executor = _resolve_default_agent_callables(
         pack_manifest=pack_manifest,
         session_root=store.runtime_paths.session_paths(session_id).root,
@@ -826,7 +884,12 @@ def start_session(
             message=_format_pipeline_event_message(event_type, detail),
         )
 
-    planning_started = time.monotonic()
+    _held_sessions.clock.activate()
+    budget = effective_runtime_config.session_max
+    elapsed = _held_sessions.clock.total()
+    session_deadline = time.monotonic() + max(0, budget - elapsed) if budget > 0 else None
+    if default_planner and planner_agent is not None and session_deadline is not None:
+        planner_agent = partial(planner_agent, deadline=session_deadline)
     try:
         preparation = prepare_session_for_execution(
             store=store,
@@ -841,14 +904,13 @@ def start_session(
             env=dict(env) if env is not None else None,
             on_status_change=_on_preparation_status_change,
             on_pipeline_event=_on_pipeline_event,
+            session_deadline=session_deadline,
         )
-    finally:
-        planning_seconds = int(time.monotonic() - planning_started)
-        runtime_state = store.get_session(session_id).runtime_state
-        store.write_session_runtime_state(
-            session_id, accumulated_elapsed_seconds=runtime_state.accumulated_elapsed_seconds + planning_seconds,
-            last_run_elapsed_seconds=planning_seconds, run_started_at=_timestamp(),
-        )
+    except PlanningSessionTimeout as exc:
+        store.update_session_status(session_id, status="paused")
+        store.append_event(session_id, timestamp=_timestamp(), event_type="session.timeout", message=str(exc))
+        _publish_alert(runtime_event_sink, session_id=session_id, severity="error", task_id=None, worker_slot=None, message=str(exc))
+        return OrchestratorResult(session_id=session_id, started=True, session_status="paused")
     # Resolution conflicts with no ready tasks → cannot proceed
     if preparation.resolution_conflicts and not preparation.ready_task_ids:
         return OrchestratorResult(
