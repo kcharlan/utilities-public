@@ -36,7 +36,8 @@ class ToolCallStreamParser:
     malformed JSON (falls back to text), and normal '<' characters.
     """
 
-    def __init__(self):
+    def __init__(self, allowed_names: set[str] | None = None):
+        self._allowed_names = allowed_names
         self._buffer: str = ""
         self._in_tool_call: bool = False
         self._tool_call_count: int = 0
@@ -138,12 +139,14 @@ class ToolCallStreamParser:
         (e.g. '{"name":"read","arguments":{"path":"/tmp"}}}').
         """
         parsed = self._lenient_json_loads(json_str)
-        if parsed is None:
+        if not isinstance(parsed, dict):
             return None
 
         name = parsed.get("name", "")
-        if not name:
+        if not isinstance(name, str) or not name:
             logger.warning("Tool call JSON missing 'name' field")
+            return None
+        if self._allowed_names is not None and name not in self._allowed_names:
             return None
         arguments = parsed.get("arguments", parsed.get("parameters", {}))
         if isinstance(arguments, dict):

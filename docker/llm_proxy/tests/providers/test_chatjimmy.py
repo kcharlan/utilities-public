@@ -156,12 +156,20 @@ class TestParseStream:
         chunks = [f"Hi{STATS_START}{stats}{STATS_END}"]
         response = self._make_response(chunks)
 
-        async for _ in adapter._parse_stream(response):
+        parsed_stats = {}
+        async for _ in adapter._parse_stream(response, parsed_stats):
             pass
 
-        assert adapter._last_stats is not None
-        assert adapter._last_stats["prefill_tokens"] == 14
-        assert adapter._last_stats["decode_tokens"] == 10
+        assert parsed_stats["prefill_tokens"] == 14
+        assert parsed_stats["decode_tokens"] == 10
+
+    @pytest.mark.asyncio
+    async def test_stats_body_split_across_chunks(self, adapter):
+        response = self._make_response(["Hi<|stats|>{\"prefill_", "tokens\":14,\"decode_tokens\":10}<|/stats|>"])
+        parsed_stats = {}
+        content = [text async for text in adapter._parse_stream(response, parsed_stats)]
+        assert "".join(content) == "Hi"
+        assert parsed_stats == {"prefill_tokens": 14, "decode_tokens": 10}
 
     @pytest.mark.asyncio
     async def test_no_stats_flushes_buffer(self, adapter):
