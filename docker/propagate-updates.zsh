@@ -89,6 +89,7 @@ typeset -rA CHECK_BUILD_SERVICES=(
 
 COMMAND=
 DRY_RUN=false
+KEEP_SOURCE_BUNDLES=false
 typeset -a SELECTED=()
 typeset -a SUMMARY=()
 typeset -i PROBLEMS=0
@@ -102,7 +103,7 @@ die() { print -ru2 -- "[propagate] ERROR: $*"; exit 1; }
 usage() {
   cat <<EOF
 Usage: $PROG refresh [--stack NAME]... [--dry-run]
-       $PROG deploy  [--stack NAME]... [--dry-run]
+       $PROG deploy  [--stack NAME]... [--dry-run] [--keep-source-bundles]
        $PROG --help
 
 refresh  Update docker/ lockfiles within their declared ranges, audit them,
@@ -118,6 +119,7 @@ deploy   Requires no uncommitted tracked changes under docker/. Copies tracked
 
 --stack NAME  Limit to one stack; repeatable. Default: every stack.
 --dry-run     Print the plan without running tools or changing files.
+--keep-source-bundles  Do not prune source bundles during this deploy.
 
 Stacks: ${(j:, :)STACKS}
 EOF
@@ -141,6 +143,10 @@ parse_args() {
   while (( $# )); do
     case "$1" in
       --dry-run) DRY_RUN=true ;;
+      --keep-source-bundles)
+        [[ "$COMMAND" == deploy ]] || usage_error "--keep-source-bundles is only valid for deploy"
+        KEEP_SOURCE_BUNDLES=true
+        ;;
       --help|-h) usage; exit 0 ;;
       --stack|--stack=*)
         if [[ "$1" == --stack=* ]]; then
@@ -420,6 +426,11 @@ bundle_matches_commit() {
   return "$result"
 }
 
+bundle_overlaps_reference() {
+  local bundle="${1:A}" ref="${2:A}"
+  [[ "$bundle" == / || "$ref" == / || "$bundle" == "$ref" || "$ref" == "$bundle"/* || "$bundle" == "$ref"/* ]]
+}
+
 prune_unused_bundles() {
   local dir name sha stamp entry ref referenced ordered
   local -a candidates=() sorted=()
@@ -432,7 +443,7 @@ prune_unused_bundles() {
     bundle_matches_commit "$dir" "$sha" || { warn "retaining unverified bundle: $dir"; continue; }
     referenced=false
     for ref in "${BUNDLE_REFERENCES[@]}"; do
-      [[ "$ref" == "${dir:A}" || "$ref" == "${dir:A}"/* ]] && { referenced=true; break; }
+      bundle_overlaps_reference "$dir" "$ref" && { referenced=true; break; }
     done
     [[ "$referenced" == false ]] || continue
     stamp="$(LC_ALL=C perl -MTime::HiRes=stat -e 'my @s = stat($ARGV[0]); @s or die; printf "%.9f", $s[9]' "$dir")" || { warn "cannot inspect bundle timestamps; retaining bundles"; return; }
@@ -448,7 +459,7 @@ prune_unused_bundles() {
     if ! capture_bundle_references; then warn "cannot inspect bundle references; retaining remaining bundles"; return; fi
     referenced=false
     for ref in "${BUNDLE_REFERENCES[@]}"; do
-      [[ "$ref" == "${dir:A}" || "$ref" == "${dir:A}"/* ]] && { referenced=true; break; }
+      bundle_overlaps_reference "$dir" "$ref" && { referenced=true; break; }
     done
     [[ "$referenced" == false ]] || continue
     [[ ! -L "$dir/.ready" && -f "$dir/.ready" && ! -L "$dir/.complete" && -f "$dir/.complete" && "$(stat -f '%u' "$dir")" == "$(id -u)" && "$(stat -f '%Lp' "$dir")" == 700 ]] || continue
@@ -640,7 +651,15 @@ snapshot_running() {
   RUNNING_COMPOSE=()
   RUNNING_CONTAINERS=()
   json="$(docker compose ls --format json)" || die "docker compose ls failed; is Docker running?"
-  compose_lines="$(jq -r '.[] | select(.Status | test("running")) | "\(.Name)\t\(.ConfigFiles)"' <<< "$json")" || die "could not parse docker compose ls output"
+  compose_lines="$(jq -r '
+    def valid: type == "string" and length > 0 and (test("[\\t\\r\\n]") | not);
+    if type != "array" or (all(.[]; type == "object" and
+      (.Name | valid and test("^[a-z0-9][a-z0-9_-]*$")) and
+      (.Status | valid and test("^(created|running|paused|restarting|removing|exited|dead)\\([0-9]+\\)(, *(created|running|paused|restarting|removing|exited|dead)\\([0-9]+\\))*$")) and
+      (.ConfigFiles | valid and (split(",") | all(.[]; startswith("/") and length > 1)))) | not)
+    then error("invalid compose runtime list")
+    else .[] | select(.Status | test("running")) | "\(.Name)\t\(.ConfigFiles)" end
+  ' <<< "$json")" || die "could not parse docker compose ls output"
   for line in "${(@f)compose_lines}"; do
     [[ -n "$line" ]] || continue
     name="${line%%$'\t'*}"
@@ -708,7 +727,7 @@ cmd_deploy() {
   snapshot_running
   check_deploy_source
   if [[ "$DRY_RUN" != true ]]; then
-    if ! capture_bundle_references; then
+    if [[ "$KEEP_SOURCE_BUNDLES" != true ]] && ! capture_bundle_references; then
       BUNDLE_REFERENCES_OK=false
       warn "cannot inspect bundle references; retaining all bundles"
     fi
@@ -828,7 +847,9 @@ cmd_deploy() {
       warn "cannot mark bundle complete; retaining all bundles"
       BUNDLE_REFERENCES_OK=false
     fi
-    if [[ "$BUNDLE_REFERENCES_OK" == true ]]; then
+    if [[ "$KEEP_SOURCE_BUNDLES" == true ]]; then
+      log "Source bundle pruning disabled for this deploy."
+    elif [[ "$BUNDLE_REFERENCES_OK" == true ]]; then
       if capture_bundle_references; then
         prune_unused_bundles
       else

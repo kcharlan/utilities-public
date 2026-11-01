@@ -250,6 +250,9 @@ test_help_and_usage_errors() {
   assert_contains "$CASE/out" "unknown stack: nonexistent"
   run_script frobnicate
   assert_status 2
+  run_script refresh --keep-source-bundles
+  assert_status 2
+  assert_contains "$CASE/out" 'only valid for deploy'
 }
 
 # --- refresh -------------------------------------------------------------
@@ -366,6 +369,51 @@ test_refresh_dry_run_changes_nothing() {
 
 # --- deploy --------------------------------------------------------------
 
+test_deploy_rejects_invalid_compose_runtime_records() {
+  new_case deploy_invalid_compose_records
+  commit_change webserver/index/package-lock.json '// committed change'
+  local original invalid
+  original="$(<"$DEPLOY/webserver/index/package-lock.json")"
+  for invalid in '{}' '[null]' '[{}]' \
+    '[{"Status":"running(1)","ConfigFiles":"/synthetic/compose.yml"}]' \
+    '[{"Name":"webserver","ConfigFiles":"/synthetic/compose.yml"}]' \
+    '[{"Name":"webserver","Status":"running(1)"}]' \
+    '[{"Name":null,"Status":"running(1)","ConfigFiles":"/synthetic/compose.yml"}]' \
+    '[{"Name":3,"Status":"running(1)","ConfigFiles":"/synthetic/compose.yml"}]' \
+    '[{"Name":"webserver","Status":null,"ConfigFiles":"/synthetic/compose.yml"}]' \
+    '[{"Name":"webserver","Status":3,"ConfigFiles":"/synthetic/compose.yml"}]' \
+    '[{"Name":"webserver","Status":"running(1)","ConfigFiles":null}]' \
+    '[{"Name":"webserver","Status":"running(1)","ConfigFiles":3}]' \
+    '[{"Name":"","Status":"running(1)","ConfigFiles":"/synthetic/compose.yml"}]' \
+    '[{"Name":"webserver","Status":"","ConfigFiles":"/synthetic/compose.yml"}]' \
+    '[{"Name":"webserver","Status":"running(1)","ConfigFiles":""}]' \
+    '[{"Name":" ","Status":"running(1)","ConfigFiles":"/synthetic/compose.yml"}]' \
+    '[{"Name":"webserver","Status":"unknown","ConfigFiles":"/synthetic/compose.yml"}]' \
+    '[{"Name":"webserver","Status":"running(1)","ConfigFiles":" "}]'; do
+    print -r -- "$invalid" > "$STATE/compose.json"
+    : > "$CASE/calls.log"
+    run_script deploy --stack webserver
+    assert_status 1
+    assert_contains "$CASE/out" 'could not parse docker compose ls output'
+    assert_not_contains "$CASE/calls.log" 'update '
+    [[ "$(<"$DEPLOY/webserver/index/package-lock.json")" == "$original" ]] || fail 'invalid state copied files'
+    [[ ! -e "$HOME_DIR/.utilities-deploy-backups" ]] || fail 'invalid state created backups'
+  done
+}
+
+test_deploy_accepts_valid_stopped_compose_record() {
+  new_case deploy_stopped_record
+  print -r -- "[{\"Name\":\"webserver\",\"Status\":\"exited(1)\",\"ConfigFiles\":\"$DEPLOY/webserver/docker-compose.yml\"}]" > "$STATE/compose.json"
+  run_script deploy --stack webserver
+  assert_status 0
+  assert_contains "$CASE/out" 'not running, left stopped'
+  assert_not_contains "$CASE/calls.log" 'update webserver'
+  print -r -- "[{\"Name\":\"webserver\",\"Status\":\"running(1), exited(1)\",\"ConfigFiles\":\"$DEPLOY/webserver/docker-compose.yml\"}]" > "$STATE/compose.json"
+  run_script deploy --stack webserver
+  assert_status 0
+  assert_contains "$CASE/calls.log" 'update webserver'
+}
+
 test_deploy_refuses_unknown_runtime_state() {
   new_case deploy_ps_failure
   FAKE_PS_RC=1 run_script deploy
@@ -448,6 +496,35 @@ test_bundle_retention_preserves_all_references() {
   [[ -d "$root/docker-$commit-000006" && -d "$root/docker-$commit-000007" && -d "$root/docker-$commit-000008" && -d "$root/docker-$commit-000009" && -d "$root/docker-$commit-0000010" ]] || fail 'newer bundles removed'
 }
 
+test_bundle_retention_preserves_ancestor_mounts() {
+  local mode commit root i name source
+  for mode in parent root control; do
+    new_case "bundle_ancestor_$mode"
+    commit="$(fixture_git rev-parse HEAD)"
+    root="$HOME_DIR/.utilities-deploy-bundles"
+    for i in {1..7}; do
+      name="$root/docker-$commit-00000$i"
+      mkdir -p "$name"
+      (umask 022; fixture_git archive "$commit" docker | tar -xf - -C "$name")
+      print "$commit" > "$name/.ready"
+      print "$commit" > "$name/.complete"
+      touch -t "2020010${i}0101" "$name"
+    done
+    if [[ "$mode" != control ]]; then
+      source="$root"; [[ "$mode" == root ]] && source=/
+      print 'aaaaaaaaaaaa' > "$STATE/all-ids.txt"
+      print -r -- "[{\"Mounts\":[{\"Source\":\"$source\"}],\"Config\":{\"Labels\":{}}}]" > "$STATE/inspect.json"
+    fi
+    run_script deploy --stack webserver
+    assert_status 0
+    if [[ "$mode" == control ]]; then
+      [[ ! -e "$root/docker-$commit-000001" && ! -e "$root/docker-$commit-000002" ]] || fail 'control did not prune eligible bundles'
+    else
+      for i in {1..7}; do [[ -d "$root/docker-$commit-00000$i" ]] || fail "$mode mount lost a bundle"; done
+    fi
+  done
+}
+
 test_bundle_retention_skips_failed_inspection() {
   new_case bundle_reference_failure
   local commit root i
@@ -455,8 +532,10 @@ test_bundle_retention_skips_failed_inspection() {
   root="$HOME_DIR/.utilities-deploy-bundles"
   for i in {1..7}; do
     mkdir -p "$root/docker-$commit-00000$i"
+    (umask 022; fixture_git archive "$commit" docker | tar -xf - -C "$root/docker-$commit-00000$i")
     print "$commit" > "$root/docker-$commit-00000$i/.ready"
     print "$commit" > "$root/docker-$commit-00000$i/.complete"
+    touch -t "2020010${i}0101" "$root/docker-$commit-00000$i"
   done
   FAKE_REFERENCE_FAILURE=1 run_script deploy --stack webserver
   assert_status 0
@@ -468,6 +547,11 @@ test_bundle_retention_skips_failed_inspection() {
   assert_status 0
   assert_contains "$CASE/out" 'cannot inspect bundle references'
   [[ -d "$root/docker-$commit-000001" ]] || fail 'pruned after malformed inspection'
+  : > "$STATE/all-ids.txt"
+  print '[]' > "$STATE/inspect.json"
+  run_script deploy --stack webserver
+  assert_status 0
+  [[ ! -e "$root/docker-$commit-000001" ]] || fail 'inspection control did not prune eligible bundle'
 }
 
 test_bundle_retention_keeps_unknown_and_in_progress() {
@@ -477,6 +561,7 @@ test_bundle_retention_keeps_unknown_and_in_progress() {
   root="$HOME_DIR/.utilities-deploy-bundles"
   for i in {1..7}; do
     mkdir -p "$root/docker-$commit-00000$i"
+    (umask 022; fixture_git archive "$commit" docker | tar -xf - -C "$root/docker-$commit-00000$i")
     print "$commit" > "$root/docker-$commit-00000$i/.ready"
     print "$commit" > "$root/docker-$commit-00000$i/.complete"
     touch -t "2020010${i}0101" "$root/docker-$commit-00000$i"
@@ -486,6 +571,27 @@ test_bundle_retention_keeps_unknown_and_in_progress() {
   run_script deploy --stack webserver
   assert_status 0
   [[ -d "$root/docker-$commit-000001" && -d "$root/unrecognized" ]] || fail 'removed in-progress or unknown bundle'
+  [[ ! -e "$root/docker-$commit-000002" ]] || fail 'in-progress control did not prune eligible bundle'
+}
+
+test_deploy_keeps_source_bundles_when_requested() {
+  new_case bundle_keep_optout
+  local commit root i
+  commit="$(fixture_git rev-parse HEAD)"
+  root="$HOME_DIR/.utilities-deploy-bundles"
+  for i in {1..7}; do
+    mkdir -p "$root/docker-$commit-00000$i"
+    (umask 022; fixture_git archive "$commit" docker | tar -xf - -C "$root/docker-$commit-00000$i")
+    print "$commit" > "$root/docker-$commit-00000$i/.ready"
+    print "$commit" > "$root/docker-$commit-00000$i/.complete"
+    touch -t "2020010${i}0101" "$root/docker-$commit-00000$i"
+  done
+  run_script deploy --stack webserver --keep-source-bundles
+  assert_status 0
+  for i in {1..7}; do [[ -d "$root/docker-$commit-00000$i" ]] || fail 'opt-out pruned a bundle'; done
+  run_script deploy --stack webserver
+  assert_status 0
+  [[ ! -e "$root/docker-$commit-000001" ]] || fail 'opt-out control did not prune eligible bundle'
 }
 
 test_deploy_never_executes_modified_deployed_updater() {

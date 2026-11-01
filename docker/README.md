@@ -53,8 +53,8 @@ docker/propagate-updates.zsh deploy
   changes. It copies changed tracked files into `~/docker`, backing up each
   replaced file under `~/.utilities-deploy-backups/docker-<timestamp>/`, and
   never deletes or touches local-only files such as `.env`. It then runs the
-  deployed `update.sh` for each selected stack that was running, confirms the
-  stack is running again from `~/docker`, and leaves stopped stacks stopped.
+  committed bundle's `update.sh` for each selected stack that was running,
+  confirms the stack is running again, and leaves stopped stacks stopped.
   A running stack without an `update.sh`, or one running
   from a Compose file outside `~/docker`, is reported as needing manual action.
   `llm_collector` is synchronized only by its own `migrate.sh`; when its
@@ -69,6 +69,11 @@ docker/propagate-updates.zsh deploy
   projects, and the five newest other verified completed snapshots. Failed,
   in-progress, altered and unrecognized snapshots are retained. If reference inspection fails,
   pruning is skipped and a warning is printed.
+  Snapshot paths are internal to managed propagation and are not stable paths
+  for independently created containers. If independent Docker operations need
+  to reference them, pass `--keep-source-bundles` on every deploy to disable
+  bundle pruning; reference discovery and deletion are not atomic with those
+  independent operations.
   After a successful deploy that made backups, it retains the newest two
   timestamped Docker backup directories by modification time, breaking ties
   by descending name. Failed, unchanged and dry runs do not prune backups.
