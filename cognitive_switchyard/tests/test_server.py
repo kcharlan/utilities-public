@@ -13,7 +13,7 @@ from textwrap import dedent
 
 import pytest
 import starlette.testclient as starlette_testclient
-from fastapi.testclient import TestClient
+from fastapi.testclient import TestClient as StarletteClient
 from starlette.exceptions import StarletteDeprecationWarning
 
 from cognitive_switchyard.config import GlobalConfig, build_runtime_paths, write_global_config
@@ -21,6 +21,11 @@ from cognitive_switchyard.models import BackendRuntimeEvent, PackManifest, TaskP
 from cognitive_switchyard.pack_loader import load_pack_manifest
 from cognitive_switchyard.server import create_app
 from cognitive_switchyard.state import StateStore, initialize_state_store
+
+
+class TestClient(StarletteClient):
+    def __init__(self, app):
+        super().__init__(app, base_url="http://127.0.0.1:8000", headers={"Origin": "http://127.0.0.1:8000"})
 
 
 def _build_store(tmp_path: Path) -> tuple[StateStore, object]:
@@ -522,7 +527,7 @@ def test_create_session_accepts_session_overrides_and_returns_effective_runtime_
                     "auto_fix_enabled": True,
                     "auto_fix_max_attempts": 4,
                     "poll_interval": 0.25,
-                    "environment": {"API_MODE": "setup", "TRACE_TOKEN": "abc123"},
+                    "environment": {"COGNITIVE_SWITCHYARD_PROJECT_DIR": "synthetic-project"},
                 },
             },
         )
@@ -538,7 +543,7 @@ def test_create_session_accepts_session_overrides_and_returns_effective_runtime_
             "auto_fix_enabled": True,
             "auto_fix_max_attempts": 4,
             "poll_interval": 0.25,
-            "environment": {"API_MODE": "setup", "TRACE_TOKEN": "abc123"},
+            "environment": {"COGNITIVE_SWITCHYARD_PROJECT_DIR": "synthetic-project"},
         }
         assert payload["effective_runtime_config"] == {
             "planner_count": 2,
@@ -547,12 +552,12 @@ def test_create_session_accepts_session_overrides_and_returns_effective_runtime_
             "timeouts": {"task_idle": 25, "task_max": 90, "session_max": 600},
             "auto_fix": {"enabled": True, "max_attempts": 4},
             "poll_interval": 0.25,
-            "environment": {"API_MODE": "setup", "TRACE_TOKEN": "abc123"},
+            "environment": {"COGNITIVE_SWITCHYARD_PROJECT_DIR": "synthetic-project"},
         }
         assert json.loads(store.get_session("session-11c-create").config_json or "{}") == payload["config"]
 
 
-def test_create_session_succeeds_when_pack_directory_is_missing(
+def test_existing_session_serializes_when_pack_directory_is_missing(
     tmp_path: Path,
 ) -> None:
     """Regression: _serialize_session must not crash if the pack dir is absent."""
@@ -567,8 +572,9 @@ def test_create_session_succeeds_when_pack_directory_is_missing(
             "/api/sessions",
             json={"id": "missing-pack-session", "pack": "nonexistent-pack"},
         )
-        assert response.status_code == 201
-        payload = response.json()["session"]
+        assert response.status_code == 400
+        store.create_session(session_id="missing-pack-session", name="Missing", pack="nonexistent-pack", created_at="2026-01-01T00:00:00Z")
+        payload = client.get("/api/sessions/missing-pack-session").json()["session"]
         assert payload["id"] == "missing-pack-session"
         assert payload["pack"] == "nonexistent-pack"
         # effective_runtime_config should be empty dict fallback, not a crash
@@ -1537,7 +1543,7 @@ def test_state_update_snapshot_after_runtime_events_preserves_worker_card_fields
     )
     with TestClient(app) as client:
 
-        with client.websocket_connect("/ws") as websocket:
+        with client.websocket_connect("ws://127.0.0.1:8000/ws") as websocket:
             controller._publish_snapshot(session.id)
             message = _wait_for_websocket_message(
                 websocket,
@@ -1719,7 +1725,7 @@ def test_websocket_broadcasts_state_updates_alerts_and_slot_scoped_log_lines(tmp
             """
             _run_async(coro, loop=manager.event_loop)
 
-        with client.websocket_connect("/ws") as websocket:
+        with client.websocket_connect("ws://127.0.0.1:8000/ws") as websocket:
             _send(
                 manager.broadcast_state(
                     {
@@ -1841,7 +1847,7 @@ def test_background_session_websocket_streams_runtime_task_status_changes_before
     app = create_app(store=store, runtime_paths=runtime_paths)
     with TestClient(app) as client:
 
-        with client.websocket_connect("/ws") as websocket:
+        with client.websocket_connect("ws://127.0.0.1:8000/ws") as websocket:
             start_response = client.post(f"/api/sessions/{session.id}/start")
             assert start_response.status_code == 202
 
@@ -1925,7 +1931,7 @@ def test_background_session_websocket_streams_subscribed_log_lines_and_progress_
     app = create_app(store=store, runtime_paths=runtime_paths)
     with TestClient(app) as client:
 
-        with client.websocket_connect("/ws") as websocket:
+        with client.websocket_connect("ws://127.0.0.1:8000/ws") as websocket:
             websocket.send_json({"type": "subscribe_logs", "worker_slot": 0})
             start_response = client.post(f"/api/sessions/{session.id}/start")
             assert start_response.status_code == 202
@@ -1978,7 +1984,7 @@ def test_background_session_websocket_emits_timeout_or_problem_alerts_from_runti
     app = create_app(store=store, runtime_paths=runtime_paths)
     with TestClient(app) as client:
 
-        with client.websocket_connect("/ws") as websocket:
+        with client.websocket_connect("ws://127.0.0.1:8000/ws") as websocket:
             start_response = client.post(f"/api/sessions/{session.id}/start")
             assert start_response.status_code == 202
 
@@ -2478,7 +2484,7 @@ def test_broadcast_alert_reaches_websocket_with_correct_structure(tmp_path: Path
         client.post("/api/sessions", json={"id": session_id, "name": "Alert WS", "pack": "claude-code"})
 
         controller = app.state.controller
-        with client.websocket_connect("/ws") as websocket:
+        with client.websocket_connect("ws://127.0.0.1:8000/ws") as websocket:
             controller._broadcast_alert(session_id, "Pipeline stopped", severity="warning")
             msg = websocket.receive_json()
             assert msg["type"] == "alert"
@@ -2558,7 +2564,7 @@ def test_pipeline_event_triggers_websocket_snapshot(tmp_path: Path) -> None:
         client.post("/api/sessions", json={"id": session_id, "name": "PipeEvt", "pack": "claude-code"})
 
         controller = app.state.controller
-        with client.websocket_connect("/ws") as websocket:
+        with client.websocket_connect("ws://127.0.0.1:8000/ws") as websocket:
             # Simulate a pipeline event (file claimed)
             controller._publish_runtime_event(
                 BackendRuntimeEvent(
@@ -2584,7 +2590,7 @@ def test_preparation_status_event_triggers_websocket_snapshot(tmp_path: Path) ->
         client.post("/api/sessions", json={"id": session_id, "name": "PrepStatus", "pack": "claude-code"})
 
         controller = app.state.controller
-        with client.websocket_connect("/ws") as websocket:
+        with client.websocket_connect("ws://127.0.0.1:8000/ws") as websocket:
             # Update session status, then fire preparation_status event
             store.update_session_status(session_id, status="planning")
             controller._publish_runtime_event(
@@ -2725,7 +2731,7 @@ def test_session_start_broadcasts_status_transitions_over_websocket(
     app = create_app(store=store, runtime_paths=runtime_paths)
 
     with TestClient(app) as client:
-        with client.websocket_connect("/ws") as websocket:
+        with client.websocket_connect("ws://127.0.0.1:8000/ws") as websocket:
             start_resp = client.post(f"/api/sessions/{session.id}/start")
             assert start_resp.status_code == 202
 
@@ -4139,7 +4145,7 @@ def test_reprocess_blocked_while_workers_active(tmp_path: Path) -> None:
 
 
 def test_reprocess_cleans_worktree_on_backward_move(tmp_path: Path) -> None:
-    """move_task from done→intake calls git branch -D for the per-task branch."""
+    """move_task from done→intake cleans merged task branches for known slots."""
     import json
     from unittest.mock import MagicMock, patch
     from cognitive_switchyard.server import ConnectionManager, SessionController
@@ -4147,10 +4153,7 @@ def test_reprocess_cleans_worktree_on_backward_move(tmp_path: Path) -> None:
     store, runtime_paths = _build_store(tmp_path)
     _write_runtime_pack(runtime_paths)
     config_json = json.dumps({
-        "environment": {
-            "COGNITIVE_SWITCHYARD_SOURCE_REPO": "/source/repo",
-            "COGNITIVE_SWITCHYARD_REPO_ROOT": "/worktree/path",
-        }
+        "_worktree": {"source_repo": "/source/repo", "path": "/worktree/path"}
     })
     session = store.create_session(
         session_id="rp-005",
@@ -4160,6 +4163,7 @@ def test_reprocess_cleans_worktree_on_backward_move(tmp_path: Path) -> None:
         config_json=config_json,
     )
     _register_task(store, session.id, task_id="cleanup-t1", title="Cleanup Task")
+    store.project_task(session.id, "cleanup-t1", status="active", worker_slot=1)
     store.project_task(session.id, "cleanup-t1", status="done")
 
     cm = ConnectionManager()
@@ -4169,16 +4173,17 @@ def test_reprocess_cleans_worktree_on_backward_move(tmp_path: Path) -> None:
         connection_manager=cm,
     )
 
-    with patch("cognitive_switchyard.server.subprocess.run") as mock_run:
+    with patch("cognitive_switchyard.server._registered_secondary_worktree", return_value=True), \
+         patch("cognitive_switchyard.server.subprocess.run") as mock_run:
         mock_run.return_value = MagicMock(returncode=0)
         controller.move_task(session.id, "cleanup-t1", "intake")
 
-    # Verify git branch -D was called for the task branch
+    # Verify only a merged branch for the server-recorded slot is deleted.
     calls = [list(call.args[0]) for call in mock_run.call_args_list]
     assert any(
         call[:4] == ["git", "-C", "/source/repo", "branch"]
-        and "-D" in call
-        and "switchyard-cleanup-t1" in call
+        and "-d" in call
+        and "switchyard-cleanup-t1-1" in call
         for call in calls
     )
     # Task row should be deleted (moved to intake)

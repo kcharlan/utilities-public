@@ -32,7 +32,7 @@ from textwrap import dedent
 
 import pytest
 
-pytest.importorskip("playwright")
+import playwright
 
 import uvicorn  # noqa: E402
 from playwright.sync_api import TimeoutError as PlaywrightTimeoutError  # noqa: E402
@@ -56,6 +56,11 @@ from cognitive_switchyard.state import initialize_state_store  # noqa: E402
 # ---------------------------------------------------------------------------
 
 SLOW_TIMEOUT = 15_000  # ms — generous timeout for CI
+
+
+@pytest.fixture(scope="session")
+def base_url(pytestconfig):
+    return pytestconfig.getoption("--base-url") or pytestconfig.getini("base_url") or None
 
 
 @pytest.fixture
@@ -500,6 +505,45 @@ def server_url(runtime_home):
     store = initialize_state_store(runtime_paths)
     app = create_app(store=store, runtime_paths=runtime_paths)
     yield from _serve_app(app)
+
+
+def test_wsproto_origin_and_reconnection(server_url):
+    host = server_url.removeprefix("http://")
+    port = int(host.rsplit(":", 1)[1])
+
+    def handshake(origin):
+        request = (
+            f"GET /ws HTTP/1.1\r\nHost: {host}\r\nUpgrade: websocket\r\n"
+            f"Connection: Upgrade\r\nSec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n"
+            f"Sec-WebSocket-Version: 13\r\nOrigin: {origin}\r\n\r\n"
+        )
+        with socket.create_connection(("127.0.0.1", port), timeout=5) as connection:
+            connection.sendall(request.encode('ascii'))
+            return connection.recv(4096).split(b'\r\n', 1)[0]
+
+    assert b' 101 ' in handshake(server_url)
+    assert b' 101 ' in handshake(server_url)
+    assert b' 403 ' in handshake('http://foreign.example')
+
+
+def test_browser_mutation_and_websocket_reconnection(fresh_server, page):
+    page.add_init_script("""(() => {
+        const Original = window.WebSocket;
+        window.testSockets = [];
+        window.WebSocket = class extends Original {
+            constructor(...args) { super(...args); window.testSockets.push(this); }
+        };
+    })()""")
+    page.goto(fresh_server['url'])
+    status = page.evaluate("""async () => (await fetch('/api/sessions', {
+        method: 'POST', headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({id: 'browser-reconnect', pack: 'claude-code'})
+    })).status""")
+    assert status == 201
+    page.reload()
+    page.wait_for_function("window.testSockets.length > 0 && window.testSockets.at(-1).readyState === 1")
+    page.evaluate("window.testSockets.at(-1).close()")
+    page.wait_for_function("window.testSockets.length > 1 && window.testSockets.at(-1).readyState === 1", timeout=SLOW_TIMEOUT)
 
 
 @pytest.fixture
