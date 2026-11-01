@@ -8,7 +8,17 @@ CLI="$PROJECT_DIR/bin/tm-snapshot-monitor"
 LIB="$PROJECT_DIR/lib/tm_snapshot_monitor.sh"
 
 TMP_ROOT=$(/usr/bin/mktemp -d "${TMPDIR:-/tmp}/tm-snapshot-monitor-tests.XXXXXX")
-trap '/bin/rm -rf "$TMP_ROOT"' EXIT HUP INT TERM
+remove_test_tree() {
+    case "$1" in "$TMP_ROOT"|"$TMP_ROOT"/*) ;; *) return 1 ;; esac
+    [ -e "$1" ] || [ -L "$1" ] || return 0
+    /bin/rm -r -- "$1"
+}
+trap 'remove_test_tree "$TMP_ROOT"' EXIT HUP INT TERM
+TMPDIR="$TMP_ROOT"
+export TMPDIR
+HOME="$TMP_ROOT/home"
+export HOME
+/bin/mkdir -p "$HOME"
 
 PASS_COUNT=0
 FAIL_COUNT=0
@@ -79,6 +89,10 @@ FAKE_BIN="$TMP_ROOT/fake-bin"
 
 /bin/cat >"$FAKE_BIN/tmutil" <<'EOF'
 #!/bin/sh
+if [ -n "${FAKE_TMUTIL_HANG_PID:-}" ]; then
+    /bin/echo "$$" >"$FAKE_TMUTIL_HANG_PID"
+    exec /bin/sleep 5
+fi
 if [ "${FAKE_TMUTIL_EXIT:-0}" -ne 0 ]; then
     exit "$FAKE_TMUTIL_EXIT"
 fi
@@ -94,6 +108,7 @@ EOF
 if [ -n "${FAKE_MOUNT_CALLED_FILE:-}" ]; then
     /bin/echo called >>"$FAKE_MOUNT_CALLED_FILE"
 fi
+if [ "${FAKE_MOUNT_EXIT:-0}" -ne 0 ]; then exit "$FAKE_MOUNT_EXIT"; fi
 if [ -n "${FAKE_MOUNT_OUTPUT:-}" ]; then
     /bin/cat "$FAKE_MOUNT_OUTPUT"
 fi
@@ -136,6 +151,10 @@ EOF
 
 /bin/cat >"$FAKE_BIN/diskutil" <<'EOF'
 #!/bin/sh
+if [ -n "${FAKE_DISKUTIL_HANG_PID:-}" ]; then
+    /bin/echo "$$" >"$FAKE_DISKUTIL_HANG_PID"
+    exec /bin/sleep 5
+fi
 if [ -n "${FAKE_DISKUTIL_RECORD:-}" ]; then
     /usr/bin/printf '%s\n' "$*" >>"$FAKE_DISKUTIL_RECORD"
 fi
@@ -147,6 +166,8 @@ exit "$exit_status"
 EOF
 
 /bin/chmod 700 "$FAKE_BIN/tmutil" "$FAKE_BIN/mount" "$FAKE_BIN/alerter" "$FAKE_BIN/launchctl" "$FAKE_BIN/plutil" "$FAKE_BIN/diskutil"
+TMUTIL_BIN="$FAKE_BIN/tmutil" MOUNT_BIN="$FAKE_BIN/mount" ALERTER_BIN="$FAKE_BIN/alerter" DISKUTIL_BIN="$FAKE_BIN/diskutil"
+export TMUTIL_BIN MOUNT_BIN ALERTER_BIN DISKUTIL_BIN
 
 run_function() {
     output_file=$1
@@ -260,7 +281,7 @@ test_snapshot_mount_filtering() {
 
 test_hourly_skip_counters_and_alert_thresholds() {
     runtime="$TMP_ROOT/runtime"
-    /bin/rm -rf "$runtime"
+    remove_test_tree "$runtime"
     running_fixture="$TMP_ROOT/counter-running"
     empty_mounts="$TMP_ROOT/counter-mounts"
     alerter_record="$TMP_ROOT/counter-alerts"
@@ -322,7 +343,7 @@ test_idle_resets_counters_and_detects_stale_mount() {
 
 test_log_rotation_is_bounded() {
     runtime="$TMP_ROOT/runtime"
-    /bin/rm -rf "$runtime"
+    remove_test_tree "$runtime"
     /bin/mkdir -p "$runtime/logs" "$runtime/state"
     /usr/bin/printf 'AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA\n' \
         >"$runtime/logs/monitor.log"
@@ -364,7 +385,7 @@ test_log_rotation_is_bounded() {
 
 test_repair_safety_and_normal_unmount() {
     runtime="$TMP_ROOT/runtime"
-    /bin/rm -rf "$runtime"
+    remove_test_tree "$runtime"
     running_fixture="$TMP_ROOT/repair-running"
     unknown_fixture="$TMP_ROOT/repair-unknown"
     idle_fixture="$TMP_ROOT/repair-idle"
@@ -422,7 +443,7 @@ test_repair_safety_and_normal_unmount() {
 
 test_notification_action_rechecks_and_repairs() {
     runtime="$TMP_ROOT/runtime"
-    /bin/rm -rf "$runtime"
+    remove_test_tree "$runtime"
     idle_fixture="$TMP_ROOT/action-idle"
     stale_mounts="$TMP_ROOT/action-mounts"
     alerter_record="$TMP_ROOT/action-alerts"
@@ -450,7 +471,7 @@ test_notification_action_rechecks_and_repairs() {
 
 test_status_and_notification_self_test() {
     runtime="$TMP_ROOT/runtime"
-    /bin/rm -rf "$runtime"
+    remove_test_tree "$runtime"
     /bin/mkdir -p "$runtime/state"
     /usr/bin/printf '2\n' >"$runtime/state/running_skip_count"
     /usr/bin/printf '0\n' >"$runtime/state/status_error_count"
@@ -490,7 +511,7 @@ test_status_and_notification_self_test() {
 
 test_notification_failure_records_real_status() {
     runtime="$TMP_ROOT/runtime"
-    /bin/rm -rf "$runtime"
+    remove_test_tree "$runtime"
     idle_fixture="$TMP_ROOT/notification-failure-idle"
     empty_mounts="$TMP_ROOT/notification-failure-mounts"
     alerter_record="$TMP_ROOT/notification-failure-alerts"
@@ -508,6 +529,82 @@ test_notification_failure_records_real_status() {
 
     assert_status "failed test notification returns dependency error" 6 "$failure_status"
     assert_contains "failed notification logs actual exit status" "$(/bin/cat "$runtime/logs/monitor.log")" "status=9"
+}
+
+test_dependency_failures_are_reported() {
+    runtime="$TMP_ROOT/runtime"
+    /bin/mkdir -p "$runtime/state"
+    output="$TMP_ROOT/dependency-failure.out"
+    export FAKE_MOUNT_EXIT=9
+    run_cli "$output" --check
+    assert_status "mount failure fails check" 6 "$?"
+    run_cli "$output" --status
+    assert_status "mount failure fails status" 6 "$?"
+    run_cli "$output" --repair
+    assert_status "mount failure refuses repair" 6 "$?"
+    unset FAKE_MOUNT_EXIT
+    assert_contains "mount failure is logged" "$(/bin/cat "$runtime/logs/monitor.log")" "event=mount_failed"
+
+    /usr/bin/printf '3\n' >"$runtime/state/running_skip_count"
+    running="$TMP_ROOT/dependency-running"
+    /usr/bin/printf '    Running = 1;\n' >"$running"
+    export FAKE_TMUTIL_OUTPUT="$running" FAKE_ALERTER_EXIT=9
+    run_cli "$output" --check
+    assert_status "counter notification failure fails check" 6 "$?"
+    unset FAKE_TMUTIL_OUTPUT
+    assert_contains "counter notification failure is logged" "$(/bin/cat "$runtime/logs/monitor.log")" "kind=running status=9"
+    run_cli "$output" --repair
+    assert_status "repair result notification failure fails repair" 6 "$?"
+    unset FAKE_ALERTER_EXIT
+    assert_contains "repair notification failure is logged" "$(/bin/cat "$runtime/logs/monitor.log")" "kind=repair status=9"
+
+    stale="$TMP_ROOT/notification-stale"
+    /usr/bin/printf '%s\n' '/dev/fake on /Volumes/com.apple.TimeMachine.localsnapshots/Synthetic/Data (apfs, local)' >"$stale"
+    export FAKE_ALERTER_EXIT=9 FAKE_MOUNT_OUTPUT="$stale"
+    run_cli "$output" --check
+    assert_status "stale notification failure fails check" 6 "$?"
+    assert_contains "stale notification failure is logged" "$(/bin/cat "$runtime/logs/monitor.log")" "kind=stale status=9"
+    unset FAKE_ALERTER_EXIT FAKE_MOUNT_OUTPUT
+
+    export FAKE_TMUTIL_EXIT=9
+    run_cli "$output" --status
+    assert_status "unknown status fails status command" 6 "$?"
+    unset FAKE_TMUTIL_EXIT
+}
+
+test_hung_commands_are_bounded() {
+    runtime="$TMP_ROOT/runtime"
+    output="$TMP_ROOT/hang.out"
+    pidfile="$TMP_ROOT/hang-pid"
+    export TMSM_COMMAND_TIMEOUT=1 FAKE_TMUTIL_HANG_PID="$pidfile"
+    started=$(/bin/date +%s)
+    run_cli "$output" --repair
+    result=$?
+    elapsed=$(( $(/bin/date +%s) - started ))
+    assert_status "hung status refuses repair" 4 "$result"
+    [ "$elapsed" -lt 4 ] && pass "hung status returns promptly" || fail "hung status returns promptly" "elapsed=$elapsed"
+    if /bin/kill -0 "$(/bin/cat "$pidfile")" 2>/dev/null; then
+        fail "timed-out status child exits"
+    else
+        pass "timed-out status child exits"
+    fi
+    unset FAKE_TMUTIL_HANG_PID
+    stale="$TMP_ROOT/hang-mounts"
+    /usr/bin/printf '%s\n' '/dev/fake on /Volumes/com.apple.TimeMachine.localsnapshots/Synthetic/Data (apfs, local)' >"$stale"
+    export FAKE_MOUNT_OUTPUT="$stale" FAKE_DISKUTIL_HANG_PID="$pidfile"
+    started=$(/bin/date +%s)
+    run_cli "$output" --repair
+    result=$?
+    elapsed=$(( $(/bin/date +%s) - started ))
+    assert_status "hung unmount reports incomplete repair" 5 "$result"
+    [ "$elapsed" -lt 4 ] && pass "hung unmount returns promptly" || fail "hung unmount returns promptly" "elapsed=$elapsed"
+    if /bin/kill -0 "$(/bin/cat "$pidfile")" 2>/dev/null; then
+        fail "timed-out unmount child exits"
+    else
+        pass "timed-out unmount child exits"
+    fi
+    assert_contains "hung unmount is logged" "$(/bin/cat "$runtime/logs/monitor.log")" "status=124"
+    unset TMSM_COMMAND_TIMEOUT FAKE_MOUNT_OUTPUT FAKE_DISKUTIL_HANG_PID
 }
 
 test_installer_and_uninstaller_are_idempotent() {
@@ -757,6 +854,8 @@ test_repair_safety_and_normal_unmount
 test_notification_action_rechecks_and_repairs
 test_status_and_notification_self_test
 test_notification_failure_records_real_status
+test_dependency_failures_are_reported
+test_hung_commands_are_bounded
 test_installer_and_uninstaller_are_idempotent
 test_installer_refuses_unrelated_public_file
 
