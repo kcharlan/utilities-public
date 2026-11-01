@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import signal
 import subprocess
 import threading
 import time
@@ -9,6 +10,7 @@ from pathlib import Path
 from typing import Callable, Mapping, TextIO
 
 from .models import PackManifest, WorkerAlert, WorkerProgressState, WorkerResult, WorkerSnapshot
+from .agent_runtime import PROCESS_LOG_CAP_BYTES, _signal_process_group
 from .pack_loader import resolve_pack_hook_path
 from .parsers import ArtifactParseError, parse_progress_line, parse_status_sidecar
 
@@ -17,6 +19,31 @@ _logger = __import__("logging").getLogger(__name__)
 # Defense-in-depth: if Claude/Codex has exited (result line in output file) but
 # the execute script is still alive and silent, terminate after this many seconds.
 _STALE_EXECUTE_SECONDS = 30.0
+
+
+def _open_bounded_log(path: Path) -> TextIO:
+    handle = path.open("a+", encoding="utf-8")
+    handle.close()
+    handle = path.open("r+", encoding="utf-8", errors="replace")
+    handle.seek(0, os.SEEK_END)
+    if handle.tell() > PROCESS_LOG_CAP_BYTES:
+        _write_bounded_log(handle, "")
+    return handle
+
+
+def _write_bounded_log(handle: TextIO, text: str) -> None:
+    encoded = text.encode("utf-8")
+    if handle.tell() + len(encoded) > PROCESS_LOG_CAP_BYTES:
+        handle.seek(max(0, handle.tell() - PROCESS_LOG_CAP_BYTES // 2))
+        previous = handle.read().encode("utf-8")
+        keep = max(0, PROCESS_LOG_CAP_BYTES // 2 - len(encoded))
+        retained = previous[-keep:] if keep else b""
+        text = (retained + encoded[-PROCESS_LOG_CAP_BYTES:]).decode("utf-8", errors="ignore")
+        handle.seek(0)
+        handle.truncate()
+        _logger.warning("Worker log truncated to retain recent output")
+    handle.write(text)
+    handle.flush()
 
 
 class WorkerManagerError(RuntimeError):
@@ -51,6 +78,7 @@ class _ActiveWorker:
     last_detail_content: str | None = None
     progress: WorkerProgressState = field(default_factory=WorkerProgressState)
     pending_lines: list[str] = field(default_factory=list)
+    pending_bytes: int = 0
     pending_alerts: list[WorkerAlert] = field(default_factory=list)
     timed_out: bool = False
     timeout_kind: str | None = None
@@ -120,10 +148,11 @@ class WorkerManager:
             env=command_env,
             text=True,
             bufsize=1,
+            start_new_session=True,
         )
-        log_handle = log_path.open("a", encoding="utf-8")
+        log_handle = _open_bounded_log(log_path)
         task_log_handle = (
-            resolved_task_log_path.open("a", encoding="utf-8")
+            _open_bounded_log(resolved_task_log_path)
             if resolved_task_log_path is not None
             else None
         )
@@ -162,6 +191,7 @@ class WorkerManager:
         with worker.lock:
             new_output_lines = tuple(worker.pending_lines)
             worker.pending_lines.clear()
+            worker.pending_bytes = 0
             progress = worker.progress
             alerts = tuple(worker.pending_alerts)
             worker.pending_alerts.clear()
@@ -300,7 +330,7 @@ class WorkerManager:
         with worker.lock:
             if worker.terminate_sent_at is not None:
                 if now - worker.terminate_sent_at >= self._kill_grace_period:
-                    worker.process.kill()
+                    _signal_process_group(worker.process.pid, signal.SIGKILL)
                     worker.kill_escalated = True
                 return
 
@@ -424,15 +454,11 @@ class WorkerManager:
             worker.terminate_sent_at = now
         # Queue error alert so the frontend banner escalates from warning to error
         self._queue_alert(worker, severity="error", message=reason)
-        worker.process.terminate()
+        _signal_process_group(worker.process.pid, signal.SIGTERM)
 
     def _finalize_worker(self, worker: _ActiveWorker) -> None:
-        # Close stdout/stderr pipes first so any blocked readline() in the reader
-        # threads returns "" immediately, allowing them to exit cleanly. F-9 fix.
-        if worker.process.stdout:
-            worker.process.stdout.close()
-        if worker.process.stderr:
-            worker.process.stderr.close()
+        # A descendant can keep the pipes open after the leader exits.
+        _signal_process_group(worker.process.pid, signal.SIGKILL)
         for reader in worker.readers:
             reader.join(timeout=5.0)
         worker.log_handle.flush()
@@ -452,7 +478,7 @@ class WorkerManager:
 
     def _read_stream(self, worker: _ActiveWorker, stream: TextIO) -> None:
         try:
-            for raw_line in iter(stream.readline, ""):
+            for raw_line in iter(lambda: stream.readline(8192), ""):
                 line = raw_line.rstrip("\r\n")
                 now = self._clock()
                 detail_content = _extract_detail_content(line, worker.task_id, worker.progress_format)
@@ -465,13 +491,15 @@ class WorkerManager:
                         worker.last_output_at = now
                         worker.last_detail_content = detail_content
                     # else: identical detail content — true heartbeat, do NOT reset
-                    worker.pending_lines.append(line)
+                    available = PROCESS_LOG_CAP_BYTES - worker.pending_bytes
+                    pending = line.encode("utf-8")[:available].decode("utf-8", errors="ignore")
+                    if available > 0:
+                        worker.pending_lines.append(pending)
+                        worker.pending_bytes += max(1, len(pending.encode("utf-8")))
                     try:
-                        worker.log_handle.write(raw_line)
-                        worker.log_handle.flush()
+                        _write_bounded_log(worker.log_handle, raw_line)
                         if worker.task_log_handle is not None:
-                            worker.task_log_handle.write(raw_line)
-                            worker.task_log_handle.flush()
+                            _write_bounded_log(worker.task_log_handle, raw_line)
                     except ValueError:
                         # Log handle was closed by _finalize_worker before this
                         # thread finished — discard the trailing output. F-18 fix.

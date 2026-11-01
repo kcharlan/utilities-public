@@ -4,6 +4,7 @@ import json
 import logging
 import os
 import re
+import signal
 import subprocess
 import threading
 import time
@@ -15,6 +16,9 @@ _logger = logging.getLogger(__name__)
 
 _CLI_MAX_RETRIES = 3
 _CLI_BACKOFF_BASE = 5  # seconds: 5, 10, 20
+PROCESS_TIMEOUT_SECONDS = 3600
+PROCESS_LOG_CAP_BYTES = 1024 * 1024
+_PROCESS_KILL_GRACE_SECONDS = 0.5
 
 from .models import FixerAttemptResult, FixerContext, PackManifest
 
@@ -483,17 +487,17 @@ class CodexCliRuntime:
             command.extend(["-c", f'model_reasoning_effort="{reasoning_effort}"'])
         if phase in {"planning", "resolution"}:
             command.extend(["-c", 'model_reasoning_summary="detailed"'])
-        command.append(full_prompt)
+        command.append("-")
         attempt_label = f" (attempt {attempt}/{_CLI_MAX_RETRIES})" if attempt > 1 else ""
         if self._output_line_callback is not None:
             self._output_line_callback(effective_task_id, f"[{phase}] Launching Codex CLI ({model}){attempt_label}...")
             if self._has_injected_runner:
-                completed = self._subprocess_runner(command=command, cwd=session_root, input_text="")
+                completed = self._subprocess_runner(command=command, cwd=session_root, input_text=full_prompt)
             else:
                 completed = _streaming_subprocess_runner(
                     command=command,
                     cwd=session_root,
-                    input_text="",
+                    input_text=full_prompt,
                     line_callback=_make_detail_extracting_callback(
                         effective_task_id,
                         self._output_line_callback,
@@ -508,7 +512,7 @@ class CodexCliRuntime:
             completed = self._subprocess_runner(
                 command=command,
                 cwd=session_root,
-                input_text="",
+                input_text=full_prompt,
             )
         if completed.returncode != 0:
             stderr = completed.stderr or ""
@@ -683,15 +687,7 @@ def _default_subprocess_runner(
     # Strip CLAUDECODE env var so child Claude CLI sessions don't refuse to
     # launch when the orchestrator itself is running inside Claude Code.
     env = {k: v for k, v in os.environ.items() if k != "CLAUDECODE"}
-    return subprocess.run(
-        command,
-        cwd=cwd,
-        input=input_text,
-        text=True,
-        capture_output=True,
-        check=False,
-        env=env,
-    )
+    return _run_bounded_process(command, cwd=cwd, env=env, input_text=input_text)
 
 
 def _streaming_subprocess_runner(
@@ -703,58 +699,91 @@ def _streaming_subprocess_runner(
 ) -> subprocess.CompletedProcess[str]:
     """Run a subprocess while streaming stdout lines through a callback.
 
-    Returns a CompletedProcess with the full captured stdout/stderr, compatible
-    with the non-streaming runner.
+    Returns a CompletedProcess with bounded stdout/stderr tails, compatible with
+    the non-streaming runner.
     """
     env = {k: v for k, v in os.environ.items() if k != "CLAUDECODE"}
-    proc = subprocess.Popen(
-        command,
-        cwd=cwd,
-        stdin=subprocess.PIPE,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        text=True,
-        bufsize=1,
-        env=env,
-    )
-    stdout_lines: list[str] = []
-    stderr_lines: list[str] = []
+    return _run_bounded_process(command, cwd=cwd, env=env, input_text=input_text, line_callback=line_callback)
 
-    def _read_stderr():
-        assert proc.stderr is not None
-        for raw_line in iter(proc.stderr.readline, ""):
-            stderr_lines.append(raw_line)
-        proc.stderr.close()
 
-    stderr_thread = threading.Thread(target=_read_stderr, daemon=True)
-    stderr_thread.start()
-
-    # Write input and close stdin
-    assert proc.stdin is not None
+def _signal_process_group(pid: int, sig: int) -> None:
     try:
-        proc.stdin.write(input_text)
-        proc.stdin.close()
-    except BrokenPipeError:
+        os.killpg(pid, sig)
+    except ProcessLookupError:
         pass
 
-    # Read stdout line-by-line, streaming to callback
-    assert proc.stdout is not None
-    for raw_line in iter(proc.stdout.readline, ""):
-        stdout_lines.append(raw_line)
-        try:
-            line_callback(raw_line.rstrip("\r\n"))
-        except Exception:
-            pass  # callback errors must not crash the subprocess runner
-    proc.stdout.close()
 
-    stderr_thread.join(timeout=5.0)
-    proc.wait()
-    return subprocess.CompletedProcess(
-        args=command,
-        returncode=proc.returncode,
-        stdout="".join(stdout_lines),
-        stderr="".join(stderr_lines),
-    )
+def _decode_capture(data: bytes) -> str:
+    decoded = data.decode("utf-8", errors="replace").encode("utf-8")
+    return decoded[-PROCESS_LOG_CAP_BYTES:].decode("utf-8", errors="ignore")
+
+
+def _run_bounded_process(command, *, cwd, env, input_text="", line_callback=None, shell=False,
+                         merge_stderr=False):
+    """Capture bounded output and stop the entire process group on timeout."""
+    proc = subprocess.Popen(command, cwd=cwd, env=env, shell=shell, start_new_session=True,
+                            stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+                            stderr=subprocess.STDOUT if merge_stderr else subprocess.PIPE)
+    captures = [bytearray(), bytearray()]
+
+    def read_stream(stream, capture, callback):
+        pending = b""
+        truncated = False
+        try:
+            while chunk := os.read(stream.fileno(), 8192):
+                capture.extend(chunk)
+                if len(capture) > PROCESS_LOG_CAP_BYTES:
+                    del capture[:-PROCESS_LOG_CAP_BYTES]
+                    if not truncated:
+                        _logger.warning("Process output truncated to retain recent output")
+                        truncated = True
+                if callback is not None:
+                    pending += chunk
+                    while b"\n" in pending:
+                        line, pending = pending.split(b"\n", 1)
+                        try:
+                            callback(line.decode("utf-8", errors="replace").rstrip("\r"))
+                        except Exception:
+                            pass
+                    pending = pending[-PROCESS_LOG_CAP_BYTES:]
+            if pending and callback is not None:
+                try:
+                    callback(pending.decode("utf-8", errors="replace"))
+                except Exception:
+                    pass
+        finally:
+            stream.close()
+
+    def write_input():
+        try:
+            with proc.stdin:
+                proc.stdin.write(input_text.encode("utf-8"))
+        except (BrokenPipeError, OSError, ValueError):
+            pass
+
+    readers = [threading.Thread(target=read_stream, args=(proc.stdout, captures[0], line_callback), daemon=True)]
+    if proc.stderr is not None:
+        readers.append(threading.Thread(target=read_stream, args=(proc.stderr, captures[1], None), daemon=True))
+    for thread in readers:
+        thread.start()
+    writer = threading.Thread(target=write_input, daemon=True)
+    writer.start()
+    deadline = time.monotonic() + PROCESS_TIMEOUT_SECONDS
+    while time.monotonic() < deadline:
+        if proc.poll() is not None and not any(thread.is_alive() for thread in readers):
+            break
+        time.sleep(0.01)
+    else:
+        _signal_process_group(proc.pid, signal.SIGTERM)
+        time.sleep(_PROCESS_KILL_GRACE_SECONDS)
+        _signal_process_group(proc.pid, signal.SIGKILL)
+        proc.wait()
+        for thread in readers:
+            thread.join(timeout=1)
+        return subprocess.CompletedProcess(command, 124, _decode_capture(captures[0]),
+                                           _decode_capture(captures[1] + b"\nProcess timed out"))
+    return subprocess.CompletedProcess(command, proc.returncode, _decode_capture(captures[0]),
+                                       _decode_capture(captures[1]))
 
 
 def _format_fixer_context(context: FixerContext) -> str:

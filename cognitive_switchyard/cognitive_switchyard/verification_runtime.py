@@ -2,11 +2,11 @@ from __future__ import annotations
 
 import os
 import re
-import subprocess
 from pathlib import Path
 from typing import Callable, Mapping
 
 from .models import FixerContext, VerificationRunResult
+from .agent_runtime import _run_bounded_process
 
 _PYTEST_SUMMARY_RE = re.compile(
     r"(\d+ passed(?:,\s*\d+ \w+)*)",
@@ -32,40 +32,13 @@ def run_verification_command(
         command_env.update(env)
 
     try:
-        if output_line_callback is not None:
-            proc = subprocess.Popen(
-                command,
-                cwd=session_root,
-                env=command_env,
-                shell=True,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.STDOUT,
-                text=True,
-                bufsize=1,
-            )
-            stdout_lines: list[str] = []
-            if proc.stdout:
-                for line in proc.stdout:
-                    stripped = line.rstrip("\n")
-                    stdout_lines.append(stripped)
-                    try:
-                        output_line_callback(stripped)
-                    except Exception:
-                        pass  # callback errors must not crash verification
-            proc.wait()
-            output = "\n".join(stdout_lines)
-            exit_code = proc.returncode
-        else:
-            result = subprocess.run(
-                command,
-                cwd=session_root,
-                env=command_env,
-                shell=True,
-                capture_output=True,
-                text=True,
-            )
-            output = (result.stdout or "") + (result.stderr or "")
-            exit_code = result.returncode
+        result = _run_bounded_process(command, cwd=session_root, env=command_env, shell=True,
+                                      line_callback=output_line_callback,
+                                      merge_stderr=output_line_callback is not None)
+        output = (result.stdout or "") + (result.stderr or "")
+        if output_line_callback is not None and output.endswith("\n"):
+            output = output[:-1]
+        exit_code = result.returncode
     except Exception as exc:
         _logger.error("Verification subprocess failed: %s", exc)
         output = f"Verification subprocess failed: {exc}"

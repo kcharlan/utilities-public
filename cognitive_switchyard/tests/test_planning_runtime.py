@@ -405,6 +405,8 @@ def test_parallel_planning_sends_failed_item_to_review_and_continues(tmp_path: P
 
     assert slow_started.is_set()
     assert not any(session_paths.claimed.iterdir())
+    # Failed intake bytes survive for recovery.
+    assert (session_paths.root / "intake_failed" / "001_fail.md").read_bytes() == b"# Fail\n"
     # Failed item goes to review, not back to intake.
     assert not any(session_paths.intake.glob("001_fail.md"))
     # Successful items are staged; failed item is in review.
@@ -689,6 +691,7 @@ def test_unparseable_planner_output_goes_to_review_not_crash(tmp_path: Path) -> 
     review_text = review_path.read_text(encoding="utf-8")
     assert "Planner output was unparseable" in review_text
     assert "This is just plain text" in review_text
+    assert (session_paths.root / "intake_failed" / "001_garbled.md").read_bytes() == b"# Garbled task\n"
     assert not any(session_paths.claimed.iterdir()), "claimed/ should be empty after planning"
 
 
@@ -1262,3 +1265,26 @@ def test_no_cleanup_for_active_tasks(tmp_path: Path) -> None:
     assert not (staging / "001.plan.md").exists()
     assert (worker_slot / "001.plan.md").exists(), "Worker slot file must be untouched"
     assert len(removed) == 1
+
+
+def test_invalid_plan_id_cannot_escape_staging(tmp_path: Path) -> None:
+    store, paths = _build_store(tmp_path)
+    session = store.create_session(session_id="invalid-plan", name="Invalid", pack="p", created_at="2026-03-09T10:00:00Z")
+    pack = _write_pack(tmp_path, name="p")
+    session_paths = paths.session_paths(session.id)
+    _write_intake(session_paths.intake, "bad.plan.md", _staged_plan_text("../escaped"))
+    with pytest.raises(ValueError):
+        run_planning_phase(store=store, session_id=session.id, pack_manifest=load_pack_manifest(pack))
+    assert not (session_paths.root / "escaped.plan.md").exists()
+
+
+def test_invalid_resolver_output_moves_plans_to_review(tmp_path: Path) -> None:
+    store, paths = _build_store(tmp_path)
+    session = store.create_session(session_id="bad-resolver", name="Invalid", pack="p", created_at="2026-03-09T10:00:00Z")
+    pack = _write_pack(tmp_path, name="p", resolution_executor="agent")
+    session_paths = paths.session_paths(session.id)
+    _write_staging_plan(session_paths.root, "001")
+    result = run_resolution_phase(store=store, session_id=session.id, pack_manifest=load_pack_manifest(pack),
+                                  resolver_agent=lambda **kwargs: "not json", env={"COGNITIVE_SWITCHYARD_REPO_ROOT": str(tmp_path)})
+    assert result.conflicts
+    assert (session_paths.review / "001.plan.md").exists()

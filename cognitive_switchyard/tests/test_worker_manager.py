@@ -662,7 +662,7 @@ def test_read_stream_does_not_propagate_closed_stream_error(caplog) -> None:
     class _BlockThenCloseStream:
         closed = False
 
-        def readline(self) -> str:
+        def readline(self, size: int = -1) -> str:
             if lines_to_emit:
                 return lines_to_emit.pop(0)
             # Signal that the reader is now blocked, then wait for close
@@ -679,7 +679,9 @@ def test_read_stream_does_not_propagate_closed_stream_error(caplog) -> None:
     worker.lock = threading.Lock()
     worker.last_output_at = 0.0
     worker.pending_lines = []
+    worker.pending_bytes = 0
     worker.log_handle = log_handle
+    worker.task_log_handle = None
     worker.progress = WorkerProgressState()
     worker.task_id = "test-task"
     worker.progress_format = "##PROGRESS##"

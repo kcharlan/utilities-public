@@ -1,5 +1,10 @@
 # Lessons Learned
 
+## Process Groups and Inherited Pipes
+
+- What went wrong: Terminating a wrapper left descendants running and holding its output pipes open, so joining readers could stall the orchestrator.
+- Pattern to follow instead: Start subprocesses in their own process groups, terminate and escalate the group on timeout, and test cleanup with a synthetic signal-resistant descendant that inherits a pipe.
+
 ## DAG Geometry Must Follow Rendered Nodes
 
 - What went wrong: The replacement DAG treated an 80-pixel layout estimate as the rendered height, so wrapped titles displaced handles and invalidated fit, edge and selection geometry.

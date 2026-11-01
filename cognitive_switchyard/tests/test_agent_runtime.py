@@ -281,7 +281,15 @@ def test_codex_cli_runner_builds_planner_invocation_with_reasoning_config_and_co
 
     assert result == "planned output"
     assert captured["cwd"] == session_root
-    assert captured["input_text"] == ""
+    assert captured["input_text"] == (
+        "Shared system rules.\n\nPlanner system prompt.\n\n"
+        f"Session root: {session_root}\n"
+        f"Intake file: {intake_path}\n"
+        "--- BEGIN INTAKE ---\n"
+        "# Feature\n"
+        "Implement packet 13.\n"
+        "--- END INTAKE ---"
+    )
     assert captured["command"] == [
         "codex",
         "exec",
@@ -295,15 +303,7 @@ def test_codex_cli_runner_builds_planner_invocation_with_reasoning_config_and_co
         'model_reasoning_effort="xhigh"',
         "-c",
         'model_reasoning_summary="detailed"',
-        (
-            "Shared system rules.\n\nPlanner system prompt.\n\n"
-            f"Session root: {session_root}\n"
-            f"Intake file: {intake_path}\n"
-            "--- BEGIN INTAKE ---\n"
-            "# Feature\n"
-            "Implement packet 13.\n"
-            "--- END INTAKE ---"
-        ),
+        "-",
     ]
 
 
