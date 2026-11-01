@@ -1,5 +1,9 @@
 # Lessons learned
 
+- A subprocess group leader can exit on SIGTERM while a descendant ignores it.
+  Reap the leader and also terminate surviving members of its owned group on
+  timeout or interruption. Regression: `tests/test_process_cleanup.py`.
+
 - Never create a venv from a venv interpreter. `sys._base_executable` inside a
   venv is the fully resolved versioned Homebrew Cellar path, so a venv built
   from it (or from the runtime venv's `python3`, which `bench run` puts first

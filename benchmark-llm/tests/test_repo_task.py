@@ -1008,7 +1008,7 @@ def test_repo_task_retries_execute_in_fresh_workspace_and_preserves_attempts(tmp
                 "if [ \"$count\" -eq 1 ]; then",
                 "  printf 'contaminated\\n' > \"$WORKSPACE_ROOT/contamination.txt\"",
                 "  printf '{\"type\":\"error\",\"error\":{\"message\":\"{\\\"code\\\":502,\\\"message\\\":\\\"Network connection lost.\\\",\\\"metadata\\\":{\\\"error_type\\\":\\\"provider_unavailable\\\"}}\"}}\\n'",
-                "  exit 0",
+                "  exit 1",
                 "fi",
                 "printf 'success\\n' > \"$WORKSPACE_ROOT/output/result.txt\"",
             ]
