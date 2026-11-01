@@ -14,7 +14,14 @@ while [ -n "$component" ]; do
 done
 umask 077
 scratch=$(mktemp -d "${TMPDIR:-/tmp}/prime-secrets-scan.XXXXXX") || fail 2
-trap 'code=$?; rm -r -- "${scratch:?}" || { [ "$code" -ne 0 ] || code=1; }; exit "$code"' EXIT
+remove_scratch() { rm -r -- "${scratch:?}"; }
+cleanup_on_exit() {
+  local code=$?
+  trap - EXIT
+  if ! remove_scratch && [ "$code" -eq 0 ]; then fail 2; fi
+  exit "$code"
+}
+trap cleanup_on_exit EXIT
 # No -q: grep must finish reading every input and report read errors.
 match_file() {
   grep -a -F -f "$patterns" -- "$1" >/dev/null
@@ -69,4 +76,6 @@ while IFS= read -r -d '' record; do
   git show "$object" > "$scratch/blob" || fail 2
   match_file "$scratch/blob"
 done < "$scratch/index"
+trap - EXIT
+remove_scratch || fail 2
 printf 'clean\n'
