@@ -26,6 +26,10 @@ from tools.testkit import (
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 LAUNCHER = PROJECT_ROOT / 'expense_dock'
 
+@pytest.fixture(scope='session')
+def base_url(pytestconfig):
+    return pytestconfig.getoption('--base-url') or pytestconfig.getini('base_url') or None
+
 @pytest.fixture(scope='module')
 def server(tmp_path_factory):
     with socket.socket() as sock:
@@ -95,21 +99,15 @@ def test_config_field_updates_on_each_keystroke(server, page):
         page.get_by_role('button', name='Setup Connection and defaults').click()
         field = page.get_by_role('textbox', name='Default paid by')
         assert page.request.get(server + '/api/status').json()['lookups']['paid_by'] == []
-        saves = []
-
-        def capture_save(route):
-            expect(field).to_be_focused()
-            saves.append(route.request.post_data_json)
-            route.continue_()
-
-        page.route('**/api/config', capture_save)
         for index, char in enumerate('SYNTHETIC', 1):
             field.focus()
             field.press_sequentially(char)
             expect(field).to_be_focused()
-            with page.expect_response('**/api/config'):
+            with page.expect_response('**/api/config') as saved:
                 page.get_by_role('button', name='Save config').evaluate('(button) => button.click()')
-            assert saves[-1]['defaults']['paid_by'] == 'SYNTHETIC'[:index]
+            assert saved.value.status == 200
+            assert saved.value.request.post_data_json['defaults']['paid_by'] == 'SYNTHETIC'[:index]
+            assert page.request.get(server + '/api/status').json()['config']['defaults']['paid_by'] == 'SYNTHETIC'[:index]
             expect(field).to_have_value('SYNTHETIC'[:index])
 
 def test_footer_shows_the_running_version(server, page):

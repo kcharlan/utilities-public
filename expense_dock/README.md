@@ -6,7 +6,7 @@ Expense Dock is a uv-managed local web app for logging business expenses through
 
 When you submit an expense, Expense Dock:
 
-1. Renames the receipt file to a standardized format (`YYYY-MM-DD_Vendor_Amount_Purpose.ext`)
+1. Renames the receipt file to a standardized format (`YYYY-MM-DD_Vendor_Amount_Purpose_SHA256.ext`)
 2. Uploads the receipt under the configured shared OneDrive folder's `YYYY/YYYY-MM/` path, creating year and month folders as needed
 3. Generates an anonymous read-only share link for the uploaded receipt
 4. Downloads the expense tracking workbook from OneDrive, appends a new row with all the expense details and the receipt link, then uploads it back
@@ -112,12 +112,15 @@ The runtime directory and `pending/` are enforced as mode `0700`; configuration,
 
 ## Operational Notes
 
-- Receipt filenames are normalized to `YYYY-MM-DD_Vendor_Amount_ShortPurpose.ext`
-- If the normalized receipt filename already exists in the target month folder, Expense Dock reuses it instead of uploading again
+- Receipt filenames are normalized to `YYYY-MM-DD_Vendor_Amount_ShortPurpose_SHA256.ext`
+- If the content-hashed receipt filename already exists in the target month folder, Expense Dock reuses it instead of uploading again
 - If the workbook already contains the same receipt link or receipt filename, the submission is treated as already logged (no duplicate row)
+- Pending retries retain their saved receipt filenames. Manually resubmitting an old receipt created before content hashes were added cannot be reliably matched to its historical filename and may create another entry.
+- Filenames are limited to 240 UTF-8 bytes, including the full content hash. Extensions must contain 1–15 ASCII letters or digits; other extensions become `.bin`.
 - Receipts larger than 4 MB use a resumable upload session; smaller files use a direct upload
 - Receipt uploads are limited to 100 MB
 - OneDrive operations target resolved shared-drive item IDs, not a local OneDrive sync folder
+- Workbook uploads use an eTag to detect concurrent edits and retry up to three times. Rewriting the workbook can still discard cached formula values; this is a known limit.
 - Help and instructions are available in the in-app Help modal
 - Action results appear as toast notifications; failures with a CSV fallback expose that directly in the toast and retry queue
 
