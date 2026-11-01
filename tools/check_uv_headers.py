@@ -104,7 +104,7 @@ LAUNCHERS = [
 # Project-specific deferrals belong here with their reason, until validated.
 UNCAPPED_LAUNCHERS: tuple[str, ...] = ()
 
-# Explicit targets per launcher; do not scan sibling modules implicitly.
+# Additional targets not reached through statically named local imports.
 LAUNCHER_TARGETS: dict[str, tuple[str, ...]] = {
     "transcription/transcription": ("transcription/app.py", "transcription/transcribe.py", "transcription/transcription_state.py"),
 }
@@ -441,6 +441,70 @@ def missing_declared_imports(path: Path, text: str, dependencies: list[str]) -> 
     return sorted(missing)
 
 
+def check_import_graph(launcher: Path, dependencies: list[str]) -> list[str]:
+    """Follow statically named local modules and report parse and import errors."""
+    root = launcher.parent
+    declared = {normalize_distribution(dep) for dep in dependencies}
+    pending = [launcher]
+    seen: set[Path] = set()
+    problems: list[str] = []
+
+    def module_file(base: Path, name: str) -> Path | None:
+        candidate = base.joinpath(*name.split('.')) if name else base
+        for item in (candidate.with_suffix('.py'), candidate / '__init__.py'):
+            if item.is_file() and item.resolve().is_relative_to(root.resolve()):
+                return item
+        return None
+
+    while pending:
+        path = pending.pop()
+        if path in seen:
+            continue
+        seen.add(path)
+        try:
+            tree = ast.parse(path.read_text(encoding='utf-8'), filename=str(path))
+        except (OSError, UnicodeError, SyntaxError) as exc:
+            problems.append(f'could not parse {path.relative_to(REPO_ROOT)}: {exc}')
+            continue
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Import):
+                imports = [(0, alias.name, ()) for alias in node.names]
+            elif isinstance(node, ast.ImportFrom):
+                imports = [(node.level, node.module or '', tuple(alias.name for alias in node.names))]
+            else:
+                continue
+            for level, name, children in imports:
+                base = path.parent
+                if level:
+                    for _ in range(level - 1):
+                        base = base.parent
+                else:
+                    base = root
+                    if name.partition('.')[0] == root.name and not module_file(root, name):
+                        base = root.parent
+                target = module_file(base, name)
+                if target:
+                    pending.append(target)
+                    for parent in target.parent.parents:
+                        if parent == root.parent:
+                            break
+                        initializer = parent / '__init__.py'
+                        if initializer.is_file():
+                            pending.append(initializer)
+                    initializer = target.parent / '__init__.py'
+                    if initializer.is_file():
+                        pending.append(initializer)
+                    package = target.parent if target.name == '__init__.py' else None
+                    if package:
+                        pending.extend(child for name in children if name != '*'
+                                       if (child := module_file(package, name)))
+                elif not level and name:
+                    top = name.partition('.')[0]
+                    if not module_file(base, top) and top not in sys.stdlib_module_names and normalize_distribution(IMPORT_DISTRIBUTION_ALIASES.get(top, top)) not in declared:
+                        problems.append(f'{path.relative_to(REPO_ROOT)}: third-party imports missing from dependencies: {top}')
+    return problems
+
+
 def check_launcher_targets(rel_path: str, dependencies: list[str]) -> list[str]:
     problems = []
     for target in LAUNCHER_TARGETS.get(rel_path, ()):
@@ -540,12 +604,7 @@ def check_launcher(rel_path: str) -> list[str]:
         if not isinstance(deps, list):
             problems.append("PEP 723 block missing a 'dependencies' list")
         else:
-            missing_imports = missing_declared_imports(path, text, deps)
-            if missing_imports:
-                problems.append(
-                    "third-party imports missing from dependencies: "
-                    + ", ".join(missing_imports)
-                )
+            problems.extend(check_import_graph(path, deps))
             problems.extend(check_launcher_targets(rel_path, deps))
             problems.extend(check_dependency_manifest(rel_path, meta))
 

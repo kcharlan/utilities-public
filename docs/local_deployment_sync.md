@@ -27,14 +27,15 @@ The audit contract is:
 - One validated stage-0 Git-index snapshot defines current source for direct
   mappings, maintained top-level projects, the Time Machine Snapshot Monitor
   tree, Model Sentinel, and tracked repository `.gitignore` files. Staged
-  additions are included; untracked files are excluded.
+  additions are included; untracked files are excluded. Working-tree bytes
+  must hash to the indexed blob before a source can pass.
 - Current direct and maintained-project files are compared byte-for-byte.
   Their complete numeric permission modes must also match, including setuid,
   setgid, and sticky bits as well as ordinary read/write/execute bits.
 - An indexed source missing from the working tree, a staged deletion, an
   unmerged entry, a sparse-directory entry, a symlink, a submodule, or another
   unsupported indexed type fails as incomplete source state instead of being
-  silently skipped.
+  silently skipped. A maintained project with no indexed files also fails.
 - Model Sentinel must be a regular non-symlink file with its owner-execute bit
   set and must be executable by the audit process. The audit checks the exact
   executable preamble, bidirectional archive inventory, entry types,

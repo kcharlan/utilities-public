@@ -378,6 +378,9 @@ if [[ "$git_snapshot_ok" == true ]]; then
     indexed_source="$REPO_ROOT/$indexed_path"
     if [[ -L "$indexed_source" || ! -f "$indexed_source" ]]; then
       source_state_invalid[$indexed_path]=1
+    elif ! run_git_capture "source hash failed" "$AUDIT_TMP/source-oid" hash-object -- "$indexed_path" ||
+         [[ "$(<"$AUDIT_TMP/source-oid")" != "${index_oids[$indexed_path]}" ]]; then
+      source_state_invalid[$indexed_path]=1
     fi
   done
 fi
@@ -1131,7 +1134,7 @@ if [[ "$model_can_inspect" == true ]]; then
         metadata_kind_count="$(grep -Ec \
           '^BUILD_KIND = "standalone"$' "$streamed_file" || true)"
         metadata_revision_count="$(grep -Ec \
-          '^BUILD_REVISION = "([0-9a-f]{12}(\+modified)?|unknown)"$' \
+          '^BUILD_REVISION = "([0-9a-f]{12}|unknown)"$' \
           "$streamed_file" || true)"
         metadata_hash_count="$(grep -Fxc \
           "BUILD_SOURCE_HASH = \"$model_source_hash\"" \
@@ -1184,6 +1187,7 @@ for project in "${all_projects[@]}"; do
   project_mode_differences=0
   project_stale="${stale_counts[$project]:-0}"
   project_source_state_failures=0
+  project_index_count=0
   project_operational_errors="${stale_history_operational_errors[$project]:-0}"
 
   if [[ "$git_snapshot_ok" != true ]]; then
@@ -1195,6 +1199,7 @@ for project in "${all_projects[@]}"; do
       if [[ "$tracked_file" != "$project"/* ]]; then
         continue
       fi
+      project_index_count=$((project_index_count + 1))
       source_file="$REPO_ROOT/$tracked_file"
       if [[ -n "${source_state_invalid[$tracked_file]-}" ]]; then
         project_source_state_failures=$((project_source_state_failures + 1))
@@ -1246,6 +1251,9 @@ for project in "${all_projects[@]}"; do
         project_source_state_failures=$((project_source_state_failures + 1))
       fi
     done
+    if (( project_index_count == 0 && project_source_state_failures == 0 )); then
+      project_source_state_failures=1
+    fi
   fi
 
   if (( project_missing ||

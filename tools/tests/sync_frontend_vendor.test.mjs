@@ -7,6 +7,23 @@ import {join} from 'node:path';
 import {spawnSync} from 'node:child_process';
 const tool = new URL('../sync_frontend_vendor.mjs', import.meta.url).pathname;
 
+test('rejects unmatched and nested vendor markers without modifying the file', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'frontend-markers-'));
+  try {
+    const path = join(dir, 'page.html');
+    for (const content of [
+      '<!-- frontend-vendor:begin kit -->\nhand edit\n<!-- frontend-vendor:begin kit -->\n<!-- frontend-vendor:end -->\n',
+      '<!-- frontend-vendor:end -->\n<!-- frontend-vendor:begin kit -->\n<!-- frontend-vendor:end -->\n',
+      '<!-- frontend-vendor:begin kit -->\n# frontend-vendor:end\n',
+    ]) {
+      writeFileSync(path, content);
+      const result = spawnSync('node', [tool, path], {encoding:'utf8'});
+      assert.notEqual(result.status, 0);
+      assert.equal(readFileSync(path, 'utf8'), content);
+    }
+  } finally { rmSync(dir, {recursive:true, force:true}); }
+});
+
 test('sync fills HTML and Python regions idempotently and detects stale content', () => {
   const dir = mkdtempSync(join(tmpdir(), 'frontend-sync-'));
   try {

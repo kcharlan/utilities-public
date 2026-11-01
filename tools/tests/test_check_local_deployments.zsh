@@ -535,6 +535,25 @@ test_project_byte_drift() {
   assert_fixture_unchanged "$before" "$after"
 }
 
+test_matching_unstaged_source_and_copy_fails() {
+  new_fixture
+  print -r -- 'synthetic modified bytes' > "$FIXTURE_REPO/tax2/synthetic-placeholder.txt"
+  cp "$FIXTURE_REPO/tax2/synthetic-placeholder.txt" "$FIXTURE_LOCAL/tax2/synthetic-placeholder.txt"
+  run_audit
+  assert_status 1 "$AUDIT_STATUS" 'unstaged matching source and deployment'
+  assert_contains "$AUDIT_STDERR" 'source-state failures: 1'
+}
+
+test_project_without_index_files_fails() {
+  new_fixture
+  git -C "$FIXTURE_REPO" rm -q -- tax2/synthetic-placeholder.txt
+  git -C "$FIXTURE_REPO" commit -qm 'remove synthetic project source'
+  rm -- "$FIXTURE_LOCAL/tax2/synthetic-placeholder.txt"
+  run_audit
+  assert_status 1 "$AUDIT_STATUS" 'project without index files'
+  assert_not_contains "$AUDIT_STDOUT" 'OK: ~/tax2 tracked files'
+}
+
 test_direct_mode_drift() {
   new_fixture
   chmod 744 "$FIXTURE_SCRIPTS/de-abacus.py"
@@ -1239,6 +1258,7 @@ test_model_archive_detects_nested_asset_drift() {
   local changed="$FIXTURE_ROOT/changed-browse-asset"
   /usr/bin/tr 's' 'S' < "$asset" > "$changed"
   mv "$changed" "$asset"
+  git -C "$FIXTURE_REPO" add model_sentinel/model_sentinel/browse/assets/index.html
   run_audit
 
   assert_status 1 "$AUDIT_STATUS" "nested model asset drift"
@@ -1270,6 +1290,20 @@ EOF
     "$AUDIT_STDERR" \
     "model-sentinel packaged build provenance is invalid"
   assert_not_contains "$AUDIT_STDOUT" "OK: model-sentinel zipapp"
+}
+
+test_model_archive_rejects_modified_revision() {
+  new_fixture
+  local staging="$FIXTURE_ROOT/model-staging"
+  local archive="$FIXTURE_ROOT/model-modified-revision.zip"
+  sed 's/^BUILD_REVISION = .*/BUILD_REVISION = "0123456789ab+modified"/' \
+    "$staging/model_sentinel/_packaged_build.py" > "$FIXTURE_ROOT/build-info"
+  mv "$FIXTURE_ROOT/build-info" "$staging/model_sentinel/_packaged_build.py"
+  (cd "$staging" && zip -q -X -r "$archive" __main__.py model_sentinel/)
+  install_fixture_archive "$archive"
+  run_audit
+  assert_status 1 "$AUDIT_STATUS" 'modified packaged revision'
+  assert_contains "$AUDIT_STDERR" 'model-sentinel packaged build provenance is invalid'
 }
 
 test_model_archive_rejects_deleted_index_module() {
@@ -1309,6 +1343,7 @@ test_model_archive_content_mismatches() {
   local changed="$FIXTURE_ROOT/changed-entrypoint"
   /usr/bin/tr 's' 'S' < "$source" > "$changed"
   mv "$changed" "$source"
+  git -C "$FIXTURE_REPO" add model_sentinel/__main__.py
   run_audit
   assert_status 1 "$AUDIT_STATUS" "model entrypoint content mismatch"
   assert_contains "$AUDIT_STDERR" "model-sentinel __main__.py is stale"
@@ -1319,6 +1354,7 @@ test_model_archive_content_mismatches() {
   changed="$FIXTURE_ROOT/changed-module"
   /usr/bin/tr 's' 'S' < "$source" > "$changed"
   mv "$changed" "$source"
+  git -C "$FIXTURE_REPO" add model_sentinel/model_sentinel/audit.py
   run_audit
   assert_status 1 "$AUDIT_STATUS" "model module content mismatch"
   assert_contains "$AUDIT_STDERR" "model-sentinel module audit.py is stale"
@@ -1469,6 +1505,8 @@ test_passing_baseline
 test_scripts_project_and_command_link_drift
 test_missing_direct_copy
 test_project_byte_drift
+test_project_without_index_files_fails
+test_matching_unstaged_source_and_copy_fails
 test_direct_mode_drift
 test_direct_special_mode_drift
 test_project_mode_drift
@@ -1508,6 +1546,7 @@ test_model_archive_rejects_untracked_extra_module
 test_model_archive_accepts_installer_layout
 test_model_archive_detects_nested_asset_drift
 test_model_archive_rejects_invalid_packaged_provenance
+test_model_archive_rejects_modified_revision
 test_model_archive_rejects_deleted_index_module
 test_model_archive_requires_exact_preamble
 test_model_archive_content_mismatches
@@ -1602,6 +1641,7 @@ test_native_colophon_deployment() {
 
   new_fixture
   print 'synthetic source drift' >> "$FIXTURE_REPO/colophon/src/main.c"
+  git -C "$FIXTURE_REPO" add colophon/src/main.c
   run_audit
   assert_status 1 "$AUDIT_STATUS" 'native source drift'
   assert_contains "$AUDIT_STDERR" 'colophon native deployment unverified'
@@ -1663,6 +1703,7 @@ test_native_brew_version_deployment() {
     new_fixture
   done
   print 'synthetic drift' >> "$FIXTURE_REPO/brew_version/Sources/synthetic.swift"
+  git -C "$FIXTURE_REPO" add brew_version/Sources/synthetic.swift
   run_audit
   assert_status 1 "$AUDIT_STATUS" 'brew source drift'
   assert_contains "$AUDIT_STDERR" 'brew-version native deployment unverified'
@@ -1713,6 +1754,7 @@ test_storage_monitor_deployment() {
 
   new_fixture
   print 'synthetic native source drift' >> "$FIXTURE_REPO/storage_monitor/native/src/storage_monitor_walk.c"
+  git -C "$FIXTURE_REPO" add storage_monitor/native/src/storage_monitor_walk.c
   run_audit
   assert_status 1 "$AUDIT_STATUS" 'storage monitor native source drift'
   assert_contains "$AUDIT_STDERR" 'storage_monitor deployment unverified (source, launcher, walker or receipt drift)'
@@ -1736,6 +1778,7 @@ test_storage_monitor_deployment() {
     "console.log('OK: storage_monitor deployment'); console.error('synthetic warning')"; do
     new_fixture
     print -r -- "$response" > "$FIXTURE_REPO/tools/deploy_storage_monitor.mjs"
+    git -C "$FIXTURE_REPO" add tools/deploy_storage_monitor.mjs
     run_audit
     assert_status 1 "$AUDIT_STATUS" 'storage monitor malformed child success'
     assert_contains "$AUDIT_STDERR" 'storage_monitor child protocol unverified'
@@ -1801,6 +1844,7 @@ test_native_anker_charge_monitor_deployment() {
     "process.stdout.write('OK: anker-charge-monitor native deployment\\n\\n')"; do
     new_fixture
     print -r -- "$response" > "$FIXTURE_REPO/tools/deploy_anker_charge_monitor.mjs"
+    git -C "$FIXTURE_REPO" add tools/deploy_anker_charge_monitor.mjs
     run_audit
     assert_status 1 "$AUDIT_STATUS" 'anker malformed child success'
     assert_contains "$AUDIT_STDERR" 'anker-charge-monitor native child protocol unverified'
@@ -1846,6 +1890,7 @@ test_native_telltale_deployment() {
     "process.stdout.write('OK: telltale native deployment\\n\\n')"; do
     new_fixture
     print -r -- "$response" > "$FIXTURE_REPO/tools/deploy_telltale.mjs"
+    git -C "$FIXTURE_REPO" add tools/deploy_telltale.mjs
     run_audit
     assert_status 1 "$AUDIT_STATUS" 'telltale malformed child success'
     assert_contains "$AUDIT_STDERR" 'telltale native child protocol unverified'
