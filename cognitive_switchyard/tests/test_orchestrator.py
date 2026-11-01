@@ -758,7 +758,7 @@ def test_invalid_status_sidecar_moves_task_to_blocked_and_calls_isolate_end_with
     assert "invalid status sidecar" in blocked_events[0].message
 
 
-def test_session_max_timeout_aborts_active_workers_and_marks_session_aborted(
+def test_session_max_timeout_pauses_and_preserves_active_workspace(
     tmp_path: Path,
 ) -> None:
     from cognitive_switchyard.orchestrator import execute_session
@@ -821,15 +821,17 @@ def test_session_max_timeout_aborts_active_workers_and_marks_session_aborted(
     events = store.list_events(session.id)
     expected_workspace = runtime_paths.session_paths(session.id).root / "workspace" / "020"
 
-    assert result.session_status == "aborted"
-    assert store.get_session(session.id).status == "aborted"
+    assert result.session_status == "paused"
+    assert store.get_session(session.id).status == "paused"
     assert task.status == "blocked"
-    assert marker_path.read_text(encoding="utf-8").strip() == f"0|020|{expected_workspace}|blocked"
-    assert any(event.event_type == "session.aborted" for event in events)
+    assert expected_workspace.exists()
+    assert store.read_worker_recovery_metadata(session.id, slot_number=0).workspace_path == expected_workspace
+    assert not marker_path.exists()
+    assert any(event.event_type == "session.timeout" for event in events)
     assert any(event.event_type == "task.blocked" and event.task_id == "020" for event in events)
 
 
-def test_restart_honors_original_session_max_budget(tmp_path: Path) -> None:
+def test_restart_does_not_count_downtime_against_session_max(tmp_path: Path) -> None:
     from cognitive_switchyard.orchestrator import execute_session
 
     store, _runtime_paths = _build_store(tmp_path)
@@ -868,9 +870,9 @@ def test_restart_honors_original_session_max_budget(tmp_path: Path) -> None:
         poll_interval=0.01,
     )
 
-    assert result.session_status == "aborted"
-    assert store.get_session(session.id).status == "aborted"
-    assert store.list_done_tasks(session.id) == ()
+    assert result.session_status == "idle"
+    assert store.get_session(session.id).status == "idle"
+    assert len(store.list_done_tasks(session.id)) == 1
 
 
 def test_all_done_session_marks_completed_and_records_ordered_events(tmp_path: Path) -> None:
@@ -1729,7 +1731,7 @@ def test_blocked_or_aborted_sessions_do_not_trim_history_debug_artifacts(tmp_pat
         kill_grace_period=0.05,
     )
 
-    assert aborted_result.session_status == "aborted"
+    assert aborted_result.session_status == "paused"
     assert aborted_paths.worker_log(0).exists()
     assert aborted_paths.worker_dir(0).exists()
     assert not aborted_paths.root.joinpath("summary.json").exists()
@@ -3053,3 +3055,121 @@ def test_idle_session_run_counter_increments(tmp_path: Path) -> None:
     rs = store.get_session(session.id).runtime_state
     assert rs.run_number == 4, f"run_number must be 4 after incrementing from 3, got {rs.run_number}"
     assert rs.run_started_at != old_run_started_at, "run_started_at must be refreshed"
+
+
+def test_autofix_isolation_failure_blocks_task(tmp_path: Path) -> None:
+    from unittest.mock import MagicMock, patch
+    from cognitive_switchyard.orchestrator import _handle_failed_task
+
+    plan = tmp_path / "task-reg-001.plan.md"
+    plan.write_text("synthetic plan")
+    task = _make_active_task(plan)
+    store = MagicMock()
+    store.project_task.return_value = task
+    with (patch("cognitive_switchyard.orchestrator._attempt_task_auto_fix", return_value=True),
+          patch("cognitive_switchyard.orchestrator._run_isolate_end", return_value=False),
+          patch("cognitive_switchyard.orchestrator._finalize_blocked_task") as blocked):
+        _handle_failed_task(store=store, session_id=task.session_id, pack_manifest=_make_pack_manifest_with_autofix(tmp_path), effective_runtime_config=_make_effective_runtime_config(auto_fix_enabled=True), active_task=task, slot_number=0, workspace_path=tmp_path, reason="synthetic failure", log_path=None, status_path=None, env=None, fixer_executor=MagicMock(), runtime_event_sink=None)
+    blocked.assert_called_once()
+    assert blocked.call_args.kwargs["run_isolation_end"] is False
+    store.update_session_status.assert_called_with(task.session_id, status="paused")
+
+
+def test_task_autofix_and_verification_run_in_workspace(tmp_path: Path, monkeypatch) -> None:
+    from functools import partial
+    from cognitive_switchyard.models import FixerAttemptResult, VerificationRunResult
+    from cognitive_switchyard.orchestrator import _attempt_task_auto_fix
+
+    store, paths = _build_store(tmp_path)
+    store.create_session(session_id="synthetic", name="Synthetic", pack="test", created_at="2026-01-01T00:00:00Z")
+    _register_task(store, session_id="synthetic", task_id="001")
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    seen = []
+    def fixer(context, *, session_root):
+        seen.append(session_root)
+        return FixerAttemptResult(success=True, summary="synthetic")
+    def verify(**kwargs):
+        seen.append(kwargs["session_root"])
+        return VerificationRunResult(ok=True, exit_code=0, output="", log_path=paths.session_paths("synthetic").verify_log)
+    monkeypatch.setattr("cognitive_switchyard.orchestrator.run_verification_command", verify)
+    assert _attempt_task_auto_fix(store=store, session_id="synthetic", pack_manifest=_make_pack_manifest_with_autofix(tmp_path), effective_runtime_config=_make_effective_runtime_config(auto_fix_enabled=True), task=store.get_task("synthetic", "001"), log_path=None, status_path=None, env=None, fixer_executor=partial(fixer, session_root=paths.session_paths("synthetic").root), workspace_path=workspace)
+    assert seen == [workspace, workspace]
+    assert store.get_task("synthetic", "001").status == "ready"
+    assert not any(event.event_type == "task.completed" for event in store.list_events("synthetic"))
+
+
+def test_recovered_isolated_autofix_pauses_without_workspace_identity(tmp_path: Path, monkeypatch) -> None:
+    from dataclasses import replace
+    from cognitive_switchyard.orchestrator import _run_pending_verification
+    store, _ = _build_store(tmp_path)
+    store.create_session(session_id="synthetic", name="Synthetic", pack="test", created_at="2026-01-01T00:00:00Z")
+    _register_task(store, session_id="synthetic", task_id="001")
+    store.update_session_status("synthetic", status="verifying")
+    store.write_session_runtime_state("synthetic", verification_pending=True, auto_fix_context="task_failure", auto_fix_task_id="001")
+    pack = _make_pack_manifest_with_autofix(tmp_path)
+    pack = replace(pack, isolation=replace(pack.isolation, type="worktree"))
+    monkeypatch.setattr("cognitive_switchyard.orchestrator.run_verification_command", lambda **_: pytest.fail("verification used an unknown workspace"))
+    result = _run_pending_verification(store=store, session_id="synthetic", pack_manifest=pack, effective_runtime_config=_make_effective_runtime_config(auto_fix_enabled=True), env=None, fixer_executor=None, runtime_event_sink=None)
+    assert result.session_status == "paused"
+    assert store.get_task("synthetic", "001").status == "ready"
+
+
+def test_planning_time_counts_toward_active_budget(tmp_path: Path, monkeypatch) -> None:
+    import time
+    from cognitive_switchyard import orchestrator
+    from cognitive_switchyard.models import OrchestratorResult, SessionPreparationResult
+    store, _ = _build_store(tmp_path)
+    store.create_session(session_id="synthetic", name="Synthetic", pack="test", created_at="2026-01-01T00:00:00Z")
+    pack = load_pack_manifest(_write_pack(tmp_path, name="planning-time", execute_script_body="#!/bin/sh\nexit 0\n"))
+    def prepare(**kwargs):
+        time.sleep(1.05)
+        return SessionPreparationResult(session_id=kwargs["session_id"], ready_task_ids=("001",))
+    monkeypatch.setattr(orchestrator, "prepare_session_for_execution", prepare)
+    monkeypatch.setattr(orchestrator, "execute_session", lambda **kwargs: OrchestratorResult(session_id=kwargs["session_id"], started=True, session_status="running"))
+    orchestrator.start_session(store=store, session_id="synthetic", pack_manifest=pack)
+    assert store.get_session("synthetic").runtime_state.accumulated_elapsed_seconds >= 1
+
+
+def test_worker_inspection_failure_pauses_direct_execution(tmp_path: Path, monkeypatch) -> None:
+    from cognitive_switchyard import orchestrator
+    from cognitive_switchyard.process_identity import ProcessGroupInspectionError
+    store, paths = _build_store(tmp_path)
+    store.create_session(session_id="synthetic", name="Synthetic", pack="test", created_at="2026-01-01T00:00:00Z")
+    marker = paths.session_paths("synthetic").root / "work"
+    marker.write_text("synthetic")
+    pack = load_pack_manifest(_write_pack(tmp_path, name="inspection-error", execute_script_body="#!/bin/sh\nexit 0\n"))
+    monkeypatch.setattr(orchestrator, "_collect_finished_workers", lambda **_: (_ for _ in ()).throw(ProcessGroupInspectionError("cannot inspect synthetic group")))
+    with pytest.raises(ProcessGroupInspectionError):
+        orchestrator.execute_session(store=store, session_id="synthetic", pack_manifest=pack)
+    assert store.get_session("synthetic").status == "paused"
+    assert marker.read_text() == "synthetic"
+    assert any("cannot inspect synthetic group" in e.message for e in store.list_events("synthetic"))
+
+
+def test_failed_blocked_isolation_preserves_recovery_metadata(tmp_path: Path) -> None:
+    from unittest.mock import MagicMock, patch
+    from cognitive_switchyard.orchestrator import _finalize_blocked_task
+    plan = tmp_path / "task-reg-001.plan.md"
+    plan.write_text("synthetic plan")
+    store = MagicMock()
+    task = _make_active_task(plan)
+    with patch("cognitive_switchyard.orchestrator._run_isolate_end", return_value=False):
+        _finalize_blocked_task(store=store, session_id=task.session_id, pack_manifest=_make_pack_manifest_with_autofix(tmp_path), active_task=task, slot_number=0, workspace_path=tmp_path, reason="synthetic failure")
+    store.clear_worker_recovery_metadata.assert_not_called()
+
+
+def test_pause_during_verification_is_not_overwritten(tmp_path: Path, monkeypatch) -> None:
+    from cognitive_switchyard.models import VerificationRunResult
+    from cognitive_switchyard.orchestrator import _run_pending_verification
+    store, paths = _build_store(tmp_path)
+    store.create_session(session_id="synthetic", name="Synthetic", pack="test", created_at="2026-01-01T00:00:00Z")
+    store.update_session_status("synthetic", status="running")
+    store.write_session_runtime_state("synthetic", verification_pending=True)
+    def verify(**kwargs):
+        store.update_session_status("synthetic", status="paused")
+        return VerificationRunResult(ok=True, exit_code=0, output="", log_path=paths.session_paths("synthetic").verify_log)
+    monkeypatch.setattr("cognitive_switchyard.orchestrator.run_verification_command", verify)
+    result = _run_pending_verification(store=store, session_id="synthetic", pack_manifest=_make_pack_manifest_with_autofix(tmp_path), effective_runtime_config=_make_effective_runtime_config(auto_fix_enabled=True), env=None, fixer_executor=None, runtime_event_sink=None)
+    assert store.get_session("synthetic").status == "paused"
+    assert result.session_status == "paused"

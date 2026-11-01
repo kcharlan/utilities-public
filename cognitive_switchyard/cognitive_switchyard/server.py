@@ -41,7 +41,7 @@ from .models import (
     WorkerCardRuntimeState,
     apply_runtime_event_to_worker_card_state,
 )
-from .orchestrator import run_session_preflight, start_session
+from .orchestrator import SessionAlreadyRunning, run_session_preflight, start_session
 from .pack_loader import list_runtime_pack_names, load_pack_manifest
 from .parsers import ArtifactParseError, parse_progress_line
 from .planning_runtime import _INTAKE_META_FILES
@@ -394,11 +394,11 @@ class SessionController:
         task = self.store.get_task(session_id, task_id)
         if task.status == "ready":
             return task
-        retried = self.store.project_task(
-            session_id,
-            task_id,
-            status="ready",
-        )
+        if task.status == "active":
+            raise HTTPException(status_code=409, detail="Cannot retry an active task")
+        if not self.store.try_transition_task(session_id, task_id, expected=task.status, status="ready"):
+            raise HTTPException(status_code=409, detail="Task status changed; retry again")
+        retried = self.store.get_task(session_id, task_id)
         self._publish_snapshot(session_id)
         return retried
 
@@ -499,6 +499,9 @@ class SessionController:
                     message=reason,
                 )
                 self._broadcast_alert(session_id, reason, severity="warning")
+        except SessionAlreadyRunning as exc:
+            self._broadcast_alert(session_id, str(exc), severity="warning")
+            return
         except Exception:
             import logging
             import traceback
@@ -507,11 +510,9 @@ class SessionController:
             )
             error_detail = traceback.format_exc()
             try:
-                self.store.update_session_status(
-                    session_id,
-                    status="aborted",
-                    completed_at=datetime.now(UTC).isoformat().replace("+00:00", "Z"),
-                )
+                current_status = self.store.get_session(session_id).status
+                if current_status in {"created", "planning", "resolving", "running", "verifying", "auto_fixing"}:
+                    self.store.try_transition_session(session_id, expected=current_status, status="paused")
                 self.store.append_event(
                     session_id,
                     timestamp=_timestamp(),
@@ -1615,7 +1616,7 @@ def build_dashboard_payload(
     run_start_ref = rs.run_started_at or session.started_at
     current_run_elapsed = int(_elapsed_seconds(run_start_ref)) if is_active else 0
     session_elapsed = rs.accumulated_elapsed_seconds + current_run_elapsed
-    run_elapsed = current_run_elapsed if is_active else rs.last_run_elapsed_seconds
+    run_elapsed = rs.last_run_elapsed_seconds + current_run_elapsed
     return {
         "session": {
             "id": session.id,

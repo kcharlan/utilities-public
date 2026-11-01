@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import logging
+import fcntl
+import threading
 import time
-from functools import partial
+from functools import partial, wraps
 
 _logger = logging.getLogger(__name__)
 from datetime import UTC, datetime
@@ -40,6 +42,43 @@ from .worker_manager import (
 )
 
 
+class SessionAlreadyRunning(RuntimeError):
+    pass
+
+
+_held_sessions = threading.local()
+
+
+def _locked_session(function):
+    @wraps(function)
+    def wrapped(*args, **kwargs):
+        store, session_id = kwargs["store"], kwargs["session_id"]
+        path = store.runtime_paths.session_paths(session_id).root / ".orchestrator.lock"
+        held = getattr(_held_sessions, "paths", set())
+        if path in held:
+            return function(*args, **kwargs)
+        with path.open("a") as lock:
+            try:
+                fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            except BlockingIOError as exc:
+                raise SessionAlreadyRunning(f"Session {session_id} is already running") from exc
+            _held_sessions.paths = held | {path}
+            try:
+                try:
+                    return function(*args, **kwargs)
+                except Exception as exc:
+                    status = store.get_session(session_id).status
+                    if status in {"created", "planning", "resolving", "running", "verifying", "auto_fixing"}:
+                        store.try_transition_session(session_id, expected=status, status="paused")
+                        store.append_event(session_id, timestamp=_timestamp(), event_type="session.error", message=str(exc))
+                    raise
+            finally:
+                _held_sessions.paths = held
+                fcntl.flock(lock, fcntl.LOCK_UN)
+    return wrapped
+
+
+@_locked_session
 def execute_session(
     *,
     store: StateStore,
@@ -119,6 +158,17 @@ def execute_session(
             env=env,
             kill_grace_period=kill_grace_period,
         )
+        runtime_state = store.get_session(session_id).runtime_state
+        if (runtime_state.auto_fix_context == "task_failure" and runtime_state.auto_fix_attempt > 0
+                and (initial_status == "auto_fixing" or runtime_state.verification_reason in {"unverified_fixer", "isolation_failed"})):
+            isolation_failed = runtime_state.verification_reason == "isolation_failed"
+            reason = ("Isolation teardown failed; workspace preserved for manual recovery." if isolation_failed else
+                      "Interrupted fixer has no verified process identity; workspace preserved for manual recovery.")
+            store.write_session_runtime_state(session_id, verification_reason="isolation_failed" if isolation_failed else "unverified_fixer")
+            store.update_session_status(session_id, status="paused")
+            store.append_event(session_id, timestamp=_timestamp(), event_type="session.recovery_paused", message=reason)
+            _publish_alert(runtime_event_sink, session_id=session_id, severity="error", task_id=runtime_state.auto_fix_task_id, worker_slot=None, message=reason)
+            return OrchestratorResult(session_id=session_id, started=True, session_status="paused")
         if initial_status == "paused":
             return OrchestratorResult(
                 session_id=session_id,
@@ -174,6 +224,7 @@ def execute_session(
                 auto_fix_task_id=None,
                 auto_fix_attempt=0,
                 last_fix_summary=None,
+                last_run_elapsed_seconds=0,
                 dispatch_frozen=False,
                 dispatch_frozen_reason=None,
             )
@@ -198,16 +249,26 @@ def execute_session(
         kill_grace_period=kill_grace_period,
     )
     session_paths = store.runtime_paths.session_paths(session_id)
-    session_started_at = session.started_at
-    # Use monotonic clock for session timeout to avoid wall-clock drift (NTP, suspend/resume).
-    # On restart, fall back to wall-clock elapsed since the original start timestamp.
-    _session_monotonic_start = time.monotonic() - _elapsed_since_timestamp(session_started_at)
+    accumulated_at_start = session.runtime_state.accumulated_elapsed_seconds
+    run_elapsed_at_start = session.runtime_state.last_run_elapsed_seconds
+    _session_monotonic_start = time.monotonic()
+    store.write_session_runtime_state(session_id, run_started_at=_timestamp())
+    recorded_seconds = 0
 
     while True:
+        active_seconds = int(time.monotonic() - _session_monotonic_start)
+        if active_seconds != recorded_seconds:
+            recorded_seconds = active_seconds
+            store.write_session_runtime_state(
+                session_id,
+                accumulated_elapsed_seconds=accumulated_at_start + active_seconds,
+                last_run_elapsed_seconds=run_elapsed_at_start + active_seconds,
+                run_started_at=_timestamp(),
+            )
         verified_this_iteration = False
         if (
             effective_runtime_config.session_max > 0
-            and (time.monotonic() - _session_monotonic_start) >= effective_runtime_config.session_max
+            and accumulated_at_start + (time.monotonic() - _session_monotonic_start) >= effective_runtime_config.session_max
         ):
             return _abort_session_for_timeout(
                 store=store,
@@ -348,13 +409,12 @@ def execute_session(
             idle_at = _timestamp()
             # Accumulate run duration into session total
             runtime_state = store.get_session(session_id).runtime_state
-            run_seconds = _elapsed_since_timestamp(runtime_state.run_started_at) if runtime_state.run_started_at else 0
-            new_accumulated = runtime_state.accumulated_elapsed_seconds + int(run_seconds)
+            run_seconds = int(time.monotonic() - _session_monotonic_start)
             store.update_session_status(session_id, status="idle")
             store.write_session_runtime_state(
                 session_id,
-                accumulated_elapsed_seconds=new_accumulated,
-                last_run_elapsed_seconds=max(1, int(run_seconds)),
+                accumulated_elapsed_seconds=accumulated_at_start + run_seconds,
+                last_run_elapsed_seconds=max(1, run_elapsed_at_start + run_seconds),
             )
             store.append_event(
                 session_id,
@@ -463,11 +523,17 @@ def execute_session(
                     )
                     _publish_state_update(runtime_event_sink, session_id)
                     break
+            started_at = _timestamp()
+            active_task = store.try_claim_task(
+                session_id, next_task.task_id, worker_slot=slot_number, timestamp=started_at,
+            )
+            if active_task is None:
+                continue
             workspace_path = _prepare_workspace(
                 pack_manifest=pack_manifest,
                 session_paths=session_paths,
                 slot_number=slot_number,
-                task=next_task,
+                task=active_task,
                 env=env,
             )
             if workspace_path is None:
@@ -497,14 +563,6 @@ def execute_session(
                 _publish_state_update(runtime_event_sink, session_id)
                 continue
 
-            started_at = _timestamp()
-            active_task = store.project_task(
-                session_id,
-                next_task.task_id,
-                status="active",
-                worker_slot=slot_number,
-                timestamp=started_at,
-            )
             try:
                 pid = manager.dispatch(
                     slot_number=slot_number,
@@ -621,6 +679,7 @@ def execute_session(
         time.sleep(effective_runtime_config.poll_interval)
 
 
+@_locked_session
 def start_session(
     *,
     store: StateStore,
@@ -698,6 +757,7 @@ def start_session(
             run_number=new_run_number,
             run_started_at=run_started_at,
             completed_since_verification=0,
+            last_run_elapsed_seconds=0,
         )
         store.append_event(
             session_id,
@@ -732,6 +792,7 @@ def start_session(
             run_number=new_run_number,
             run_started_at=run_started_at,
             completed_since_verification=0,
+            last_run_elapsed_seconds=0,
         )
         store.append_event(
             session_id,
@@ -765,20 +826,29 @@ def start_session(
             message=_format_pipeline_event_message(event_type, detail),
         )
 
-    preparation = prepare_session_for_execution(
-        store=store,
-        session_id=session_id,
-        pack_manifest=pack_manifest,
-        planner_agent=planner_agent,
-        resolver_agent=resolver_agent,
-        effective_planner_count=build_effective_planner_count(
-            session=session,
+    planning_started = time.monotonic()
+    try:
+        preparation = prepare_session_for_execution(
+            store=store,
+            session_id=session_id,
             pack_manifest=pack_manifest,
-        ),
-        env=dict(env) if env is not None else None,
-        on_status_change=_on_preparation_status_change,
-        on_pipeline_event=_on_pipeline_event,
-    )
+            planner_agent=planner_agent,
+            resolver_agent=resolver_agent,
+            effective_planner_count=build_effective_planner_count(
+                session=session,
+                pack_manifest=pack_manifest,
+            ),
+            env=dict(env) if env is not None else None,
+            on_status_change=_on_preparation_status_change,
+            on_pipeline_event=_on_pipeline_event,
+        )
+    finally:
+        planning_seconds = int(time.monotonic() - planning_started)
+        runtime_state = store.get_session(session_id).runtime_state
+        store.write_session_runtime_state(
+            session_id, accumulated_elapsed_seconds=runtime_state.accumulated_elapsed_seconds + planning_seconds,
+            last_run_elapsed_seconds=planning_seconds, run_started_at=_timestamp(),
+        )
     # Resolution conflicts with no ready tasks → cannot proceed
     if preparation.resolution_conflicts and not preparation.ready_task_ids:
         return OrchestratorResult(
@@ -987,32 +1057,9 @@ def _collect_finished_workers(
                 fixer_executor=fixer_executor,
                 runtime_event_sink=runtime_event_sink,
             )
-        except Exception as exc:
-            _logger.error(
-                "Unhandled error collecting worker slot %d in session %s: %s",
-                slot_number, session_id, exc,
-            )
-            # Try to mark the task as blocked so the slot is freed.
-            try:
-                snapshot = manager.poll(slot_number)
-                if snapshot.task_id:
-                    active_task = store.get_task(session_id, snapshot.task_id)
-                    _finalize_blocked_task(
-                        store=store,
-                        session_id=session_id,
-                        pack_manifest=pack_manifest,
-                        active_task=active_task,
-                        slot_number=slot_number,
-                        workspace_path=snapshot.workspace_path,
-                        reason=f"Worker collection crashed: {exc}",
-                        env=env,
-                        runtime_event_sink=runtime_event_sink,
-                    )
-            except Exception as inner_exc:
-                _logger.error(
-                    "Failed to recover slot %d after collection crash: %s",
-                    slot_number, inner_exc,
-                )
+        except Exception:
+            _logger.exception("Worker collection failed for slot %d in session %s", slot_number, session_id)
+            raise
 
 
 def _collect_single_worker(
@@ -1116,6 +1163,8 @@ def _collect_single_worker(
                 slot_number=slot_number,
                 workspace_path=result.workspace_path,
                 reason="Isolation teardown failed.",
+                run_isolation_end=False,
+                preserve_recovery_metadata=True,
                 env=env,
                 runtime_event_sink=runtime_event_sink,
             )
@@ -1191,14 +1240,22 @@ def _handle_failed_task(
     ):
         # Do NOT call _run_isolate_end here — preserve the worktree so the
         # fixer can inspect/continue partial work (committed or staged changes).
+        store.write_session_runtime_state(
+            session_id, verification_pending=True, verification_reason="task_auto_fix",
+            auto_fix_context="task_failure", auto_fix_task_id=active_task.task_id, auto_fix_attempt=0,
+        )
+        store.write_worker_recovery_metadata(
+            session_id, slot_number=slot_number, task_id=active_task.task_id,
+            workspace_path=workspace_path, pid=None,
+        )
         restored_task = store.project_task(session_id, active_task.task_id, status="ready")
-        store.clear_worker_recovery_metadata(session_id, slot_number=slot_number)
         if _attempt_task_auto_fix(
             store=store,
             session_id=session_id,
             pack_manifest=pack_manifest,
             effective_runtime_config=effective_runtime_config,
             task=restored_task,
+            workspace_path=workspace_path,
             log_path=log_path,
             status_path=status_path,
             env=env,
@@ -1207,7 +1264,7 @@ def _handle_failed_task(
             failure_kind=failure_kind,
         ):
             # Auto-fix succeeded — tear down the worktree with "done" status.
-            _run_isolate_end(
+            if not _run_isolate_end(
                 pack_manifest=pack_manifest,
                 slot_number=slot_number,
                 task_id=active_task.task_id,
@@ -1215,11 +1272,32 @@ def _handle_failed_task(
                 final_status="done",
                 plan_path=active_task.plan_path,
                 env=env,
-            )
+            ):
+                _finalize_blocked_task(
+                    store=store,
+                    session_id=session_id,
+                    pack_manifest=pack_manifest,
+                    active_task=store.get_task(session_id, active_task.task_id),
+                    slot_number=slot_number,
+                    workspace_path=workspace_path,
+                    reason="Isolation teardown failed after auto-fix.",
+                    run_isolation_end=False,
+                    preserve_recovery_metadata=True,
+                    env=env,
+                    runtime_event_sink=runtime_event_sink,
+                )
+                store.write_session_runtime_state(session_id, verification_reason="isolation_failed")
+                store.update_session_status(session_id, status="paused")
+            else:
+                _complete_task_after_auto_fix_verification(
+                    store=store, session_id=session_id, task_id=active_task.task_id,
+                    runtime_event_sink=runtime_event_sink,
+                )
+                store.clear_worker_recovery_metadata(session_id, slot_number=slot_number)
             return
         # Auto-fix failed — tear down the worktree with "blocked" status,
         # then finalize (skip isolation end inside _finalize_blocked_task).
-        _run_isolate_end(
+        cleanup_ok = _run_isolate_end(
             pack_manifest=pack_manifest,
             slot_number=slot_number,
             task_id=active_task.task_id,
@@ -1236,6 +1314,7 @@ def _handle_failed_task(
             workspace_path=workspace_path,
             reason=reason,
             run_isolation_end=False,
+            preserve_recovery_metadata=not cleanup_ok,
             env=env,
             runtime_event_sink=runtime_event_sink,
         )
@@ -1263,12 +1342,13 @@ def _finalize_blocked_task(
     workspace_path: Path,
     reason: str,
     run_isolation_end: bool = True,
+    preserve_recovery_metadata: bool = False,
     env: Mapping[str, str] | None = None,
     runtime_event_sink: Callable[[BackendRuntimeEvent], None] | None = None,
 ) -> None:
     previous_status = active_task.status
     if run_isolation_end:
-        _run_isolate_end(
+        isolation_ok = _run_isolate_end(
             pack_manifest=pack_manifest,
             slot_number=slot_number,
             task_id=active_task.task_id,
@@ -1276,6 +1356,7 @@ def _finalize_blocked_task(
             final_status="blocked",
             env=env,
         )
+        preserve_recovery_metadata = preserve_recovery_metadata or not isolation_ok
     blocked_at = _timestamp()
     store.project_task(
         session_id,
@@ -1283,7 +1364,8 @@ def _finalize_blocked_task(
         status="blocked",
         timestamp=blocked_at,
     )
-    store.clear_worker_recovery_metadata(session_id, slot_number=slot_number)
+    if not preserve_recovery_metadata:
+        store.clear_worker_recovery_metadata(session_id, slot_number=slot_number)
     store.append_event(
         session_id,
         timestamp=blocked_at,
@@ -1317,12 +1399,16 @@ def _attempt_task_auto_fix(
     status_path: Path | None,
     env: Mapping[str, str] | None,
     fixer_executor: Callable[..., FixerAttemptResult],
+    workspace_path: Path | None = None,
     start_attempt: int = 1,
     previous_summary: str | None = None,
     runtime_event_sink: Callable[[BackendRuntimeEvent], None] | None = None,
     failure_kind: str | None = None,
 ) -> bool:
     session_paths = store.runtime_paths.session_paths(session_id)
+    execution_root = workspace_path or session_paths.root
+    if isinstance(fixer_executor, partial) and "session_root" in (fixer_executor.keywords or {}):
+        fixer_executor = partial(fixer_executor, session_root=execution_root)
     previous_verification_output: str | None = None
     for attempt in range(start_attempt, effective_runtime_config.auto_fix_max_attempts + 1):
         store.update_session_status(session_id, status="auto_fixing")
@@ -1364,49 +1450,15 @@ def _attempt_task_auto_fix(
         )
         if not fix_result.success:
             continue
+        store.update_session_status(session_id, status="verifying")
         verification = run_verification_command(
-            session_root=session_paths.root,
+            session_root=execution_root,
             verify_log_path=session_paths.verify_log,
             command=pack_manifest.verification.command or "",
             env=env,
             output_line_callback=_make_verification_output_callback(runtime_event_sink, session_id),
         )
         if verification.ok:
-            completed_at = _timestamp()
-            previous_status = store.get_task(session_id, task.task_id).status
-            store.project_task(session_id, task.task_id, status="done", timestamp=completed_at)
-            store.append_event(
-                session_id,
-                timestamp=completed_at,
-                event_type="task.completed",
-                task_id=task.task_id,
-                message=f"Task {task.task_id} ({task.title}) completed after auto-fix and verification pass.",
-            )
-            store.update_session_status(session_id, status="running")
-            store.write_session_runtime_state(
-                session_id,
-                completed_since_verification=0,
-                verification_pending=False,
-                verification_reason=None,
-                auto_fix_context=None,
-                auto_fix_task_id=None,
-                auto_fix_attempt=0,
-                last_fix_summary=previous_summary,
-                dispatch_frozen=False,
-                dispatch_frozen_reason=None,
-            )
-            _publish_task_status_change(
-                runtime_event_sink,
-                session_id=session_id,
-                task_id=task.task_id,
-                old_status=previous_status,
-                new_status="done",
-                worker_slot=task.worker_slot,
-                notes=f"Task {task.task_id} ({task.title}) completed after auto-fix and verification pass.",
-                elapsed=_task_elapsed(task.started_at, completed_at),
-                started_at=task.started_at,
-                completed_at=completed_at,
-            )
             _publish_state_update(runtime_event_sink, session_id)
             return True
         previous_verification_output = verification.output
@@ -1464,6 +1516,12 @@ def _complete_task_after_auto_fix_verification(
             completed_at=completed_at,
         )
         _publish_state_update(runtime_event_sink, session_id)
+    store.try_transition_session(session_id, expected="verifying", status="running")
+    store.write_session_runtime_state(
+        session_id, completed_since_verification=0, verification_pending=False,
+        verification_reason=None, auto_fix_context=None, auto_fix_task_id=None,
+        auto_fix_attempt=0, dispatch_frozen=False, dispatch_frozen_reason=None,
+    )
 
 
 def _resume_recovered_task_auto_fix(
@@ -1476,6 +1534,7 @@ def _resume_recovered_task_auto_fix(
     fixer_executor: Callable[..., FixerAttemptResult],
     runtime_state,
     session_root: Path,
+    recovery_metadata=None,
     runtime_event_sink: Callable[[BackendRuntimeEvent], None] | None = None,
 ) -> None:
     task = store.get_task(session_id, runtime_state.auto_fix_task_id)
@@ -1485,6 +1544,7 @@ def _resume_recovered_task_auto_fix(
         pack_manifest=pack_manifest,
         effective_runtime_config=effective_runtime_config,
         task=task,
+        workspace_path=recovery_metadata.workspace_path if recovery_metadata else session_root,
         log_path=None,
         status_path=None,
         env=env,
@@ -1493,16 +1553,35 @@ def _resume_recovered_task_auto_fix(
         previous_summary=runtime_state.last_fix_summary,
         runtime_event_sink=runtime_event_sink,
     ):
+        if recovery_metadata is not None and not _run_isolate_end(
+            pack_manifest=pack_manifest, slot_number=recovery_metadata.slot_number,
+            task_id=task.task_id, workspace_path=recovery_metadata.workspace_path,
+            final_status="done", plan_path=task.plan_path, env=env,
+        ):
+            _finalize_blocked_task(store=store, session_id=session_id, pack_manifest=pack_manifest,
+                active_task=task, slot_number=recovery_metadata.slot_number,
+                workspace_path=recovery_metadata.workspace_path, reason="Isolation teardown failed after recovered auto-fix.",
+                run_isolation_end=False, preserve_recovery_metadata=True, env=env, runtime_event_sink=runtime_event_sink)
+            store.write_session_runtime_state(session_id, verification_reason="isolation_failed")
+            store.update_session_status(session_id, status="paused")
+            return
+        _complete_task_after_auto_fix_verification(
+            store=store, session_id=session_id, task_id=task.task_id,
+            runtime_event_sink=runtime_event_sink,
+        )
+        if recovery_metadata is not None:
+            store.clear_worker_recovery_metadata(session_id, slot_number=recovery_metadata.slot_number)
         return
     _finalize_blocked_task(
         store=store,
         session_id=session_id,
         pack_manifest=pack_manifest,
         active_task=store.get_task(session_id, runtime_state.auto_fix_task_id),
-        slot_number=0,
-        workspace_path=session_root,
+        slot_number=recovery_metadata.slot_number if recovery_metadata else 0,
+        workspace_path=recovery_metadata.workspace_path if recovery_metadata else session_root,
         reason="Auto-fix retry budget exhausted after recovery.",
         run_isolation_end=False,
+        preserve_recovery_metadata=recovery_metadata is not None,
         env=env,
         runtime_event_sink=runtime_event_sink,
     )
@@ -1520,14 +1599,31 @@ def _run_pending_verification(
 ) -> OrchestratorResult | None:
     session_paths = store.runtime_paths.session_paths(session_id)
     runtime_state = store.get_session(session_id).runtime_state
+    recovery_metadata = None
+    if runtime_state.auto_fix_context == "task_failure" and pack_manifest.isolation.type != "none":
+        for worker_dir in session_paths.workers.iterdir():
+            if worker_dir.is_dir() and worker_dir.name.isdigit():
+                candidate = store.read_worker_recovery_metadata(session_id, slot_number=int(worker_dir.name))
+                if candidate is not None and candidate.task_id == runtime_state.auto_fix_task_id:
+                    recovery_metadata = candidate
+                    break
+        if recovery_metadata is None or recovery_metadata.pid is not None or not recovery_metadata.workspace_path.is_dir():
+            reason = "Cannot recover task auto-fix without a stopped worker and workspace identity; workspace preserved."
+            store.update_session_status(session_id, status="paused")
+            store.append_event(session_id, timestamp=_timestamp(), event_type="session.recovery_paused", message=reason)
+            _publish_alert(runtime_event_sink, session_id=session_id, severity="error", task_id=runtime_state.auto_fix_task_id, worker_slot=None, message=reason)
+            return OrchestratorResult(session_id=session_id, started=True, session_status="paused")
     verification_started_at = _timestamp()
-    store.update_session_status(session_id, status="verifying")
+    current_status = store.get_session(session_id).status
+    if current_status not in {"running", "verifying", "auto_fixing"} or not store.try_transition_session(
+        session_id, expected=current_status, status="verifying"
+    ):
+        return OrchestratorResult(session_id=session_id, started=True, session_status=store.get_session(session_id).status)
     store.write_session_runtime_state(
         session_id,
         verification_started_at=verification_started_at,
         last_verification_test_summary=None,
         last_fix_summary=None,
-        auto_fix_attempt=0,
     )
     store.append_event(
         session_id,
@@ -1537,23 +1633,38 @@ def _run_pending_verification(
     )
     _publish_state_update(runtime_event_sink, session_id)
     verification = run_verification_command(
-        session_root=session_paths.root,
+        session_root=recovery_metadata.workspace_path if recovery_metadata else session_paths.root,
         verify_log_path=session_paths.verify_log,
         command=pack_manifest.verification.command or "",
         env=env,
         output_line_callback=_make_verification_output_callback(runtime_event_sink, session_id),
     )
     if verification.ok:
+        if not store.try_transition_session(session_id, expected="verifying", status="running"):
+            return OrchestratorResult(session_id=session_id, started=True, session_status=store.get_session(session_id).status)
         if runtime_state.auto_fix_context == "task_failure" and runtime_state.auto_fix_task_id is not None:
+            if recovery_metadata is not None and not _run_isolate_end(
+                pack_manifest=pack_manifest, slot_number=recovery_metadata.slot_number,
+                task_id=recovery_metadata.task_id, workspace_path=recovery_metadata.workspace_path,
+                final_status="done", plan_path=store.get_task(session_id, recovery_metadata.task_id).plan_path, env=env,
+            ):
+                _finalize_blocked_task(store=store, session_id=session_id, pack_manifest=pack_manifest,
+                    active_task=store.get_task(session_id, recovery_metadata.task_id), slot_number=recovery_metadata.slot_number,
+                    workspace_path=recovery_metadata.workspace_path, reason="Isolation teardown failed after recovery verification.",
+                    run_isolation_end=False, preserve_recovery_metadata=True, env=env, runtime_event_sink=runtime_event_sink)
+                store.write_session_runtime_state(session_id, verification_reason="isolation_failed")
+                store.update_session_status(session_id, status="paused")
+                return OrchestratorResult(session_id=session_id, started=True, session_status="paused")
             _complete_task_after_auto_fix_verification(
                 store=store,
                 session_id=session_id,
                 task_id=runtime_state.auto_fix_task_id,
                 runtime_event_sink=runtime_event_sink,
             )
+            if recovery_metadata is not None:
+                store.clear_worker_recovery_metadata(session_id, slot_number=recovery_metadata.slot_number)
         verified_at = _timestamp()
         test_summary = parse_test_summary(verification.output)
-        store.update_session_status(session_id, status="running")
         store.write_session_runtime_state(
             session_id,
             completed_since_verification=0,
@@ -1598,6 +1709,7 @@ def _run_pending_verification(
             fixer_executor=fixer_executor,
             runtime_state=runtime_state,
             session_root=session_paths.root,
+            recovery_metadata=recovery_metadata,
             runtime_event_sink=runtime_event_sink,
         )
         return None
@@ -1732,6 +1844,7 @@ def _abort_session_for_timeout(
         poll_interval=poll_interval,
         reason=reason,
         timeout_kind="session_max",
+        preserve_workspace=True,
         env=env,
         runtime_event_sink=runtime_event_sink,
     )
@@ -1746,6 +1859,7 @@ def _abort_session(
     poll_interval: float,
     reason: str,
     timeout_kind: str = "abort",
+    preserve_workspace: bool = False,
     env: Mapping[str, str] | None = None,
     runtime_event_sink: Callable[[BackendRuntimeEvent], None] | None = None,
 ) -> OrchestratorResult:
@@ -1758,9 +1872,6 @@ def _abort_session(
 
     while manager.active_slot_numbers():
         for slot_number in manager.active_slot_numbers():
-            # Wrap per-slot body so an exception from collect() or _finalize_blocked_task()
-            # (e.g., corrupt status sidecar) does not abort the drain loop — other
-            # workers must still be collected. F-5 fix.
             try:
                 snapshot = manager.poll(slot_number)
                 _publish_worker_runtime_events(
@@ -1780,27 +1891,31 @@ def _abort_session(
                     slot_number=result.slot_number,
                     workspace_path=result.workspace_path,
                     reason=result.failure_reason or f"Killed: {reason}",
+                    run_isolation_end=not preserve_workspace,
+                    preserve_recovery_metadata=preserve_workspace,
                     env=env,
                     runtime_event_sink=runtime_event_sink,
                 )
             except Exception:
-                _logger.exception("Error draining worker slot %d during abort; continuing drain", slot_number)
+                _logger.exception("Error draining worker slot %d during abort", slot_number)
+                raise
         if manager.active_slot_numbers():
             time.sleep(poll_interval)
 
     aborted_at = _timestamp()
-    store.update_session_status(session_id, status="aborted", completed_at=aborted_at)
+    final_status = "paused" if preserve_workspace else "aborted"
+    store.update_session_status(session_id, status=final_status, completed_at=None if preserve_workspace else aborted_at)
     store.append_event(
         session_id,
         timestamp=aborted_at,
-        event_type="session.aborted",
+        event_type="session.paused" if preserve_workspace else "session.aborted",
         message=reason,
     )
     _publish_state_update(runtime_event_sink, session_id)
     return OrchestratorResult(
         session_id=session_id,
         started=True,
-        session_status="aborted",
+        session_status=final_status,
         blocked_tasks=tuple(task.task_id for task in store.list_blocked_tasks(session_id)),
     )
 

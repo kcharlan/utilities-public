@@ -1,10 +1,11 @@
 from __future__ import annotations
 
 import collections.abc
+import fcntl
 import json
 import shutil
 import sqlite3
-from contextlib import contextmanager
+from contextlib import contextmanager, nullcontext
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -349,6 +350,44 @@ class StateStore:
         worker_slot: int | None = None,
         timestamp: str | None = None,
     ) -> PersistedTask:
+        with self._task_projection_lock(session_id):
+            return self._project_task_unlocked(session_id, task_id, status=status, worker_slot=worker_slot, timestamp=timestamp)
+
+    @contextmanager
+    def _task_projection_lock(self, session_id: str):
+        lock_path = self.runtime_paths.session_paths(session_id).root / ".task-projection.lock"
+        with lock_path.open("a") as lock:
+            fcntl.flock(lock, fcntl.LOCK_EX)
+            try:
+                yield
+            finally:
+                fcntl.flock(lock, fcntl.LOCK_UN)
+
+    def try_transition_task(self, session_id: str, task_id: str, *, expected: str, status: str) -> bool:
+        return self._try_project_task(session_id, task_id, expected=expected, status=status) is not None
+
+    def try_claim_task(self, session_id: str, task_id: str, *, worker_slot: int, timestamp: str) -> PersistedTask | None:
+        return self._try_project_task(session_id, task_id, expected="ready", status="active", worker_slot=worker_slot, timestamp=timestamp)
+
+    def _try_project_task(self, session_id: str, task_id: str, *, expected: str, status: str,
+                          worker_slot: int | None = None, timestamp: str | None = None) -> PersistedTask | None:
+        with self._task_projection_lock(session_id):
+            with self._connect() as connection:
+                connection.execute("BEGIN IMMEDIATE")
+                row = connection.execute(
+                    "SELECT status FROM tasks WHERE session_id = ? AND task_id = ?",
+                    (session_id, task_id),
+                ).fetchone()
+                if row is None or row["status"] != expected:
+                    return None
+                return self._project_task_unlocked(session_id, task_id, status=status, worker_slot=worker_slot,
+                                                   timestamp=timestamp, connection=connection)
+
+    def _project_task_unlocked(
+        self, session_id: str, task_id: str, *, status: str,
+        worker_slot: int | None = None, timestamp: str | None = None,
+        connection: sqlite3.Connection | None = None,
+    ) -> PersistedTask:
         normalized_worker_slot = self._normalize_worker_slot(
             status=status,
             worker_slot=worker_slot,
@@ -387,7 +426,7 @@ class StateStore:
         # filesystem state is a consequence of a committed DB state. If the
         # process crashes after commit but before the file move, reconcile_filesystem_projection
         # will repair the DB on recovery (the file is still in its old location).
-        with self._connect() as connection:
+        with nullcontext(connection) if connection is not None else self._connect() as connection:
             previous_slot = current.worker_slot
             if previous_slot is not None and previous_slot != normalized_worker_slot:
                 self._upsert_worker_slot(
@@ -456,6 +495,15 @@ class StateStore:
         if row is None:
             raise KeyError(f"Unknown session: {session_id}")
         return self._session_from_row(row)
+
+    def try_transition_session(self, session_id: str, *, expected: str, status: str) -> bool:
+        with self._connect() as connection:
+            result = connection.execute(
+                "UPDATE sessions SET status = ? WHERE id = ? AND status = ?",
+                (status, session_id, expected),
+            )
+            connection.commit()
+            return result.rowcount == 1
 
     def update_session_status(
         self,

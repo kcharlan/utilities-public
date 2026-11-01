@@ -1031,13 +1031,14 @@ class TestIntakeManagement:
             });
         }""")
         _write_intake_plan(runtime_home, "intake-lock-001", "t001")
-        _write_intake_file(runtime_home, "intake-lock-001", "dummy.md", "# Dummy\n")
+        _write_intake_plan(runtime_home, "intake-lock-001", "t002")
 
         # Start session
-        page.evaluate("""async () => {
-            await fetch('/api/sessions/intake-lock-001/start', { method: 'POST' });
-        }""")
-        page.wait_for_timeout(1000)
+        status = page.evaluate("""async () =>
+            (await fetch('/api/sessions/intake-lock-001/start', { method: 'POST' })).status
+        """)
+        assert status == 202
+        _poll_session_status(page, "intake-lock-001", {"idle"})
 
         result = page.evaluate("""async () => {
             const resp = await fetch('/api/sessions/intake-lock-001/intake');
@@ -1118,7 +1119,10 @@ class TestPreflight:
 
         # The "Run Preflight" button should exist (may be in the setup view)
         preflight_btn = page.locator("button:has-text('Preflight')")
-        assert preflight_btn.count() > 0
+        assert preflight_btn.count() > 0, page.evaluate("""async () => JSON.stringify({
+            sessions: (await (await fetch('/api/sessions')).json()).sessions.map(s => [s.id, s.status]),
+            body: document.body.innerText.slice(0, 800)
+        })""")
 
 
 # ---------------------------------------------------------------------------
@@ -3186,9 +3190,10 @@ class TestElapsedTimers:
             const span = document.querySelector('[title="Current run time"]');
             return span ? span.textContent : null;
         }""")
-        assert run_timer_text is not None, (
-            "Run timer span not found. TopBar may not be rendering timers."
-        )
+        assert run_timer_text is not None, page.evaluate("""async () => JSON.stringify({
+            sessions: (await (await fetch('/api/sessions')).json()).sessions.map(s => [s.id, s.status]),
+            body: document.body.innerText.slice(0, 800)
+        })""")
         assert run_timer_text != "Run #1: 0s", (
             f"Run timer reset to '0s' after completion — lastRunElapsed capture is broken. "
             f"Got: {run_timer_text!r}"
@@ -3252,9 +3257,10 @@ class TestElapsedTimers:
                 inlineStyle: span.getAttribute('style') || ''
             };
         }""")
-        assert cumul_style is not None, (
-            "Cumulative timer span not found. TopBar may not be rendering timers."
-        )
+        assert cumul_style is not None, page.evaluate("""async () => JSON.stringify({
+            sessions: (await (await fetch('/api/sessions')).json()).sessions.map(s => [s.id, s.status]),
+            body: document.body.innerText.slice(0, 800)
+        })""")
         # Must NOT have the old muted class
         assert "muted" not in cumul_style["className"], (
             f"Cumulative timer still has 'muted' class: {cumul_style!r}. "
