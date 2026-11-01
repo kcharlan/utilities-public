@@ -749,6 +749,17 @@ Validate Compose configuration before starting. Rebuild/start only the projects 
 
 `docker/propagate-updates.zsh deploy` applies these rules to `~/docker`: it copies only committed tracked files, backs up replaced files under `~/.utilities-deploy-backups/docker-<timestamp>/`, reruns `update.sh` only for stacks that were running, and verifies they are running again. Its `refresh` phase updates and audits the Docker lockfiles beforehand. See [docker/README.md](../docker/README.md#propagating-dependency-updates).
 
+Each managed deployment snapshots its executed helpers, Compose and build inputs,
+and read-only runtime code in a persistent private committed-source bundle.
+Configuration and writable volumes remain at their deployed paths. Pruning
+retains the current bundle and prior or current referenced bundles plus five other
+verified unused bundles; unknown, in-progress, failed, linked or altered bundles
+are retained. The concurrency guarantee covers managed propagation only.
+Bundle paths are internal; independent manual cache users must pass
+`deploy --keep-source-bundles` on every deploy because inspecting references
+cannot be atomic with an external Docker create. Container rollback does not
+restore database migrations.
+
 After a successful deploy that creates a backup, it keeps the two newest eligible
 Docker backup directories by modification time, with descending name as the
 tie-break. Failed, unchanged and dry runs leave backups untouched.

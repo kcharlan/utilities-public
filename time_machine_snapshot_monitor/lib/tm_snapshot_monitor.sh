@@ -98,7 +98,7 @@ Hourly scheduled checks are alert-only. They never unmount snapshots.
   --test-notification  Send a harmless notification test.
   --help               Show this help.
 
-Repair never forces an unmount, deletes a snapshot, kills a process, or runs
+Repair never forces an unmount, deletes a snapshot, kills an unrelated process, or runs
 while Time Machine is active or its status cannot be determined.
 EOF
 }

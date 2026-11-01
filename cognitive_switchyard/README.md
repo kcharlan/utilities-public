@@ -32,6 +32,30 @@ Packs declare which phases they use. All phases are optional except Execution.
 
 When a session is created through the web backend with both `COGNITIVE_SWITCHYARD_REPO_ROOT` and `COGNITIVE_SWITCHYARD_BRANCH` environment variables, the backend creates a git worktree in a peer directory of the source repo. Workers operate on the worktree, leaving the original checkout untouched. Idle sessions retain their worktrees for subsequent runs. Completed runs retain them for validation and merge review until the operator uses the completion card's cleanup action. Aborted sessions, explicitly ended idle sessions, and deleted or purged sessions clean up their worktrees.
 
+The session API accepts `COGNITIVE_SWITCHYARD_REPO_ROOT`,
+`COGNITIVE_SWITCHYARD_PROJECT_DIR`, and `COGNITIVE_SWITCHYARD_BRANCH`;
+clients cannot supply server-created worktree metadata. A collision returns
+409. Cleanup removes only registered worktrees and merged task branches;
+sessions without server-created metadata require manual worktree cleanup.
+Built-in task isolation refuses to merge into a dirty tree. Conflicts and
+existing task branches or workspaces preserve the existing work for manual
+resolution and block or reject the operation.
+
+Session limits count active time. A timeout or unexpected execution error
+pauses the session and preserves its workspace. If an interrupted fixer's
+process identity cannot be verified, the session pauses for manual recovery
+instead of starting another fixer. Built-in agent commands use the operator's
+normal permission and sandbox settings.
+
+Plan IDs begin with an alphanumeric character and contain only letters, digits,
+underscores and hyphens. Failed planner inputs remain in `intake_failed/`.
+Agent, hook, prerequisite and verification commands have a one-hour cap and
+clean their process groups with TERM and KILL. Output and worker logs retain
+bounded 1 MiB tails; truncated agent stdout is an explicit failure. Linux
+process-group inspection requires `pgrep` and `ps` from procps. Inspection is
+limited to the captured group and its returned PIDs; unavailable, ambiguous or
+denied ownership fails closed. Native Linux execution has not been verified.
+
 ## Architecture
 
 ```
@@ -89,7 +113,7 @@ The embedded frontend includes Preact, its icons and fonts in the HTML template.
 ./switchyard start --session my-session --pack claude-code
 ```
 
-The `serve` command starts a FastAPI server (default `127.0.0.1:8100`; override with `--host`/`--port`) with the embedded SPA and opens it in the default browser. Set `COGNITIVE_SWITCHYARD_NO_BROWSER=1` to suppress browser launch. If the requested port is occupied, the server scans the next 19 ports and uses the first available one.
+The `serve` command starts a loopback-only FastAPI server (default `127.0.0.1:8100`; override the port with `--port`) with the embedded SPA and opens it in the default browser. Set `COGNITIVE_SWITCHYARD_NO_BROWSER=1` to suppress browser launch. If the requested port is occupied, the server scans the next 19 ports and uses the first available one.
 
 `start` creates the session if it does not exist (using `--pack`, or `default_pack` from `config.yaml`) and otherwise resumes it; resuming with a different `--pack` is refused. Both `start` and `serve` first delete completed and aborted sessions that finished more than `retention_days` ago.
 

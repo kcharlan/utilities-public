@@ -66,6 +66,9 @@ Project-specific validation commands, applied with the Testing Scope above. A co
   - `node tools/sync_frontend_vendor.mjs --all --check` and `node --test tools/tests/sync_frontend_vendor.test.mjs tools/tests/svg_charts.test.mjs`.
   - `uv run --no-project --no-python-downloads --with pytest pytest tools/tests/test_testkit_offline.py tools/tests/test_sync_frontend_indent.py tools/tests/test_run_project_tests.py tools/tests/test_check_uv_headers.py -q -p no:cacheprovider` and `uv run --no-python-downloads --script tools/check_uv_headers.py`.
   - Run the complete suites of consumers embedding changed kit items or using changed test helpers.
+- Local server guard:
+  - `node tools/sync_local_server_guard.mjs --all --check` and `node --test tools/tests/sync_local_server_guard.test.mjs`.
+  - `uv run --no-project --no-python-downloads --with pytest pytest tools/tests/test_local_server_guard.py tools/tests/test_local_server_guards.py -q -p no:cacheprovider`.
 - Migrated CLI tools (run launchers with `UV_PYTHON_DOWNLOADS=never`):
   - `"abacus usage/de-abacus.py" --help`, `anduril_steps/anduril_steps.py --help`, `worktree-helper/worktree --version` and `--list`; exercise `dloc/dloc` in a synthetic Git repository and `md-json/md_converter.py` against a synthetic input in temporary space.
   - For `Claude_plugin_converter/to_gemini_cli`, run `UV_PYTHON_DOWNLOADS=never tools/run_project_tests.py to_gemini_cli` and smoke the launcher against a synthetic category in a temporary workspace.
@@ -110,6 +113,7 @@ Project-specific validation commands, applied with the Testing Scope above. A co
   - `.venv/bin/python -m pytest collector snapshots extension` (collector, snapshot and Chromium popup tests; no skips).
   - `zsh tests/test_local_config.zsh` and `node --test extension/test_*.js`.
   - Validate migration changes with `bash -n migrate.sh`; agents never run it, even with `--dry-run`.
+- `docker/llm_proxy` (from `docker/llm_proxy/`): `uv run --frozen --no-python-downloads --extra dev python -m pytest -q`.
 - `web_games/multibody_sim`:
   - `npm test` (Playwright; config launches local `http-server` on `127.0.0.1:4173`)
 - `Calculation tools/backtest` (independent nested Market Atlas project):
@@ -123,7 +127,7 @@ Project-specific validation commands, applied with the Testing Scope above. A co
   - Changes to the checker also require the complete `brew_version` and `anker_charge_monitor` suites above.
 - Static deployment/fleet audit tooling:
   - `zsh tools/tests/test_check_home_residue.zsh` (synthetic home residue audit cases).
-  - `node --test tools/tests/deploy_storage_monitor.test.mjs tools/tests/deploy_colophon.test.mjs tools/tests/deploy_brew_version.test.mjs tools/tests/deploy_anker_charge_monitor.test.mjs tools/tests/deploy_telltale.test.mjs tools/tests/deploy_calculator_pages.test.mjs tools/tests/deploy_copies.test.mjs` (installer lifecycles and shared filesystem helpers).
+  - `node --test tools/tests/deploy_storage_monitor.test.mjs tools/tests/deploy_colophon.test.mjs tools/tests/deploy_brew_version.test.mjs tools/tests/deploy_anker_charge_monitor.test.mjs tools/tests/deploy_telltale.test.mjs tools/tests/deploy_calculator_pages.test.mjs tools/tests/deploy_copies.test.mjs tools/tests/transaction.test.mjs` (installer lifecycles and shared filesystem helpers).
   - `node --test tools/tests/check_static_deployments.test.mjs`
   - `zsh tools/tests/test_check_local_deployments.zsh`
   - Changes to the static audit or its child runner also require Market Atlas's complete suites above. The app synthetic command does not implicitly run root suites.
@@ -235,6 +239,8 @@ Answer in order and stop at the first match:
 **Static page.** One HTML file with no launcher. It inlines everything, makes no external requests, and prefixes its storage keys. Inputs come from form fields or the File API; outputs leave as browser downloads. `web_games/gorilla` and `Calculation tools/money_sense_calculators.html` are examples.
 
 **Local server.** The exception. Python (FastAPI + uvicorn, or the standard library for read-only tools) serves the page and `/api/*` JSON endpoints.
+
+- Keep each local server's `LocalOriginGuard` region synchronized with `tools/local_server_guard.py` using `node tools/sync_local_server_guard.mjs --all --check`. Exercise the boundary with `tools.testkit.assert_local_server_guard` using a read-only GET path and the application's mutation and WebSocket paths.
 - Bind to `127.0.0.1` only and select the port as described in Port Selection below.
 - Block other websites from driving the API: reject any request whose `Host` is not `127.0.0.1:<port>` or `localhost:<port>` (as `model_sentinel/model_sentinel/browse/server.py` `_valid_host` does; Starlette's `TrustedHostMiddleware` ignores the port, so FastAPI needs custom middleware); never change state on GET or HEAD; reject other methods unless `Origin` is present and equals the server's own origin; never send CORS headers.
 - Use the same vendored front-end stack as built pages, so the UI also works offline; fetch data from `/api/*` instead of embedding it.
