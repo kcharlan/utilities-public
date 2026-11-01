@@ -21,8 +21,12 @@ def load_yaml(text: str) -> Any:
         if isinstance(node, yaml.ScalarNode):
             remaining -= len(node.value)
         elif isinstance(node, yaml.SequenceNode):
+            if len(nodes) + len(node.value) > remaining:
+                raise ValueError('YAML expansion limit exceeded')
             nodes.extend(node.value)
         elif isinstance(node, yaml.MappingNode):
+            if len(nodes) + 2 * len(node.value) > remaining:
+                raise ValueError('YAML expansion limit exceeded')
             for key, child in node.value:
                 nodes.extend((key, child))
         if remaining < 0:
@@ -37,9 +41,13 @@ def load_yaml(text: str) -> Any:
         if remaining < 0:
             raise ValueError('YAML expansion limit exceeded')
         if isinstance(item, dict):
+            if len(stack) + 2 * len(item) > remaining:
+                raise ValueError('YAML expansion limit exceeded')
             for key, child in item.items():
                 stack.extend((key, child))
         elif isinstance(item, (list, tuple, set)):
+            if len(stack) + len(item) > remaining:
+                raise ValueError('YAML expansion limit exceeded')
             stack.extend(item)
     return value
 

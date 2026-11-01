@@ -33,6 +33,26 @@ test('YAML merge expansion is bounded during parsing', async ({ page }) => {
   });
   expect(result).toBe(true);
 });
+
+test('wide recursive YAML aliases do not accumulate pending work', async ({ page }) => {
+  await page.goto('/web/index.html');
+  const result = await page.evaluate(() => {
+    const push = Array.prototype.push;
+    let largest = 0;
+    Array.prototype.push = function (...items) {
+      const size = push.apply(this, items);
+      largest = Math.max(largest, size);
+      return size;
+    };
+    try {
+      const text = `a: &a [${Array(10).fill('*a').join(', ')}]\n`;
+      try { jsonFromYaml(text); return {rejected: false, largest}; }
+      catch (error) { return {rejected: /expansion/i.test(error.message), largest}; }
+    } finally { Array.prototype.push = push; }
+  });
+  expect(result.rejected).toBe(true);
+  expect(result.largest).toBeLessThan(100000);
+});
 const { execFileSync } = require('node:child_process');
 const path = require('node:path');
 const { pathToFileURL } = require('node:url');

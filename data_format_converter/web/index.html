@@ -1240,7 +1240,11 @@ window.TOML={parse:parse$1,stringify:stringify$1};
                 remaining -= 1 + (typeof item === 'string' ? item.length : 0);
                 if (remaining < 0) throw new Error('YAML expansion limit exceeded');
                 if (item && typeof item === 'object') {
-                    for (const [key, child] of Object.entries(item)) stack.push(key, child);
+                    const keys = Object.keys(item);
+                    if (stack.length + 2 * keys.length > remaining) {
+                        throw new Error('YAML expansion limit exceeded');
+                    }
+                    for (const key of keys) stack.push(key, item[key]);
                 }
             }
             return value;
