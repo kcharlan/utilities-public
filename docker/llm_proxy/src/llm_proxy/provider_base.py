@@ -21,6 +21,31 @@ from llm_proxy.models import (
 logger = logging.getLogger(__name__)
 
 
+def _valid_tool(tool: object) -> bool:
+    """Check the nested tool fields the adapters read while formatting prompts."""
+    if not isinstance(tool, dict) or not isinstance(tool.get("function"), dict):
+        return False
+    function = tool["function"]
+    if not isinstance(function.get("name", ""), str):
+        return False
+    description = function.get("description")
+    if description is not None and not isinstance(description, str):
+        return False
+    parameters = function.get("parameters")
+    if parameters is None:
+        return True
+    if not isinstance(parameters, dict):
+        return False
+    properties = parameters.get("properties")
+    if properties is not None and (
+        not isinstance(properties, dict)
+        or any(not isinstance(value, dict) for value in properties.values())
+    ):
+        return False
+    required = parameters.get("required", [])
+    return isinstance(required, list) and all(isinstance(name, str) for name in required)
+
+
 class ProviderAdapter(ABC):
 
     @property
@@ -99,8 +124,7 @@ class ProviderAdapter(ABC):
             tools = body.get("tools")
             if tools is not None and (
                 not isinstance(tools, list)
-                or any(not isinstance(t, dict) or not isinstance(t.get("function"), dict)
-                       for t in tools)
+                or any(not _valid_tool(tool) for tool in tools)
             ):
                 raise HTTPException(status_code=422, detail="Invalid tools")
             choice = body.get("tool_choice")

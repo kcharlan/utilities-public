@@ -48,6 +48,55 @@ async def test_malformed_request_returns_validation_error(payload):
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("stream", [False, True])
+@pytest.mark.parametrize("function", [
+    {"name": "allowed", "parameters": "bad"},
+    {"name": "allowed", "parameters": {"properties": "bad"}},
+    {"name": "allowed", "parameters": {"properties": {"arg": "bad"}}},
+    {"name": "allowed", "parameters": {"properties": {"arg": {}}, "required": ["x", {}]}},
+    {"name": "allowed", "parameters": {"properties": {"arg": {}}, "required": 5}},
+    {"name": "allowed", "description": ["bad"]},
+])
+async def test_invalid_nested_tool_schema_rejected_before_upstream(stream, function):
+    local = FastAPI()
+    local.include_router(T3ChatAdapter().create_router())
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=local), base_url="http://test") as client:
+        response = await client.post("/v1/chat/completions", json={
+            "model": "fake", "messages": [], "stream": stream,
+            "tools": [{"type": "function", "function": function}],
+        })
+    assert response.status_code == 422
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("stream", [False, True])
+async def test_valid_nested_tool_schema_reaches_provider(httpx_mock, stream):
+    import base64
+
+    httpx_mock.add_response(url=httpx.URL(
+        "https://t3.chat/api/trpc/auth.getActiveSessions"
+        "?batch=1&input=%7B%220%22%3A%7B%22json%22%3A%7B%22includeLocation%22%3Afalse%7D%7D%7D"
+    ))
+    httpx_mock.add_response(url="https://t3.chat/api/chat", text=(
+        'data: {"type":"text-delta","delta":"ok"}\n\n'
+        'data: {"type":"finish"}\n\n'
+    ))
+    local = FastAPI()
+    local.include_router(T3ChatAdapter().create_router())
+    token = base64.b64encode(json.dumps({"cookies": "fake=1", "convex_session_id": "fake"}).encode()).decode()
+    function = {"name": "allowed", "description": "Synthetic tool", "parameters": {
+        "type": "object", "properties": {"arg": {"type": "string"}}, "required": ["arg"]
+    }}
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=local), base_url="http://test") as client:
+        response = await client.post("/v1/chat/completions", headers={"Authorization": f"Bearer {token}"}, json={
+            "model": "fake", "messages": [], "stream": stream,
+            "tools": [{"type": "function", "function": function}],
+        })
+    assert response.status_code == 200
+    assert "ok" in response.text
+
+
+@pytest.mark.asyncio
 async def test_cross_origin_get_has_no_cors_grant():
     async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as client:
         response = await client.get("/health", headers={"Origin":"https://example.invalid"})
@@ -114,6 +163,34 @@ async def test_tool_choice_and_declared_names_control_output(httpx_mock, choice)
     assert response.choices[0].message.tool_calls is None
     assert "other" in response.choices[0].message.content
     assert response.choices[0].finish_reason == "stop"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("choice,expected", [
+    ("none", []),
+    ({"type": "function", "function": {"name": "selected"}}, ["selected"]),
+])
+async def test_choice_none_and_named_choice_filter_declared_calls(httpx_mock, choice, expected):
+    httpx_mock.add_response(url=httpx.URL(
+        "https://t3.chat/api/trpc/auth.getActiveSessions"
+        "?batch=1&input=%7B%220%22%3A%7B%22json%22%3A%7B%22includeLocation%22%3Afalse%7D%7D%7D"
+    ))
+    payload = ''.join(
+        f'<tool_call>{{"name":"{name}","arguments":{{}}}}</tool_call>'
+        for name in ("selected", "other")
+    )
+    event = json.dumps({"type": "text-delta", "delta": payload})
+    httpx_mock.add_response(url="https://t3.chat/api/chat", text=f'data: {event}\n\ndata: {{"type":"finish"}}\n\n')
+    request = ChatCompletionRequest(
+        model="fake", messages=[], tool_choice=choice,
+        tools=[{"type": "function", "function": {"name": name}} for name in ("selected", "other")],
+    )
+    response = await T3ChatAdapter().chat_completion(request, {"cookies": "fake=1", "convex_session_id": "fake"})
+    calls = response.choices[0].message.tool_calls or []
+    assert [call["function"]["name"] for call in calls] == expected
+    assert "other" in response.choices[0].message.content
+    if choice == "none":
+        assert "selected" in response.choices[0].message.content
 
 
 @pytest.mark.asyncio
