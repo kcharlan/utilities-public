@@ -249,6 +249,9 @@ redirects, and never retry with credentials. This is a local policy choice;
 Model Sentinel does not assume the provider guarantees anonymous access, and an
 authentication failure appears as a failed path.
 
+Catalog requests require HTTPS and do not follow redirects, so a provider that
+moves its catalog must be updated in the provider configuration before scanning.
+
 Each capture is saved in the runtime database with the catalog scrape it belongs
 to: one row per catalog model mapping, one per endpoint-list path with its
 outcome and sanitized error, each endpoint's stable state (stored once and

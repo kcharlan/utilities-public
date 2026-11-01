@@ -101,7 +101,7 @@ def test_generated_runner_scans_from_cache_without_refresh_mount(tmp_path: Path)
     assert str(project) not in (home / "local.model_sentinel.scan.plist").read_text()
     assert str(target) in runner.read_text()
     shutil.rmtree(project)
-    with synthetic_provider_server(home) as authorizations:
+    with synthetic_provider_server(home, env=env) as authorizations:
         result = _run_command(["/bin/bash", str(home / "run_model_sentinel_launchd.sh")], env, tmp_path)
         assert result.returncode == 0, result.stdout + result.stderr
         assert authorizations == ["Bearer SYNTHETIC_NOT_A_REAL_SECRET_cached"]

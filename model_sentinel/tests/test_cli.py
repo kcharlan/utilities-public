@@ -2833,7 +2833,7 @@ def test_endpoint_healthcheck_status_and_counts_synthetic_acceptance(
         requests.append(args)
         raise AssertionError("healthcheck attempted a provider request")
 
-    monkeypatch.setattr(providers, "urlopen", no_network)
+    monkeypatch.setattr(providers, "_open_catalog", no_network)
     monkeypatch.setattr(providers, "endpoint_opener", no_network)
     monkeypatch.setattr(cli, "fetch_raw_models", no_network)
     monkeypatch.setattr(cli, "fetch_endpoint_lists", no_network)
