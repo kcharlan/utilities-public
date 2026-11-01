@@ -544,6 +544,19 @@ test_matching_unstaged_source_and_copy_fails() {
   assert_contains "$AUDIT_STDERR" 'source-state failures: 1'
 }
 
+test_normalized_worktree_bytes_do_not_match_index() {
+  new_fixture
+  print -r -- 'tax2/synthetic-placeholder.txt text eol=lf' > "$FIXTURE_REPO/.gitattributes"
+  printf 'synthetic normalized\n' > "$FIXTURE_REPO/tax2/synthetic-placeholder.txt"
+  git -C "$FIXTURE_REPO" add .gitattributes tax2/synthetic-placeholder.txt
+  git -C "$FIXTURE_REPO" commit -qm 'set synthetic line normalization'
+  printf 'synthetic normalized\r\n' > "$FIXTURE_REPO/tax2/synthetic-placeholder.txt"
+  cp "$FIXTURE_REPO/tax2/synthetic-placeholder.txt" "$FIXTURE_LOCAL/tax2/synthetic-placeholder.txt"
+  run_audit
+  assert_status 1 "$AUDIT_STATUS" 'normalized worktree bytes differ from index'
+  assert_contains "$AUDIT_STDERR" 'source-state failures: 1'
+}
+
 test_project_without_index_files_fails() {
   new_fixture
   git -C "$FIXTURE_REPO" rm -q -- tax2/synthetic-placeholder.txt
@@ -1507,6 +1520,7 @@ test_missing_direct_copy
 test_project_byte_drift
 test_project_without_index_files_fails
 test_matching_unstaged_source_and_copy_fails
+test_normalized_worktree_bytes_do_not_match_index
 test_direct_mode_drift
 test_direct_special_mode_drift
 test_project_mode_drift

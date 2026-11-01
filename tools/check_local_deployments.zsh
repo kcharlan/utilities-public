@@ -378,7 +378,7 @@ if [[ "$git_snapshot_ok" == true ]]; then
     indexed_source="$REPO_ROOT/$indexed_path"
     if [[ -L "$indexed_source" || ! -f "$indexed_source" ]]; then
       source_state_invalid[$indexed_path]=1
-    elif ! run_git_capture "source hash failed" "$AUDIT_TMP/source-oid" hash-object -- "$indexed_path" ||
+    elif ! run_git_capture "source hash failed" "$AUDIT_TMP/source-oid" hash-object --no-filters -- "$indexed_path" ||
          [[ "$(<"$AUDIT_TMP/source-oid")" != "${index_oids[$indexed_path]}" ]]; then
       source_state_invalid[$indexed_path]=1
     fi

@@ -48,9 +48,13 @@ function generate(names) {
 }
 function sync(path, check) {
   const source = readFileSync(path,'utf8');
-  const markers = source.matchAll(/^[ \t]*(# |<!-- )frontend-vendor:(begin|end)\b[^\r\n]*$/gm);
+  const markers = source.matchAll(/^[ \t]*(# |<!-- )frontend-vendor:(begin|end)\b[^\r\n]*\r?$/gm);
   let open = null;
-  for (const [, kind, action] of markers) {
+  for (const [line, kind, action] of markers) {
+    const valid = kind === '# '
+      ? /^[ \t]*# frontend-vendor:(?:begin [^\r\n]+|end)[ \t]*\r?$/
+      : /^[ \t]*<!-- frontend-vendor:(?:begin [^\r\n]+|end) -->[ \t]*\r?$/;
+    if (!valid.test(line)) throw Error(`${path}: malformed frontend-vendor marker`);
     if (action === 'begin') {
       if (open !== null) throw Error(`${path}: nested frontend-vendor marker`);
       open = kind;

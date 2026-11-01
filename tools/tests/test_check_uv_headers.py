@@ -265,6 +265,22 @@ def test_local_import_graph_checks_package_initializers(tmp_path, monkeypatch):
     assert any('synthetic_missing_dependency' in p for p in guard.check_launcher('launcher'))
 
 
+@pytest.mark.parametrize(('source', 'expected'), [
+    ('import synthetic_missing_dependency\n', 'synthetic_missing_dependency'),
+    ('def broken(:\n', 'could not parse'),
+])
+def test_local_import_graph_checks_named_namespace_children(tmp_path, monkeypatch, source, expected):
+    monkeypatch.setattr(guard, 'REPO_ROOT', tmp_path)
+    launcher = tmp_path / 'launcher'
+    launcher.write_text(guard.CANONICAL_SHEBANG + '\n# /// script\n# requires-python = ">=3.12,<4"\n# dependencies = []\n# ///\nfrom package.namespace import child\n')
+    namespace = tmp_path / 'package' / 'namespace'
+    namespace.mkdir(parents=True)
+    (namespace.parent / '__init__.py').write_text('')
+    child = namespace / 'child.py'
+    child.write_text(source)
+    assert any(expected in p and 'child.py' in p for p in guard.check_launcher('launcher'))
+
+
 def test_reverse_manifest_check_rejects_unapproved_extras() -> None:
     missing, unexpected = compare_dependency_sets(
         ["fastapi", "uvicorn"],

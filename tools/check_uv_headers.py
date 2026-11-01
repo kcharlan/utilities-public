@@ -454,6 +454,8 @@ def check_import_graph(launcher: Path, dependencies: list[str]) -> list[str]:
         for item in (candidate.with_suffix('.py'), candidate / '__init__.py'):
             if item.is_file() and item.resolve().is_relative_to(root.resolve()):
                 return item
+        if candidate.is_dir() and candidate.resolve().is_relative_to(root.resolve()):
+            return candidate
         return None
 
     while pending:
@@ -484,20 +486,22 @@ def check_import_graph(launcher: Path, dependencies: list[str]) -> list[str]:
                         base = root.parent
                 target = module_file(base, name)
                 if target:
-                    pending.append(target)
-                    for parent in target.parent.parents:
+                    if target.is_file():
+                        pending.append(target)
+                    target_dir = target if target.is_dir() else target.parent
+                    for parent in target_dir.parents:
                         if parent == root.parent:
                             break
                         initializer = parent / '__init__.py'
                         if initializer.is_file():
                             pending.append(initializer)
-                    initializer = target.parent / '__init__.py'
+                    initializer = target_dir / '__init__.py'
                     if initializer.is_file():
                         pending.append(initializer)
-                    package = target.parent if target.name == '__init__.py' else None
+                    package = target_dir if target.is_dir() or target.name == '__init__.py' else None
                     if package:
                         pending.extend(child for name in children if name != '*'
-                                       if (child := module_file(package, name)))
+                                       if (child := module_file(package, name)) and child.is_file())
                 elif not level and name:
                     top = name.partition('.')[0]
                     if not module_file(base, top) and top not in sys.stdlib_module_names and normalize_distribution(IMPORT_DISTRIBUTION_ALIASES.get(top, top)) not in declared:
