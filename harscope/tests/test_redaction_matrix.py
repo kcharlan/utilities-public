@@ -227,3 +227,37 @@ async def test_manual_secret_in_base64_json_key_refuses_export(client):
     response = await client.post('/api/export/har')
     assert response.status_code == 422
     assert 'object key' in response.text
+
+
+@threaded
+async def test_short_base64_copy_is_redacted(client):
+    import base64
+    secret = 'Zx' + '7319'
+    source = capture('new_password')
+    source['log']['entries'][0]['request']['postData']['text'] = json.dumps({'new_password': secret})
+    source['log']['entries'][0]['response']['content']['text'] = base64.b64encode(secret.encode()).decode()
+    await load_har(client, source)
+    response = await client.post('/api/export/har')
+    assert response.status_code == 200
+    encoded = response.json()['log']['entries'][0]['response']['content']['text']
+    assert secret not in base64.b64decode(encoded).decode()
+
+
+@pytest.mark.parametrize('kind,secret', [('csv', 'Synthetic"Secret7319'), ('csv-findings', 'Synthetic"Secret7319'), ('html', 'Synthetic&Secret7319')])
+@threaded
+async def test_formatted_export_hides_escaped_selected_value(client, kind, secret):
+    import csv
+    import html
+    import io
+    source = capture('new_password')
+    source['log']['entries'][0]['request']['postData']['text'] = json.dumps({'new_password': secret})
+    source['log']['entries'][0]['request']['url'] = 'https://example.test/' + secret
+    await load_har(client, source)
+    if kind.startswith('csv'):
+        response = await client.post('/api/export/' + kind)
+        assert response.status_code == 200
+        assert all(secret not in cell for row in csv.reader(io.StringIO(response.text)) for cell in row)
+    else:
+        response = await client.post('/api/export/report', json={'format': 'html'})
+        assert response.status_code == 200
+        assert secret not in html.unescape(response.text)

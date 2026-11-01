@@ -1241,7 +1241,7 @@ class ExportEngine:
             swept = ExportEngine._sweep(parsed, secrets, depth + 1)
             if swept != parsed:
                 return json.dumps(swept, separators=(',', ':'))
-        if len(node) >= 16 and re.fullmatch(r'[A-Za-z0-9+/]+={0,2}', node):
+        if len(node) >= 4 and re.fullmatch(r'[A-Za-z0-9+/]+={0,2}', node):
             try:
                 decoded = base64.b64decode(node, validate=True).decode('utf-8')
             except (ValueError, UnicodeDecodeError):
@@ -2782,18 +2782,34 @@ async def api_export_har():
     )
 
 
-def _safe_export_content(make_content):
+def _safe_export_content(make_content, fmt=None):
     try:
         ExportEngine.sanitized_har(har_manager, security_scanner)
-        return ExportEngine._sweep(make_content(), ExportEngine._secrets(security_scanner))
-    except ValueError as exc:
+        secrets = ExportEngine._secrets(security_scanner)
+        content = make_content()
+        # Formatters escape values before this final pass. Remove those forms
+        # as well, then verify the values a CSV reader or browser will see.
+        if fmt in (None, 'csv', 'html'):
+            for secret in secrets:
+                for encoded in (secret.replace('"', '""'), html_lib.escape(secret, quote=True),
+                                html_lib.escape(secret, quote=False)):
+                    content = content.replace(encoded, '[REDACTED]')
+        content = ExportEngine._sweep(content, secrets)
+        if fmt == 'csv':
+            cells = (cell for row in csv.reader(io.StringIO(content)) for cell in row)
+            if any(secret in cell for cell in cells for secret in secrets):
+                raise ValueError('CSV redaction verification failed')
+        elif fmt == 'html' and any(secret in html_lib.unescape(content) for secret in secrets):
+            raise ValueError('HTML redaction verification failed')
+        return content
+    except (ValueError, csv.Error) as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
 
 
 @app.post("/api/export/edl")
 async def api_export_edl():
     _require_file()
-    content = _safe_export_content(lambda: ExportEngine.edl_export(har_manager, security_scanner))
+    content = _safe_export_content(lambda: ExportEngine.edl_export(har_manager, security_scanner), 'json')
     # Match filename to the sanitized HAR: sanitized_X.har → sanitized_X.edl.json
     base_name = har_manager.file_name.rsplit('.', 1)[0] if '.' in har_manager.file_name else har_manager.file_name
     return StreamingResponse(
@@ -2829,7 +2845,7 @@ async def api_validate(file: UploadFile = File(...)):
 @app.post("/api/export/csv")
 async def api_export_csv():
     _require_file()
-    content = _safe_export_content(lambda: ExportEngine.csv_export(har_manager, security_scanner))
+    content = _safe_export_content(lambda: ExportEngine.csv_export(har_manager, security_scanner), 'csv')
     return StreamingResponse(
         io.BytesIO(content.encode('utf-8')),
         media_type='text/csv',
@@ -2840,7 +2856,7 @@ async def api_export_csv():
 @app.post("/api/export/csv-findings")
 async def api_export_csv_findings():
     _require_file()
-    content = _safe_export_content(lambda: ExportEngine.csv_findings_export(har_manager, security_scanner))
+    content = _safe_export_content(lambda: ExportEngine.csv_findings_export(har_manager, security_scanner), 'csv')
     return StreamingResponse(
         io.BytesIO(content.encode('utf-8')),
         media_type='text/csv',
@@ -2854,7 +2870,7 @@ class ReportRequest(BaseModel):
 @app.post("/api/export/report")
 async def api_export_report(req: ReportRequest):
     _require_file()
-    content = _safe_export_content(lambda: ExportEngine.summary_report(har_manager, security_scanner, req.format))
+    content = _safe_export_content(lambda: ExportEngine.summary_report(har_manager, security_scanner, req.format), req.format)
     ext = 'md' if req.format == 'md' else 'html'
     media = 'text/markdown' if req.format == 'md' else 'text/html'
     return StreamingResponse(
