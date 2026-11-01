@@ -49,6 +49,8 @@ The server has no authentication and can launch agents with permission bypass en
 
 Idle sessions retain their worktrees for further runs. A completed run retains its worktree for validation and merge review; use the completion card's cleanup action when that review is finished. Aborted sessions and explicitly ended idle sessions clean up their worktrees. Deleting, resetting, or purging a session also removes its worktree and cleans up the git worktree reference in the source repo.
 
+Worktree creation returns a conflict if its target exists and is not a registered secondary worktree of the selected repository. Cleanup removes only registered secondary worktrees and deletes only merged `switchyard-*` branches; unmerged branches remain available for recovery. Sessions created before server-owned cleanup metadata was introduced require manual worktree cleanup.
+
 ## History and Retention
 
 A successful run leaves the session `idle`. Ending an idle session (**End Session** in the UI, `POST /api/sessions/{id}/end`) marks it completed, writes `summary.json` and `RELEASE_NOTES.md`, and trims it to the retained artifact set:

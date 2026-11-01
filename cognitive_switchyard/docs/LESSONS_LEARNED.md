@@ -74,3 +74,13 @@
 - What went wrong: The Setup form prefilled verification interval 4, auto-fix enabled and 2 attempts, and always sent them, so a pack's own `verification.interval` and `auto_fix` settings never applied to UI-created sessions (the built-in `test-echo` pack's `auto_fix.enabled: false` was ignored).
 - Pattern that caused it: Hard-coding the backend's fallback values in the frontend draft instead of leaving override fields unset.
 - Pattern to follow instead: Start override fields blank, show the selected pack's value as the hint, and send a field only when the operator sets it, so the backend's pack-default merge stays the single source of defaults.
+
+## Worktree Cleanup Requires Server-Owned Authority
+
+- What went wrong: A session's client-provided environment could identify a directory for cleanup, and a worktree collision could remove a directory Git did not own.
+- Pattern that caused it: Treating a path string as proof of worktree ownership and force-deleting isolation branches regardless of merge state.
+- Pattern to follow instead: Record cleanup paths on the server, verify that Git lists the target as a secondary worktree before removal, and retain unmerged isolation branches for recovery.
+
+## Squash Conflicts Need Explicit Recovery
+
+- Git squash conflicts do not necessarily create `MERGE_HEAD`. Refuse dirty target trees, restore only the clean target on failure, and preserve the task branch and workspace for resolution; remove a registered worktree before deleting its branch.

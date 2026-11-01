@@ -21,6 +21,7 @@ from fastapi.responses import HTMLResponse, JSONResponse
 from .config import (
     GlobalConfig,
     RuntimePaths,
+    default_global_config,
     ensure_global_config,
     load_global_config,
     write_global_config,
@@ -47,6 +48,37 @@ from .planning_runtime import _INTAKE_META_FILES
 from .state import StateStore, initialize_state_store
 
 from pydantic import BaseModel
+
+# local-server-guard:begin
+class LocalOriginGuard:
+    """Reject foreign Host on every request, and foreign Origin on state changes."""
+
+    def __init__(self, app):
+        self.app = app
+
+    async def __call__(self, scope, receive, send):
+        if scope["type"] not in ("http", "websocket"):
+            await self.app(scope, receive, send)
+            return
+        server = scope.get("server")
+        port = server[1] if server and len(server) > 1 else None
+        allowed = {f"127.0.0.1:{port}", f"localhost:{port}"}
+        headers = [(k.lower(), v.decode("latin-1")) for k, v in scope.get("headers", [])]
+        hosts = [v for k, v in headers if k == b"host"]
+        origins = [v for k, v in headers if k == b"origin"]
+        ok = type(port) is int and 1 <= port <= 65535 and len(hosts) == 1 and hosts[0] in allowed
+        if ok and (scope["type"] == "websocket" or scope["method"] not in ("GET", "HEAD")):
+            ok = len(origins) == 1 and origins[0] == f"http://{hosts[0]}"
+        if ok:
+            await self.app(scope, receive, send)
+        elif scope["type"] == "websocket":
+            await receive()
+            await send({"type": "websocket.close", "code": 1008})
+        else:
+            await send({"type": "http.response.start", "status": 403,
+                        "headers": [(b"content-type", b"text/plain")]})
+            await send({"type": "http.response.body", "body": b"Forbidden"})
+# local-server-guard:end
 
 
 class CreateSessionRequest(BaseModel):
@@ -374,20 +406,22 @@ class SessionController:
         """Remove per-task isolation branch, if any."""
         session = self.store.get_session(session_id)
         try:
-            config = parse_session_config_overrides(session.config_json)
-            env = config.environment or {}
-        except (ValueError, Exception):
+            metadata = json.loads(session.config_json or "{}").get("_worktree", {})
+            source_repo = metadata.get("source_repo", "")
+            repo_root = metadata.get("path", "")
+        except (ValueError, TypeError, AttributeError):
             return
-        source_repo = env.get("COGNITIVE_SWITCHYARD_SOURCE_REPO", "")
-        repo_root = env.get("COGNITIVE_SWITCHYARD_REPO_ROOT", "")
         if not source_repo or not repo_root or source_repo == repo_root:
             return
-        branch_name = f"switchyard-{task_id}"
         try:
-            subprocess.run(
-                ["git", "-C", source_repo, "branch", "-D", branch_name],
-                capture_output=True, text=True, timeout=10,
-            )
+            if not _registered_secondary_worktree(source_repo, repo_root):
+                return
+            for slot in self.store.list_worker_slots(session_id):
+                branch_name = f"switchyard-{task_id}-{slot.slot_number}"
+                subprocess.run(
+                    ["git", "-C", source_repo, "branch", "-d", "--", branch_name],
+                    capture_output=True, text=True, timeout=10,
+                )
         except Exception:
             pass
 
@@ -708,13 +742,15 @@ def _create_session_worktree(repo_root: str, branch: str, worktree_path: Path) -
     if git_check.returncode != 0:
         raise HTTPException(status_code=400, detail=f"Not a git repository: {repo_root}")
     # Remove stale worktree at the target path if it exists from a prior session.
-    if worktree_path.exists():
-        subprocess.run(
+    if worktree_path.exists() or worktree_path.is_symlink():
+        if not _registered_secondary_worktree(str(repo), str(worktree_path)):
+            raise HTTPException(status_code=409, detail="Worktree path already exists")
+        removed = subprocess.run(
             ["git", "-C", str(repo), "worktree", "remove", "--force", str(worktree_path)],
             capture_output=True, text=True, timeout=15,
         )
-        if worktree_path.exists():
-            shutil.rmtree(worktree_path, ignore_errors=True)
+        if removed.returncode != 0 or worktree_path.exists():
+            raise HTTPException(status_code=409, detail="Could not remove registered worktree")
     # Prune stale worktree entries left by prior sessions that crashed or were
     # cleaned up without calling `git worktree remove`.
     subprocess.run(
@@ -733,33 +769,46 @@ def _create_session_worktree(repo_root: str, branch: str, worktree_path: Path) -
     return worktree_path
 
 
+def _registered_secondary_worktree(source_repo: str, worktree_path: str) -> bool:
+    result = subprocess.run(
+        ["git", "-C", source_repo, "worktree", "list", "--porcelain", "-z"],
+        capture_output=True, text=True, timeout=10,
+    )
+    if result.returncode:
+        return False
+    paths = [item[9:] for item in result.stdout.split("\0") if item.startswith("worktree ")]
+    target = Path(worktree_path).resolve()
+    return bool(paths and target != Path(paths[0]).resolve() and
+                any(target == Path(path).resolve() for path in paths[1:]))
+
+
 def cleanup_session_worktree_if_needed(session: SessionRecord) -> None:
     """Remove the git worktree created for a session, if any.
 
     Safe to call on any session — silently returns if no worktree was configured.
     """
     try:
-        config = parse_session_config_overrides(session.config_json)
-        env = config.environment or {}
-    except (ValueError, Exception):
+        metadata = json.loads(session.config_json or "{}").get("_worktree", {})
+        source_repo = metadata.get("source_repo", "")
+        worktree_root = metadata.get("path", "")
+    except (ValueError, TypeError, AttributeError):
         return
-    source_repo = env.get("COGNITIVE_SWITCHYARD_SOURCE_REPO", "")
-    worktree_root = env.get("COGNITIVE_SWITCHYARD_REPO_ROOT", "")
     if source_repo and worktree_root and source_repo != worktree_root:
         _cleanup_session_worktree(source_repo, worktree_root)
 
 
 def _cleanup_session_worktree(source_repo: str, worktree_path: str) -> None:
     try:
-        subprocess.run(
+        if not _registered_secondary_worktree(source_repo, worktree_path):
+            return
+        removed = subprocess.run(
             ["git", "-C", source_repo, "worktree", "remove", "--force", worktree_path],
             capture_output=True, text=True, timeout=15,
         )
+        if removed.returncode:
+            return
     except Exception:
-        pass
-    wt = Path(worktree_path)
-    if wt.exists():
-        shutil.rmtree(wt, ignore_errors=True)
+        return
     # Prune stale worktree entries from git's internal tracking so the branch
     # can be reused immediately by a new session.
     try:
@@ -780,7 +829,7 @@ def _cleanup_session_worktree(source_repo: str, worktree_path: str) -> None:
             branch = line.strip().lstrip("* ")
             if branch:
                 subprocess.run(
-                    ["git", "-C", source_repo, "branch", "-D", branch],
+                    ["git", "-C", source_repo, "branch", "-d", branch],
                     capture_output=True, text=True, timeout=5,
                 )
     except Exception:
@@ -795,6 +844,7 @@ def create_app(
     command_runner: CommandRunner | None = None,
 ) -> FastAPI:
     app = FastAPI(title="Cognitive Switchyard Backend")
+    app.add_middleware(LocalOriginGuard)
     connection_manager = ConnectionManager()
     session_controller = controller or SessionController(
         store=store,
@@ -938,9 +988,15 @@ def create_app(
         name = payload.name or session_id
         pack = payload.pack or ensure_global_config(runtime_paths.config).default_pack
         config = payload.config
+        if pack not in list_runtime_pack_names(runtime_paths.packs):
+            raise HTTPException(status_code=400, detail="Unknown pack")
+        allowed_environment = {"COGNITIVE_SWITCHYARD_REPO_ROOT", "COGNITIVE_SWITCHYARD_PROJECT_DIR", "COGNITIVE_SWITCHYARD_BRANCH"}
         try:
+            overrides = parse_session_config_overrides(config)
+            if config and ("_worktree" in config or set(overrides.environment) - allowed_environment):
+                raise ValueError("Unsupported session environment or metadata")
             config_json = None if config is None else json.dumps(
-                parse_session_config_overrides(config).to_dict(),
+                overrides.to_dict(),
                 sort_keys=True,
             )
         except ValueError as exc:
@@ -1004,6 +1060,7 @@ def create_app(
                 env["COGNITIVE_SWITCHYARD_REPO_ROOT"] = str(worktree_path)
                 updated_config = config_overrides.to_dict() if config_overrides else {}
                 updated_config["environment"] = env
+                updated_config["_worktree"] = {"source_repo": str(Path(repo_root).resolve()), "path": str(worktree_path.resolve())}
                 updated_config_json = json.dumps(updated_config, sort_keys=True)
                 store.update_session_config(created.id, updated_config_json)
                 created = store.get_session(created.id)
@@ -1375,11 +1432,13 @@ def create_app(
 
     @app.get("/api/settings")
     def get_settings() -> dict[str, Any]:
-        config = ensure_global_config(runtime_paths.config)
+        config = _read_settings(runtime_paths)
         return {"settings": _serialize_settings(config, runtime_paths=runtime_paths)}
 
     @app.put("/api/settings")
     def update_settings(payload: UpdateSettingsRequest) -> dict[str, Any]:
+        if payload.terminal_app.lower() not in {"iterm", "terminal", "kitty", "alacritty", "wezterm", "xterm", "x-terminal-emulator"}:
+            raise HTTPException(status_code=400, detail="Unsupported terminal application")
         config = GlobalConfig(
             retention_days=payload.retention_days,
             default_planners=payload.default_planners,
@@ -1425,6 +1484,8 @@ def serve_backend(
     host: str,
     port: int,
 ) -> int:
+    if host != "127.0.0.1":
+        raise ValueError("Server host must be 127.0.0.1")
     del builtin_packs_root
     resolved_port = find_free_port(port)
     store = initialize_state_store(runtime_paths)
@@ -1851,6 +1912,12 @@ def _serialize_task(store: StateStore, session_id: str, task: PersistedTask) -> 
     return payload
 
 
+def _read_settings(runtime_paths: RuntimePaths) -> GlobalConfig:
+    if runtime_paths.config.is_file():
+        return load_global_config(runtime_paths.config)
+    return default_global_config()
+
+
 def _serialize_settings(config: GlobalConfig, runtime_paths: RuntimePaths | None = None) -> dict[str, Any]:
     payload: dict[str, Any] = {
         "retention_days": config.retention_days,
@@ -1873,7 +1940,7 @@ def _build_root_bootstrap_payload(
         _serialize_session(session, runtime_paths=runtime_paths)
         for session in store.list_sessions()
     ]
-    settings = _serialize_settings(ensure_global_config(runtime_paths.config), runtime_paths=runtime_paths)
+    settings = _serialize_settings(_read_settings(runtime_paths), runtime_paths=runtime_paths)
     packs = [
         _serialize_pack_summary(load_pack_manifest(runtime_paths.packs / pack_name))
         for pack_name in list_runtime_pack_names(runtime_paths.packs)
@@ -2165,7 +2232,7 @@ def _open_terminal_command(target: Path, terminal_app: str) -> list[str]:
         if app_lower == "wezterm":
             return ["wezterm", "start", "--always-new-process", "--cwd", str(target)]
         return [terminal_app] + dir_flags + [str(target)]
-    return [terminal_app, "--working-directory", str(target)]
+    raise ValueError("Unsupported terminal application")
 
 
 def _reveal_command(target: Path) -> list[str]:
