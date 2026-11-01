@@ -54,8 +54,9 @@ current limitations.
 ## Important schema-editor limitation
 
 Back up the database before applying schema-editor changes. The current
-shadow-table migration rebuilds columns from their names and one of four
-declared types (`TEXT`, `INTEGER`, `REAL`, or `BLOB`). It does **not** preserve
+shadow-table migration rebuilds columns from their names and declared types.
+The type list offers `TEXT`, `INTEGER`, `REAL` and `BLOB`, plus the column's
+existing declared type when it is something else. It does **not** preserve
 primary keys, `AUTOINCREMENT`, `NOT NULL`, default values, unique or check
 constraints, foreign-key declarations, indexes, or triggers.
 

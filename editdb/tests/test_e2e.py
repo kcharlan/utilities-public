@@ -1,4 +1,5 @@
 """Browser coverage against an isolated, synthetic SQLite database."""
+import json
 import os
 import signal
 import socket
@@ -13,7 +14,7 @@ from playwright.sync_api import expect
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(REPO_ROOT))
-from tools.testkit import (assert_classes_styled, assert_frontend_vendor_current,
+from tools.testkit import (assert_classes_styled, assert_exact_text, assert_fonts_loaded, assert_frontend_vendor_current,
     assert_launcher_compiles_cleanly, assert_no_external_resources,
     assert_offline_page_source, block_external_requests, guard_browser_errors)
 
@@ -24,8 +25,13 @@ MARKUP = '<b>x</b> & ${y} `value` {{X}} &nbsp;'
 def server(tmp_path):
     database = tmp_path / 'synthetic.sqlite'
     with sqlite3.connect(database) as conn:
-        conn.execute('CREATE TABLE samples (id INTEGER PRIMARY KEY, label TEXT)')
-        conn.executemany('INSERT INTO samples VALUES (?, ?)', [(1, 'alpha'), (2, 'beta'), (3, MARKUP), (4, '漢字')])
+        conn.execute('CREATE TABLE samples (id INTEGER PRIMARY KEY, label TEXT, note TEXT)')
+        conn.executemany('INSERT INTO samples VALUES (?, ?, NULL)', [(1, 'alpha'), (2, 'beta'), (3, MARKUP), (4, '漢字')])
+        conn.execute('CREATE TABLE typed (id INTEGER PRIMARY KEY, code VARCHAR(20), stamp DATETIME, plain, title TEXT)')
+        conn.execute('CREATE TABLE unkeyed (label TEXT)')
+        conn.execute('CREATE TABLE stored_kinds (id INTEGER PRIMARY KEY, absent TEXT, big INTEGER, raw BLOB, loose, lines TEXT)')
+        conn.execute('INSERT INTO stored_kinds VALUES (1, NULL, 9007199254740993, ?, 1.0, ?)', (b'ABC', 'first line\nsecond line'))
+        conn.execute("INSERT INTO unkeyed VALUES ('keyless synthetic')")
     with socket.socket() as sock:
         sock.bind(('127.0.0.1', 0))
         port = sock.getsockname()[1]
@@ -63,6 +69,7 @@ def test_page_loads_offline(server, browser):
     with guard_browser_errors(page):
         page.goto(server, wait_until='networkidle')
         expect(page.get_by_role('button', name='SQL Console')).to_be_visible()
+        assert_fonts_loaded(page, ['Inter'])
         assert_no_external_resources(page, blocked)
         assert_offline_page_source(page.content())
     context.close()
@@ -134,3 +141,221 @@ def test_cell_values_with_markup_display_literally(server, page):
         assert cell.inner_text() == MARKUP
         assert cell.locator('b').count() == 0
         expect(page.get_by_role('cell', name='漢字', exact=True)).to_be_visible()
+
+def test_export_buttons_have_no_padding_between_icon_and_label(server, page):
+    with guard_browser_errors(page):
+        page.goto(server)
+        expect(page.get_by_text('alpha', exact=True)).to_be_visible()
+        for title, label in (('Export CSV', 'CSV'), ('Export JSON', 'JSON'), ('Export Schema (SQL)', 'SQL')):
+            assert_exact_text(page.get_by_title(title), label)
+
+NOTE_COLUMN = 3  # The grid's columns are: edit button, id, label, note, delete button.
+
+def stored(tmp_path, row_id):
+    with sqlite3.connect(tmp_path / 'synthetic.sqlite') as conn:
+        return conn.execute('SELECT label, note FROM samples WHERE id = ?', (row_id,)).fetchone()
+
+def record_writes(page):
+    writes = []
+    page.on('request', lambda request: request.method != 'GET' and writes.append((request.method, json.loads(request.post_data))))
+    return writes
+
+def hold_writes(page):
+    """Hold every PUT until the test continues it, as a slow database would."""
+    held = []
+    page.route('**/api/data/samples', lambda route: held.append(route) if route.request.method == 'PUT' else route.continue_())
+    return held
+
+def wait_for_held(page, held, count=1):
+    for _ in range(200):
+        if len(held) >= count:
+            return
+        page.wait_for_timeout(10)
+    pytest.fail(f'Expected {count} held writes, got {len(held)}')
+
+def label_write(row_id, value):
+    return ('PUT', {'where': {'id': row_id}, 'values': {'label': value}})
+
+def note_cell(page, label):
+    return page.get_by_role('row').filter(has=page.get_by_role('cell', name=label, exact=True)).get_by_role('cell').nth(NOTE_COLUMN)
+
+def open_cell(page, cell):
+    cell.dblclick()
+    editor = page.locator('td input')
+    expect(editor).to_be_focused()
+    return editor
+
+def test_escape_cancels_the_cell_editor_without_writing(server, page, tmp_path):
+    with guard_browser_errors(page):
+        writes = record_writes(page)
+        page.goto(server)
+        editor = open_cell(page, page.get_by_role('cell', name='alpha', exact=True))
+        editor.fill('abandoned synthetic')
+        editor.press('Escape')
+        expect(editor).to_have_count(0)
+        expect(page.get_by_role('cell', name='alpha', exact=True)).to_be_visible()
+        page.wait_for_load_state('networkidle')
+        assert writes == []
+        assert stored(tmp_path, 1) == ('alpha', None)
+
+def test_escape_on_a_null_cell_leaves_it_null(server, page, tmp_path):
+    with guard_browser_errors(page):
+        writes = record_writes(page)
+        page.goto(server)
+        expect(note_cell(page, 'alpha')).to_have_text('NULL')
+        editor = open_cell(page, note_cell(page, 'alpha'))
+        expect(editor).to_have_value('')
+        editor.press('Escape')
+        expect(editor).to_have_count(0)
+        page.wait_for_load_state('networkidle')
+        assert writes == []
+        assert stored(tmp_path, 1) == ('alpha', None)
+        page.reload()
+        expect(note_cell(page, 'alpha')).to_have_text('NULL')
+
+def test_enter_sends_exactly_one_write(server, page, tmp_path):
+    with guard_browser_errors(page):
+        writes = record_writes(page)
+        page.goto(server)
+        editor = open_cell(page, page.get_by_role('cell', name='beta', exact=True))
+        editor.fill('beta2')
+        editor.press('Enter')
+        expect(page.get_by_role('cell', name='beta2', exact=True)).to_be_visible()
+        page.wait_for_load_state('networkidle')
+        assert writes == [label_write(2, 'beta2')]
+        assert stored(tmp_path, 2) == ('beta2', None)
+
+def test_enter_on_a_primary_key_cell_sends_exactly_one_write(server, page, tmp_path):
+    with guard_browser_errors(page):
+        writes = record_writes(page)
+        page.goto(server)
+        editor = open_cell(page, page.get_by_role('cell', name='2', exact=True))
+        editor.fill('22')
+        editor.press('Enter')
+        expect(page.get_by_role('cell', name='22', exact=True)).to_be_visible()
+        page.wait_for_load_state('networkidle')
+        assert writes == [('PUT', {'where': {'id': 2}, 'values': {'id': '22'}})]
+        assert stored(tmp_path, 22) == ('beta', None)
+
+def test_clicking_another_cell_saves_the_open_cell_once(server, page, tmp_path):
+    with guard_browser_errors(page):
+        writes = record_writes(page)
+        page.goto(server)
+        editor = open_cell(page, page.get_by_role('cell', name='alpha', exact=True))
+        editor.fill('alpha2')
+        page.get_by_role('cell', name='beta', exact=True).click()
+        expect(page.get_by_role('cell', name='alpha2', exact=True)).to_be_visible()
+        page.wait_for_load_state('networkidle')
+        assert writes == [label_write(1, 'alpha2')]
+        assert stored(tmp_path, 1) == ('alpha2', None)
+        assert stored(tmp_path, 2) == ('beta', None)
+
+def test_cell_opened_during_a_save_is_not_written_when_the_save_closes_it(server, page, tmp_path):
+    with guard_browser_errors(page):
+        writes = record_writes(page)
+        held = hold_writes(page)
+        page.goto(server)
+        editor = open_cell(page, page.get_by_role('cell', name='alpha', exact=True))
+        editor.fill('alpha2')
+        note_cell(page, 'beta').dblclick()
+        wait_for_held(page, held)
+        expect(page.locator('td input')).to_be_focused()
+        held[0].continue_()
+        expect(page.get_by_role('cell', name='alpha2', exact=True)).to_be_visible()
+        page.wait_for_load_state('networkidle')
+        assert writes == [label_write(1, 'alpha2')]
+        assert stored(tmp_path, 2) == ('beta', None)
+        expect(note_cell(page, 'beta')).to_have_text('NULL')
+
+def test_leaving_the_cell_during_its_save_sends_no_second_write(server, page, tmp_path):
+    with guard_browser_errors(page):
+        writes = record_writes(page)
+        held = hold_writes(page)
+        page.goto(server)
+        editor = open_cell(page, page.get_by_role('cell', name='beta', exact=True))
+        editor.fill('beta2')
+        editor.press('Enter')
+        wait_for_held(page, held)
+        page.get_by_role('cell', name='alpha', exact=True).click()
+        expect(editor).not_to_be_focused()
+        page.wait_for_timeout(100)
+        assert len(held) == 1
+        held[0].continue_()
+        expect(page.get_by_role('cell', name='beta2', exact=True)).to_be_visible()
+        page.wait_for_load_state('networkidle')
+        assert writes == [label_write(2, 'beta2')]
+
+def test_editor_stays_usable_when_a_table_cannot_be_updated(server, page):
+    messages = []
+    with guard_browser_errors(page):
+        page.on('dialog', lambda dialog: (messages.append(dialog.message), dialog.accept()))
+        writes = record_writes(page)
+        page.goto(server)
+        page.get_by_role('button', name='unkeyed').click()
+        editor = open_cell(page, page.get_by_role('cell', name='keyless synthetic', exact=True))
+        editor.press('Enter')
+        editor.press('Enter')
+        editor.press('Escape')
+        expect(editor).to_have_count(0)
+        assert messages == ['Updating requires a Primary Key.'] * 2
+        assert writes == []
+
+def test_schema_type_select_shows_each_columns_declared_type(server, page, tmp_path):
+    with guard_browser_errors(page):
+        page.on('dialog', lambda dialog: dialog.accept())
+        writes = record_writes(page)
+        page.goto(server)
+        page.get_by_role('button', name='typed').click()
+        page.get_by_role('button', name='Schema', exact=True).click()
+        selects = page.locator('select')
+        expect(selects).to_have_count(5)
+        assert [selects.nth(index).input_value() for index in range(5)] == ['INTEGER', 'VARCHAR(20)', 'DATETIME', '', 'TEXT']
+        expect(selects.nth(1).locator('option:checked')).to_have_text('VARCHAR(20)')
+        expect(selects.nth(3).locator('option:checked')).to_have_text('(none)')
+        expect(selects.nth(4).locator('option')).to_have_count(4)
+        selects.nth(1).select_option('INTEGER')
+        selects.nth(1).select_option('VARCHAR(20)')
+        expect(selects.nth(1)).to_have_value('VARCHAR(20)')
+        selects.nth(4).select_option('BLOB')
+        page.get_by_role('button', name='Apply Changes').click()
+        expect(selects.nth(4)).to_have_value('BLOB')
+        page.wait_for_load_state('networkidle')
+        assert [(column['new_name'], column['type']) for column in writes[0][1]['columns']] == [
+            ('id', 'INTEGER'), ('code', 'VARCHAR(20)'), ('stamp', 'DATETIME'), ('plain', ''), ('title', 'BLOB')]
+        with sqlite3.connect(tmp_path / 'synthetic.sqlite') as conn:
+            assert [row[1:3] for row in conn.execute('PRAGMA table_info(typed)')] == [
+                ('id', 'INTEGER'), ('code', 'VARCHAR(20)'), ('stamp', 'DATETIME'), ('plain', ''), ('title', 'BLOB')]
+
+def test_enter_on_an_untouched_null_cell_writes_an_empty_string(server, page, tmp_path):
+    with guard_browser_errors(page):
+        writes = record_writes(page)
+        page.goto(server)
+        open_cell(page, note_cell(page, 'alpha')).press('Enter')
+        expect(note_cell(page, 'alpha')).to_have_text('')
+        page.wait_for_load_state('networkidle')
+        assert writes == [('PUT', {'where': {'id': 1}, 'values': {'note': ''}})]
+        assert stored(tmp_path, 1) == ('alpha', '')
+
+@pytest.mark.parametrize('column, position, kind, literal', [
+    ('absent', 2, 'null', 'NULL'),
+    ('big', 3, 'integer', '9007199254740993'),
+    ('raw', 4, 'blob', "X'414243'"),
+    ('loose', 5, 'real', '1.0'),
+    ('lines', 6, 'text', "'first line\nsecond line'"),
+])
+def test_clicking_away_from_an_unchanged_cell_writes_nothing(server, page, tmp_path, column, position, kind, literal):
+    def stored_value():
+        with sqlite3.connect(tmp_path / 'synthetic.sqlite') as conn:
+            return conn.execute(f'SELECT typeof({column}), quote({column}) FROM stored_kinds').fetchone()
+
+    with guard_browser_errors(page):
+        writes = record_writes(page)
+        page.goto(server)
+        page.get_by_role('button', name='stored_kinds').click()
+        assert stored_value() == (kind, literal)
+        editor = open_cell(page, page.locator('tbody tr').first.get_by_role('cell').nth(position))
+        page.get_by_role('heading', name='stored_kinds').click()
+        expect(editor).to_have_count(0)
+        page.wait_for_load_state('networkidle')
+        assert writes == []
+        assert stored_value() == (kind, literal)

@@ -46,6 +46,7 @@ REPO_ROOT = PROJECT_ROOT.parent
 sys.path.insert(0, str(REPO_ROOT))
 
 from tools.testkit import (  # noqa: E402
+    assert_fonts_loaded,
     assert_no_external_resources,
     assert_offline_page_source,
     block_external_requests,
@@ -64,6 +65,7 @@ def test_page_loads_offline(browser, server):
         with guard_browser_errors(page):
             page.goto(server, wait_until="domcontentloaded")
             expect(page.locator("header")).to_be_visible(timeout=10000)
+            assert_fonts_loaded(page, ["Geist", "JetBrains Mono"])
             assert_no_external_resources(page, blocked)
             assert_offline_page_source(page.content())
     finally:
@@ -114,6 +116,18 @@ def _open_app(page, url):
     page.goto(url, wait_until="domcontentloaded")
     # DOMContentLoaded can precede the application mount.
     expect(page.locator("header")).to_be_visible(timeout=30000)
+
+
+# Selector hooks for scripts and tests; none of them carries a style of its own.
+CHART_HOOK_CLASSES = (
+    "activity-chart", "allocation-chart", "detail-content", "svgc-area", "svgc-curve", "svgc-grid-horizontal",
+    "svgc-grid-vertical", "svgc-point", "svgc-reference-line", "svgc-x-axis-line",
+)
+
+
+def _assert_charts_finite(page):
+    for chart in page.locator(".svgc-wrapper").evaluate_all("nodes => nodes.map(node => node.outerHTML)"):
+        assert not re.search(r"NaN|Infinity|undefined", chart), chart[:500]
 
 
 def _assert_tooltip_readable_in_viewport(page, tooltip):
@@ -1215,6 +1229,7 @@ def test_activity_chart_renders_with_no_history_and_one_day(server, page):
     _open_app(page, server + '#/repo/synthetic')
     page.get_by_role('button', name='All', exact=True).click()
     expect(page.locator('.svgc-wrapper')).to_be_visible()
+    _assert_charts_finite(page)
     page.unroute('**/api/repos/synthetic/history*')
     page.route('**/api/repos/synthetic/history*', lambda route: route.fulfill(json={'data': [
         {'date': today, 'commits': 1, 'insertions': 3, 'deletions': 1}]}))
@@ -1222,7 +1237,7 @@ def test_activity_chart_renders_with_no_history_and_one_day(server, page):
     page.get_by_role('button', name='All', exact=True).click()
     paths = page.locator('.svgc-wrapper path')
     expect(paths.first).to_be_visible()
-    assert all('NaN' not in (p.get_attribute('d') or '') for p in paths.all())
+    _assert_charts_finite(page)
 
 
 def test_hiding_every_allocation_series_leaves_a_valid_chart(server, page):
@@ -1232,7 +1247,10 @@ def test_hiding_every_allocation_series_leaves_a_valid_chart(server, page):
     page.get_by_role('button', name='Synthetic', exact=True).click()
     paths = page.locator('.svgc-wrapper path.svgc-area')
     expect(paths.first).to_have_attribute('fill-opacity', '0')
-    assert all('NaN' not in (p.get_attribute('d') or '') for p in paths.all())
+    box = page.locator('.svgc-wrapper').bounding_box()
+    page.mouse.move(box['x'] + box['width'] / 2, box['y'] + box['height'] / 2)
+    expect(page.locator('.svgc-tooltip')).to_contain_text('Synthetic')
+    _assert_charts_finite(page)
 
 
 def test_constrained_chart_tooltip_scrolls_and_keeps_focus(server, page):
@@ -1248,12 +1266,12 @@ def test_constrained_chart_tooltip_scrolls_and_keeps_focus(server, page):
         series:[{key:'value', color:'#4c8dff'}],
         tooltip:({label, payload}) => h('div', {style:{background:'#fff', color:'#000'}},
           h('div', null, label + ': ' + payload[0].value),
-          Array.from({length:30}, (_, i) => h('div', null, 'Synthetic row ' + i)))
+          Array.from({length:100}, (_, i) => h('div', null, 'Synthetic row ' + i)))
       }), host);
     }""")
     chart = page.locator('#synthetic-tooltip-chart .svgc-wrapper')
     box = chart.bounding_box()
-    page.mouse.move(box['x'] + box['width'] - 5, box['y'] + box['height'] - 5)
+    page.mouse.move(box['x'] + box['width'] - 12, box['y'] + 30)
     tooltip = chart.get_by_role('region', name='Chart tooltip')
     expect(tooltip).to_be_visible()
     assert tooltip.evaluate('el => el.scrollHeight > el.clientHeight')
@@ -1271,8 +1289,8 @@ def test_constrained_chart_tooltip_scrolls_and_keeps_focus(server, page):
     page.mouse.wheel(0, 2000)
     page.wait_for_function("""() => { const el = document.querySelector('#synthetic-tooltip-chart .svgc-tooltip');
         return el && el.scrollTop + el.clientHeight >= el.scrollHeight - 1; }""", timeout=3000)
-    assert 'Synthetic row 29' in tooltip.inner_text()
-    last = tooltip.get_by_text('Synthetic row 29', exact=True).bounding_box()
+    assert 'Synthetic row 99' in tooltip.inner_text()
+    last = tooltip.get_by_text('Synthetic row 99', exact=True).bounding_box()
     bounds = tooltip.bounding_box()
     assert last['y'] >= bounds['y'] and last['y'] + last['height'] <= bounds['y'] + bounds['height']
     assert 'synthetic-latest: 2' in tooltip.inner_text()
@@ -1343,7 +1361,7 @@ def test_activity_chart_renders_signed_areas_axes_and_custom_tooltip(server, pag
     chart.scroll_into_view_if_needed()
     chart_box = chart.bounding_box()
     page.mouse.move(chart_box["x"] + chart_box["width"] - 8,
-                    chart_box["y"] + chart_box["height"] - 8)
+                    chart_box["y"] + chart_box["height"] - 34)
     tooltip = page.locator(".svgc-tooltip")
     _assert_tooltip_readable_in_viewport(page, tooltip)
     tooltip_text = tooltip.inner_text()
@@ -1459,7 +1477,7 @@ def test_time_allocation_chart_renders_stack_axes_and_tooltip(server, page):
     axis_labels = [label for label in chart.locator("svg text").all_text_contents() if label]
     assert any(re.fullmatch(r"\d{4}-\d{2}-\d{2}", label) for label in axis_labels)
     assert any(re.fullmatch(r"\d+", label) for label in axis_labels)
-    assert max(int(label) for label in axis_labels if re.fullmatch(r"\d+", label)) <= 11
+    assert max(int(label) for label in axis_labels if re.fullmatch(r"\d+", label)) == 12
     tick = chart.locator('svg text').first
     assert tick.evaluate("el => getComputedStyle(el).fontFamily").startswith('"JetBrains Mono"')
     assert tick.evaluate("el => getComputedStyle(el).fontSize") == '11px'
@@ -1469,13 +1487,171 @@ def test_time_allocation_chart_renders_stack_axes_and_tooltip(server, page):
     assert box and box["width"] > 200 and box["height"] == pytest.approx(260, abs=2)
     chart.scroll_into_view_if_needed()
     box = chart.bounding_box()
-    page.mouse.move(box["x"] + box["width"] - 12, box["y"] + box["height"] - 8)
+    page.mouse.move(box["x"] + box["width"] - 12, box["y"] + box["height"] - 34)
     tooltip = page.locator(".svgc-tooltip")
     _assert_tooltip_readable_in_viewport(page, tooltip)
     tooltip_text = tooltip.inner_text()
     assert active_week in tooltip_text
-    assert re.search(r"Synthetic Alpha\s*:\s*7(?:\D|$)", tooltip_text)
-    assert re.search(r"Synthetic Beta\s*:\s*4(?:\D|$)", tooltip_text)
+    assert re.search(r"Synthetic Alpha : 7(?:\D|$)", tooltip_text)
+    assert re.search(r"Synthetic Beta : 4(?:\D|$)", tooltip_text)
+    assert tooltip_text.index("Synthetic Alpha") < tooltip_text.index("Synthetic Beta")
+
+
+ALLOCATION_NAMES = ("Synthetic Delta", "Synthetic Alpha", "Synthetic Charlie", "Synthetic Bravo")
+
+
+def _mock_allocation(page, weeks=4, names=ALLOCATION_NAMES):
+    today = date.today()
+    dates = [(today - timedelta(days=(weeks - i - 1) * 7)).isoformat() for i in range(weeks)]
+    series = [{"repo_id": name, "name": name, "data": [
+        {"date": day, "commits": index + i + 1} for i, day in enumerate(dates)]}
+        for index, name in enumerate(names)]
+    page.route("**/api/analytics/allocation*", lambda route: route.fulfill(json={"series": series}))
+
+
+def _allocation_chart(page):
+    heading = page.get_by_role("heading", name="Time Allocation")
+    return heading.locator("xpath=../following-sibling::*[1]")
+
+
+def _mock_activity(page, history):
+    page.route("**/api/repos/synthetic-repo", lambda route: route.fulfill(json={
+        "id": "synthetic-repo", "name": "Synthetic Repo", "path": "/tmp/synthetic-repo",
+        "path_exists": True, "runtime": "python", "default_branch": "main",
+        "working_state": {"current_branch": "main"}}))
+    page.route("**/api/repos/synthetic-repo/history*", lambda route: route.fulfill(json={"data": history}))
+
+
+def _activity_history(rows):
+    today = date.today()
+    return [{"date": (today - timedelta(days=len(rows) - i - 1)).isoformat(), "commits": 1,
+             "insertions": ins, "deletions": dels, "files_changed": 1}
+            for i, (ins, dels) in enumerate(rows)]
+
+
+def test_allocation_tooltip_keeps_old_order_hidden_rows_and_separator(server, page):
+    _mock_allocation(page)
+    _open_app(page, server + "#/analytics")
+    chart = _allocation_chart(page)
+    wrapper = chart.locator(".svgc-wrapper")
+    wrapper.wait_for()
+    page.get_by_role("button", name="Synthetic Charlie", exact=True).click()
+    box = wrapper.bounding_box()
+    page.mouse.move(box["x"] + box["width"] / 2, box["y"] + box["height"] / 2)
+    tooltip = chart.locator(".svgc-tooltip")
+    expect(tooltip).to_be_visible()
+    rows = [line for line in tooltip.inner_text().splitlines() if line.startswith("Synthetic")]
+    assert [row.split(" : ")[0] for row in rows] == sorted(ALLOCATION_NAMES)
+    expect(chart.locator(".svgc-active-dot")).to_have_count(4)
+
+
+def test_allocation_outlines_and_nice_axis_match_the_old_chart(server, page):
+    _mock_allocation(page, weeks=4, names=("Synthetic Alpha",))
+    _open_app(page, server + "#/analytics")
+    wrapper = _allocation_chart(page).locator(".svgc-wrapper")
+    wrapper.wait_for()
+    expect(wrapper.locator("path.svgc-curve")).to_have_attribute("stroke-width", "1")
+    labels = [text for text in wrapper.locator("svg text").all_text_contents() if re.fullmatch(r"\d+", text)]
+    assert labels == ["0", "1", "2", "3", "4"]
+
+
+def test_allocation_labels_never_collide_at_narrow_width(server, page):
+    page.set_viewport_size({"width": 390, "height": 800})
+    _mock_allocation(page, weeks=26, names=("Synthetic Alpha", "Synthetic Beta"))
+    _open_app(page, server + "#/analytics")
+    wrapper = _allocation_chart(page).locator(".svgc-wrapper")
+    wrapper.wait_for()
+    labels = wrapper.locator("svg text").evaluate_all("""nodes => nodes
+        .filter(n => /^\d{4}-\d\d-\d\d$/.test(n.textContent)).map(n => n.getBoundingClientRect().toJSON())""")
+    assert len(labels) >= 2
+    assert all(first["right"] <= second["left"] for first, second in zip(labels, labels[1:]))
+    box = wrapper.bounding_box()
+    assert labels[-1]["right"] <= box["x"] + box["width"] + .5
+
+
+@pytest.mark.parametrize("view", ["activity", "allocation"])
+def test_chart_keyboard_reading_and_hover_marks(server, page, view):
+    if view == "activity":
+        _mock_activity(page, _activity_history([(5, 2), (9, 1), (3, 4)]))
+        _open_app(page, server + "#/repo/synthetic-repo")
+        host = page.locator(".detail-content")
+        dots = 3
+    else:
+        _mock_allocation(page, names=("Synthetic Alpha", "Synthetic Beta"))
+        _open_app(page, server + "#/analytics")
+        host = _allocation_chart(page)
+        dots = 2
+    surface = host.locator('svg[role="application"]')
+    surface.wait_for()
+    surface.focus()
+    page.keyboard.press("Shift+Tab")
+    page.keyboard.press("Tab")
+    expect(surface).to_be_focused()
+    tooltip = host.locator(".svgc-tooltip")
+    expect(tooltip).to_be_visible()
+    first = tooltip.inner_text()
+    expect(host.locator(".svgc-active-dot")).to_have_count(dots)
+    page.keyboard.press("ArrowRight")
+    expect(tooltip).not_to_have_text(first)
+    page.keyboard.press("Tab")
+    expect(tooltip).to_have_count(0)
+    surface.scroll_into_view_if_needed()
+    box = surface.bounding_box()
+    page.mouse.move(box["x"] + box["width"] / 2, box["y"] + box["height"] / 2)
+    expect(host.locator(".svgc-cursor")).to_have_count(1)
+    expect(host.locator(".svgc-active-dot")).to_have_count(dots)
+    page.mouse.move(box["x"] + 5, box["y"] + box["height"] / 2)
+    expect(host.locator(".svgc-cursor")).to_have_count(0)
+    expect(tooltip).to_have_count(0)
+
+
+def test_activity_axis_uses_the_old_symmetric_ticks(server, page):
+    _mock_activity(page, _activity_history([(130, 100), (60, 20), (10, 5)]))
+    _open_app(page, server + "#/repo/synthetic-repo")
+    wrapper = page.locator(".detail-content .svgc-wrapper")
+    wrapper.wait_for()
+    labels = [text for text in wrapper.locator("svg text").all_text_contents() if re.fullmatch(r"\d+", text)]
+    assert labels == ["130", "65", "0", "65", "130"]
+
+
+def test_all_zero_activity_uses_the_old_axis(server, page):
+    _mock_activity(page, _activity_history([(0, 0), (0, 0), (0, 0)]))
+    _open_app(page, server + "#/repo/synthetic-repo")
+    wrapper = page.locator(".detail-content .svgc-wrapper")
+    wrapper.wait_for()
+    labels = [text for text in wrapper.locator("svg text").all_text_contents() if re.fullmatch(r"\d+", text)]
+    assert labels == ["0", "1", "2", "3", "4"]
+    _assert_charts_finite(page)
+
+
+@pytest.mark.parametrize("sparkline,start", [([0, 0, 0], "M0,28"), ([5], "M"), ([], None)], ids=["zeros", "single", "empty"])
+def test_sparkline_fill_and_degenerate_data(server, page, sparkline, start):
+    page.route("**/api/fleet", lambda route: route.fulfill(json={"repos": [{
+        "id": "synthetic", "name": "Synthetic", "path": "/tmp/synthetic",
+        "path_exists": True, "sparkline": sparkline}], "kpis": {}}))
+    _open_app(page, server)
+    card = page.locator(".project-card")
+    card.hover()
+    if start is None:
+        expect(card.locator(".svgc-wrapper")).to_have_count(0)
+        return
+    curve = card.locator("path.svgc-curve")
+    expect(curve).to_have_attribute("d", re.compile("^" + start))
+    expect(card.locator("path.svgc-area")).to_have_attribute("fill-opacity", "0.6")
+    assert card.locator('svg[role="application"]').count() == 0
+    _assert_charts_finite(page)
+
+
+def test_chart_views_have_no_unstyled_classes(server, page):
+    from tools.testkit import assert_classes_styled
+    _mock_allocation(page, names=("Synthetic Alpha", "Synthetic Beta"))
+    _mock_activity(page, _activity_history([(5, 2), (9, 1)]))
+    _open_app(page, server + "#/analytics")
+    _allocation_chart(page).locator(".svgc-wrapper").wait_for()
+    assert_classes_styled(page, ignore=CHART_HOOK_CLASSES)
+    _open_app(page, server + "#/repo/synthetic-repo")
+    page.locator(".detail-content .svgc-wrapper").wait_for()
+    assert_classes_styled(page, ignore=CHART_HOOK_CLASSES)
 
 
 # ═════════════════════════════════════════════════════════════════════════════

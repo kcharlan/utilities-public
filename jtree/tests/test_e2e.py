@@ -19,6 +19,7 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(REPO_ROOT))
 
 from tools.testkit import (
+    assert_fonts_loaded,
     assert_no_external_resources,
     assert_offline_page_source,
     block_external_requests,
@@ -42,6 +43,7 @@ def test_page_loads_offline(server, browser):
     with guard_browser_errors(page):
         page.goto(server, wait_until="domcontentloaded")
         expect(page.get_by_title("Toggle theme")).to_be_visible(timeout=15000)
+        assert_fonts_loaded(page, ["DM Sans", "JetBrains Mono"])
         assert_no_external_resources(page, blocked)
         assert_offline_page_source(page.content())
     context.close()
@@ -64,8 +66,9 @@ def _wait_for_server(port: int, timeout: float = 10) -> bool:
     return False
 
 
-@pytest.fixture(scope="module")
+@pytest.fixture
 def server(tmp_path_factory):
+    """Give each test its own server: some tests replace the open document."""
     port = _find_free_port()
     fixture = tmp_path_factory.mktemp("jtree-e2e") / "synthetic.json"
     fixture.write_text(json.dumps({"name": "synthetic", "items": [1, 2]}))
@@ -107,6 +110,21 @@ def test_frontend_contract():
         for text in ('current Playwright Chromium', 'Chrome 111', 'Safari 16.4', 'Firefox 128'):
             assert text in normalized
     assert 'Safari and Firefox are not covered by the automated browser test' in ' '.join(README.read_text().split())
+
+
+def test_app_root_has_no_whitespace_only_text_nodes(server, page):
+    with guard_browser_errors(page):
+        page.goto(server, wait_until="domcontentloaded")
+        expect(page.get_by_title("Toggle theme")).to_be_visible(timeout=15000)
+        blank = page.locator("#root").evaluate(r"""root => {
+            const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+            const found = [];
+            while (walker.nextNode()) {
+                if (/^\s+$/.test(walker.currentNode.nodeValue)) found.push(walker.currentNode.parentElement.tagName);
+            }
+            return found;
+        }""")
+        assert blank == []
 
 
 def test_app_persists_theme_and_opens_search(server, page):
@@ -258,3 +276,31 @@ def test_wheel_pan_zoom_and_image_export(server, page, tmp_path):
             page.get_by_text('PNG', exact=True).click()
         path = download.value.path()
         assert path.read_bytes().startswith(b'\x89PNG\r\n\x1a\n')
+
+
+def add_boolean_child(page, key):
+    page.locator('.graph-node').first.click(button='right')
+    page.get_by_text('Add Child').click()
+    modal = page.locator('.modal-box')
+    modal.get_by_placeholder('key name').fill(key)
+    modal.locator('select').first.select_option('boolean')
+    return modal, modal.locator('select').nth(1)
+
+
+def test_add_child_boolean_saves_the_value_it_shows(server, page, tmp_path):
+    with guard_browser_errors(page):
+        open_synthetic_data(page, server, tmp_path, {'keep': 'synthetic'})
+        expect(page.locator('.graph-node').filter(has_text='keep')).to_be_visible()
+
+        modal, value = add_boolean_child(page, 'shown_default')
+        expect(value).to_have_value('true')
+        expect(value.locator('option:checked')).to_have_text('true')
+        modal.get_by_role('button', name='Add').click()
+        expect(page.locator('.graph-node').filter(has_text='shown_default')).to_be_visible()
+        assert page.request.get(server + '/api/node', params={'path': 'shown_default'}).json()['value'] is True
+
+        modal, value = add_boolean_child(page, 'picked_false')
+        value.select_option('false')
+        modal.get_by_role('button', name='Add').click()
+        expect(page.locator('.graph-node').filter(has_text='picked_false')).to_be_visible()
+        assert page.request.get(server + '/api/node', params={'path': 'picked_false'}).json()['value'] is False

@@ -17,7 +17,7 @@ def test_indented_python_region_preserves_script_and_css_bytes(tmp_path):
     (vendor / 'x.js').write_text(script)
     (vendor / 'x.css').write_text(css)
     (vendor / 'manifest.json').write_text(json.dumps({'schema': 1, 'items': {'x': {
-        'kind': 'script', 'file': 'x.js', 'css': 'x.css', 'sha256': hashlib.sha256(script.encode()).hexdigest()
+        'kind': 'script', 'file': 'x.js', 'css': 'x.css', 'cssSha256': hashlib.sha256(css.encode()).hexdigest(), 'sha256': hashlib.sha256(script.encode()).hexdigest()
     }}}))
     path = tmp_path / 'synthetic.py'
     path.write_text('def build():\n    # frontend-vendor:begin x\n    # frontend-vendor:end\n    return FRONTEND_VENDOR_HTML\n')

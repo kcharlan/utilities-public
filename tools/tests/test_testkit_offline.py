@@ -1,4 +1,6 @@
+import json
 from pathlib import Path
+import subprocess
 
 import pytest
 
@@ -78,11 +80,108 @@ def test_offline_source_allows_svg_namespace_and_anchor_hrefs():
     testkit.assert_offline_page_source('<svg xmlns="http://www.w3.org/2000/svg"></svg><a href="https://example.invalid">link</a>')
 
 
-def test_vendor_current_reports_the_stale_file(tmp_path):
-    path = tmp_path / 'missing.py'
+@pytest.mark.parametrize('html', [
+    pytest.param('<script>a="/*"</script><script src="https://example.invalid/x"></script><script>b="*/"</script>', id='css-comment-strings'),
+    pytest.param('<script>a="<!--"</script><script src="https://example.invalid/x"></script><script>b="-->"</script>', id='html-comment-strings'),
+    pytest.param('<script>import(`https://example.invalid/x.js`)</script>', id='template-literal-import'),
+    pytest.param('<script>import(`//example.invalid/x.js`)</script>', id='template-literal-relative-scheme-import'),
+    pytest.param('<script type=importmap>{}</script>', id='unquoted-importmap'),
+    pytest.param('<script type=text/babel></script>', id='unquoted-babel'),
+    pytest.param('<img src="https://example.invalid/x.png">', id='img'),
+    pytest.param('<img src=//example.invalid/x.png>', id='img-unquoted'),
+    pytest.param('<img srcset="data:image/png;base64,AA 1x, https://example.invalid/x.png 2x">', id='img-srcset'),
+    pytest.param('<iframe src="https://example.invalid/x"></iframe>', id='iframe'),
+    pytest.param('<script>fetch("https://example.invalid/x")</script>', id='fetch'),
+    pytest.param('<script>fetch(`https://example.invalid/${id}`)</script>', id='fetch-template-literal'),
+    pytest.param('<script>importScripts("local.js", "https://example.invalid/x.js")</script>', id='importScripts'),
+    pytest.param('<script>html`<img src="https://example.invalid/x.png" />`</script>', id='img-in-htm-template'),
+    pytest.param('<script>html`<iframe src=${x} /><iframe src="https://example.invalid/x" />`</script>', id='iframe-in-htm-template'),
+    pytest.param('<script>html`<img src=${"https://example.invalid/x.png"} />`</script>', id='img-htm-literal'),
+    pytest.param('<script>html`<script src=${"//example.invalid/x.js"}>`</script>', id='script-htm-literal-relative-scheme'),
+    pytest.param('<script>html`<link href=${"https://example.invalid/x.css"} />`</script>', id='link-htm-literal'),
+    pytest.param('<script>html`<iframe src=${`https://example.invalid/x`} />`</script>', id='iframe-htm-template-literal'),
+    pytest.param('<script>html`<img src=${`https://example.invalid/${id}.png`} />`</script>', id='img-htm-template-with-path-value'),
+    pytest.param('<script>html`<image href="https://example.invalid/x.png" />`</script>', id='svg-image-href'),
+    pytest.param('<script>html`<image href=${"https://example.invalid/x.png"} />`</script>', id='svg-image-href-htm-literal'),
+    pytest.param('<script>html`<use xlink:href="https://example.invalid/x.svg#a" />`</script>', id='xlink-href'),
+    pytest.param('<script>html`<meta http-equiv=refresh content="0;url=https://example.invalid/x" />`</script>', id='meta-refresh-in-code'),
+    pytest.param('<script>html`<meta content="0; url=//example.invalid/x" http-equiv="Refresh" />`</script>', id='meta-refresh-in-code-reversed'),
+    pytest.param('<meta http-equiv="refresh" content="0;url=https://example.invalid/x">', id='meta-refresh'),
+    pytest.param('<body background="https://example.invalid/x.png"></body>', id='background'),
+    pytest.param('<script>html`<body background=https://example.invalid/x.png>`</script>', id='background-in-code'),
+    pytest.param('<script>html`<td background=${"https://example.invalid/x.png"} />`</script>', id='background-htm-literal'),
+    pytest.param('<script>node.setAttribute("src", "https://example.invalid/x.png")</script>', id='setAttribute'),
+    pytest.param('<script>node.setAttributeNS(null, "href", `https://example.invalid/x.png`)</script>', id='setAttributeNS'),
+    pytest.param('<script>xhr.open("GET", "https://example.invalid/x")</script>', id='xhr-open'),
+    pytest.param("<script>xhr.open('post', `//example.invalid/x`, true)</script>", id='xhr-open-template-literal'),
+    pytest.param('<script>navigator.sendBeacon("https://example.invalid/x", data)</script>', id='sendBeacon'),
+    pytest.param('<script>new WebSocket("wss://example.invalid/x")</script>', id='websocket'),
+    pytest.param('<script>new WebSocket(`ws://example.invalid/${id}`)</script>', id='websocket-template-literal'),
+    pytest.param('<style>@import "https://example.invalid/x.css";</style>', id='css-import'),
+    pytest.param('<style>@import url(https://example.invalid/x.css);</style>', id='css-import-url'),
+    pytest.param('<div style="background:url(https://example.invalid/x.png)"></div>', id='inline-style-url'),
+])
+def test_offline_source_rejects_bypasses(html):
+    with pytest.raises(AssertionError, match='Offline source contains'):
+        testkit.assert_offline_page_source(html)
+
+
+@pytest.mark.parametrize('html', [
+    pytest.param('<!-- <script src="https://example.invalid/x"></script> --><p>ok</p>', id='markup-comment'),
+    pytest.param('<script>const a = "https://example.invalid/x"; fetch("/api/data")</script>', id='plain-url-string'),
+    pytest.param('<script>// see https://example.invalid/docs\nimport("./local.js")</script>', id='comment-url'),
+    pytest.param('<pre>import x from "https://example.invalid/x"</pre>', id='page-text'),
+    pytest.param('<img src="data:image/png;base64,AA"><script src="/static/x.js"></script>', id='local-resources'),
+    pytest.param('<script>html`<a href="https://example.invalid/x">link</a>`</script>', id='link-in-htm-template'),
+    pytest.param('<script>html`<a href=${"https://example.invalid/x"}>link</a>`</script>', id='link-htm-literal'),
+    pytest.param('<script>new WebSocket(`ws://${location.host}/ws`)</script>', id='same-host-websocket'),
+    pytest.param('<script>new WebSocket(`${scheme}//${location.host}/ws`)</script>', id='same-host-websocket-scheme'),
+    pytest.param('<script>fetch(`http://${location.host}/api/data`)</script>', id='same-host-fetch'),
+    pytest.param('<script>html`<img src=${`http://${location.host}/x.png`} />`</script>', id='same-host-htm-template'),
+    pytest.param('<script>xhr.open("GET", `http://${location.host}/api/data`)</script>', id='same-host-xhr'),
+    pytest.param('<script>window.open("https://example.invalid/x", "_blank")</script>', id='link-in-new-tab'),
+    pytest.param('<script>node.setAttributeNS("http://www.w3.org/1999/xlink", "href", "#local")</script>', id='svg-namespace'),
+    pytest.param('<meta http-equiv="refresh" content="60">', id='meta-refresh-without-a-url'),
+    pytest.param('<meta http-equiv="refresh" content="0;url=/local">', id='meta-refresh-to-the-same-host'),
+    pytest.param('<meta name="description" content="url=https://example.invalid/x">', id='other-meta'),
+    pytest.param('<script>const style = {background: "https://example.invalid/x"}</script>', id='background-style-key'),
+])
+def test_offline_source_allows_inert_text_and_local_resources(html):
+    testkit.assert_offline_page_source(html)
+
+
+def embedded_pages():
+    root = Path(__file__).resolve().parents[2]
+    found = subprocess.run(
+        ['git', '-C', str(root), 'grep', '-lzE', '^[[:space:]]*(# |<!-- )frontend-vendor:begin ', '--', ':!tools'],
+        capture_output=True, text=True, check=True,
+    ).stdout
+    return [root / name for name in found.split('\0') if name]
+
+
+def test_offline_source_accepts_every_embedded_page():
+    pages = embedded_pages()
+    # A floor, so a broken search fails here and adding a page doesn't.
+    assert len(pages) >= 14
+    for page in pages:
+        testkit.assert_offline_page_source(page.read_text())
+
+
+def test_vendor_current_reports_a_missing_region(tmp_path):
+    path = tmp_path / 'unmarked.py'
     path.write_text('x')
-    with pytest.raises(AssertionError, match='missing.py'):
+    with pytest.raises(AssertionError, match='unmarked.py: no frontend-vendor region'):
         testkit.assert_frontend_vendor_current(path)
+
+
+def test_vendor_current_reports_the_stale_file(tmp_path):
+    path = tmp_path / 'marked.py'
+    path.write_text('# frontend-vendor:begin kit\n# frontend-vendor:end\n')
+    with pytest.raises(AssertionError, match='marked.py: stale frontend-vendor region'):
+        testkit.assert_frontend_vendor_current(path)
+    tool = Path(__file__).resolve().parents[1] / 'sync_frontend_vendor.mjs'
+    subprocess.run(['node', str(tool), str(path)], capture_output=True, check=True)
+    testkit.assert_frontend_vendor_current(path)
 
 
 def test_compiles_cleanly_fails_on_invalid_escape_sequence(tmp_path):
@@ -98,6 +197,11 @@ def test_classes_styled_reports_unstyled_tokens_and_honors_ignore():
     testkit.assert_classes_styled(Page(['missing']), ignore=['missing'])
 
 
+def test_exact_text_rejects_padding_that_normalized_matchers_hide():
+    testkit.assert_exact_text(Page('Copy'), 'Copy')
+    with pytest.raises(AssertionError, match="' Copy '"):
+        testkit.assert_exact_text(Page(' Copy '), 'Copy')
+
 
 
 def test_offline_source_rejects_unquoted_remote_resource():
@@ -105,10 +209,45 @@ def test_offline_source_rejects_unquoted_remote_resource():
         testkit.assert_offline_page_source('<script src=https://example.invalid/x></script>')
 
 
-def test_classes_styled_does_not_confuse_class_name_prefixes():
-    import json
-    import subprocess
+class FontPage:
+    """Run the helper's page script in Node against synthetic font faces."""
 
+    def __init__(self, faces):
+        self.faces = faces
+
+    def evaluate(self, script, families):
+        program = '''
+            globalThis.document = {fonts: Object.assign(%s, {ready: Promise.resolve()})};
+            (%s)(%s).then(result => console.log(JSON.stringify(result)));
+        ''' % (json.dumps(self.faces), script, json.dumps(families))
+        result = subprocess.run(['node', '-e', program], capture_output=True, text=True, check=True)
+        return json.loads(result.stdout)
+
+
+def test_fonts_loaded_accepts_a_loaded_face_with_or_without_quotes():
+    testkit.assert_fonts_loaded(FontPage([
+        {'family': '"SYNTHETIC Sans"', 'status': 'loaded'},
+        {'family': 'SYNTHETIC Mono', 'status': 'unloaded'},
+        {'family': 'SYNTHETIC Mono', 'status': 'loaded'},
+    ]), ['SYNTHETIC Sans', 'SYNTHETIC Mono'])
+
+
+@pytest.mark.parametrize('faces', [
+    pytest.param([], id='no-face-only-a-css-stack'),
+    pytest.param([{'family': 'SYNTHETIC Sans', 'status': 'unloaded'}], id='never-used'),
+    pytest.param([{'family': 'SYNTHETIC Sans', 'status': 'error'}], id='failed'),
+    pytest.param([
+        {'family': 'SYNTHETIC Sans', 'status': 'loaded'},
+        {'family': 'SYNTHETIC Sans', 'status': 'error'},
+    ], id='one-weight-failed'),
+    pytest.param([{'family': 'SYNTHETIC Mono', 'status': 'loaded'}], id='other-family'),
+])
+def test_fonts_loaded_rejects_a_family_without_a_loaded_face(faces):
+    with pytest.raises(AssertionError, match='SYNTHETIC Sans'):
+        testkit.assert_fonts_loaded(FontPage(faces), ['SYNTHETIC Sans'])
+
+
+def test_classes_styled_does_not_confuse_class_name_prefixes():
     class JavaScriptPage:
         def evaluate(self, script, ignore):
             program = '''

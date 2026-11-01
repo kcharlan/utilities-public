@@ -5,10 +5,10 @@
 - What went wrong: The replacement DAG treated an 80-pixel layout estimate as the rendered height, so wrapped titles displaced handles and invalidated fit, edge and selection geometry.
 - Pattern to follow instead: Measure rendered node dimensions and share them across every geometry consumer; test a wrapping title as well as live updates without resetting the user's viewport.
 
-## Option Text Whitespace After Template Conversion
+## Text Whitespace After Template Conversion
 
-- What went wrong: Converting JSX to tagged templates introduced spaces around an interpolated option label, changing its exact visible text.
-- Pattern to follow instead: Check rendered option and button text after conversion, and keep intentional whitespace explicit around interpolations.
+- What went wrong: Converting JSX to tagged templates kept the single spaces that JSX drops at line breaks. Option labels changed, and `white-space: pre` and `pre-wrap` elements (code blocks, release notes, log lines) showed indented first lines, while normal inline text shifted a few pixels.
+- Pattern to follow instead: Derive template text from the JSX rule: text on one line keeps its spaces, a line break and the whitespace around it disappear, and `{" "}` is the explicit space. Assert exact text with raw `textContent` (`tools/testkit.py` `assert_exact_text`), because Playwright's `to_have_text` and `inner_text` normalize whitespace and hide this.
 
 ## Streaming Must Honor Injected Process Runners
 

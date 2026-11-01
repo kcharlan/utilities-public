@@ -93,6 +93,11 @@ def _job_row(page, label, *, show_apple=False):
     return row
 
 
+def _settle(page):
+    """Let a key's state change reach the DOM before asserting that nothing changed."""
+    page.evaluate("() => new Promise(done => requestAnimationFrame(() => requestAnimationFrame(done)))")
+
+
 def _open_job_detail(page, label, *, show_apple=False):
     row = _job_row(page, label, show_apple=show_apple)
     row.click()
@@ -305,6 +310,24 @@ class TestConfirmationPolicy:
 
         page.keyboard.press("Escape")
         expect(page.locator(".bulk-bar")).to_have_count(0)
+
+    def test_hidden_apple_domain_shows_the_first_option_not_a_blank_select(
+        self, server, page, restore_settings
+    ):
+        _put_settings(server, {"show_apple_jobs": True})
+        page.goto(server, wait_until="networkidle")
+        domain_select = page.locator(".filter-select")
+        domain_select.select_option("apple")
+
+        page.locator(".topbar-right .icon-btn").last.click()
+        page.locator(".toggle-row:has-text('Show Apple System Jobs') .toggle-switch").click()
+
+        expect(page.locator(".filter-select option[value='apple']")).to_have_count(0)
+        expect(domain_select).to_have_value("all")
+        # The table agrees with the select rather than filtering to a hidden domain.
+        page.keyboard.press("Escape")
+        expect(page.locator(".modal")).to_have_count(0)
+        expect(page.locator(".job-table tbody tr").filter(has_text="com.example.synthetic-idle")).to_be_visible()
 
     def test_show_apple_setting_sets_startup_filter(
         self, server, page, restore_settings
@@ -696,6 +719,15 @@ class TestJobTable:
         dot = first_row.locator(".status-dot")
         expect(dot).to_be_visible()
 
+    def test_sort_headers_have_no_padding(self, server, page):
+        page.goto(server, wait_until="networkidle")
+        headers = page.locator(".job-table thead th").evaluate_all(
+            "cells => cells.map(cell => cell.textContent)"
+        )
+        assert headers == [
+            "", "Status▲", "Label▲", "Domain▲", "Schedule", "PID", "Last Exit▲", "Actions",
+        ]
+
     def test_pagination_visible_when_many_jobs(self, server, page):
         """If there are more than 25 jobs, pagination should appear."""
         page.goto(server, wait_until="networkidle")
@@ -792,6 +824,16 @@ class TestDetailPanel:
             re.compile("com.example.synthetic-idle")
         )
 
+    def test_plist_editor_disables_spellcheck(self, server, page):
+        page.goto(server, wait_until="networkidle")
+        panel = _open_job_detail(page, "com.example.synthetic-idle")
+        panel.locator(".panel-tab:has-text('Edit')").click()
+
+        textarea = panel.locator(".plist-editor textarea")
+
+        expect(textarea).to_have_attribute("spellcheck", "false")
+        assert textarea.evaluate("element => element.spellcheck") is False
+
     def test_detail_panel_close(self, server, page):
         page.goto(server, wait_until="networkidle")
         page.locator(".job-table tbody tr").first.click()
@@ -866,6 +908,81 @@ class TestCreateJobModal:
         page.locator("button:has-text('Cancel')").click()
         expect(modal).not_to_be_visible()
 
+    @pytest.mark.parametrize(
+        "field", ["input[placeholder*='com.']", "textarea.form-input"], ids=["input", "textarea"]
+    )
+    def test_escape_closes_modal_from_a_focused_field(self, server, page, field):
+        page.goto(server, wait_until="networkidle")
+        page.get_by_role("button", name="New Job").click()
+        modal = page.locator(".modal")
+        modal.locator(field).first.focus()
+        expect(modal.locator(field).first).to_be_focused()
+
+        page.keyboard.press("Escape")
+
+        expect(modal).to_have_count(0)
+
+    def test_shortcut_opened_modal_closes_on_first_escape(self, server, page):
+        page.goto(server, wait_until="networkidle")
+        page.keyboard.press("n")
+        expect(page.locator(".modal input").first).to_be_focused()
+
+        page.keyboard.press("Escape")
+
+        expect(page.locator(".modal")).to_have_count(0)
+
+    def test_escape_from_a_field_keeps_a_typed_form(self, server, page):
+        page.goto(server, wait_until="networkidle")
+        page.keyboard.press("n")
+        label = page.locator(".modal input[placeholder*='com.']")
+        expect(label).to_be_focused()
+        page.keyboard.type("com.example.synthetic-typed")
+
+        page.keyboard.press("Escape")
+        _settle(page)
+
+        expect(page.locator(".modal")).to_be_visible()
+        expect(label).to_have_value("com.example.synthetic-typed")
+
+    def test_escape_from_a_field_keeps_a_form_changed_outside_it(self, server, page):
+        page.goto(server, wait_until="networkidle")
+        page.keyboard.press("n")
+        modal = page.locator(".modal")
+        modal.locator("select.form-input").first.select_option("global-agent")
+        modal.locator("input[placeholder*='com.']").focus()
+
+        page.keyboard.press("Escape")
+        _settle(page)
+
+        expect(modal).to_be_visible()
+
+    def test_a_reopened_form_is_untouched_again(self, server, page):
+        page.goto(server, wait_until="networkidle")
+        page.keyboard.press("n")
+        page.keyboard.type("com.example.synthetic-typed")
+        page.get_by_role("button", name="Cancel").click()
+        expect(page.locator(".modal")).to_have_count(0)
+
+        page.keyboard.press("n")
+        expect(page.locator(".modal input").first).to_be_focused()
+        page.keyboard.press("Escape")
+
+        expect(page.locator(".modal")).to_have_count(0)
+
+    @pytest.mark.parametrize("typed", ["", "com.example.synthetic-typed"], ids=["untouched", "typed"])
+    def test_escape_from_a_modal_field_leaves_the_detail_panel_open(self, server, page, typed):
+        page.goto(server, wait_until="networkidle")
+        panel = _open_job_detail(page, "com.example.synthetic-idle")
+        page.keyboard.press("n")
+        expect(page.locator(".modal input").first).to_be_focused()
+        page.keyboard.type(typed)
+
+        page.keyboard.press("Escape")
+        _settle(page)
+
+        expect(page.locator(".modal")).to_have_count(1 if typed else 0)
+        expect(panel).to_be_visible()
+
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # 8. Settings Modal
@@ -899,6 +1016,41 @@ class TestSettingsModal:
         assert request_bodies[0]["poll_interval"] == 7
         assert isinstance(request_bodies[0]["poll_interval"], int)
 
+    def test_escape_closes_settings_from_the_poll_interval_field(self, server, page):
+        page.goto(server, wait_until="networkidle")
+        page.locator(".topbar-right .icon-btn").last.click()
+        modal = page.locator(".modal")
+        modal.locator("input[type='number']").focus()
+
+        page.keyboard.press("Escape")
+
+        expect(modal).to_have_count(0)
+
+    def test_escape_keeps_settings_after_typing_a_poll_interval(self, server, page):
+        page.goto(server, wait_until="networkidle")
+        page.locator(".topbar-right .icon-btn").last.click()
+        modal = page.locator(".modal")
+        poll_interval = modal.locator("input[type='number']")
+        poll_interval.fill("7")
+
+        page.keyboard.press("Escape")
+        _settle(page)
+
+        expect(modal).to_be_visible()
+        expect(poll_interval).to_have_value("7")
+
+    def test_escape_closes_settings_from_outside_a_field_after_typing(self, server, page):
+        page.goto(server, wait_until="networkidle")
+        page.locator(".topbar-right .icon-btn").last.click()
+        modal = page.locator(".modal")
+        modal.locator("input[type='number']").fill("7")
+        page.evaluate("document.activeElement.blur()")
+
+        page.keyboard.press("Escape")
+
+        expect(modal).to_have_count(0)
+
+
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # 9. Keyboard Shortcuts
@@ -925,6 +1077,24 @@ class TestKeyboardShortcuts:
         page.keyboard.press("/")
         search = page.locator(".filter-search")
         expect(search).to_be_focused()
+
+    def test_search_keys_still_work_after_a_modal_closes_on_escape(self, server, page):
+        page.goto(server, wait_until="networkidle")
+        page.keyboard.press("n")
+        page.keyboard.press("Escape")
+        expect(page.locator(".modal")).to_have_count(0)
+        page.locator(".topbar-brand").click()
+
+        page.keyboard.press("/")
+        search = page.locator(".filter-search")
+        expect(search).to_be_focused()
+        search.press_sequentially("synthetic-idle")
+        page.keyboard.press("Escape")
+        expect(search).to_have_value("")
+        expect(search).to_be_focused()
+
+        page.keyboard.press("Escape")
+        expect(search).not_to_be_focused()
 
     def test_selected_job_navigation_shortcuts_open_logs_and_edit(
         self, server, page
@@ -1219,7 +1389,7 @@ class TestAppleJobsToggle:
 
 
 def test_page_loads_offline(server, browser):
-    from tools.testkit import block_external_requests, assert_no_external_resources, assert_offline_page_source
+    from tools.testkit import assert_fonts_loaded, block_external_requests, assert_no_external_resources, assert_offline_page_source
     context = browser.new_context()
     blocked = block_external_requests(context, allowed_origins=[server])
     page = context.new_page()
@@ -1227,6 +1397,7 @@ def test_page_loads_offline(server, browser):
         with guard_browser_errors(page):
             page.goto(server, wait_until="networkidle")
             expect(page.locator('.job-table')).to_be_visible()
+            assert_fonts_loaded(page, ['Chakra Petch', 'IBM Plex Mono'])
             assert_no_external_resources(page, blocked)
             assert_offline_page_source(page.content())
     finally:

@@ -1,5 +1,6 @@
 """Start the real app with discovery isolated to the synthetic test manifest."""
 import runpy
+import subprocess
 import sys
 import json
 import os
@@ -7,6 +8,14 @@ import os
 import uvicorn
 from fastapi.responses import JSONResponse
 
+
+def forbid_subprocess(argv, **kwargs):
+    raise RuntimeError(f"Subprocess refused in the synthetic server: {argv!r}")
+
+
+# Every launchctl and log call goes through subprocess.run, so a call site added
+# later is refused even before it gets a named fake below.
+subprocess.run = forbid_subprocess
 namespace = runpy.run_path(sys.argv[1], run_name="launchmaster_test_server")
 # Functions retain the runpy globals, which are distinct from its returned dict.
 globals_ = namespace["build_job_list"].__globals__

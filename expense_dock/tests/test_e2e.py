@@ -14,6 +14,7 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(REPO_ROOT))
 from tools.testkit import (
     assert_classes_styled,
+    assert_fonts_loaded,
     assert_frontend_vendor_current,
     assert_launcher_compiles_cleanly,
     assert_no_external_resources,
@@ -82,6 +83,7 @@ def test_page_loads_offline(server, browser):
     with guard_browser_errors(page):
         page.goto(server, wait_until='networkidle')
         expect(page.get_by_role('heading', name='Expense Dock')).to_be_visible()
+        assert_fonts_loaded(page, ['Fraunces', 'IBM Plex Mono', 'Work Sans'])
         assert_no_external_resources(page, blocked)
         assert_offline_page_source(page.content())
     context.close()
@@ -145,3 +147,20 @@ def test_app_loads_without_browser_errors_and_opens_setup(server, page):
         for name in ('Submit Primary intake form', 'Setup Connection and defaults', 'Queue No pending retries', 'Lookups Not refreshed yet'):
             page.get_by_role('button', name=name).click()
             assert_classes_styled(page)
+
+def test_select_with_an_unlisted_value_shows_its_placeholder(server, page):
+    def stale_default(route):
+        response = route.fetch()
+        status = response.json()
+        status['lookups']['paid_by'] = ['Synthetic Current Payer']
+        status['config']['defaults']['paid_by'] = 'Synthetic Former Payer'
+        route.fulfill(response=response, json=status)
+
+    page.route('**/api/auth/**', lambda route: route.abort())
+    page.route('**/api/status', stale_default)
+    with guard_browser_errors(page):
+        page.goto(server, wait_until='networkidle')
+        page.get_by_role('button', name='Setup Connection and defaults').click()
+        select = page.get_by_role('combobox', name='Default paid by')
+        expect(select).to_be_visible()
+        assert select.evaluate('(element) => element.selectedIndex') == 0

@@ -143,7 +143,7 @@ def test_app_loads_without_browser_errors_and_opens_security(server, page):
 
 
 def test_page_loads_offline(server, browser):
-    from tools.testkit import block_external_requests, assert_no_external_resources, assert_offline_page_source
+    from tools.testkit import assert_fonts_loaded, block_external_requests, assert_no_external_resources, assert_offline_page_source
     context = browser.new_context()
     blocked = block_external_requests(context, allowed_origins=[server])
     page = context.new_page()
@@ -151,6 +151,7 @@ def test_page_loads_offline(server, browser):
         with guard_browser_errors(page):
             page.goto(server, wait_until='domcontentloaded')
             expect(page.get_by_role('button', name='Security')).to_be_visible(timeout=15000)
+            assert_fonts_loaded(page, ['DM Sans', 'JetBrains Mono'])
             assert_no_external_resources(page, blocked)
             assert_offline_page_source(page.content())
     finally:
@@ -199,6 +200,17 @@ def test_har_values_with_markup_display_literally(server, page, minimal_har_dict
         page.get_by_role('button', name='Body', exact=False).click()
         expect(page.locator('pre')).to_have_text(sample)
         assert page.locator('pre b').count() == 0
+
+
+def test_raw_view_text_is_the_exact_json(server, page, minimal_har_dict):
+    with guard_browser_errors(page):
+        _load_synthetic(page, server, minimal_har_dict)
+        page.get_by_text('/api/data', exact=False).first.click()
+        page.get_by_role('button', name='Raw', exact=True).click()
+        text = page.locator('pre').evaluate('element => element.textContent')
+        assert text.startswith('{\n')
+        assert text.endswith('}')
+        json.loads(text)
 
 
 def test_sequence_wheel_and_pointer_pan(server, page, minimal_har_dict):
@@ -255,3 +267,112 @@ def test_websocket_plain_text_with_markup_displays_literally(server, page, minim
         payload = page.locator('pre')
         expect(payload).to_have_text(sample)
         assert payload.locator('b').count() == 0
+
+
+MARKUP = '<b>x</b> & ${y} `value` {{X}} &nbsp;'
+
+
+def assert_literal_json(element):
+    assert json.loads(element.evaluate('element => element.textContent')) == {MARKUP: MARKUP}
+    assert element.locator('b').count() == 0
+    # Only the JSON syntax spans and the redaction controls may exist as markup.
+    assert set(element.locator('*').evaluate_all('elements => elements.map(element => element.tagName)')) <= {'SPAN', 'INPUT'}
+
+
+def test_json_body_with_markup_displays_literally(server, page, minimal_har_dict):
+    body = json.dumps({MARKUP: MARKUP})
+    minimal_har_dict['log']['entries'][0]['response']['content'] = {'size': len(body), 'mimeType': 'application/json', 'text': body}
+    with guard_browser_errors(page):
+        _load_synthetic(page, server, minimal_har_dict)
+        page.get_by_text('/api/data', exact=False).first.click()
+        page.get_by_role('button', name='Response', exact=False).first.click()
+        page.get_by_role('button', name='Body', exact=False).click()
+        pre = page.locator('pre')
+        expect(pre).to_contain_text('<b>x</b>')
+        assert_literal_json(pre)
+
+
+def test_websocket_json_payload_with_markup_displays_literally(server, page, minimal_har_dict):
+    minimal_har_dict['log']['entries'][0]['_webSocketMessages'] = [
+        {'type': 'receive', 'time': 0, 'opcode': 1, 'data': json.dumps({MARKUP: MARKUP})},
+    ]
+    with guard_browser_errors(page):
+        _load_synthetic(page, server, minimal_har_dict)
+        page.get_by_text('/api/data', exact=False).first.click()
+        page.get_by_role('button', name='WebSocket', exact=False).click()
+        page.get_by_role('button', name=re.compile('RECV')).click()
+        pre = page.locator('pre')
+        expect(pre).to_contain_text('<b>x</b>')
+        assert_literal_json(pre)
+
+
+TOGGLE_REQUESTS = re.compile(r'/api/(security/toggle|redaction/(manual|remove-manual))$')
+
+
+def test_failed_redaction_toggles_leave_every_checkbox_on_the_server_state(server, page, minimal_har_dict):
+    entry = minimal_har_dict['log']['entries'][0]
+    entry['_webSocketMessages'] = [{'type': 'receive', 'time': 0, 'opcode': 1, 'data': 'plain synthetic text'}]
+    entry['response']['content'] = {'size': 5, 'mimeType': 'text/plain', 'text': 'plain'}
+    failing = {'on': False}
+    requests = []
+
+    def forced_failure(route):
+        requests.append(route.request.url)
+        if failing['on']:
+            route.fulfill(status=500, json={'detail': 'forced synthetic failure'})
+        else:
+            route.continue_()
+
+    def check(errors, checkbox):
+        before = checkbox.is_checked()
+        failing['on'] = True
+        requests.clear()
+        checkbox.click()
+        page.wait_for_timeout(100)
+        assert len(requests) == 1
+        assert checkbox.is_checked() == before
+        assert any('forced synthetic failure' in error for error in errors)
+        errors.clear()
+        failing['on'] = False
+        checkbox.click()
+        expect(checkbox).to_be_checked(checked=not before)
+
+    with guard_browser_errors(page) as errors:
+        _load_synthetic(page, server, minimal_har_dict)
+        page.route(TOGGLE_REQUESTS, forced_failure)
+        page.get_by_text('/api/data', exact=False).first.click()
+        row_checkbox = page.locator('tbody input[type=checkbox]').first
+        check(errors, row_checkbox)  # Headers
+        page.get_by_role('button', name='Query', exact=False).click()
+        check(errors, row_checkbox)
+        page.get_by_role('button', name='WebSocket', exact=False).click()
+        check(errors, page.locator('input[type=checkbox].redact-cb').first)
+        page.get_by_role('button', name='Response', exact=False).first.click()
+        page.get_by_role('button', name='Cookies', exact=False).click()
+        check(errors, row_checkbox)
+        page.get_by_role('button', name='Body', exact=False).click()
+        check(errors, page.locator('button input[type=checkbox]').first)
+        page.get_by_role('button', name='Security').first.click()
+        check(errors, page.get_by_label('Redact').first)
+
+
+def test_decisions_area_filter_falls_back_when_its_area_disappears(server, page, minimal_har_dict):
+    entry = minimal_har_dict['log']['entries'][0]
+    entry['request']['cookies'] = [{'name': 'flavour', 'value': 'plain'}]
+    entry['response']['cookies'] = []
+    with guard_browser_errors(page):
+        _load_synthetic(page, server, minimal_har_dict)
+        page.get_by_text('/api/data', exact=False).first.click()
+        page.get_by_role('button', name='Cookies', exact=False).click()
+        page.locator('tbody input[type=checkbox]').first.click()
+        expect(page.locator('tbody input[type=checkbox]').first).not_to_be_checked()
+        page.get_by_role('button', name='Decisions', exact=False).first.click()
+        area = page.locator('select').nth(2)
+        area.select_option('cookies')
+        rows = page.locator('tbody tr')
+        expect(rows).to_have_count(1)
+        rows.get_by_role('button', name='Keep').click()
+        expect(area).to_have_value('')
+        expect(area.locator('option:checked')).to_have_text('All areas')
+        expect(page.get_by_text('No decisions match the current filters')).to_have_count(0)
+        expect(rows.first).to_contain_text('REDACT')

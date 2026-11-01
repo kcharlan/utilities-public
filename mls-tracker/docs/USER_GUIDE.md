@@ -25,7 +25,7 @@ MLS Tracker starts a local web server bound to `127.0.0.1` and opens the corresp
 
 Install [uv](https://docs.astral.sh/uv/) first (`brew install uv`). The launcher declares Python 3.12+ and its runtime dependencies (FastAPI, uvicorn, and requests) in a PEP 723 header. On first launch, uv resolves them into its shared cache; later launches reuse that cache.
 
-**Requirements:** uv and an internet connection for ESPN data. Frontend assets are embedded; The backend embeds ESPN team logos in cached data; a logo is omitted when its fetch fails.
+**Requirements:** uv and an internet connection for ESPN data. Frontend assets are embedded; the backend embeds ESPN team logos, kept in memory for a week. A logo is omitted when its fetch fails and no earlier copy exists.
 
 ### Data Source
 

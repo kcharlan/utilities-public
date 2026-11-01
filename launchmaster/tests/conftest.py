@@ -21,6 +21,8 @@ from typing import Any, Dict
 
 import pytest
 
+from fake_launchctl import read_line_within
+
 # ── Enforce UTILITIES_TESTING so browser-opening code is always suppressed ────
 # Set it if not already set, so test runs never steal focus.
 os.environ["UTILITIES_TESTING"] = "1"
@@ -133,7 +135,6 @@ def _write_synthetic_jobs(runtime_home: Path) -> Path:
             last_exit=0,
         ),
     ]
-    synthetic_jobs[0]["stdout_path"] = str(log_path)
     for suffix, schedule in (
         ("calendar", {"StartCalendarInterval": {"Weekday": 1, "Hour": 9, "Minute": 30}}),
         ("interval", {"StartInterval": 300}),
@@ -154,7 +155,7 @@ def _write_synthetic_jobs(runtime_home: Path) -> Path:
 
 
 @contextmanager
-def _running_server(runtime_home: Path):
+def _running_server(runtime_home: Path, script: Path = LAUNCHMASTER_SCRIPT):
     """Run one isolated launchmaster server and always terminate it."""
     port = _find_free_port()
     env = dict(os.environ)
@@ -163,7 +164,7 @@ def _running_server(runtime_home: Path):
     env["LAUNCHMASTER_SYNTHETIC_JOBS"] = str(_write_synthetic_jobs(runtime_home))
 
     proc = subprocess.Popen(
-        [sys.executable, str(PROJECT_ROOT / "tests" / "synthetic_server.py"), str(LAUNCHMASTER_SCRIPT), str(port)],
+        [sys.executable, str(PROJECT_ROOT / "tests" / "synthetic_server.py"), str(script), str(port)],
         env=env,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
@@ -222,6 +223,63 @@ def restore_settings(server):
         )
         with urllib.request.urlopen(request):
             pass
+
+
+@pytest.fixture
+def synthetic_server_probe(tmp_path):
+    """Serve a stand-in launcher through synthetic_server.py to test its guards."""
+    script = tmp_path / "probe_launcher.py"
+    script.write_text(
+        "import subprocess\n"
+        "from fastapi import FastAPI\n"
+        "app = FastAPI()\n"
+        "def build_job_list():\n"
+        "    return []\n"
+        "@app.get('/api/health')\n"
+        "def health():\n"
+        "    return {}\n"
+        "@app.get('/api/probe')\n"
+        "def probe():\n"
+        "    try:\n"
+        "        subprocess.run(['/usr/bin/true'])\n"
+        "    except RuntimeError as exc:\n"
+        "        return {'refused': str(exc)}\n"
+        "    return {'refused': None}\n"
+    )
+    with _running_server(tmp_path, script) as url:
+        yield url
+
+
+@pytest.fixture
+def faked_launchctl_main(tmp_path):
+    """Boot the real main() in a child with launchctl faked and plists confined."""
+    port = _find_free_port()
+    env = dict(os.environ)
+    env["UTILITIES_TESTING"] = "1"
+    env["LAUNCHMASTER_HOME"] = str(tmp_path / "launchmaster-home")
+    env["PYTHONUNBUFFERED"] = "1"
+    proc = subprocess.Popen(
+        [sys.executable, str(PROJECT_ROOT / "tests" / "fake_launchctl.py"), str(LAUNCHMASTER_SCRIPT), str(port)],
+        env=env,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+    try:
+        startup_output = read_line_within(proc.stdout, timeout=30)
+        if startup_output is None or not _wait_for_server(port):
+            proc.kill()
+            stdout, stderr = proc.communicate(timeout=5)
+            pytest.fail(f"main() did not serve.\nstdout: {stdout[:2000]}\nstderr: {stderr[:2000]}")
+        yield f"http://127.0.0.1:{port}", startup_output
+    finally:
+        if proc.poll() is None:
+            proc.send_signal(signal.SIGTERM)
+            try:
+                proc.communicate(timeout=5)
+            except subprocess.TimeoutExpired:
+                proc.kill()
+                proc.communicate(timeout=5)
 
 
 @pytest.fixture(scope="session")

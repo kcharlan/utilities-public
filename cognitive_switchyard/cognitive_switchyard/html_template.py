@@ -1443,21 +1443,32 @@ def render_app_html(bootstrap: dict[str, Any]) -> str:
                   linear-gradient(90deg, rgba(255,255,255,0.02) 1px, transparent 1px);
                 background-size: 40px 40px;
               }
-              .dag-canvas-root { position: relative; width: 100%; height: 100%; overflow: hidden; touch-action: none; }
+              .dag-canvas-root { position: relative; width: 100%; height: 100%; overflow: hidden; touch-action: none; cursor: grab; outline: none; }
+              .dag-canvas-root:active { cursor: grabbing; }
+              .dag-canvas-root.selecting { cursor: pointer; }
               .dag-viewport { position: absolute; inset: 0; transform-origin: 0 0; }
               .dag-edges { position: absolute; overflow: visible; pointer-events: none; }
+              .dag-edges g { cursor: pointer; outline: none; }
+              .dag-edge-hit { pointer-events: stroke; }
+              .dag-canvas-root.locked .dag-edge-hit, .dag-canvas-root.locked .dag-handle { pointer-events: none; }
               .dag-edge.animated { stroke-dasharray: 5; animation: dag-edge-flow .5s linear infinite; }
               .dag-edges g[data-selected="true"] .dag-edge { stroke: #555; }
               @keyframes dag-edge-flow { to { stroke-dashoffset: -10; } }
-              .dag-node { position: absolute; box-sizing: border-box; padding: 10px; text-align: center; cursor: grab; font-size: 12px; user-select: none; }
+              .dag-node { position: absolute; box-sizing: border-box; padding: 10px; text-align: center; cursor: grab; font-size: 12px; user-select: none; outline: none; }
+              .dag-node:active { cursor: grabbing; }
+              .dag-node:not(.dag-task-node) { pointer-events: none; }
               .dag-node.selected { box-shadow: 0 0 0 1px var(--text-primary); }
-              .dag-handle { position: absolute; left: 50%; width: 4px; height: 4px; border: 1px solid white; border-radius: 50%; background: #1a192b; transform: translateX(-50%); cursor: crosshair; }
+              .dag-handle { position: absolute; left: 50%; width: 6px; height: 6px; border: 1px solid white; border-radius: 50%; background: #1a192b; transform: translateX(-50%); cursor: crosshair; }
               .dag-target-handle { top: -3px; }
               .dag-source-handle { bottom: -3px; }
-              .dag-controls { position: absolute; left: 15px; bottom: 15px; display: flex; flex-direction: column; box-shadow: 0 0 2px #777; }
-              .dag-controls button { width: 26px; height: 26px; border: 0; border-bottom: 1px solid #ddd; background: white; color: #999; cursor: pointer; }
-              .dag-controls svg { width: 12px; height: 12px; fill: currentColor; }
-              .dag-minimap { position: absolute; right: 15px; bottom: 15px; width: 200px; height: 150px; background: white; }
+              .dag-controls { position: absolute; left: 15px; bottom: 15px; display: flex; flex-direction: column; box-shadow: 0 0 2px 1px rgba(0, 0, 0, .08); }
+              .dag-controls button { display: flex; justify-content: center; align-items: center; width: 26px; height: 26px; padding: 4px; border: 0; border-bottom: 1px solid #eee; background: #fefefe; color: #999; cursor: pointer; user-select: none; }
+              .dag-controls button:hover { background: #f4f4f4; }
+              .dag-controls button:disabled { pointer-events: none; }
+              .dag-controls button:disabled svg { fill-opacity: .4; }
+              .dag-controls svg { width: 100%; max-width: 12px; max-height: 12px; fill: currentColor; }
+              .dag-minimap { position: absolute; right: 15px; bottom: 15px; width: 200px; height: 150px; background: white; cursor: auto; }
+              .dag-minimap-mask { fill: rgba(240, 240, 240, .6); }
 
               .dag-canvas {
                 height: calc(100vh - var(--topbar-height) - 88px);
@@ -1593,10 +1604,12 @@ def render_app_html(bootstrap: dict[str, Any]) -> str:
             <script id="switchyard-bootstrap" type="application/json">__BOOTSTRAP_JSON__</script>
             <script type="module">
 const html = htm.bind(preact.h);
-              const { Icon } = frontendKit;
+              const { Icon, memo } = frontendKit;
 
               const bootstrap = JSON.parse(document.getElementById("switchyard-bootstrap").textContent);
-              const {useEffect, useMemo, useRef, useState} = preactHooks;
+              const {useEffect, useLayoutEffect, useMemo, useRef, useState} = preactHooks;
+              // React shows a select's first option when its value matches none; Preact leaves it blank.
+              const shownOption = (value, options) => options.includes(value) ? value : options[0];
               const OPERABLE_STATUSES = new Set(["created", "idle", "running", "paused", "planning", "resolving", "verifying", "auto_fixing"]);
               const ACTIVE_STATUSES = new Set(["running", "idle", "paused", "planning", "resolving", "verifying", "auto_fixing"]);
               const STATUS_COLORS = {
@@ -2582,27 +2595,27 @@ const html = htm.bind(preact.h);
                 }
 
                 return (
-                  html`<div class=${"app-shell"}> <${TopBar} currentSession=${currentSession} currentView=${view} workerCount=${workerCount} activeWorkers=${activeWorkers} elapsed=${dashboard?.session?.elapsed || 0} runElapsed=${dashboard?.session?.run_elapsed || 0} runNumber=${dashboard?.session?.run_number || 0} onNavigate=${setView} isPausing=${isPausing} onPause=${() => handleSessionControl("pause")} onResume=${() => handleSessionControl("resume")} onAbort=${() => handleSessionControl("abort")} onEnd=${() => handleSessionControl("end")} onNewRun=${() => handleSessionControl("resume")} /> ${message ? (
-                      html`<div class=${`banner ${message.level === "error" ? "error" : message.level === "warning" ? "warning" : ""}`} style=${{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}> <div style=${{ flex: 1 }}> <span>${message.text}</span> ${message.level === "error" && message.sessionId ? (
-                            html`<button type=${"button"} class=${"secondary-button"} style=${{ marginLeft: '12px', fontSize: 'var(--text-xs)', padding: '2px 8px' }} onClick=${() => handleForceReset(message.sessionId)}> Force Reset </button>`
-                          ) : null} </div> <button type=${"button"} onClick=${() => setMessage(null)} style=${{ background: 'none', border: 'none', color: 'inherit', cursor: 'pointer',
-                                   fontSize: '18px', padding: '0 0 0 12px', lineHeight: 1, opacity: 0.7 }} title=${"Dismiss"} onMouseOver=${(e) => e.currentTarget.style.opacity = '1'} onMouseOut=${(e) => e.currentTarget.style.opacity = '0.7'}> × </button> </div>`
-                    ) : null} ${view === "monitor" ? (
+                  html`<div class=${"app-shell"}><${TopBar} currentSession=${currentSession} currentView=${view} workerCount=${workerCount} activeWorkers=${activeWorkers} elapsed=${dashboard?.session?.elapsed || 0} runElapsed=${dashboard?.session?.run_elapsed || 0} runNumber=${dashboard?.session?.run_number || 0} onNavigate=${setView} isPausing=${isPausing} onPause=${() => handleSessionControl("pause")} onResume=${() => handleSessionControl("resume")} onAbort=${() => handleSessionControl("abort")} onEnd=${() => handleSessionControl("end")} onNewRun=${() => handleSessionControl("resume")} />${message ? (
+                      html`<div class=${`banner ${message.level === "error" ? "error" : message.level === "warning" ? "warning" : ""}`} style=${{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}><div style=${{ flex: 1 }}><span>${message.text}</span>${message.level === "error" && message.sessionId ? (
+                            html`<button type=${"button"} class=${"secondary-button"} style=${{ marginLeft: '12px', fontSize: 'var(--text-xs)', padding: '2px 8px' }} onClick=${() => handleForceReset(message.sessionId)}>Force Reset</button>`
+                          ) : null}</div><button type=${"button"} onClick=${() => setMessage(null)} style=${{ background: 'none', border: 'none', color: 'inherit', cursor: 'pointer',
+                                   fontSize: '18px', padding: '0 0 0 12px', lineHeight: 1, opacity: 0.7 }} title=${"Dismiss"} onMouseOver=${(e) => e.currentTarget.style.opacity = '1'} onMouseOut=${(e) => e.currentTarget.style.opacity = '0.7'}>×</button></div>`
+                    ) : null}${view === "monitor" ? (
                       html`<${MonitorView} dashboard=${dashboard} currentSession=${currentSession} tasks=${tasks} taskLogs=${taskLogs} phaseDetail=${phaseDetail} onOpenTask=${openTaskDetail} onOpenDag=${openDag} onRevealFile=${handleRevealFile} onMoveTask=${handleMoveTask} onRescan=${handleRescan} isRescanning=${isRescanning} onReprocess=${handleReprocess} isReprocessing=${isReprocessing} />`
-                    ) : null} ${view === "setup" ? (
+                    ) : null}${view === "setup" ? (
                       html`<${SetupView} currentSession=${currentSession} setupDraft=${setupDraft} setSetupDraft=${setSetupDraft} selectedPack=${selectedPack} packs=${packs} intake=${intake} preflight=${preflight} settings=${settings} showAdvanced=${showAdvanced} setShowAdvanced=${setShowAdvanced} isBusy=${isBusy} repoRootInfo=${repoRootInfo} repoBranches=${repoBranches} onCreateDraft=${handleCreateDraftSession} onStartSession=${handleStartSession} onRefreshIntake=${() => currentSession && loadSessionData(currentSession.id, { includePreflight: true })} onRunPreflight=${async () => {
                   setIsBusy(true);
                   try { await refreshPreflight(); } finally { setIsBusy(false); }
                 }} onOpenIntake=${handleOpenIntake} onOpenIntakeTerminal=${handleOpenIntakeTerminal} onRevealFile=${handleRevealFile} onBrowseRepoRoot=${handleBrowseRepoRoot} onBrowseProjectDir=${handleBrowseProjectDir} onResolveRepoRoot=${resolveRepoRoot} onCreateBranch=${handleCreateBranch} onDiscardDraft=${handleDiscardDraft} onNewRun=${() => handleSessionControl("resume")} onNavigate=${setView} />`
-                    ) : null} ${view === "history" ? (
+                    ) : null}${view === "history" ? (
                       html`<${HistoryView} sessions=${sessions} settings=${settings} selectedSession=${currentSession && !OPERABLE_STATUSES.has(currentSession.status) ? currentSession : null} selectedTasks=${historyTasks} onOpenSession=${handleOpenHistorySession} onOpenSettings=${() => setView("settings")} onPurgeSession=${handlePurgeSession} onPurgeAll=${handlePurgeAll} />`
-                    ) : null} ${view === "settings" ? (
+                    ) : null}${view === "settings" ? (
                       html`<${SettingsView} settingsDraft=${settingsDraft} setSettingsDraft=${setSettingsDraft} packs=${packs} onSave=${handleSettingsSave} />`
-                    ) : null} ${view === "task-detail" ? (
+                    ) : null}${view === "task-detail" ? (
                       html`<${TaskDetailView} task=${selectedTask} currentSession=${currentSession} logLines=${filteredTaskLog} taskLogs=${taskLogs} sessionStatus=${appSessionStatus} runtimeState=${appRuntimeState} searchValue=${taskSearch} onSearchChange=${setTaskSearch} onBack=${() => setView("monitor")} onMoveTask=${handleMoveTask} onRevealFile=${handleRevealFile} />`
-                    ) : null} ${view === "dag" ? (
+                    ) : null}${view === "dag" ? (
                       html`<${DagView} dag=${dag} liveTasks=${tasks} onBack=${() => setView("monitor")} onOpenTask=${openTaskDetail} />`
-                    ) : null} </div>`
+                    ) : null}</div>`
                 );
               }
 
@@ -2639,25 +2652,25 @@ const html = htm.bind(preact.h);
                 }, [isActive]);
                 const displayedRunTime = isActive ? runTick : runElapsed;
                 return (
-                  html`<header class=${"topbar"}> <div class=${"brand"}>Cognitive Switchyard</div> <div class=${"topbar-center"}> <span class=${"session-text secondary"}> ${currentSession ? (
-                          html`<${preact.Fragment}> ${currentSession.name} ${" | "} <span class=${"status-badge"} style=${statusBadgeStyle(sessionStatus)}>${sessionStatus}</span> ${" | "} ${runNumber > 0 ? (
-                              html`<span title=${"Current run time"}> ${"Run #"}${runNumber}${": "}${formatElapsed(displayedRunTime)} </span>`
-                            ) : null} ${runNumber > 0 ? (
-                              html`<span style=${{ marginLeft: '0.75em', color: 'var(--text-primary)' }} title=${"Total active time across all runs"}> ${"("}${formatElapsed(sessionTick)}${" cumulative)"} </span>`
-                            ) : null} <//>`
-                        ) : "No active session"} </span> ${currentSession ? (
+                  html`<header class=${"topbar"}><div class=${"brand"}>Cognitive Switchyard</div><div class=${"topbar-center"}><span class=${"session-text secondary"}>${currentSession ? (
+                          html`<${preact.Fragment}>${currentSession.name}${" | "}<span class=${"status-badge"} style=${statusBadgeStyle(sessionStatus)}>${sessionStatus}</span>${" | "}${runNumber > 0 ? (
+                              html`<span title=${"Current run time"}>${"Run #"}${runNumber}${": "}${formatElapsed(displayedRunTime)}</span>`
+                            ) : null}${runNumber > 0 ? (
+                              html`<span style=${{ marginLeft: '0.75em', color: 'var(--text-primary)' }} title=${"Total active time across all runs"}>${"("}${formatElapsed(sessionTick)}${" cumulative)"}</span>`
+                            ) : null}<//>`
+                        ) : "No active session"}</span>${currentSession ? (
                         html`<span class=${"session-text muted hidden-mobile"}>${`${activeWorkers}/${workerCount} active`}</span>`
-                      ) : null} </div> <nav class=${"topbar-nav"}> <button type=${"button"} class=${`nav-link${currentView === "setup" ? " active" : ""}`} onClick=${() => onNavigate("setup")}>Setup</button> <button type=${"button"} class=${`nav-link${currentView === "monitor" ? " active" : ""}`} onClick=${() => onNavigate("monitor")}>Monitor</button> <button type=${"button"} class=${`nav-link${currentView === "history" ? " active" : ""}`} onClick=${() => onNavigate("history")}>History</button> ${isPausing ? (
+                      ) : null}</div><nav class=${"topbar-nav"}><button type=${"button"} class=${`nav-link${currentView === "setup" ? " active" : ""}`} onClick=${() => onNavigate("setup")}>Setup</button><button type=${"button"} class=${`nav-link${currentView === "monitor" ? " active" : ""}`} onClick=${() => onNavigate("monitor")}>Monitor</button><button type=${"button"} class=${`nav-link${currentView === "history" ? " active" : ""}`} onClick=${() => onNavigate("history")}>History</button>${isPausing ? (
                         html`<button type=${"button"} class=${"pausing-button"} disabled>⏸ Pausing…</button>`
                       ) : ["planning", "resolving", "running", "verifying", "auto_fixing"].includes(currentSession?.status) ? (
                         html`<button type=${"button"} class=${"secondary-button pause-button"} onClick=${onPause}>❚❚ Pause</button>`
                       ) : currentSession?.status === "paused" ? (
                         html`<button type=${"button"} class=${"action-button resume-entrance"} onClick=${onResume}>▶ Resume</button>`
-                      ) : null} ${currentSession?.status === "idle" ? (
-                        html`<${preact.Fragment}> <button type=${"button"} class=${"action-button"} onClick=${onNewRun}>New Run</button> <button type=${"button"} class=${"secondary-button"} onClick=${onEnd}>End Session</button> <//>`
-                      ) : null} ${currentSession && !["completed", "aborted", "idle"].includes(currentSession.status) ? (
+                      ) : null}${currentSession?.status === "idle" ? (
+                        html`<${preact.Fragment}><button type=${"button"} class=${"action-button"} onClick=${onNewRun}>New Run</button><button type=${"button"} class=${"secondary-button"} onClick=${onEnd}>End Session</button><//>`
+                      ) : null}${currentSession && !["completed", "aborted", "idle"].includes(currentSession.status) ? (
                         html`<button type=${"button"} class=${"danger-button"} onClick=${onAbort}>Abort</button>`
-                      ) : null} <button type=${"button"} class=${"icon-button"} onClick=${() => onNavigate("settings")} aria-label=${"Settings"}> ${icon("settings", { width: 18, height: 18 })} </button> </nav> </header>`
+                      ) : null}<button type=${"button"} class=${"icon-button"} onClick=${() => onNavigate("settings")} aria-label=${"Settings"}>${icon("settings", { width: 18, height: 18 })}</button></nav></header>`
                 );
               }
 
@@ -2687,7 +2700,7 @@ const html = htm.bind(preact.h);
                 const activeStageOrder = activeStageKey ? STAGE_ORDER[activeStageKey] : -1;
 
                 return (
-                  html`<div class=${"pipeline-strip"}> ${stages.map(([key, label], index) => {
+                  html`<div class=${"pipeline-strip"}>${stages.map(([key, label], index) => {
                       const count = pipeline[key] || 0;
                       const stageOrder = STAGE_ORDER[key];
                       const isActive = key === activeStageKey;
@@ -2721,7 +2734,7 @@ const html = htm.bind(preact.h);
                         badgeOpacity = 0.35;
                       }
                       return (
-                        html`<${preact.Fragment} key=${key}> <button type=${"button"} class=${"stage-badge"} title=${pipelineDirs[key] ? `Open ${label} directory` : label} onClick=${() => pipelineDirs[key] && currentSession && onRevealFile(pipelineDirs[key])} style=${{
+                        html`<${preact.Fragment} key=${key}><button type=${"button"} class=${"stage-badge"} title=${pipelineDirs[key] ? `Open ${label} directory` : label} onClick=${() => pipelineDirs[key] && currentSession && onRevealFile(pipelineDirs[key])} style=${{
                               color: badgeColor,
                               background: badgeBg,
                               animation: badgeAnimation,
@@ -2729,15 +2742,15 @@ const html = htm.bind(preact.h);
                               border: badgeBorder,
                               opacity: badgeOpacity,
                               transition: "all 300ms ease",
-                            }}> ${`${label}(${count})`} </button> ${index < stages.length - 1 ? (
+                            }}>${`${label}(${count})`}</button>${index < stages.length - 1 ? (
                             html`<span class=${"stage-separator"} style=${{ opacity: isPast ? 0.3 : 1 }}>${">"}</span>`
-                          ) : null} <//>`
+                          ) : null}<//>`
                       );
-                    })} <button type=${"button"} class=${"icon-button"} onClick=${onOpenDag} aria-label=${"Open DAG"}> ${icon("git-branch", { width: 18, height: 18 })} </button> <button type=${"button"} class=${"icon-button"} onClick=${onRescan} disabled=${isRescanning || !currentSession} aria-label=${"Rescan filesystem"} title=${"Rescan: reconcile filesystem state into database"} style=${{ position: "relative" }}> ${isRescanning
+                    })}<button type=${"button"} class=${"icon-button"} onClick=${onOpenDag} aria-label=${"Open DAG"}>${icon("git-branch", { width: 18, height: 18 })}</button><button type=${"button"} class=${"icon-button"} onClick=${onRescan} disabled=${isRescanning || !currentSession} aria-label=${"Rescan filesystem"} title=${"Rescan: reconcile filesystem state into database"} style=${{ position: "relative" }}>${isRescanning
                         ? icon("loader", { width: 18, height: 18, style: { animation: "spin 1s linear infinite" } })
-                        : icon("refresh-cw", { width: 18, height: 18 })} </button> <button type=${"button"} class=${"icon-button"} onClick=${onReprocess} disabled=${!canReprocess || isReprocessing} aria-label=${"Reprocess pipeline"} title=${"Reprocess: re-run planning, resolution, and execution on current filesystem state"} style=${{ position: "relative" }}> ${isReprocessing
+                        : icon("refresh-cw", { width: 18, height: 18 })}</button><button type=${"button"} class=${"icon-button"} onClick=${onReprocess} disabled=${!canReprocess || isReprocessing} aria-label=${"Reprocess pipeline"} title=${"Reprocess: re-run planning, resolution, and execution on current filesystem state"} style=${{ position: "relative" }}>${isReprocessing
                         ? icon("loader", { width: 18, height: 18, style: { animation: "spin 1s linear infinite" } })
-                        : html`<svg xmlns=${"http://www.w3.org/2000/svg"} width=${"18"} height=${"18"} viewBox=${"0 0 24 24"} fill=${"none"} stroke=${"currentColor"} stroke-width=${"2"} stroke-linecap=${"round"} stroke-linejoin=${"round"}><path d=${"M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"} /><path d=${"M3 3v5h5"} /></svg>`} </button> </div>`
+                        : html`<svg xmlns=${"http://www.w3.org/2000/svg"} width=${"18"} height=${"18"} viewBox=${"0 0 24 24"} fill=${"none"} stroke=${"currentColor"} stroke-width=${"2"} stroke-linecap=${"round"} stroke-linejoin=${"round"}><path d=${"M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"} /><path d=${"M3 3v5h5"} /></svg>`}</button></div>`
                 );
               }
 
@@ -2795,7 +2808,7 @@ const html = htm.bind(preact.h);
                     flexDirection: 'column',
                     height: '280px',
                     minWidth: 0,
-                  }}> <div style=${{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 'var(--space-2)', minWidth: 0 }}> <span class=${"mono"} style=${{ fontSize: 'var(--text-sm)', color: 'var(--status-active)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', minWidth: 0 }} title=${agent.file}> ${agent.file} </span> <span class=${"mono muted"} style=${{ fontSize: 'var(--text-xs)', flexShrink: 0, whiteSpace: 'nowrap', marginLeft: 'var(--space-2)' }}> ${formatElapsed(elapsed)} </span> </div> ${detailMessage ? (
+                  }}><div style=${{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 'var(--space-2)', minWidth: 0 }}><span class=${"mono"} style=${{ fontSize: 'var(--text-sm)', color: 'var(--status-active)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', minWidth: 0 }} title=${agent.file}>${agent.file}</span><span class=${"mono muted"} style=${{ fontSize: 'var(--text-xs)', flexShrink: 0, whiteSpace: 'nowrap', marginLeft: 'var(--space-2)' }}>${formatElapsed(elapsed)}</span></div>${detailMessage ? (
                       html`<div class=${"detail-line"} style=${{
                         marginBottom: 'var(--space-2)',
                         padding: 'var(--space-1) var(--space-2)',
@@ -2807,12 +2820,12 @@ const html = htm.bind(preact.h);
                         overflow: 'hidden',
                         textOverflow: 'ellipsis',
                         whiteSpace: 'nowrap',
-                      }}> ${detailMessage} </div>`
-                    ) : null} <div ref=${logTailRef} class=${"log-tail"} style=${{ flex: 1, minHeight: 0, overflowY: 'auto', fontSize: 'var(--text-xs)' }}> ${logLines.length > 0
+                      }}>${detailMessage}</div>`
+                    ) : null}<div ref=${logTailRef} class=${"log-tail"} style=${{ flex: 1, minHeight: 0, overflowY: 'auto', fontSize: 'var(--text-xs)' }}>${logLines.length > 0
                         ? logLines.map(entry => filterLogLine(entry.line)).filter(r => r.show).slice(-10).map((r, idx) => (
                             html`<div key=${idx} class=${"log-line"}>${r.text}</div>`
                           ))
-                        : html`<div class=${"log-line muted"}>Waiting for output...</div>`} </div> </div>`
+                        : html`<div class=${"log-line muted"}>Waiting for output...</div>`}</div></div>`
                 );
               }
 
@@ -2837,14 +2850,14 @@ const html = htm.bind(preact.h);
                   }
                 }, [logLines.length]);
                 return (
-                  html`<article class=${"worker-card active"} style=${{ gridColumn: '1 / -1' }}> <div class=${"worker-card-header"}> <div class=${"worker-card-title"}> <span class=${"mono"} style=${{ color: 'var(--status-active)', fontSize: 'var(--text-md)' }}>${title}</span> <span class=${"secondary"}>${subtitle}</span> </div> <div style=${{ display: 'flex', alignItems: 'center', gap: 'var(--space-2)' }}> <span class=${"mono muted"} style=${{ fontSize: 'var(--text-xs)' }}>${formatElapsed(elapsed)}</span> <span class=${"status-badge"} style=${statusBadgeStyle("active")}>${statusLabel}</span> </div> </div> ${total > 0 ? (
-                      html`<div style=${{ marginTop: 'var(--space-3)' }}> <div style=${{ display: 'flex', justifyContent: 'space-between', marginBottom: '4px' }}> <span class=${"mono muted"} style=${{ fontSize: 'var(--text-xs)' }}>${`${processed}/${total} processed`}</span> <span class=${"mono muted"} style=${{ fontSize: 'var(--text-xs)' }}>${`${progressPct}%`}</span> </div> <div class=${"progress-bar"} style=${{ gridTemplateColumns: '1fr' }}> <span style=${{
+                  html`<article class=${"worker-card active"} style=${{ gridColumn: '1 / -1' }}><div class=${"worker-card-header"}><div class=${"worker-card-title"}><span class=${"mono"} style=${{ color: 'var(--status-active)', fontSize: 'var(--text-md)' }}>${title}</span><span class=${"secondary"}>${subtitle}</span></div><div style=${{ display: 'flex', alignItems: 'center', gap: 'var(--space-2)' }}><span class=${"mono muted"} style=${{ fontSize: 'var(--text-xs)' }}>${formatElapsed(elapsed)}</span><span class=${"status-badge"} style=${statusBadgeStyle("active")}>${statusLabel}</span></div></div>${total > 0 ? (
+                      html`<div style=${{ marginTop: 'var(--space-3)' }}><div style=${{ display: 'flex', justifyContent: 'space-between', marginBottom: '4px' }}><span class=${"mono muted"} style=${{ fontSize: 'var(--text-xs)' }}>${`${processed}/${total} processed`}</span><span class=${"mono muted"} style=${{ fontSize: 'var(--text-xs)' }}>${`${progressPct}%`}</span></div><div class=${"progress-bar"} style=${{ gridTemplateColumns: '1fr' }}><span style=${{
                             background: 'var(--status-active)',
                             width: `${progressPct}%`,
                             transition: 'width 400ms ease',
                             display: 'block',
-                          }} /> </div> </div>`
-                    ) : null} ${detailMessage ? (
+                          }} /></div></div>`
+                    ) : null}${detailMessage ? (
                       html`<div class=${"detail-line"} style=${{
                         marginTop: 'var(--space-2)',
                         padding: 'var(--space-1) var(--space-2)',
@@ -2856,13 +2869,13 @@ const html = htm.bind(preact.h);
                         overflow: 'hidden',
                         textOverflow: 'ellipsis',
                         whiteSpace: 'nowrap',
-                      }}> ${detailMessage} </div>`
-                    ) : null} ${(planningAgents || []).length > 0 ? (
-                      html`<div style=${{ display: 'grid', gridTemplateColumns: `repeat(${Math.min((planningAgents || []).length, 4)}, minmax(0, 1fr))`, gap: 'var(--space-3)', marginTop: 'var(--space-3)' }}> ${(planningAgents || []).map((agent) => (
+                      }}>${detailMessage}</div>`
+                    ) : null}${(planningAgents || []).length > 0 ? (
+                      html`<div style=${{ display: 'grid', gridTemplateColumns: `repeat(${Math.min((planningAgents || []).length, 4)}, minmax(0, 1fr))`, gap: 'var(--space-3)', marginTop: 'var(--space-3)' }}>${(planningAgents || []).map((agent) => (
                           html`<${PlannerAgentCard} key=${agent.planner_task_id} agent=${agent} logLines=${(taskLogs || {})[agent.planner_task_id] || []} detailMessage=${(phaseDetail || {})[agent.planner_task_id]} />`
-                        ))} </div>`
+                        ))}</div>`
                     ) : (
-                      html`<div ref=${logTailRef} class=${"log-tail"} style=${{ minHeight: '60px', maxHeight: '240px', overflowY: 'auto' }}> ${logLines.length > 0 ? (
+                      html`<div ref=${logTailRef} class=${"log-tail"} style=${{ minHeight: '60px', maxHeight: '240px', overflowY: 'auto' }}>${logLines.length > 0 ? (
                           logLines
                             .map(entry => filterLogLine(entry.line))
                             .filter(r => r.show)
@@ -2873,9 +2886,9 @@ const html = htm.bind(preact.h);
                         ) : events.length === 0 ? (
                           html`<div class=${"log-line muted"}>Claude CLI running... (${formatElapsed(elapsed)})</div>`
                         ) : events.slice(-8).map((evt, idx) => (
-                          html`<div key=${idx} class=${`log-line ${evt.type?.includes("error") ? "error" : evt.type?.includes("fail") ? "error" : ""}`}> <span class=${"muted"} style=${{ marginRight: '8px' }}>${evt.timestamp?.slice(11, 19) || ""}</span> ${evt.message} </div>`
-                        ))} </div>`
-                    )} </article>`
+                          html`<div key=${idx} class=${`log-line ${evt.type?.includes("error") ? "error" : evt.type?.includes("fail") ? "error" : ""}`}><span class=${"muted"} style=${{ marginRight: '8px' }}>${evt.timestamp?.slice(11, 19) || ""}</span>${evt.message}</div>`
+                        ))}</div>`
+                    )}</article>`
                 );
               }
 
@@ -2932,45 +2945,45 @@ const html = htm.bind(preact.h);
                   html`<article class=${"worker-card active"} style=${{
                     gridColumn: '1 / -1', borderColor, boxShadow: `0 0 12px ${glowColor}`,
                     cursor: 'pointer',
-                  }} onClick=${() => setExpanded(e => !e)}> <div class=${"worker-card-header"}> <div class=${"worker-card-title"}> <span style=${{ color: accentColor, fontSize: 'var(--text-md)', fontWeight: 600 }}> ${reasonLabel} </span> ${fixContext === "task_failure" && fixTaskId ? (
-                          html`<button type=${"button"} class=${"nav-link"} style=${{ padding: 0, fontSize: 'var(--text-xs)', textDecoration: 'underline' }} onClick=${(e) => { e.stopPropagation(); if (onOpenTask) onOpenTask(fixTaskId); }}> View task: ${fixTaskId} </button>`
-                        ) : null} </div> <div style=${{ display: 'flex', alignItems: 'center', gap: 'var(--space-2)' }}> <span class=${"mono muted"} style=${{ fontSize: 'var(--text-xs)' }}>${expanded ? "▲" : "▼"}</span> <span class=${"status-badge"} style=${statusBadgeStyle(isAutoFix ? "review" : "active")}> ${isAutoFix ? `attempt ${attempt}/${maxAttempts}` : "running"} </span> </div> </div> ${(isVerifying || isAutoFix) ? (
+                  }} onClick=${() => setExpanded(e => !e)}><div class=${"worker-card-header"}><div class=${"worker-card-title"}><span style=${{ color: accentColor, fontSize: 'var(--text-md)', fontWeight: 600 }}>${reasonLabel}</span>${fixContext === "task_failure" && fixTaskId ? (
+                          html`<button type=${"button"} class=${"nav-link"} style=${{ padding: 0, fontSize: 'var(--text-xs)', textDecoration: 'underline' }} onClick=${(e) => { e.stopPropagation(); if (onOpenTask) onOpenTask(fixTaskId); }}>View task: ${fixTaskId}</button>`
+                        ) : null}</div><div style=${{ display: 'flex', alignItems: 'center', gap: 'var(--space-2)' }}><span class=${"mono muted"} style=${{ fontSize: 'var(--text-xs)' }}>${expanded ? "▲" : "▼"}</span><span class=${"status-badge"} style=${statusBadgeStyle(isAutoFix ? "review" : "active")}>${isAutoFix ? `attempt ${attempt}/${maxAttempts}` : "running"}</span></div></div>${(isVerifying || isAutoFix) ? (
                       html`<div style=${{
                         display: 'flex', alignItems: 'center', gap: 'var(--space-2)',
                         marginTop: 'var(--space-2)',
                         fontSize: 'var(--text-xs)', color: 'var(--text-secondary)',
-                      }}> <span class=${"mono muted"}>Elapsed:</span> <span class=${"mono"}>${formatElapsed(elapsed)}</span> </div>`
-                    ) : null} ${isAutoFix && maxAttempts > 0 ? (
-                      html`<div style=${{ marginTop: 'var(--space-3)' }}> <div style=${{ display: 'flex', justifyContent: 'space-between', marginBottom: '4px' }}> <span class=${"mono muted"} style=${{ fontSize: 'var(--text-xs)' }}> ${fixContext === "task_failure" && fixTaskId
+                      }}><span class=${"mono muted"}>Elapsed:</span><span class=${"mono"}>${formatElapsed(elapsed)}</span></div>`
+                    ) : null}${isAutoFix && maxAttempts > 0 ? (
+                      html`<div style=${{ marginTop: 'var(--space-3)' }}><div style=${{ display: 'flex', justifyContent: 'space-between', marginBottom: '4px' }}><span class=${"mono muted"} style=${{ fontSize: 'var(--text-xs)' }}>${fixContext === "task_failure" && fixTaskId
                               ? `Fixing task: ${fixTaskId}`
-                              : "Fixing verification failures"} </span> <span class=${"mono muted"} style=${{ fontSize: 'var(--text-xs)' }}> ${`${attempt}/${maxAttempts}`} </span> </div> <div class=${"progress-bar"} style=${{ gridTemplateColumns: `repeat(${maxAttempts}, 1fr)` }}> ${Array.from({ length: maxAttempts }).map((_, i) => (
+                              : "Fixing verification failures"}</span><span class=${"mono muted"} style=${{ fontSize: 'var(--text-xs)' }}>${`${attempt}/${maxAttempts}`}</span></div><div class=${"progress-bar"} style=${{ gridTemplateColumns: `repeat(${maxAttempts}, 1fr)` }}>${Array.from({ length: maxAttempts }).map((_, i) => (
                             html`<span key=${i} class=${i < attempt ? "done" : i === attempt ? "active" : "future"} />`
-                          ))} </div> </div>`
-                    ) : null} ${lastSummary ? (
+                          ))}</div></div>`
+                    ) : null}${lastSummary ? (
                       html`<div style=${{
                         marginTop: 'var(--space-2)', padding: 'var(--space-2)',
                         background: 'var(--bg-surface)', borderRadius: '4px',
                         fontSize: 'var(--text-xs)', color: 'var(--text-secondary)',
                         fontFamily: 'var(--font-mono)',
                         maxHeight: '120px', overflowY: 'auto',
-                      }}> <span class=${"muted"}>Last fix: </span>${lastSummary} </div>`
-                    ) : null} ${expanded ? (
-                      html`<div class=${"log-tail"} style=${{ maxHeight: '400px', minHeight: '200px', overflowY: 'auto' }}> ${eventLines.map((evt, idx) => (
-                          html`<div key=${`evt-${idx}`} class=${`log-line ${evt.type?.includes("fail") ? "error" : ""}`} style=${{ whiteSpace: 'pre-wrap' }}> <span class=${"muted"} style=${{ marginRight: '8px' }}>${evt.timestamp?.slice(11, 19) || ""}</span> ${evt.message} </div>`
-                        ))} ${streamingLines.map(entry => filterLogLine(entry.line)).filter(r => r.show).map((r, idx) => (
+                      }}><span class=${"muted"}>Last fix: </span>${lastSummary}</div>`
+                    ) : null}${expanded ? (
+                      html`<div class=${"log-tail"} style=${{ maxHeight: '400px', minHeight: '200px', overflowY: 'auto' }}>${eventLines.map((evt, idx) => (
+                          html`<div key=${`evt-${idx}`} class=${`log-line ${evt.type?.includes("fail") ? "error" : ""}`} style=${{ whiteSpace: 'pre-wrap' }}><span class=${"muted"} style=${{ marginRight: '8px' }}>${evt.timestamp?.slice(11, 19) || ""}</span>${evt.message}</div>`
+                        ))}${streamingLines.map(entry => filterLogLine(entry.line)).filter(r => r.show).map((r, idx) => (
                           html`<div key=${`log-${idx}`} class=${"log-line"}>${r.text}</div>`
-                        ))} ${!hasContent ? (
-                          html`<div class=${"log-line muted"}> ${isVerifying ? "Running verification command..." : "Running auto-fix agent..."} </div>`
-                        ) : null} </div>`
+                        ))}${!hasContent ? (
+                          html`<div class=${"log-line muted"}>${isVerifying ? "Running verification command..." : "Running auto-fix agent..."}</div>`
+                        ) : null}</div>`
                     ) : (
-                      html`<div ref=${logTailRef} class=${"log-tail"} style=${{ minHeight: '60px', maxHeight: '250px', overflowY: 'auto' }}> ${eventLines.slice(-6).map((evt, idx) => (
-                          html`<div key=${`evt-${idx}`} class=${`log-line ${evt.type?.includes("fail") ? "error" : ""}`} style=${{ whiteSpace: 'pre-wrap' }}> <span class=${"muted"} style=${{ marginRight: '8px' }}>${evt.timestamp?.slice(11, 19) || ""}</span> ${evt.message} </div>`
-                        ))} ${streamingLines.map(entry => filterLogLine(entry.line)).filter(r => r.show).slice(-15).map((r, idx) => (
+                      html`<div ref=${logTailRef} class=${"log-tail"} style=${{ minHeight: '60px', maxHeight: '250px', overflowY: 'auto' }}>${eventLines.slice(-6).map((evt, idx) => (
+                          html`<div key=${`evt-${idx}`} class=${`log-line ${evt.type?.includes("fail") ? "error" : ""}`} style=${{ whiteSpace: 'pre-wrap' }}><span class=${"muted"} style=${{ marginRight: '8px' }}>${evt.timestamp?.slice(11, 19) || ""}</span>${evt.message}</div>`
+                        ))}${streamingLines.map(entry => filterLogLine(entry.line)).filter(r => r.show).slice(-15).map((r, idx) => (
                           html`<div key=${`log-${idx}`} class=${"log-line"}>${r.text}</div>`
-                        ))} ${!hasContent ? (
-                          html`<div class=${"log-line muted"}> ${isVerifying ? "Running verification command..." : "Running auto-fix agent..."} </div>`
-                        ) : null} </div>`
-                    )} </article>`
+                        ))}${!hasContent ? (
+                          html`<div class=${"log-line muted"}>${isVerifying ? "Running verification command..." : "Running auto-fix agent..."}</div>`
+                        ) : null}</div>`
+                    )}</article>`
                 );
               }
 
@@ -3037,13 +3050,13 @@ const html = htm.bind(preact.h);
                 }
 
                 return (
-                  html`<section class=${"worker-grid"}> <article class=${"worker-card"} style=${{ gridColumn: "1 / -1", borderColor: "rgba(52, 211, 153, 0.3)" }}> <div class=${"worker-card-header"}> <div class=${"worker-card-title"}> <span class=${"mono"} style=${{ color: "var(--status-done)", fontSize: "var(--text-md)" }}> Session Completed — Next Steps </span> <span class=${"secondary"}> ${pipeline.done || 0} task(s) done${pipeline.blocked > 0 ? ", " + pipeline.blocked + " blocked" : ""} </span> </div> <span class=${"status-badge"} style=${{ background: "rgba(52, 211, 153, 0.15)", color: "var(--status-done)", border: "1px solid rgba(52, 211, 153, 0.3)" }}>completed</span> </div> ${hasWorktree && !worktreeCleaned ? (
-                        html`<div> <div class=${"completion-card-section"}> <h4>1. Validate</h4> <div class=${"completion-code-block"}> ${validateCmds} <button type=${"button"} class=${"copy-btn"} onClick=${() => copyToClipboard(validateCmds, setCopiedValidate)}> ${copiedValidate ? "Copied!" : "Copy"} </button> </div> </div> <div class=${"completion-card-section"}> <h4>2. Commit message</h4> <textarea class=${"commit-msg-textarea"} value=${editableCommitMsg} onInput=${e => setEditableCommitMsg(e.target.value)} rows=${8} /> <button type=${"button"} class=${"secondary-button"} style=${{ marginTop: "var(--space-2)", fontSize: "var(--text-xs)" }} onClick=${() => copyToClipboard(editableCommitMsg, setCopiedMsg)}> ${copiedMsg ? "Copied!" : "Copy message"} </button> </div> <div class=${"completion-card-section"}> <h4>3a. Squash merge into upstream</h4> <div class=${"completion-code-block"}> ${"cd " + sourceRepo + "\\ngit merge --squash " + branch + "\\ngit commit"} <button type=${"button"} class=${"copy-btn"} onClick=${() => copyToClipboard("cd " + sourceRepo + "\\ngit merge --squash " + branch + "\\ngit commit", setCopiedSquash)}> ${copiedSquash ? "Copied!" : "Copy"} </button> </div> </div> <div class=${"completion-card-section"}> <h4>3b. Open a pull request</h4> <div class=${"completion-code-block"}> ${prCmds} <button type=${"button"} class=${"copy-btn"} onClick=${() => copyToClipboard(prCmds, setCopiedPr)}> ${copiedPr ? "Copied!" : "Copy"} </button> </div> </div> <div class=${"completion-card-section"}> <button type=${"button"} class=${"secondary-button"} style=${{ fontSize: "var(--text-xs)", color: "var(--text-muted)" }} disabled=${cleaningUp} onClick=${handleCleanup}> ${cleaningUp ? "Cleaning up..." : "Clean up worktree"} </button> </div> </div>`
+                  html`<section class=${"worker-grid"}><article class=${"worker-card"} style=${{ gridColumn: "1 / -1", borderColor: "rgba(52, 211, 153, 0.3)" }}><div class=${"worker-card-header"}><div class=${"worker-card-title"}><span class=${"mono"} style=${{ color: "var(--status-done)", fontSize: "var(--text-md)" }}>Session Completed — Next Steps</span><span class=${"secondary"}>${pipeline.done || 0} task(s) done${pipeline.blocked > 0 ? ", " + pipeline.blocked + " blocked" : ""}</span></div><span class=${"status-badge"} style=${{ background: "rgba(52, 211, 153, 0.15)", color: "var(--status-done)", border: "1px solid rgba(52, 211, 153, 0.3)" }}>completed</span></div>${hasWorktree && !worktreeCleaned ? (
+                        html`<div><div class=${"completion-card-section"}><h4>1. Validate</h4><div class=${"completion-code-block"}>${validateCmds}<button type=${"button"} class=${"copy-btn"} onClick=${() => copyToClipboard(validateCmds, setCopiedValidate)}>${copiedValidate ? "Copied!" : "Copy"}</button></div></div><div class=${"completion-card-section"}><h4>2. Commit message</h4><textarea class=${"commit-msg-textarea"} value=${editableCommitMsg} onInput=${e => setEditableCommitMsg(e.target.value)} rows=${8} /><button type=${"button"} class=${"secondary-button"} style=${{ marginTop: "var(--space-2)", fontSize: "var(--text-xs)" }} onClick=${() => copyToClipboard(editableCommitMsg, setCopiedMsg)}>${copiedMsg ? "Copied!" : "Copy message"}</button></div><div class=${"completion-card-section"}><h4>3a. Squash merge into upstream</h4><div class=${"completion-code-block"}>${"cd " + sourceRepo + "\\ngit merge --squash " + branch + "\\ngit commit"}<button type=${"button"} class=${"copy-btn"} onClick=${() => copyToClipboard("cd " + sourceRepo + "\\ngit merge --squash " + branch + "\\ngit commit", setCopiedSquash)}>${copiedSquash ? "Copied!" : "Copy"}</button></div></div><div class=${"completion-card-section"}><h4>3b. Open a pull request</h4><div class=${"completion-code-block"}>${prCmds}<button type=${"button"} class=${"copy-btn"} onClick=${() => copyToClipboard(prCmds, setCopiedPr)}>${copiedPr ? "Copied!" : "Copy"}</button></div></div><div class=${"completion-card-section"}><button type=${"button"} class=${"secondary-button"} style=${{ fontSize: "var(--text-xs)", color: "var(--text-muted)" }} disabled=${cleaningUp} onClick=${handleCleanup}>${cleaningUp ? "Cleaning up..." : "Clean up worktree"}</button></div></div>`
                       ) : hasWorktree && worktreeCleaned ? (
-                        html`<div class=${"completion-card-section"}> <span class=${"mono muted"} style=${{ fontSize: "var(--text-sm)" }}>Worktree cleaned up.</span> </div>`
+                        html`<div class=${"completion-card-section"}><span class=${"mono muted"} style=${{ fontSize: "var(--text-sm)" }}>Worktree cleaned up.</span></div>`
                       ) : (
-                        html`<div class=${"completion-card-section"}> <span style=${{ color: "var(--text-secondary)", fontSize: "var(--text-sm)" }}> Session output is in:${" "} <span class=${"mono"} style=${{ fontSize: "var(--text-xs)" }}>${currentSession?.id || ""}</span> </span> </div>`
-                      )} </article> </section>`
+                        html`<div class=${"completion-card-section"}><span style=${{ color: "var(--text-secondary)", fontSize: "var(--text-sm)" }}>Session output is in:${" "}<span class=${"mono"} style=${{ fontSize: "var(--text-xs)" }}>${currentSession?.id || ""}</span></span></div>`
+                      )}</article></section>`
                 );
               }
 
@@ -3087,23 +3100,23 @@ const html = htm.bind(preact.h);
                   && ((pipeline.intake || 0) + (pipeline.staged || 0) + (pipeline.ready || 0)) > 0;
 
                 return (
-                  html`<div> <${PipelineStrip} pipeline=${pipeline} pipelineDirs=${pipelineDirs} sessionStatus=${sessionStatus} currentSession=${currentSession} onRevealFile=${onRevealFile} onOpenDag=${onOpenDag} onRescan=${onRescan} isRescanning=${isRescanning} onReprocess=${onReprocess} isReprocessing=${isReprocessing} canReprocess=${canReprocess} /> <${HealthSummaryBar} tasks=${tasks} workers=${workers} /> ${recentEvents.length > 0 ? (
-                      html`<div class=${"event-feed"}> ${recentEvents.map((evt, idx) => (
-                          html`<div key=${idx} class=${`event-row ${evt.type === "session_error" ? "error" : evt.type === "pipeline_stopped" ? "warning" : ""}`}> <span class=${"mono muted"} style=${{ fontSize: 'var(--text-xs)' }}>${evt.timestamp?.slice(11, 19) || ""}</span> <span class=${"mono"} style=${{ fontSize: 'var(--text-xs)', color: evt.type === "session_error" ? "var(--status-blocked)" : evt.type === "pipeline_stopped" ? "var(--status-review)" : "var(--text-secondary)" }}> ${evt.type} </span> <span style=${{ fontSize: 'var(--text-sm)', flex: 1, minWidth: 0, wordBreak: 'break-word', whiteSpace: 'pre-wrap' }}>${evt.message}</span> </div>`
-                        ))} </div>`
-                    ) : null} <main class=${"page"}> ${isPreExecution ? (
-                        html`<section class=${"worker-grid"}> <${PhaseActivityCard} title=${sessionStatus === "planning" ? "Planning Phase" : "Resolution Phase"} subtitle=${sessionStatus === "planning"
+                  html`<div><${PipelineStrip} pipeline=${pipeline} pipelineDirs=${pipelineDirs} sessionStatus=${sessionStatus} currentSession=${currentSession} onRevealFile=${onRevealFile} onOpenDag=${onOpenDag} onRescan=${onRescan} isRescanning=${isRescanning} onReprocess=${onReprocess} isReprocessing=${isReprocessing} canReprocess=${canReprocess} /><${HealthSummaryBar} tasks=${tasks} workers=${workers} />${recentEvents.length > 0 ? (
+                      html`<div class=${"event-feed"}>${recentEvents.map((evt, idx) => (
+                          html`<div key=${idx} class=${`event-row ${evt.type === "session_error" ? "error" : evt.type === "pipeline_stopped" ? "warning" : ""}`}><span class=${"mono muted"} style=${{ fontSize: 'var(--text-xs)' }}>${evt.timestamp?.slice(11, 19) || ""}</span><span class=${"mono"} style=${{ fontSize: 'var(--text-xs)', color: evt.type === "session_error" ? "var(--status-blocked)" : evt.type === "pipeline_stopped" ? "var(--status-review)" : "var(--text-secondary)" }}>${evt.type}</span><span style=${{ fontSize: 'var(--text-sm)', flex: 1, minWidth: 0, wordBreak: 'break-word', whiteSpace: 'pre-wrap' }}>${evt.message}</span></div>`
+                        ))}</div>`
+                    ) : null}<main class=${"page"}>${isPreExecution ? (
+                        html`<section class=${"worker-grid"}><${PhaseActivityCard} title=${sessionStatus === "planning" ? "Planning Phase" : "Resolution Phase"} subtitle=${sessionStatus === "planning"
                               ? `Analyzing intake items and generating task plans (${pipeline.planning || 0} claimed, ${pipeline.staged || 0} staged, ${pipeline.review || 0} to review)`
-                              : `Resolving dependencies and ordering tasks (${pipeline.staged || 0} staged plans)`} statusLabel=${sessionStatus} events=${recentEvents} pipeline=${pipeline} phaseLogs=${taskLogs[sessionStatus === "planning" ? "__phase_planning__" : "__phase_resolution__"] || []} planningAgents=${sessionStatus === "planning" ? (dashboard?.planning_agents || []) : []} taskLogs=${taskLogs} detailMessage=${phaseDetail[sessionStatus === "planning" ? "__phase_planning__" : "__phase_resolution__"]} phaseDetail=${phaseDetail} /> ${pipeline.review > 0 ? (
+                              : `Resolving dependencies and ordering tasks (${pipeline.staged || 0} staged plans)`} statusLabel=${sessionStatus} events=${recentEvents} pipeline=${pipeline} phaseLogs=${taskLogs[sessionStatus === "planning" ? "__phase_planning__" : "__phase_resolution__"] || []} planningAgents=${sessionStatus === "planning" ? (dashboard?.planning_agents || []) : []} taskLogs=${taskLogs} detailMessage=${phaseDetail[sessionStatus === "planning" ? "__phase_planning__" : "__phase_resolution__"]} phaseDetail=${phaseDetail} />${pipeline.review > 0 ? (
                             html`<article class=${"worker-card"} style=${{
                               borderColor: 'rgba(249, 115, 22, 0.4)',
                               boxShadow: '0 0 12px rgba(249, 115, 22, 0.15)',
-                            }}> <div class=${"worker-card-header"}> <div class=${"worker-card-title"}> <span class=${"mono"} style=${{ color: 'var(--status-review)', fontSize: 'var(--text-md)' }}>Items in Review</span> <span class=${"secondary"}>${`${pipeline.review} item(s) need human review before proceeding`}</span> </div> <span class=${"status-badge"} style=${statusBadgeStyle("review")}>${pipeline.review}</span> </div> <div class=${"log-tail"} style=${{ minHeight: '40px' }}> <div class=${"log-line"}> <button type=${"button"} class=${"nav-link"} onClick=${() => pipelineDirs.review && onRevealFile(pipelineDirs.review)} style=${{ textDecoration: 'underline', padding: 0 }}> Open review directory to inspect </button> </div> </div> </article>`
-                          ) : null} </section>`
-                      ) : null} ${isExecution ? (
-                        html`<${preact.Fragment}> ${sessionStatus === "verifying" || sessionStatus === "auto_fixing" ? (
-                            html`<section class=${"worker-grid"} style=${{ marginBottom: 'var(--space-4)' }}> <${VerificationCard} sessionStatus=${sessionStatus} runtimeState=${runtimeState} effectiveConfig=${effectiveConfig} recentEvents=${recentEvents} taskLogs=${taskLogs} onOpenTask=${onOpenTask} /> </section>`
-                          ) : null} ${sessionStatus === "running" && effectiveConfig.verification_interval > 0 ? (
+                            }}><div class=${"worker-card-header"}><div class=${"worker-card-title"}><span class=${"mono"} style=${{ color: 'var(--status-review)', fontSize: 'var(--text-md)' }}>Items in Review</span><span class=${"secondary"}>${`${pipeline.review} item(s) need human review before proceeding`}</span></div><span class=${"status-badge"} style=${statusBadgeStyle("review")}>${pipeline.review}</span></div><div class=${"log-tail"} style=${{ minHeight: '40px' }}><div class=${"log-line"}><button type=${"button"} class=${"nav-link"} onClick=${() => pipelineDirs.review && onRevealFile(pipelineDirs.review)} style=${{ textDecoration: 'underline', padding: 0 }}>Open review directory to inspect</button></div></div></article>`
+                          ) : null}</section>`
+                      ) : null}${isExecution ? (
+                        html`<${preact.Fragment}>${sessionStatus === "verifying" || sessionStatus === "auto_fixing" ? (
+                            html`<section class=${"worker-grid"} style=${{ marginBottom: 'var(--space-4)' }}><${VerificationCard} sessionStatus=${sessionStatus} runtimeState=${runtimeState} effectiveConfig=${effectiveConfig} recentEvents=${recentEvents} taskLogs=${taskLogs} onOpenTask=${onOpenTask} /></section>`
+                          ) : null}${sessionStatus === "running" && effectiveConfig.verification_interval > 0 ? (
                             runtimeState.verification_pending ? (
                               html`<div class=${"verification-countdown"} style=${{
                                 display: 'flex', alignItems: 'center', gap: 'var(--space-2)',
@@ -3112,7 +3125,7 @@ const html = htm.bind(preact.h);
                                 background: 'rgba(245, 158, 11, 0.1)', borderRadius: '6px',
                                 border: '1px solid rgba(245, 158, 11, 0.3)',
                                 fontSize: 'var(--text-xs)',
-                              }}> <span class=${"mono"} style=${{ color: 'var(--status-active)' }}> ${`Verification pending: ${verificationReasonLabel(runtimeState.verification_reason, sessionStatus)}`} </span> </div>`
+                              }}><span class=${"mono"} style=${{ color: 'var(--status-active)' }}>${`Verification pending: ${verificationReasonLabel(runtimeState.verification_reason, sessionStatus)}`}</span></div>`
                             ) : (
                               html`<div class=${"verification-countdown"} style=${{
                                 display: 'flex', alignItems: 'center', gap: 'var(--space-2)',
@@ -3121,16 +3134,16 @@ const html = htm.bind(preact.h);
                                 background: 'var(--bg-elevated)', borderRadius: '6px',
                                 border: '1px solid var(--border-subtle)',
                                 fontSize: 'var(--text-xs)',
-                              }}> <span class=${"mono muted"}>Next verification:</span> <span class=${"mono"} style=${{ color: 'var(--status-active)' }}> ${`${runtimeState.completed_since_verification || 0} / ${effectiveConfig.verification_interval} tasks`} </span> <div style=${{
+                              }}><span class=${"mono muted"}>Next verification:</span><span class=${"mono"} style=${{ color: 'var(--status-active)' }}>${`${runtimeState.completed_since_verification || 0} / ${effectiveConfig.verification_interval} tasks`}</span><div style=${{
                                   flex: 1, height: '4px', background: 'var(--border-subtle)',
                                   borderRadius: '2px', overflow: 'hidden',
-                                }}> <div style=${{
+                                }}><div style=${{
                                     width: `${Math.min(100, ((runtimeState.completed_since_verification || 0) / effectiveConfig.verification_interval) * 100)}%`,
                                     height: '100%', background: 'var(--status-active)',
                                     transition: 'width 400ms ease',
-                                  }} /> </div> </div>`
+                                  }} /></div></div>`
                             )
-                          ) : null} ${runtimeState.last_verification_test_summary ? (
+                          ) : null}${runtimeState.last_verification_test_summary ? (
                             html`<div style=${{
                               display: 'flex', alignItems: 'center', gap: 'var(--space-2)',
                               padding: 'var(--space-2) var(--space-3)',
@@ -3138,8 +3151,8 @@ const html = htm.bind(preact.h);
                               background: 'rgba(34, 197, 94, 0.08)', borderRadius: '6px',
                               border: '1px solid rgba(34, 197, 94, 0.25)',
                               fontSize: 'var(--text-xs)',
-                            }}> <span style=${{ color: 'rgb(34, 197, 94)', fontSize: '12px' }}>✓</span> <span class=${"mono"} style=${{ color: 'rgb(34, 197, 94)' }}> ${runtimeState.last_verification_test_summary} </span> </div>`
-                          ) : null} <section class=${"worker-grid"}> ${workers.map((worker, index) => {
+                            }}><span style=${{ color: 'rgb(34, 197, 94)', fontSize: '12px' }}>✓</span><span class=${"mono"} style=${{ color: 'rgb(34, 197, 94)' }}>${runtimeState.last_verification_test_summary}</span></div>`
+                          ) : null}<section class=${"worker-grid"}>${workers.map((worker, index) => {
                               const lineTail = (() => {
                                 if (worker.task_id && taskLogs[worker.task_id]?.length) {
                                   return taskLogs[worker.task_id].map((entry) => ({ line: entry.line, ts: entry.ts }));
@@ -3162,8 +3175,8 @@ const html = htm.bind(preact.h);
                                     ? "worker-card problem"
                                     : "worker-card idle";
                               return (
-                                html`<article key=${worker.slot} class=${stateClass} onClick=${() => worker.task_id && onOpenTask(worker.task_id)} style=${{ animationDelay: `${160 + index * 60}ms` }}> <div class=${"worker-card-header"}> <div class=${"worker-card-title"}> <span class=${"mono muted"}>${`slot ${worker.slot}`}</span> <span class=${"mono"}>${worker.task_id || "idle"}</span> <span class=${"secondary"}>${worker.task_title || "Waiting for task..."}</span> </div> <span class=${"status-badge"} style=${statusBadgeStyle(isIdleWarning ? "warning" : worker.status)}> ${isIdleWarning ? "warning" : worker.status} </span> </div> ${worker.status !== "idle" ? (
-                                    html`<${preact.Fragment}> <div class=${"progress-bar"} style=${{ gridTemplateColumns: `repeat(${phaseTotal}, 1fr)` }}> ${Array.from({ length: phaseTotal }).map((_, phaseIndex) => {
+                                html`<article key=${worker.slot} class=${stateClass} onClick=${() => worker.task_id && onOpenTask(worker.task_id)} style=${{ animationDelay: `${160 + index * 60}ms` }}><div class=${"worker-card-header"}><div class=${"worker-card-title"}><span class=${"mono muted"}>${`slot ${worker.slot}`}</span><span class=${"mono"}>${worker.task_id || "idle"}</span><span class=${"secondary"}>${worker.task_title || "Waiting for task..."}</span></div><span class=${"status-badge"} style=${statusBadgeStyle(isIdleWarning ? "warning" : worker.status)}>${isIdleWarning ? "warning" : worker.status}</span></div>${worker.status !== "idle" ? (
+                                    html`<${preact.Fragment}><div class=${"progress-bar"} style=${{ gridTemplateColumns: `repeat(${phaseTotal}, 1fr)` }}>${Array.from({ length: phaseTotal }).map((_, phaseIndex) => {
                                           let phaseClass = "future";
                                           if (phaseIndex < currentIndex) {
                                             phaseClass = "done";
@@ -3171,38 +3184,38 @@ const html = htm.bind(preact.h);
                                             phaseClass = "active";
                                           }
                                           return html`<span key=${phaseIndex} class=${phaseClass} />`;
-                                        })} </div> ${worker.detail ? html`<div class=${"detail-line"}>${worker.detail}</div>` : null} <div class=${"detail-line muted"} style=${{ display: 'flex', alignItems: 'center', gap: '8px' }}> <span>${formatElapsed(worker.elapsed || 0)}</span> <${LastActivityIndicator} worker=${worker} /> </div> <div class=${"log-tail"}> ${lineTail.map(e => ({ ...filterLogLine(e.line), ts: e.ts })).filter(r => r.show).slice(-5).map((r, lineIndex) => (
-                                          html`<div key=${lineIndex} class=${"log-line"}> ${r.ts ? html`<span class=${"mono muted"} style=${{ marginRight: '6px', fontSize: 'var(--text-xs)' }}>${r.ts.slice(11, 19)}</span>` : null} ${r.text} </div>`
-                                        ))} </div> <//>`
-                                  ) : null} </article>`
+                                        })}</div>${worker.detail ? html`<div class=${"detail-line"}>${worker.detail}</div>` : null}<div class=${"detail-line muted"} style=${{ display: 'flex', alignItems: 'center', gap: '8px' }}><span>${formatElapsed(worker.elapsed || 0)}</span><${LastActivityIndicator} worker=${worker} /></div><div class=${"log-tail"}>${lineTail.map(e => ({ ...filterLogLine(e.line), ts: e.ts })).filter(r => r.show).slice(-5).map((r, lineIndex) => (
+                                          html`<div key=${lineIndex} class=${"log-line"}>${r.ts ? html`<span class=${"mono muted"} style=${{ marginRight: '6px', fontSize: 'var(--text-xs)' }}>${r.ts.slice(11, 19)}</span>` : null}${r.text}</div>`
+                                        ))}</div><//>`
+                                  ) : null}</article>`
                               );
-                            })} </section> <//>`
-                      ) : null} ${isTerminal ? (
+                            })}</section><//>`
+                      ) : null}${isTerminal ? (
                         sessionStatus === "completed" ? (
                           html`<${CompletionCard} currentSession=${currentSession} tasks=${tasks} pipeline=${pipeline} />`
                         ) : (
-                          html`<section class=${"worker-grid"}> <article class=${"worker-card"} style=${{
+                          html`<section class=${"worker-grid"}><article class=${"worker-card"} style=${{
                               gridColumn: '1 / -1',
                               borderColor: 'rgba(239, 68, 68, 0.3)',
-                            }}> <div class=${"worker-card-header"}> <div class=${"worker-card-title"}> <span class=${"mono"} style=${{
+                            }}><div class=${"worker-card-header"}><div class=${"worker-card-title"}><span class=${"mono"} style=${{
                                     color: 'var(--status-blocked)',
                                     fontSize: 'var(--text-md)',
-                                  }}> Session Aborted </span> <span class=${"secondary"}> ${`${pipeline.done || 0} tasks completed, ${pipeline.blocked || 0} blocked`} </span> </div> <span class=${"status-badge"} style=${statusBadgeStyle(sessionStatus)}>${sessionStatus}</span> </div> </article> </section>`
+                                  }}>Session Aborted</span><span class=${"secondary"}>${`${pipeline.done || 0} tasks completed, ${pipeline.blocked || 0} blocked`}</span></div><span class=${"status-badge"} style=${statusBadgeStyle(sessionStatus)}>${sessionStatus}</span></div></article></section>`
                         )
-                      ) : null} ${!isPreExecution && !isExecution && !isTerminal && sessionStatus === "created" ? (
-                        html`<div class=${"empty-state"}> Session created but not yet started. Go to Setup to configure and start. </div>`
-                      ) : null} ${pipeline.review > 0 && isExecution ? (
+                      ) : null}${!isPreExecution && !isExecution && !isTerminal && sessionStatus === "created" ? (
+                        html`<div class=${"empty-state"}>Session created but not yet started. Go to Setup to configure and start.</div>`
+                      ) : null}${pipeline.review > 0 && isExecution ? (
                         html`<article class=${"worker-card"} style=${{
                           marginTop: 'var(--space-4)',
                           borderColor: 'rgba(249, 115, 22, 0.4)',
                           boxShadow: '0 0 12px rgba(249, 115, 22, 0.15)',
-                        }}> <div class=${"worker-card-header"}> <div class=${"worker-card-title"}> <span class=${"mono"} style=${{ color: 'var(--status-review)' }}>Items in Review</span> <span class=${"secondary"}>${`${pipeline.review} item(s) parked for human review`}</span> </div> <button type=${"button"} class=${"secondary-button"} onClick=${() => pipelineDirs.review && onRevealFile(pipelineDirs.review)}> Open Review </button> </div> </article>`
-                      ) : null} <section class=${"task-feed"}> ${tasks.length === 0 && isPreExecution ? (
-                          html`<div class=${"empty-state muted"} style=${{ padding: 'var(--space-4)' }}> Tasks will appear here once planning completes and resolution assigns execution order. </div>`
+                        }}><div class=${"worker-card-header"}><div class=${"worker-card-title"}><span class=${"mono"} style=${{ color: 'var(--status-review)' }}>Items in Review</span><span class=${"secondary"}>${`${pipeline.review} item(s) parked for human review`}</span></div><button type=${"button"} class=${"secondary-button"} onClick=${() => pipelineDirs.review && onRevealFile(pipelineDirs.review)}>Open Review</button></div></article>`
+                      ) : null}<section class=${"task-feed"}>${tasks.length === 0 && isPreExecution ? (
+                          html`<div class=${"empty-state muted"} style=${{ padding: 'var(--space-4)' }}>Tasks will appear here once planning completes and resolution assigns execution order.</div>`
                         ) : tasks.length === 0 ? (
                           html`<div class=${"empty-state"}>No tasks in this session yet.</div>`
                         ) : tasks.map((task) => (
-                          html`<div key=${task.task_id} class=${`task-row ${task.status === "blocked" ? "blocked" : task.status === "active" ? "active" : ""}`} onClick=${() => onOpenTask(task.task_id)}> <div style=${{ display: 'flex', alignItems: 'center', gap: '8px', width: '100%' }}> <span class=${"mono"}>${task.task_id}</span> <span class=${"secondary task-title"}>${task.title}</span> ${(task.depends_on || []).length > 0 ? icon("link", { width: 12, height: 12 }) : null} ${(task.anti_affinity || []).length > 0 ? icon("shield", { width: 12, height: 12 }) : null} ${task.full_test_after ? (
+                          html`<div key=${task.task_id} class=${`task-row ${task.status === "blocked" ? "blocked" : task.status === "active" ? "active" : ""}`} onClick=${() => onOpenTask(task.task_id)}><div style=${{ display: 'flex', alignItems: 'center', gap: '8px', width: '100%' }}><span class=${"mono"}>${task.task_id}</span><span class=${"secondary task-title"}>${task.title}</span>${(task.depends_on || []).length > 0 ? icon("link", { width: 12, height: 12 }) : null}${(task.anti_affinity || []).length > 0 ? icon("shield", { width: 12, height: 12 }) : null}${task.full_test_after ? (
                                 html`<span title=${"Full test after completion"} style=${{
                                   fontSize: 'var(--text-xs)',
                                   color: 'var(--status-active)',
@@ -3211,20 +3224,20 @@ const html = htm.bind(preact.h);
                                   background: 'rgba(245, 158, 11, 0.15)',
                                   borderRadius: '3px',
                                 }}>FTA</span>`
-                              ) : null} ${task.started_at ? (
-                                html`<span class=${"mono muted"} style=${{ fontSize: 'var(--text-xs)' }}> ${task.started_at.slice(11, 19)} </span>`
-                              ) : null} <span class=${"status-badge"} style=${statusBadgeStyle(task.status)}>${task.status}</span> <${TaskRowElapsed} task=${task} /> <div class=${"task-actions"} onClick=${(e) => e.stopPropagation()}> ${(TASK_TRANSITIONS[task.status] || []).map(({ target, label, icon: iconName }) => (
-                                  html`<button key=${target} type=${"button"} class=${"icon-button"} title=${`${label} (\u2192 ${target})`} onClick=${() => onMoveTask(task.task_id, target)}> ${icon(iconName, { width: 14, height: 14 })} </button>`
-                                ))} <button type=${"button"} class=${"icon-button"} title=${"Reveal plan file"} onClick=${() => onRevealFile(task.plan_path)}> ${icon("file-text", { width: 14, height: 14 })} </button> </div> </div> ${(() => {
+                              ) : null}${task.started_at ? (
+                                html`<span class=${"mono muted"} style=${{ fontSize: 'var(--text-xs)' }}>${task.started_at.slice(11, 19)}</span>`
+                              ) : null}<span class=${"status-badge"} style=${statusBadgeStyle(task.status)}>${task.status}</span><${TaskRowElapsed} task=${task} /><div class=${"task-actions"} onClick=${(e) => e.stopPropagation()}>${(TASK_TRANSITIONS[task.status] || []).map(({ target, label, icon: iconName }) => (
+                                  html`<button key=${target} type=${"button"} class=${"icon-button"} title=${`${label} (\u2192 ${target})`} onClick=${() => onMoveTask(task.task_id, target)}>${icon(iconName, { width: 14, height: 14 })}</button>`
+                                ))}<button type=${"button"} class=${"icon-button"} title=${"Reveal plan file"} onClick=${() => onRevealFile(task.plan_path)}>${icon("file-text", { width: 14, height: 14 })}</button></div></div>${(() => {
                               const evts = task.events || [];
                               const last = evts.length ? evts[evts.length - 1] : null;
                               if (!last || !["task.blocked", "session_error"].includes(last.type)) return null;
                               const color = "var(--status-blocked)";
                               return (
-                                html`<div style=${{ fontSize: 'var(--text-xs)', color, marginTop: '2px', paddingLeft: '2px' }}> ${last.message} </div>`
+                                html`<div style=${{ fontSize: 'var(--text-xs)', color, marginTop: '2px', paddingLeft: '2px' }}>${last.message}</div>`
                               );
-                            })()} </div>`
-                        ))} </section> </main> </div>`
+                            })()}</div>`
+                        ))}</section></main></div>`
                 );
               }
 
@@ -3273,29 +3286,29 @@ const html = htm.bind(preact.h);
                 const showNewBranchInput = setupDraft.branch === "__new__";
                 if (sessionActive) {
                   return (
-                    html`<div class=${"setup-shell"}> <section class=${"setup-card"} style=${{ textAlign: 'center' }}> <h1 class=${"view-title"}>Session Active</h1> <p class=${"secondary"} style=${{ marginBottom: 'var(--space-6)' }}> ${`Session "${currentSession?.name}" is ${sessionStatus}. Configuration is locked while a session is running.`} </p> <button type=${"button"} class=${"action-button"} onClick=${() => onNavigate("monitor")}> Go to Monitor </button> </section> </div>`
+                    html`<div class=${"setup-shell"}><section class=${"setup-card"} style=${{ textAlign: 'center' }}><h1 class=${"view-title"}>Session Active</h1><p class=${"secondary"} style=${{ marginBottom: 'var(--space-6)' }}>${`Session "${currentSession?.name}" is ${sessionStatus}. Configuration is locked while a session is running.`}</p><button type=${"button"} class=${"action-button"} onClick=${() => onNavigate("monitor")}>Go to Monitor</button></section></div>`
                   );
                 }
                 return (
-                  html`<div class=${"setup-shell"}> <section class=${"setup-card"}> <div class=${"row"} style=${{ justifyContent: 'space-between', alignItems: 'center' }}> <h1 class=${"view-title"} style=${{ margin: 0 }}> ${currentSession ? `Session: ${currentSession.name}` : "Configure Session"} </h1> ${draftExists ? (
+                  html`<div class=${"setup-shell"}><section class=${"setup-card"}><div class=${"row"} style=${{ justifyContent: 'space-between', alignItems: 'center' }}><h1 class=${"view-title"} style=${{ margin: 0 }}>${currentSession ? `Session: ${currentSession.name}` : "Configure Session"}</h1>${draftExists ? (
                           html`<button type=${"button"} class=${"secondary-button"} style=${{ color: '#ef4444' }} disabled=${isBusy} onClick=${onDiscardDraft}>Reset</button>`
-                        ) : null} </div> ${draftExists ? (
-                        html`<div class=${"field-hint"} style=${{ marginBottom: '0.75rem' }}> ${`Pack: ${currentSession.pack} | ID: ${currentSession.id} | Configuration is locked. Drop intake files, run preflight, then start.`} </div>`
+                        ) : null}</div>${draftExists ? (
+                        html`<div class=${"field-hint"} style=${{ marginBottom: '0.75rem' }}>${`Pack: ${currentSession.pack} | ID: ${currentSession.id} | Configuration is locked. Drop intake files, run preflight, then start.`}</div>`
                       ) : isIdle ? (
-                        html`<div class=${"field-hint"} style=${{ marginBottom: '0.75rem' }}> ${`Pack: ${currentSession.pack} | ID: ${currentSession.id} | Session idle — drop intake files and start a new run.`} </div>`
-                      ) : null} <div class=${"form-grid"}> <div> <label class=${"field-label"}>Repository Root</label> <div class=${"row"} style=${{ gap: '0.5rem' }}> <input class=${"text-input"} style=${{ flex: 1 }} placeholder=${"/path/to/your/project"} value=${setupDraft.repo_root} disabled=${draftExists} onInput=${(event) => setSetupDraft((draft) => ({ ...draft, repo_root: event.target.value }))} onBlur=${() => onResolveRepoRoot(setupDraft.repo_root)} onKeyDown=${(event) => { if (event.key === 'Enter') onResolveRepoRoot(setupDraft.repo_root); }} /> <button type=${"button"} class=${"secondary-button"} disabled=${draftExists || isBusy} onClick=${onBrowseRepoRoot}>Browse</button> </div> ${repoRootInfo && repoRootInfo.exists && repoRootInfo.is_git ? (
-                            html`<div class=${"field-hint"} style=${{ color: repoRootInfo.on_protected_branch ? '#f59e0b' : '#10b981' }}> ${repoRootInfo.on_protected_branch
+                        html`<div class=${"field-hint"} style=${{ marginBottom: '0.75rem' }}>${`Pack: ${currentSession.pack} | ID: ${currentSession.id} | Session idle — drop intake files and start a new run.`}</div>`
+                      ) : null}<div class=${"form-grid"}><div><label class=${"field-label"}>Repository Root</label><div class=${"row"} style=${{ gap: '0.5rem' }}><input class=${"text-input"} style=${{ flex: 1 }} placeholder=${"/path/to/your/project"} value=${setupDraft.repo_root} disabled=${draftExists} onInput=${(event) => setSetupDraft((draft) => ({ ...draft, repo_root: event.target.value }))} onBlur=${() => onResolveRepoRoot(setupDraft.repo_root)} onKeyDown=${(event) => { if (event.key === 'Enter') onResolveRepoRoot(setupDraft.repo_root); }} /><button type=${"button"} class=${"secondary-button"} disabled=${draftExists || isBusy} onClick=${onBrowseRepoRoot}>Browse</button></div>${repoRootInfo && repoRootInfo.exists && repoRootInfo.is_git ? (
+                            html`<div class=${"field-hint"} style=${{ color: repoRootInfo.on_protected_branch ? '#f59e0b' : '#10b981' }}>${repoRootInfo.on_protected_branch
                                 ? `\u26a0 Git repository on branch ${repoRootInfo.branch} (protected \u2014 use a feature branch)`
-                                : `\u2713 Git repository on branch ${repoRootInfo.branch}`} </div>`
+                                : `\u2713 Git repository on branch ${repoRootInfo.branch}`}</div>`
                           ) : repoRootInfo && repoRootInfo.exists && !repoRootInfo.is_git ? (
-                            html`<div class=${"field-hint"} style=${{ color: '#ef4444' }}> Directory exists but is not a git repository </div>`
+                            html`<div class=${"field-hint"} style=${{ color: '#ef4444' }}>Directory exists but is not a git repository</div>`
                           ) : repoRootInfo && !repoRootInfo.exists ? (
-                            html`<div class=${"field-hint"} style=${{ color: '#ef4444' }}> Directory does not exist </div>`
-                          ) : null} ${draftExists && currentSession?.config?.environment?.COGNITIVE_SWITCHYARD_SOURCE_REPO ? (
-                            html`<div class=${"field-hint"} style=${{ marginTop: '0.25rem' }}> ${`Session worktree: ${currentSession.config.environment.COGNITIVE_SWITCHYARD_REPO_ROOT}`} <br /> ${`Source repo: ${currentSession.config.environment.COGNITIVE_SWITCHYARD_SOURCE_REPO}`} </div>`
-                          ) : null} </div> <div> <label class=${"field-label"}>Project Directory</label> <div class=${"row"} style=${{ gap: '0.5rem' }}> <input class=${"text-input"} style=${{ flex: 1 }} placeholder=${"e.g. cognitive_switchyard (optional — for monorepos)"} value=${setupDraft.project_dir} disabled=${draftExists} onInput=${(event) => setSetupDraft((draft) => ({ ...draft, project_dir: event.target.value }))} /> <button type=${"button"} class=${"secondary-button"} disabled=${draftExists || isBusy || !setupDraft.repo_root} onClick=${onBrowseProjectDir}>Browse</button> </div> <div class=${"field-hint"}> For monorepos, browse to the subdirectory so verification scopes to this project only. </div> </div> ${showBranchSelector ? (
-                          html`<div> <label class=${"field-label"}>Branch</label> ${showNewBranchInput ? (
-                              html`<div class=${"row"} style=${{ gap: '0.5rem' }}> <input class=${"text-input"} style=${{ flex: 1 }} placeholder=${"new-branch-name"} value=${newBranchName} disabled=${draftExists || creatingBranch} onInput=${(event) => setNewBranchName(event.target.value)} /> <button type=${"button"} class=${"secondary-button"} disabled=${draftExists || creatingBranch || !newBranchName.trim()} onClick=${async () => {
+                            html`<div class=${"field-hint"} style=${{ color: '#ef4444' }}>Directory does not exist</div>`
+                          ) : null}${draftExists && currentSession?.config?.environment?.COGNITIVE_SWITCHYARD_SOURCE_REPO ? (
+                            html`<div class=${"field-hint"} style=${{ marginTop: '0.25rem' }}>${`Session worktree: ${currentSession.config.environment.COGNITIVE_SWITCHYARD_REPO_ROOT}`}<br />${`Source repo: ${currentSession.config.environment.COGNITIVE_SWITCHYARD_SOURCE_REPO}`}</div>`
+                          ) : null}</div><div><label class=${"field-label"}>Project Directory</label><div class=${"row"} style=${{ gap: '0.5rem' }}><input class=${"text-input"} style=${{ flex: 1 }} placeholder=${"e.g. cognitive_switchyard (optional — for monorepos)"} value=${setupDraft.project_dir} disabled=${draftExists} onInput=${(event) => setSetupDraft((draft) => ({ ...draft, project_dir: event.target.value }))} /><button type=${"button"} class=${"secondary-button"} disabled=${draftExists || isBusy || !setupDraft.repo_root} onClick=${onBrowseProjectDir}>Browse</button></div><div class=${"field-hint"}>For monorepos, browse to the subdirectory so verification scopes to this project only.</div></div>${showBranchSelector ? (
+                          html`<div><label class=${"field-label"}>Branch</label>${showNewBranchInput ? (
+                              html`<div class=${"row"} style=${{ gap: '0.5rem' }}><input class=${"text-input"} style=${{ flex: 1 }} placeholder=${"new-branch-name"} value=${newBranchName} disabled=${draftExists || creatingBranch} onInput=${(event) => setNewBranchName(event.target.value)} /><button type=${"button"} class=${"secondary-button"} disabled=${draftExists || creatingBranch || !newBranchName.trim()} onClick=${async () => {
                                     setCreatingBranch(true);
                                     try {
                                       await onCreateBranch(setupDraft.repo_root, newBranchName.trim(), repoRootInfo.branch || "main");
@@ -3304,80 +3317,80 @@ const html = htm.bind(preact.h);
                                     } finally {
                                       setCreatingBranch(false);
                                     }
-                                  }}>Create</button> <button type=${"button"} class=${"secondary-button"} disabled=${creatingBranch} onClick=${() => {
+                                  }}>Create</button><button type=${"button"} class=${"secondary-button"} disabled=${creatingBranch} onClick=${() => {
                                     setSetupDraft((draft) => ({ ...draft, branch: repoRootInfo?.branch || repoBranches[0] || "" }));
                                     setNewBranchName("");
-                                  }}>Cancel</button> </div>`
+                                  }}>Cancel</button></div>`
                             ) : (
-                              html`<select class=${"select-input"} value=${setupDraft.branch} disabled=${draftExists} onInput=${(event) => setSetupDraft((draft) => ({ ...draft, branch: event.target.value }))}> ${repoBranches.map((b) => html`<option key=${b} value=${b}>${b}</option>`)} <option value=${"__new__"}>New Branch...</option> </select>`
-                            )} </div>`
-                        ) : null} <div> <label class=${"field-label"}>Pack</label> <select class=${"select-input"} value=${setupDraft.pack} disabled=${draftExists} onInput=${(event) => setSetupDraft((draft) => ({ ...draft, pack: event.target.value }))}> ${packs.map((pack) => html`<option key=${pack.name} value=${pack.name}>${pack.name}</option>`)} </select> ${selectedPack ? html`<div class=${"field-hint"}>${selectedPack.description}</div>` : null} </div> <div> <label class=${"field-label"}>Session Name</label> <input class=${"text-input"} value=${setupDraft.name} disabled=${draftExists} onInput=${(event) => setSetupDraft((draft) => ({ ...draft, name: event.target.value }))} /> </div> <div> <label class=${"field-label"}>Session ID</label> <input class=${"text-input"} value=${setupDraft.id} disabled=${draftExists} onInput=${(event) => setSetupDraft((draft) => ({ ...draft, id: event.target.value }))} /> </div> <div class=${"row"}> ${packSupportsPlanning ? (
-                            html`<div style=${{ flex: 1 }}> <label class=${"field-label"}>Planner Count</label> <input class=${"text-input"} type=${"number"} min=${"1"} max=${selectedPack?.max_planners || 99} disabled=${draftExists} value=${setupDraft.planner_count} onInput=${(event) => setSetupDraft((draft) => ({ ...draft, planner_count: event.target.value }))} /> ${selectedPack?.max_planners && parseInt(setupDraft.planner_count, 10) > selectedPack.max_planners ? (
-                                html`<div class=${"field-hint"} style=${{ color: '#f59e0b' }}> ${`Pack limit: ${selectedPack.max_planners} — value will be clamped`} </div>`
-                              ) : null} </div>`
-                          ) : null} <div style=${{ flex: 1 }}> <label class=${"field-label"}>Worker Count</label> <input class=${"text-input"} type=${"number"} min=${"1"} max=${selectedPack?.max_workers || 99} disabled=${draftExists} value=${setupDraft.worker_count} onInput=${(event) => setSetupDraft((draft) => ({ ...draft, worker_count: event.target.value }))} /> ${selectedPack?.max_workers && parseInt(setupDraft.worker_count, 10) > selectedPack.max_workers ? (
-                              html`<div class=${"field-hint"} style=${{ color: '#f59e0b' }}> ${`Pack limit: ${selectedPack.max_workers} — value will be clamped`} </div>`
-                            ) : null} </div> ${packSupportsVerification ? (
-                            html`<div style=${{ flex: 1 }}> <label class=${"field-label"}>Verification Interval</label> <input class=${"text-input"} type=${"number"} min=${"1"} placeholder=${selectedPack ? `pack default (${selectedPack.verification_interval})` : "pack default"} disabled=${draftExists} value=${setupDraft.verification_interval} onInput=${(event) => setSetupDraft((draft) => ({ ...draft, verification_interval: event.target.value }))} /> </div>`
-                          ) : null} </div> <div> <label class=${"field-label"}>Defaults</label> <div class=${"field-hint"}> ${`pack=${settings?.default_pack || "n/a"} planners=${settings?.default_planners || 0} workers=${settings?.default_workers || 0} retention=${settings?.retention_days ?? 0}d`} </div> </div> <div class=${"action-row"}> <button type=${"button"} class=${"secondary-button"} onClick=${() => setShowAdvanced((value) => !value)}> ${showAdvanced ? "Hide Advanced" : "Show Advanced"} </button> ${canManageIntake ? (
-                            html` <button type=${"button"} class=${"secondary-button"} onClick=${onOpenIntake}> Open Intake </button> <button type=${"button"} class=${"secondary-button"} onClick=${onOpenIntakeTerminal}> Intake Terminal </button> <button type=${"button"} class=${"secondary-button"} onClick=${onRefreshIntake}> Refresh Intake </button> ${draftExists ? (
-                                html`<button type=${"button"} class=${"secondary-button"} disabled=${isBusy} onClick=${onRunPreflight}> ${isBusy ? "Running Preflight..." : preflight ? "Re-run Preflight" : "Run Preflight"} </button>`
-                              ) : null} `
-                          ) : null} </div> ${showAdvanced ? (
-                          html`<div class=${"advanced-panel stack"}> <div class=${"row"}> <div style=${{ flex: 1 }}> <label class=${"field-label"}>Auto-Fix</label> <select class=${"select-input"} disabled=${draftExists} value=${setupDraft.auto_fix_enabled} onInput=${(event) => setSetupDraft((draft) => ({
+                              html`<select class=${"select-input"} value=${shownOption(setupDraft.branch, [...repoBranches, "__new__"])} disabled=${draftExists} onInput=${(event) => setSetupDraft((draft) => ({ ...draft, branch: event.target.value }))}>${repoBranches.map((b) => html`<option key=${b} value=${b}>${b}</option>`)}<option value=${"__new__"}>New Branch...</option></select>`
+                            )}</div>`
+                        ) : null}<div><label class=${"field-label"}>Pack</label><select class=${"select-input"} value=${shownOption(setupDraft.pack, packs.map((pack) => pack.name))} disabled=${draftExists} onInput=${(event) => setSetupDraft((draft) => ({ ...draft, pack: event.target.value }))}>${packs.map((pack) => html`<option key=${pack.name} value=${pack.name}>${pack.name}</option>`)}</select>${selectedPack ? html`<div class=${"field-hint"}>${selectedPack.description}</div>` : null}</div><div><label class=${"field-label"}>Session Name</label><input class=${"text-input"} value=${setupDraft.name} disabled=${draftExists} onInput=${(event) => setSetupDraft((draft) => ({ ...draft, name: event.target.value }))} /></div><div><label class=${"field-label"}>Session ID</label><input class=${"text-input"} value=${setupDraft.id} disabled=${draftExists} onInput=${(event) => setSetupDraft((draft) => ({ ...draft, id: event.target.value }))} /></div><div class=${"row"}>${packSupportsPlanning ? (
+                            html`<div style=${{ flex: 1 }}><label class=${"field-label"}>Planner Count</label><input class=${"text-input"} type=${"number"} min=${"1"} max=${selectedPack?.max_planners || 99} disabled=${draftExists} value=${setupDraft.planner_count} onInput=${(event) => setSetupDraft((draft) => ({ ...draft, planner_count: event.target.value }))} />${selectedPack?.max_planners && parseInt(setupDraft.planner_count, 10) > selectedPack.max_planners ? (
+                                html`<div class=${"field-hint"} style=${{ color: '#f59e0b' }}>${`Pack limit: ${selectedPack.max_planners} — value will be clamped`}</div>`
+                              ) : null}</div>`
+                          ) : null}<div style=${{ flex: 1 }}><label class=${"field-label"}>Worker Count</label><input class=${"text-input"} type=${"number"} min=${"1"} max=${selectedPack?.max_workers || 99} disabled=${draftExists} value=${setupDraft.worker_count} onInput=${(event) => setSetupDraft((draft) => ({ ...draft, worker_count: event.target.value }))} />${selectedPack?.max_workers && parseInt(setupDraft.worker_count, 10) > selectedPack.max_workers ? (
+                              html`<div class=${"field-hint"} style=${{ color: '#f59e0b' }}>${`Pack limit: ${selectedPack.max_workers} — value will be clamped`}</div>`
+                            ) : null}</div>${packSupportsVerification ? (
+                            html`<div style=${{ flex: 1 }}><label class=${"field-label"}>Verification Interval</label><input class=${"text-input"} type=${"number"} min=${"1"} placeholder=${selectedPack ? `pack default (${selectedPack.verification_interval})` : "pack default"} disabled=${draftExists} value=${setupDraft.verification_interval} onInput=${(event) => setSetupDraft((draft) => ({ ...draft, verification_interval: event.target.value }))} /></div>`
+                          ) : null}</div><div><label class=${"field-label"}>Defaults</label><div class=${"field-hint"}>${`pack=${settings?.default_pack || "n/a"} planners=${settings?.default_planners || 0} workers=${settings?.default_workers || 0} retention=${settings?.retention_days ?? 0}d`}</div></div><div class=${"action-row"}><button type=${"button"} class=${"secondary-button"} onClick=${() => setShowAdvanced((value) => !value)}>${showAdvanced ? "Hide Advanced" : "Show Advanced"}</button>${canManageIntake ? (
+                            html`<button type=${"button"} class=${"secondary-button"} onClick=${onOpenIntake}>Open Intake</button><button type=${"button"} class=${"secondary-button"} onClick=${onOpenIntakeTerminal}>Intake Terminal</button><button type=${"button"} class=${"secondary-button"} onClick=${onRefreshIntake}>Refresh Intake</button>${draftExists ? (
+                                html`<button type=${"button"} class=${"secondary-button"} disabled=${isBusy} onClick=${onRunPreflight}>${isBusy ? "Running Preflight..." : preflight ? "Re-run Preflight" : "Run Preflight"}</button>`
+                              ) : null}`
+                          ) : null}</div>${showAdvanced ? (
+                          html`<div class=${"advanced-panel stack"}><div class=${"row"}><div style=${{ flex: 1 }}><label class=${"field-label"}>Auto-Fix</label><select class=${"select-input"} disabled=${draftExists} value=${shownOption(setupDraft.auto_fix_enabled, ["", "enabled", "disabled"])} onInput=${(event) => setSetupDraft((draft) => ({
                                     ...draft,
                                     auto_fix_enabled: event.target.value
-                                  }))}> <option value=${""}>${selectedPack ? `Pack default (${selectedPack.auto_fix_enabled ? "Enabled" : "Disabled"})` : "Pack default"}</option> <option value=${"enabled"}>Enabled</option> <option value=${"disabled"}>Disabled</option> </select> </div> <div style=${{ flex: 1 }}> <label class=${"field-label"}>Auto-Fix Attempts</label> <input class=${"text-input"} type=${"number"} min=${"1"} placeholder=${selectedPack ? `pack default (${selectedPack.auto_fix_max_attempts})` : "pack default"} disabled=${draftExists} value=${setupDraft.auto_fix_max_attempts} onInput=${(event) => setSetupDraft((draft) => ({
+                                  }))}><option value=${""}>${selectedPack ? `Pack default (${selectedPack.auto_fix_enabled ? "Enabled" : "Disabled"})` : "Pack default"}</option><option value=${"enabled"}>Enabled</option><option value=${"disabled"}>Disabled</option></select></div><div style=${{ flex: 1 }}><label class=${"field-label"}>Auto-Fix Attempts</label><input class=${"text-input"} type=${"number"} min=${"1"} placeholder=${selectedPack ? `pack default (${selectedPack.auto_fix_max_attempts})` : "pack default"} disabled=${draftExists} value=${setupDraft.auto_fix_max_attempts} onInput=${(event) => setSetupDraft((draft) => ({
                                     ...draft,
                                     auto_fix_max_attempts: event.target.value
-                                  }))} /> </div> <div style=${{ flex: 1 }}> <label class=${"field-label"}>Poll Interval</label> <input class=${"text-input"} type=${"number"} step=${"0.01"} min=${"0.01"} disabled=${draftExists} value=${setupDraft.poll_interval} onInput=${(event) => setSetupDraft((draft) => ({
+                                  }))} /></div><div style=${{ flex: 1 }}><label class=${"field-label"}>Poll Interval</label><input class=${"text-input"} type=${"number"} step=${"0.01"} min=${"0.01"} disabled=${draftExists} value=${setupDraft.poll_interval} onInput=${(event) => setSetupDraft((draft) => ({
                                     ...draft,
                                     poll_interval: event.target.value
-                                  }))} /> </div> </div> <div class=${"row"}> <div style=${{ flex: 1 }}> <label class=${"field-label"}>Task Idle Timeout (s)</label> <input class=${"text-input"} type=${"number"} min=${"0"} placeholder=${"pack default"} disabled=${draftExists} value=${setupDraft.task_idle_timeout} onInput=${(event) => setSetupDraft((draft) => ({
+                                  }))} /></div></div><div class=${"row"}><div style=${{ flex: 1 }}><label class=${"field-label"}>Task Idle Timeout (s)</label><input class=${"text-input"} type=${"number"} min=${"0"} placeholder=${"pack default"} disabled=${draftExists} value=${setupDraft.task_idle_timeout} onInput=${(event) => setSetupDraft((draft) => ({
                                     ...draft,
                                     task_idle_timeout: event.target.value
-                                  }))} /> </div> <div style=${{ flex: 1 }}> <label class=${"field-label"}>Task Max Timeout (s)</label> <input class=${"text-input"} type=${"number"} min=${"0"} placeholder=${"0 = no limit"} disabled=${draftExists} value=${setupDraft.task_max_timeout} onInput=${(event) => setSetupDraft((draft) => ({
+                                  }))} /></div><div style=${{ flex: 1 }}><label class=${"field-label"}>Task Max Timeout (s)</label><input class=${"text-input"} type=${"number"} min=${"0"} placeholder=${"0 = no limit"} disabled=${draftExists} value=${setupDraft.task_max_timeout} onInput=${(event) => setSetupDraft((draft) => ({
                                     ...draft,
                                     task_max_timeout: event.target.value
-                                  }))} /> </div> <div style=${{ flex: 1 }}> <label class=${"field-label"}>Session Max Timeout (s)</label> <input class=${"text-input"} type=${"number"} min=${"0"} placeholder=${"pack default"} disabled=${draftExists} value=${setupDraft.session_max_timeout} onInput=${(event) => setSetupDraft((draft) => ({
+                                  }))} /></div><div style=${{ flex: 1 }}><label class=${"field-label"}>Session Max Timeout (s)</label><input class=${"text-input"} type=${"number"} min=${"0"} placeholder=${"pack default"} disabled=${draftExists} value=${setupDraft.session_max_timeout} onInput=${(event) => setSetupDraft((draft) => ({
                                     ...draft,
                                     session_max_timeout: event.target.value
-                                  }))} /> </div> </div> </div>`
-                        ) : null} <div> <label class=${"field-label"}>Intake Directory</label> <div class=${"field-hint"} style=${{ fontFamily: 'monospace', fontSize: '0.8rem' }}> ${currentSession
+                                  }))} /></div></div></div>`
+                        ) : null}<div><label class=${"field-label"}>Intake Directory</label><div class=${"field-hint"} style=${{ fontFamily: 'monospace', fontSize: '0.8rem' }}>${currentSession
                               ? `${settings?.runtime_root || "~/.cognitive_switchyard"}/sessions/${currentSession.id}/intake/`
-                              : "Create a draft session to materialize the intake directory."} </div> <div class=${"intake-list"}> ${intake?.locked ? (
+                              : "Create a draft session to materialize the intake directory."}</div><div class=${"intake-list"}>${intake?.locked ? (
                               html`<div class=${"field-hint"}>Session locked - intake closed.</div>`
-                            ) : null} ${files.length === 0 ? (
+                            ) : null}${files.length === 0 ? (
                               html`<div class=${"muted"}>Drop .md files into the intake directory to begin.</div>`
                             ) : files.map((file) => (
-                              html`<div key=${file.path} class=${"intake-row"}> <div class=${"stack"} style=${{ gap: "4px" }}> <div class=${"row"} style=${{ gap: "8px" }}> ${icon("file-text", { width: 14, height: 14 })} <span class=${"mono"}>${file.filename}</span> ${file.in_snapshot === false ? html`<span class=${"muted"}>Not in session</span>` : null} </div> <div class=${"field-hint"}>${`${file.size} bytes | ${file.detected_at}`}</div> </div> ${!intake?.locked ? (
-                                  html`<button type=${"button"} class=${"icon-button"} onClick=${() => onRevealFile(file.path)} aria-label=${`Reveal ${file.filename}`}> ${icon("folder-open", { width: 16, height: 16 })} </button>`
-                                ) : null} </div>`
-                            ))} </div> </div> <div> <label class=${"field-label"}> Preflight Checks ${preflight ? (
-                              html`<span class=${"status-badge"} style=${{ ...statusBadgeStyle(preflight.ok ? "done" : "blocked"), marginLeft: '8px', fontSize: 'var(--text-xs)' }}> ${preflight.ok ? "passed" : "failed"} </span>`
-                            ) : null} </label> <div class=${"preflight-panel"}> ${!draftExists ? (
+                              html`<div key=${file.path} class=${"intake-row"}><div class=${"stack"} style=${{ gap: "4px" }}><div class=${"row"} style=${{ gap: "8px" }}>${icon("file-text", { width: 14, height: 14 })}<span class=${"mono"}>${file.filename}</span>${file.in_snapshot === false ? html`<span class=${"muted"}>Not in session</span>` : null}</div><div class=${"field-hint"}>${`${file.size} bytes | ${file.detected_at}`}</div></div>${!intake?.locked ? (
+                                  html`<button type=${"button"} class=${"icon-button"} onClick=${() => onRevealFile(file.path)} aria-label=${`Reveal ${file.filename}`}>${icon("folder-open", { width: 16, height: 16 })}</button>`
+                                ) : null}</div>`
+                            ))}</div></div><div><label class=${"field-label"}>Preflight Checks${preflight ? (
+                              html`<span class=${"status-badge"} style=${{ ...statusBadgeStyle(preflight.ok ? "done" : "blocked"), marginLeft: '8px', fontSize: 'var(--text-xs)' }}>${preflight.ok ? "passed" : "failed"}</span>`
+                            ) : null}</label><div class=${"preflight-panel"}>${!draftExists ? (
                               html`<div class=${"muted"}>Create a draft session to run preflight.</div>`
                             ) : !preflight ? (
                               html`<div class=${"muted"}>Run preflight to validate pack scripts and prerequisites.</div>`
                             ) : (
-                              html`<div class=${"preflight-list"}> <div class=${"preflight-row"}> <div class=${"row"}> <span class=${"status-dot"} style=${{ background: preflight.permission_report.ok ? "var(--status-done)" : "var(--status-blocked)" }} /> <span>Script permissions</span> </div> <span>${preflight.permission_report.ok ? "ok" : "fix required"}</span> </div> ${(preflight.permission_report.issues || []).map((issue) => (
+                              html`<div class=${"preflight-list"}><div class=${"preflight-row"}><div class=${"row"}><span class=${"status-dot"} style=${{ background: preflight.permission_report.ok ? "var(--status-done)" : "var(--status-blocked)" }} /><span>Script permissions</span></div><span>${preflight.permission_report.ok ? "ok" : "fix required"}</span></div>${(preflight.permission_report.issues || []).map((issue) => (
                                   html`<div key=${issue.relative_path} class=${"field-hint"}>${issue.fix_command}</div>`
-                                ))} ${(preflight.prerequisite_results?.results || []).map((result) => (
-                                  html`<${preact.Fragment} key=${result.name}> <div class=${"preflight-row"}> <div class=${"row"}> <span class=${"status-dot"} style=${{ background: result.ok ? "var(--status-done)" : "var(--status-blocked)" }} /> <span>${result.name}</span> </div> <span>${result.ok ? "ok" : `failed (exit ${result.exit_code})`}</span> </div> ${!result.ok && (result.stderr || result.stdout) ? (
+                                ))}${(preflight.prerequisite_results?.results || []).map((result) => (
+                                  html`<${preact.Fragment} key=${result.name}><div class=${"preflight-row"}><div class=${"row"}><span class=${"status-dot"} style=${{ background: result.ok ? "var(--status-done)" : "var(--status-blocked)" }} /><span>${result.name}</span></div><span>${result.ok ? "ok" : `failed (exit ${result.exit_code})`}</span></div>${!result.ok && (result.stderr || result.stdout) ? (
                                       html`<pre class=${"preflight-output"}>${(result.stderr || result.stdout).trim()}</pre>`
-                                    ) : null} <//>`
-                                ))} ${preflight.preflight_result ? (
-                                  html`<${preact.Fragment}> <div class=${"preflight-row"}> <div class=${"row"}> <span class=${"status-dot"} style=${{ background: preflight.preflight_result.ok ? "var(--status-done)" : "var(--status-blocked)" }} /> <span>Pack preflight hook</span> </div> <span>${preflight.preflight_result.ok ? "ok" : `failed (exit ${preflight.preflight_result.exit_code})`}</span> </div> ${!preflight.preflight_result.ok && (preflight.preflight_result.stderr || preflight.preflight_result.stdout) ? (
+                                    ) : null}<//>`
+                                ))}${preflight.preflight_result ? (
+                                  html`<${preact.Fragment}><div class=${"preflight-row"}><div class=${"row"}><span class=${"status-dot"} style=${{ background: preflight.preflight_result.ok ? "var(--status-done)" : "var(--status-blocked)" }} /><span>Pack preflight hook</span></div><span>${preflight.preflight_result.ok ? "ok" : `failed (exit ${preflight.preflight_result.exit_code})`}</span></div>${!preflight.preflight_result.ok && (preflight.preflight_result.stderr || preflight.preflight_result.stdout) ? (
                                       html`<pre class=${"preflight-output"}>${(preflight.preflight_result.stderr || preflight.preflight_result.stdout).trim()}</pre>`
-                                    ) : null} <//>`
-                                ) : null} </div>`
-                            )} </div> </div> <div class=${"action-row"}> ${isIdle ? (
-                            html`<button type=${"button"} class=${"action-button"} onClick=${onNewRun} disabled=${isBusy}> New Run </button>`
+                                    ) : null}<//>`
+                                ) : null}</div>`
+                            )}</div></div><div class=${"action-row"}>${isIdle ? (
+                            html`<button type=${"button"} class=${"action-button"} onClick=${onNewRun} disabled=${isBusy}>New Run</button>`
                           ) : !draftExists ? (
-                            html`<button type=${"button"} class=${"action-button"} onClick=${onCreateDraft} disabled=${isBusy || !setupDraft.pack}> Create Session </button>`
+                            html`<button type=${"button"} class=${"action-button"} onClick=${onCreateDraft} disabled=${isBusy || !setupDraft.pack}>Create Session</button>`
                           ) : (
-                            html`<button type=${"button"} class=${"action-button"} onClick=${onStartSession} disabled=${isBusy || !canStart}> Start Session </button>`
-                          )} </div> </div> </section> </div>`
+                            html`<button type=${"button"} class=${"action-button"} onClick=${onStartSession} disabled=${isBusy || !canStart}>Start Session</button>`
+                          )}</div></div></section></div>`
                 );
               }
 
@@ -3418,7 +3431,7 @@ const html = htm.bind(preact.h);
                     display: 'flex',
                     gap: '12px',
                     flexWrap: 'wrap',
-                  }}> ${parts.join(" — ")} </div>`
+                  }}>${parts.join(" — ")}</div>`
                 );
               }
 
@@ -3474,7 +3487,7 @@ const html = htm.bind(preact.h);
                 }
 
                 return (
-                  html`<span class=${"mono"} style=${style}> ${`idle: ${formatElapsed(ago)}`} </span>`
+                  html`<span class=${"mono"} style=${style}>${`idle: ${formatElapsed(ago)}`}</span>`
                 );
               }
 
@@ -3495,7 +3508,7 @@ const html = htm.bind(preact.h);
                   : (task.elapsed || 0);
 
                 return (
-                  html`<div> <div class=${"field-label"}>${label}</div> <div class=${"metadata-value mono"}>${formatElapsed(seconds)}</div> </div>`
+                  html`<div><div class=${"field-label"}>${label}</div><div class=${"metadata-value mono"}>${formatElapsed(seconds)}</div></div>`
                 );
               }
 
@@ -3545,8 +3558,8 @@ const html = htm.bind(preact.h);
                 }, [effectiveLogLines.length]);
 
                 return (
-                  html`<div class=${"split-view"}> <aside class=${"detail-panel"}> <button type=${"button"} class=${"secondary-button"} onClick=${onBack}> ${icon("arrow-left", { width: 16, height: 16 })} Back to Monitor </button> ${task ? (
-                        html`<div> <h1 class=${"mono"} style=${{ fontSize: "var(--text-xl)", marginBottom: "8px" }}>${task.task_id}</h1> <div class=${"secondary"}>${task.title}</div> <div style=${{ marginTop: "16px" }}> <span class=${"status-badge"} style=${statusBadgeStyle(task.status)}>${task.status}</span> ${task.full_test_after ? (
+                  html`<div class=${"split-view"}><aside class=${"detail-panel"}><button type=${"button"} class=${"secondary-button"} onClick=${onBack}>${icon("arrow-left", { width: 16, height: 16 })} Back to Monitor</button>${task ? (
+                        html`<div><h1 class=${"mono"} style=${{ fontSize: "var(--text-xl)", marginBottom: "8px" }}>${task.task_id}</h1><div class=${"secondary"}>${task.title}</div><div style=${{ marginTop: "16px" }}><span class=${"status-badge"} style=${statusBadgeStyle(task.status)}>${task.status}</span>${task.full_test_after ? (
                               html`<span title=${"Full test after completion"} style=${{
                                 fontSize: 'var(--text-xs)',
                                 color: 'var(--status-active)',
@@ -3556,34 +3569,57 @@ const html = htm.bind(preact.h);
                                 borderRadius: '3px',
                                 marginLeft: '8px',
                               }}>FTA</span>`
-                            ) : null} </div> <div class=${"metadata-grid"}> <div> <div class=${"field-label"}>Session</div> <div class=${"metadata-value mono"}>${currentSession?.name || "n/a"}</div> </div> <div> <div class=${"field-label"}>Worker Slot</div> <div class=${"metadata-value mono"}>${task.worker_slot ?? "n/a"}</div> </div> <div> <div class=${"field-label"}>Plan Path</div> <div class=${"metadata-value mono"}>${task.plan_path}</div> </div> <div> <div class=${"field-label"}>Created</div> <div class=${"metadata-value mono"}>${task.created_at || "n/a"}</div> </div> ${task.started_at ? (
-                              html`<div> <div class=${"field-label"}>Started</div> <div class=${"metadata-value mono"} title=${task.started_at}>${task.started_at.slice(11, 19)}</div> </div>`
-                            ) : null} <${ElapsedField} task=${task} /> ${task.completed_at ? (
-                              html`<div> <div class=${"field-label"}>Completed</div> <div class=${"metadata-value mono"} title=${task.completed_at}>${task.completed_at.slice(11, 19)}</div> </div>`
-                            ) : null} <div> <div class=${"field-label"}>Constraints</div> <div class=${"constraint-list"}> <div class=${"metadata-value mono"}>${`DEPENDS_ON: ${(task.depends_on || []).join(", ") || "none"}`}</div> <div class=${"metadata-value mono"}>${`ANTI_AFFINITY: ${(task.anti_affinity || []).join(", ") || "none"}`}</div> <div class=${"metadata-value mono"}>${`FULL_TEST_AFTER: ${task.full_test_after ? "yes" : "no"}`}</div> </div> </div> </div> ${(() => {
+                            ) : null}</div><div class=${"metadata-grid"}><div><div class=${"field-label"}>Session</div><div class=${"metadata-value mono"}>${currentSession?.name || "n/a"}</div></div><div><div class=${"field-label"}>Worker Slot</div><div class=${"metadata-value mono"}>${task.worker_slot ?? "n/a"}</div></div><div><div class=${"field-label"}>Plan Path</div><div class=${"metadata-value mono"}>${task.plan_path}</div></div><div><div class=${"field-label"}>Created</div><div class=${"metadata-value mono"}>${task.created_at || "n/a"}</div></div>${task.started_at ? (
+                              html`<div><div class=${"field-label"}>Started</div><div class=${"metadata-value mono"} title=${task.started_at}>${task.started_at.slice(11, 19)}</div></div>`
+                            ) : null}<${ElapsedField} task=${task} />${task.completed_at ? (
+                              html`<div><div class=${"field-label"}>Completed</div><div class=${"metadata-value mono"} title=${task.completed_at}>${task.completed_at.slice(11, 19)}</div></div>`
+                            ) : null}<div><div class=${"field-label"}>Constraints</div><div class=${"constraint-list"}><div class=${"metadata-value mono"}>${`DEPENDS_ON: ${(task.depends_on || []).join(", ") || "none"}`}</div><div class=${"metadata-value mono"}>${`ANTI_AFFINITY: ${(task.anti_affinity || []).join(", ") || "none"}`}</div><div class=${"metadata-value mono"}>${`FULL_TEST_AFTER: ${task.full_test_after ? "yes" : "no"}`}</div></div></div></div>${(() => {
                             const actions = TASK_TRANSITIONS[task.status];
                             if (!actions || actions.length === 0) return null;
                             return (
-                              html`<div style=${{ marginTop: '16px', display: 'flex', gap: '8px', flexWrap: 'wrap' }}> ${actions.map(({ target, label, icon: iconName }) => (
+                              html`<div style=${{ marginTop: '16px', display: 'flex', gap: '8px', flexWrap: 'wrap' }}>${actions.map(({ target, label, icon: iconName }) => (
                                   html`<button key=${target} type=${"button"} class=${"secondary-button"} onClick=${async (e) => {
                                       e.stopPropagation();
                                       await onMoveTask(task.task_id, target);
                                       if (target === "intake") {
                                         onBack();
                                       }
-                                    }}> ${icon(iconName, { width: 14, height: 14 })} ${label} </button>`
-                                ))} <button type=${"button"} class=${"secondary-button"} onClick=${() => onRevealFile(task.plan_path)} title=${"Open plan file in Finder/editor"}> ${icon("file-text", { width: 14, height: 14 })} Reveal File </button> </div>`
+                                    }}>${icon(iconName, { width: 14, height: 14 })} ${label}</button>`
+                                ))}<button type=${"button"} class=${"secondary-button"} onClick=${() => onRevealFile(task.plan_path)} title=${"Open plan file in Finder/editor"}>${icon("file-text", { width: 14, height: 14 })} Reveal File</button></div>`
                             );
-                          })()} </div>`
+                          })()}</div>`
                       ) : (
                         html`<div class=${"empty-state"}>Select a task from the monitor.</div>`
-                      )} </aside> <section class=${"log-panel"} ref=${logPanelRef}> <div style=${{ position: "sticky", top: 0, background: "rgba(10, 12, 16, 0.96)", paddingBottom: "12px" }}> <input class=${"search-input"} placeholder=${"Search log output"} value=${searchValue} onInput=${(event) => onSearchChange(event.target.value)} /> </div> ${(effectiveLogLines.length ? effectiveLogLines : [{ line: emptyLogMessage, ts: null }]).map((entry, index) => (
-                        html`<div key=${`${index}-${entry.line}`} class=${`log-line ${entry.line.startsWith("───") ? "separator" : isProgressLine(entry.line) ? "progress" : isProblemLine(entry.line) ? "error" : ""}`}> ${entry.ts ? html`<span class=${"muted"} style=${{ marginRight: '8px' }}>${entry.ts.slice(11, 19)}</span>` : null} ${entry.line} </div>`
-                      ))} </section> </div>`
+                      )}</aside><section class=${"log-panel"} ref=${logPanelRef}><div style=${{ position: "sticky", top: 0, background: "rgba(10, 12, 16, 0.96)", paddingBottom: "12px" }}><input class=${"search-input"} placeholder=${"Search log output"} value=${searchValue} onInput=${(event) => onSearchChange(event.target.value)} /></div>${(effectiveLogLines.length ? effectiveLogLines : [{ line: emptyLogMessage, ts: null }]).map((entry, index) => (
+                        html`<div key=${`${index}-${entry.line}`} class=${`log-line ${entry.line.startsWith("───") ? "separator" : isProgressLine(entry.line) ? "progress" : isProblemLine(entry.line) ? "error" : ""}`}>${entry.ts ? html`<span class=${"muted"} style=${{ marginRight: '8px' }}>${entry.ts.slice(11, 19)}</span>` : null}${entry.line}</div>`
+                      ))}</section></div>`
                 );
               }
 
-              function DagCanvas({ nodes, edges, setNodes, setEdges, onOpenTask }) {
+              const DAG_MIN_ZOOM = 0.5;
+              const DAG_MAX_ZOOM = 2;
+              // Edges meet the outer edge of a handle, which overhangs a task node's 2px border by 1px.
+              const DAG_HANDLE_OVERHANG = 1;
+              // Control icon paths are from React Flow (MIT License, (c) webkid GmbH, https://github.com/xyflow/xyflow).
+              const DAG_CONTROL_ICONS = {
+                zoomIn: ["0 0 32 32", "M32 18.133H18.133V32h-4.266V18.133H0v-4.266h13.867V0h4.266v13.867H32z"],
+                zoomOut: ["0 0 32 5", "M0 0h32v4.2H0z"],
+                fitView: ["0 0 32 30", "M3.692 4.63c0-.53.4-.938.939-.938h5.215V0H4.708C2.13 0 0 2.054 0 4.63v5.216h3.692V4.631zM27.354 0h-5.2v3.692h5.17c.53 0 .984.4.984.939v5.215H32V4.631A4.624 4.624 0 0027.354 0zm.954 24.83c0 .532-.4.94-.939.94h-5.215v3.768h5.215c2.577 0 4.631-2.13 4.631-4.707v-5.139h-3.692v5.139zm-23.677.94c-.531 0-.939-.4-.939-.94v-5.138H0v5.139c0 2.577 2.13 4.707 4.708 4.707h5.138V25.77H4.631z"],
+                unlocked: ["0 0 25 32", "M21.333 10.667H19.81V7.619C19.81 3.429 16.38 0 12.19 0c-4.114 1.828-1.37 2.133.305 2.438 1.676.305 4.42 2.59 4.42 5.181v3.048H3.047A3.056 3.056 0 000 13.714v15.238A3.056 3.056 0 003.048 32h18.285a3.056 3.056 0 003.048-3.048V13.714a3.056 3.056 0 00-3.048-3.047zM12.19 24.533a3.056 3.056 0 01-3.047-3.047 3.056 3.056 0 013.047-3.048 3.056 3.056 0 013.048 3.048 3.056 3.056 0 01-3.048 3.047z"],
+                locked: ["0 0 25 32", "M21.333 10.667H19.81V7.619C19.81 3.429 16.38 0 12.19 0 8 0 4.571 3.429 4.571 7.619v3.048H3.048A3.056 3.056 0 000 13.714v15.238A3.056 3.056 0 003.048 32h18.285a3.056 3.056 0 003.048-3.048V13.714a3.056 3.056 0 00-3.048-3.047zM12.19 24.533a3.056 3.056 0 01-3.047-3.047 3.056 3.056 0 013.047-3.048 3.056 3.056 0 013.048 3.048 3.056 3.056 0 01-3.048 3.047zm4.724-13.866H7.467V7.619c0-2.59 2.133-4.724 4.723-4.724 2.591 0 4.724 2.133 4.724 4.724v3.048z"],
+              };
+              const dagControlIcon = ([viewBox, path]) => html`<svg xmlns="http://www.w3.org/2000/svg" viewBox=${viewBox}><path d=${path} /></svg>`;
+              const stopPropagation = (event) => event.stopPropagation();
+              // The next four are adapted from React Flow (MIT License, (c) webkid GmbH): wheel delta, fit padding, bezier offsets.
+              const wheelZoomFactor = (event) => 2 ** (-event.deltaY * (event.deltaMode === 1 ? 0.05 : event.deltaMode ? 1 : 0.002) * (event.ctrlKey && navigator.userAgent.includes("Mac") ? 10 : 1));
+              const fitPadding = (size) => Math.floor((size - size / 1.1) * 0.5);
+              const curveOffset = (distance) => distance >= 0 ? distance / 2 : 6.25 * Math.sqrt(-distance);
+              const bezierPath = (x1, y1, x2, y2, direction = 1) => {
+                const offset = direction * curveOffset(direction * (y2 - y1));
+                return `M${x1},${y1} C${x1},${y1 + offset} ${x2},${y2 - offset} ${x2},${y2}`;
+              };
+
+              const DagCanvas = memo(function DagCanvas({ nodes, edges, setNodes, setEdges, onOpenTask }) {
                 const root = useRef(null);
                 const drag = useRef(null);
                 const touches = useRef(new Map());
@@ -3597,32 +3633,64 @@ const html = htm.bind(preact.h);
                 const [selectionBox, setSelectionBox] = useState(null);
                 const [connection, setConnection] = useState(null);
                 const [interactive, setInteractive] = useState(true);
+                const [selectionKey, setSelectionKey] = useState(false);
                 const [size, setSize] = useState({ width: 1, height: 1 });
                 const [dimensions, setDimensions] = useState({});
                 const initialFit = useRef(false);
-                const clamp = (zoom) => Math.max(0.5, Math.min(2, zoom));
+                // Auto-pan timers outlive the render that started them, so they read these.
+                const latestViewport = useRef(viewport);
+                const latestSelected = useRef(selected);
+                latestViewport.current = viewport;
+                latestSelected.current = selected;
+                const clamp = (zoom) => Math.max(DAG_MIN_ZOOM, Math.min(DAG_MAX_ZOOM, zoom));
                 const nodeSize = (node) => dimensions[node.id] || { width: Number(node.style?.width) || 180, height: Number(node.style?.height) || 80 };
                 const bounds = () => {
-                  const items = nodes.filter((n) => !n.id.endsWith('-label'));
-                  if (!items.length) return { x: 0, y: 0, width: 1, height: 1 };
-                  const x = Math.min(...items.map((n) => n.position.x));
-                  const y = Math.min(...items.map((n) => n.position.y));
-                  const right = Math.max(...items.map((n) => n.position.x + nodeSize(n).width));
-                  const bottom = Math.max(...items.map((n) => n.position.y + nodeSize(n).height));
+                  if (!nodes.length) return { x: 0, y: 0, width: 1, height: 1 };
+                  const x = Math.min(...nodes.map((n) => n.position.x));
+                  const y = Math.min(...nodes.map((n) => n.position.y));
+                  const right = Math.max(...nodes.map((n) => n.position.x + nodeSize(n).width));
+                  const bottom = Math.max(...nodes.map((n) => n.position.y + nodeSize(n).height));
                   return { x, y, width: Math.max(1, right - x), height: Math.max(1, bottom - y) };
                 };
                 const fit = () => {
                   const r = root.current?.getBoundingClientRect();
-                  if (!r || !r.width || !r.height) return;
-                  const b = bounds();
-                  const zoom = clamp(Math.min(r.width / (b.width * 1.2), r.height / (b.height * 1.2)));
-                  setViewport({ x: (r.width - b.width * zoom) / 2 - b.x * zoom, y: (r.height - b.height * zoom) / 2 - b.y * zoom, zoom });
+                  if (!r || !r.width || !r.height || !nodes.length) return;
+                  const b = bounds(), padX = fitPadding(r.width), padY = fitPadding(r.height);
+                  const zoom = clamp(Math.min((r.width - padX * 2) / b.width, (r.height - padY * 2) / b.height));
+                  const x = r.width / 2 - (b.x + b.width / 2) * zoom, y = r.height / 2 - (b.y + b.height / 2) * zoom;
+                  // A clamped zoom can leave the graph short of the padding on one side.
+                  const left = Math.floor(b.x * zoom + x), top = Math.floor(b.y * zoom + y);
+                  const right = Math.floor(r.width - ((b.x + b.width) * zoom + x)), bottom = Math.floor(r.height - ((b.y + b.height) * zoom + y));
+                  setViewport({
+                    x: x - Math.min(left - padX, 0) + Math.min(right - padX, 0),
+                    y: y - Math.min(top - padY, 0) + Math.min(bottom - padY, 0),
+                    zoom,
+                  });
+                };
+                const moveNodes = (id, dx, dy) => {
+                  const group = latestSelected.current;
+                  setNodes((current) => current.map((n) => (n.id === id || (group.includes(id) && group.includes(n.id))) ? { ...n, position: { x: n.position.x + dx, y: n.position.y + dy } } : n));
+                };
+                const selectEdge = (id, multi) => {
+                  if (!multi) setSelected([]);
+                  setSelectedEdges((current) => multi ? (current.includes(id) ? current.filter((edgeId) => edgeId !== id) : [...current, id]) : [id]);
+                };
+                const keySelectNode = (e, id) => {
+                  const multi = e.metaKey || e.ctrlKey, element = e.currentTarget;
+                  if (!selected.includes(id)) {
+                    if (e.key === 'Escape') return;
+                    setSelected(multi ? [...selected, id] : [id]);
+                    if (!multi) setSelectedEdges([]);
+                  } else if (e.key === 'Escape' || multi) {
+                    setSelected(selected.filter((nodeId) => nodeId !== id));
+                    requestAnimationFrame(() => element.blur());
+                  }
                 };
                 const zoomAt = (factor, x, y) => setViewport((v) => {
                   const zoom = clamp(v.zoom * factor);
                   return { x: x - (x - v.x) * zoom / v.zoom, y: y - (y - v.y) * zoom / v.zoom, zoom };
                 });
-                useEffect(() => {
+                useLayoutEffect(() => {
                   const el = root.current;
                   const resize = () => setSize({ width: el.clientWidth, height: el.clientHeight });
                   const observer = new ResizeObserver(resize);
@@ -3638,15 +3706,20 @@ const html = htm.bind(preact.h);
                     });
                   });
                   el.querySelectorAll('.dag-node').forEach((node) => nodeObserver.observe(node));
-                  const wheel = (e) => { e.preventDefault(); const r = el.getBoundingClientRect(); zoomAt(Math.pow(2, -e.deltaY * 0.002), e.clientX - r.left, e.clientY - r.top); };
-                  const keyDown = (e) => { if (e.code === 'Space' && !['INPUT', 'TEXTAREA', 'SELECT'].includes(document.activeElement?.tagName)) spaceDown.current = true; };
-                  const keyUp = (e) => { if (e.code === 'Space') spaceDown.current = false; };
-                  const blur = () => { spaceDown.current = false; };
+                  const wheel = (e) => {
+                    if (e.target.closest('.dag-controls, .dag-minimap')) return;
+                    e.preventDefault();
+                    const r = el.getBoundingClientRect();
+                    zoomAt(wheelZoomFactor(e), e.clientX - r.left, e.clientY - r.top);
+                  };
+                  const keyDown = (e) => { setSelectionKey(e.shiftKey); if (e.code === 'Space' && !['INPUT', 'TEXTAREA', 'SELECT'].includes(document.activeElement?.tagName)) spaceDown.current = true; };
+                  const keyUp = (e) => { setSelectionKey(e.shiftKey); if (e.code === 'Space') spaceDown.current = false; };
+                  const blur = () => { spaceDown.current = false; setSelectionKey(false); };
                   el.addEventListener('wheel', wheel, { passive: false });
                   window.addEventListener('keydown', keyDown); window.addEventListener('keyup', keyUp); window.addEventListener('blur', blur);
                   return () => { observer.disconnect(); nodeObserver.disconnect(); el.removeEventListener('wheel', wheel); window.removeEventListener('keydown', keyDown); window.removeEventListener('keyup', keyUp); window.removeEventListener('blur', blur); clearInterval(panTimer.current); };
                 }, []);
-                useEffect(() => {
+                useLayoutEffect(() => {
                   if (!initialFit.current && nodes.every((node) => dimensions[node.id])) { initialFit.current = true; fit(); }
                 }, [dimensions]);
                 const onKey = (e) => {
@@ -3659,15 +3732,23 @@ const html = htm.bind(preact.h);
                   setEdges((current) => current.filter((edge) => !selectedEdges.includes(edge.id) && !selected.includes(edge.source) && !selected.includes(edge.target)));
                   setSelected([]); setSelectedEdges([]);
                 };
+                const clickPane = () => {
+                  if (suppressClick.current) { suppressClick.current = false; return; }
+                  if (interactive) { setSelected([]); setSelectedEdges([]); }
+                };
                 const start = (e, node) => {
                   if (e.button !== 0 && e.button !== 1) return;
-                  if (spaceDown.current) node = null;
+                  e.stopPropagation();
+                  // A pan's click lands on the pane or nowhere, so each press starts clean.
+                  suppressClick.current = false;
                   if (connection?.clickMode) setConnection(null);
-                  if (node && (node.draggable === false || !interactive)) node = null;
-                  e.stopPropagation(); e.currentTarget.setPointerCapture(e.pointerId);
-                  if (node && interactive && !e.metaKey && !e.ctrlKey && !selected.includes(node.id)) { setSelected([node.id]); setSelectedEdges([]); }
-                  if (!node && !e.shiftKey) { setSelected([]); setSelectedEdges([]); }
-                  if (!node && e.shiftKey && interactive) {
+                  if (node && !interactive && e.button === 0 && e.pointerType !== 'touch') return;
+                  if (e.button === 1 || spaceDown.current || !interactive) node = null;
+                  if (!node && e.shiftKey && !interactive) return;
+                  if (!node && !e.shiftKey && e.ctrlKey && !spaceDown.current) return;
+                  e.currentTarget.setPointerCapture(e.pointerId);
+                  if (node && !e.metaKey && !e.ctrlKey && !selected.includes(node.id)) { setSelected([node.id]); setSelectedEdges([]); }
+                  if (!node && e.shiftKey) {
                     const r = root.current.getBoundingClientRect();
                     drag.current = { selecting: true, startX: e.clientX - r.left, startY: e.clientY - r.top, x: e.clientX - r.left, y: e.clientY - r.top };
                     setSelectionBox({ x: e.clientX - r.left, y: e.clientY - r.top, width: 0, height: 0 });
@@ -3698,13 +3779,15 @@ const html = htm.bind(preact.h);
                     panTimer.current = setInterval(() => {
                       const d = drag.current;
                       if (!d?.node || !d.pan || (!d.pan.x && !d.pan.y)) return;
-                      const { x, y } = d.pan;
+                      const { x, y } = d.pan, { zoom } = latestViewport.current;
                       setViewport((v) => ({ ...v, x: v.x + x, y: v.y + y }));
-                      setNodes((current) => current.map((n) => (n.id === d.node.id || (selected.includes(d.node.id) && selected.includes(n.id))) ? { ...n, position: { x: n.position.x - x / viewport.zoom, y: n.position.y - y / viewport.zoom } } : n));
+                      moveNodes(d.node.id, -x / zoom, -y / zoom);
                     }, 16);
                   }
                 };
                 const move = (e) => {
+                  // The release can go unseen, as when a macOS ctrl-click opens the context menu.
+                  if (drag.current && e.pointerType === 'mouse' && !e.buttons) { end(e); return; }
                   if (drag.current?.connecting || connection?.clickMode) {
                     const r = root.current.getBoundingClientRect();
                     const x = (e.clientX - r.left - viewport.x) / viewport.zoom, y = (e.clientY - r.top - viewport.y) / viewport.zoom;
@@ -3731,13 +3814,16 @@ const html = htm.bind(preact.h);
                     return;
                   }
                   const dx = e.clientX - d.x, dy = e.clientY - d.y;
-                  if (Math.abs(dx) + Math.abs(dy) > 0) d.moved = true;
+                  if (Math.abs(dx) + Math.abs(dy) > 0) {
+                    if (d.node && !d.moved) setSelected((current) => current.includes(d.node.id) ? current : [...current, d.node.id]);
+                    d.moved = true;
+                  }
                   d.x = e.clientX; d.y = e.clientY;
                   if (d.node) {
                     const r = root.current.getBoundingClientRect();
                     d.pan = { x: e.clientX < r.left + 20 ? 15 : e.clientX > r.right - 20 ? -15 : 0, y: e.clientY < r.top + 20 ? 15 : e.clientY > r.bottom - 20 ? -15 : 0 };
                   }
-                  if (d.node) setNodes((current) => current.map((n) => (n.id === d.node.id || (selected.includes(d.node.id) && selected.includes(n.id))) ? { ...n, position: { x: n.position.x + dx / viewport.zoom, y: n.position.y + dy / viewport.zoom } } : n));
+                  if (d.node) moveNodes(d.node.id, dx / viewport.zoom, dy / viewport.zoom);
                   else setViewport((v) => ({ ...v, x: v.x + dx, y: v.y + dy }));
                 };
                 const end = (e) => {
@@ -3759,37 +3845,44 @@ const html = htm.bind(preact.h);
                   pinch.current = null; drag.current = null;
                 };
                 const byId = new Map(nodes.map((n) => [n.id, n]));
+                const anchor = (node, source) => ({
+                  x: node.position.x + nodeSize(node).width / 2,
+                  y: source ? node.position.y + nodeSize(node).height + DAG_HANDLE_OVERHANG : node.position.y - DAG_HANDLE_OVERHANG,
+                });
                 const startConnection = (e, node, source) => {
                   if (!interactive || e.button !== 0 || spaceDown.current) return;
                   e.stopPropagation(); e.currentTarget.setPointerCapture(e.pointerId);
                   root.current.focus();
                   if (connection?.clickMode) { drag.current = { connecting: true, completing: true, x: e.clientX, y: e.clientY }; return; }
-                  const measured = nodeSize(node);
-                  const x = node.position.x + measured.width / 2, y = node.position.y + (source ? measured.height : 0);
+                  const { x, y } = anchor(node, source);
                   drag.current = { connecting: true, x: e.clientX, y: e.clientY, moved: false };
                   setConnection({ startX: x, startY: y, x, y, source });
                 };
                 const b = bounds();
                 const viewX = -viewport.x / viewport.zoom, viewY = -viewport.y / viewport.zoom;
                 const viewWidth = size.width / viewport.zoom, viewHeight = size.height / viewport.zoom;
-                const minX = Math.min(b.x, viewX), minY = Math.min(b.y, viewY);
-                const mapWidth = Math.max(b.x + b.width, viewX + viewWidth) - minX;
-                const mapHeight = Math.max(b.y + b.height, viewY + viewHeight) - minY;
-                const mapScale = Math.min(180 / Math.max(1, mapWidth), 130 / Math.max(1, mapHeight));
-                const mapX = (200 - mapWidth * mapScale) / 2 - minX * mapScale, mapY = (150 - mapHeight * mapScale) / 2 - minY * mapScale;
-                return html`<div class="dag-canvas-root" tabindex="-1" ref=${root} onKeyDown=${onKey} onPointerDown=${(e) => start(e, null)} onPointerMove=${move} onPointerUp=${end} onPointerCancel=${end} onDblClick=${(e) => { const r = root.current.getBoundingClientRect(); zoomAt(2, e.clientX - r.left, e.clientY - r.top); }}>
+                // Adapted from React Flow's minimap (MIT License, (c) webkid GmbH): the viewBox is in graph coordinates.
+                const mapLeft = nodes.length ? Math.min(b.x, viewX) : viewX, mapTop = nodes.length ? Math.min(b.y, viewY) : viewY;
+                const mapRight = nodes.length ? Math.max(b.x + b.width, viewX + viewWidth) : viewX + viewWidth;
+                const mapBottom = nodes.length ? Math.max(b.y + b.height, viewY + viewHeight) : viewY + viewHeight;
+                const mapScale = Math.max((mapRight - mapLeft) / 200, (mapBottom - mapTop) / 150), mapInset = 5 * mapScale;
+                const mapBoxX = mapLeft - (200 * mapScale - (mapRight - mapLeft)) / 2 - mapInset, mapBoxY = mapTop - (150 * mapScale - (mapBottom - mapTop)) / 2 - mapInset;
+                const mapBoxWidth = 200 * mapScale + mapInset * 2, mapBoxHeight = 150 * mapScale + mapInset * 2;
+                const mapMask = `M${mapBoxX - mapInset},${mapBoxY - mapInset}h${mapBoxWidth + mapInset * 2}v${mapBoxHeight + mapInset * 2}h${-mapBoxWidth - mapInset * 2}z M${viewX},${viewY}h${viewWidth}v${viewHeight}h${-viewWidth}z`;
+                const zoomFromCenter = (factor) => zoomAt(factor, size.width / 2, size.height / 2);
+                return html`<div class=${`dag-canvas-root${interactive ? '' : ' locked'}${interactive && selectionKey ? ' selecting' : ''}`} tabindex="-1" ref=${root} onKeyDown=${onKey} onPointerDown=${(e) => start(e, null)} onPointerMove=${move} onPointerUp=${end} onPointerCancel=${end} onClick=${clickPane} onDblClick=${(e) => { if (e.ctrlKey) return; const r = root.current.getBoundingClientRect(); zoomAt(e.shiftKey ? 0.5 : 2, e.clientX - r.left, e.clientY - r.top); }}>
                   <div class="dag-viewport" style=${{ transform: `translate(${viewport.x}px, ${viewport.y}px) scale(${viewport.zoom})` }}>
-                    <svg class="dag-edges" width="1" height="1"><defs><marker id="dag-arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="var(--text-muted)" /></marker></defs>
-                      ${connection ? html`<path class="dag-connection-preview" d=${`M ${connection.startX} ${connection.startY} C ${connection.startX} ${connection.startY + (connection.source ? 25 : -25)}, ${connection.x} ${connection.y + (connection.source ? -25 : 25)}, ${connection.x} ${connection.y}`} fill="none" stroke="#b1b1b7" stroke-width="1" />` : null}
-                      ${edges.map((edge) => { const a = byId.get(edge.source), z = byId.get(edge.target); if (!a || !z) return null; const x1 = a.position.x + nodeSize(a).width / 2, y1 = a.position.y + nodeSize(a).height, x2 = z.position.x + nodeSize(z).width / 2, y2 = z.position.y, bend = Math.max(25, Math.sqrt(Math.abs(y2 - y1)) * 6.25); const path = `M ${x1} ${y1} C ${x1} ${y1 + bend}, ${x2} ${y2 - bend}, ${x2} ${y2}`; return html`<g tabindex="0" data-selected=${selectedEdges.includes(edge.id) ? "true" : "false"} onPointerDown=${(e) => e.stopPropagation()} onClick=${(e) => { e.stopPropagation(); e.currentTarget.focus(); if (interactive) { const multi = e.metaKey || e.ctrlKey; if (!multi) setSelected([]); setSelectedEdges((current) => multi ? (current.includes(edge.id) ? current.filter((id) => id !== edge.id) : [...current, edge.id]) : [edge.id]); } }} onKeyDown=${(e) => { if (interactive && e.key === "Enter") { setSelected([]); setSelectedEdges([edge.id]); } }}><path d=${path} fill="none" stroke="transparent" stroke-width="20" style=${{ pointerEvents: "stroke" }} /><path class=${`dag-edge${edge.animated ? ' animated' : ''}`} d=${path} fill="none" stroke=${edge.style.stroke} stroke-width=${edge.style.strokeWidth} stroke-dasharray=${edge.style.strokeDasharray} marker-end=${edge.markerEnd ? 'url(#dag-arrow)' : undefined} /></g>`; })}
+                    <svg class="dag-edges" width="1" height="1"><defs><marker id="dag-arrow" viewBox="-10 -10 20 20" refX="0" refY="0" markerWidth="12.5" markerHeight="12.5" markerUnits="strokeWidth" orient="auto-start-reverse"><polyline points="-5,-4 0,0 -5,4 -5,-4" stroke-linecap="round" stroke-linejoin="round" stroke-width="1" stroke="#b1b1b7" fill="#b1b1b7" /></marker></defs>
+                      ${connection ? html`<path class="dag-connection-preview" d=${bezierPath(connection.startX, connection.startY, connection.x, connection.y, connection.source ? 1 : -1)} fill="none" stroke="#b1b1b7" stroke-width="1" />` : null}
+                      ${edges.map((edge) => { const a = byId.get(edge.source), z = byId.get(edge.target); if (!a || !z) return null; const from = anchor(a, true), to = anchor(z, false), path = bezierPath(from.x, from.y, to.x, to.y); return html`<g key=${edge.id} data-id=${edge.id} tabindex="0" data-selected=${selectedEdges.includes(edge.id) ? "true" : "false"} onPointerDown=${(e) => { if (e.button === 1) start(e, null); else e.stopPropagation(); }} onDblClick=${stopPropagation} onClick=${(e) => { e.stopPropagation(); e.currentTarget.focus(); if (interactive) selectEdge(edge.id, e.metaKey || e.ctrlKey); }} onKeyDown=${(e) => { if (!interactive) return; if (e.key === "Escape") { e.currentTarget.blur(); setSelected([]); setSelectedEdges((current) => current.filter((id) => id !== edge.id)); } else if (e.key === "Enter" || e.key === " ") { e.preventDefault(); selectEdge(edge.id, e.metaKey || e.ctrlKey); } }}><path class="dag-edge-hit" d=${path} fill="none" stroke="transparent" stroke-width="20" /><path class=${`dag-edge${edge.animated ? ' animated' : ''}`} d=${path} fill="none" stroke=${edge.style.stroke} stroke-width=${edge.style.strokeWidth} stroke-dasharray=${edge.style.strokeDasharray} marker-end=${edge.markerEnd ? 'url(#dag-arrow)' : undefined} /></g>`; })}
                     </svg>
-                    ${nodes.map((node) => html`<div key=${node.id} data-id=${node.id} class=${`dag-node${node.id.startsWith('group-') ? '' : ' dag-task-node'}${selected.includes(node.id) ? ' selected' : ''}`} tabindex=${node.selectable === false ? undefined : 0} style=${{ ...node.style, left: node.position.x, top: node.position.y }} onPointerDown=${(e) => start(e, node)} onClick=${(e) => { e.stopPropagation(); if (suppressClick.current) { suppressClick.current = false; return; } if (interactive && node.selectable !== false) { setSelected((current) => e.metaKey || e.ctrlKey ? (current.includes(node.id) ? current.filter((id) => id !== node.id) : [...current, node.id]) : [node.id]); if (!e.metaKey && !e.ctrlKey) setSelectedEdges([]); } }} onKeyDown=${(e) => { const delta = { ArrowLeft: [-1, 0], ArrowRight: [1, 0], ArrowUp: [0, -1], ArrowDown: [0, 1] }[e.key]; if (interactive && (e.key === 'Enter' || e.key === ' ')) { e.preventDefault(); setSelected([node.id]); setSelectedEdges([]); } else if (delta && interactive && node.draggable !== false) { e.preventDefault(); const step = e.shiftKey ? 4 : 1; setNodes((current) => current.map((n) => (n.id === node.id || (selected.includes(node.id) && selected.includes(n.id))) ? { ...n, position: { x: n.position.x + delta[0] * step, y: n.position.y + delta[1] * step } } : n)); } }} onDblClick=${(e) => { e.stopPropagation(); if (!node.id.startsWith('group-') && !suppressClick.current) onOpenTask(node.id); }}>${node.type === "group" ? null : node.data.label}${node.id.startsWith("group-") ? null : html`<span class="dag-handle dag-target-handle" onPointerDown=${(e) => startConnection(e, node, false)} onClick=${(e) => e.stopPropagation()} /><span class="dag-handle dag-source-handle" onPointerDown=${(e) => startConnection(e, node, true)} onClick=${(e) => e.stopPropagation()} />`}</div>`)}
+                    ${nodes.map((node) => html`<div key=${node.id} data-id=${node.id} class=${`dag-node${node.id.startsWith('group-') ? '' : ' dag-task-node'}${selected.includes(node.id) ? ' selected' : ''}`} tabindex=${node.selectable === false ? undefined : 0} style=${{ ...node.style, left: node.position.x, top: node.position.y, zIndex: selected.includes(node.id) ? 1000 : node.style?.zIndex }} onPointerDown=${(e) => start(e, node)} onClick=${(e) => { e.stopPropagation(); if (suppressClick.current) { suppressClick.current = false; return; } if (interactive && node.selectable !== false) { setSelected((current) => e.metaKey || e.ctrlKey ? (current.includes(node.id) ? current.filter((id) => id !== node.id) : [...current, node.id]) : [node.id]); if (!e.metaKey && !e.ctrlKey) setSelectedEdges([]); } }} onKeyDown=${(e) => { if (!interactive) return; const delta = { ArrowLeft: [-1, 0], ArrowRight: [1, 0], ArrowUp: [0, -1], ArrowDown: [0, 1] }[e.key]; if (e.key === 'Enter' || e.key === ' ' || e.key === 'Escape') { e.preventDefault(); keySelectNode(e, node.id); } else if (delta && node.draggable !== false && selected.includes(node.id)) { e.preventDefault(); const step = e.shiftKey ? 20 : 5; moveNodes(node.id, delta[0] * step, delta[1] * step); } }} onDblClick=${(e) => { e.stopPropagation(); if (!node.id.startsWith('group-') && !suppressClick.current) onOpenTask(node.id); }}>${node.type === "group" ? null : node.data.label}${node.id.startsWith("group-") ? null : html`<span class="dag-handle dag-target-handle" onPointerDown=${(e) => startConnection(e, node, false)} onClick=${stopPropagation} /><span class="dag-handle dag-source-handle" onPointerDown=${(e) => startConnection(e, node, true)} onClick=${stopPropagation} />`}</div>`)}
                   </div>
-                  ${selectionBox ? html`<div style=${{ position: 'absolute', left: selectionBox.x, top: selectionBox.y, width: selectionBox.width, height: selectionBox.height, background: 'rgba(0, 89, 220, .08)', border: '1px dotted #0059dc', pointerEvents: 'none' }} />` : null}
-                  <div class="dag-controls" onPointerDown=${(e) => e.stopPropagation()}><button class="dag-zoom-in" aria-label="zoom in" onClick=${() => zoomAt(1.2, size.width / 2, size.height / 2)}>+</button><button class="dag-zoom-out" aria-label="zoom out" onClick=${() => zoomAt(1 / 1.2, size.width / 2, size.height / 2)}>−</button><button class="dag-fit-view" aria-label="fit view" onClick=${fit}>⛶</button><button class="dag-toggle-interactivity" aria-label="toggle interactivity" aria-pressed=${!interactive} onClick=${() => setInteractive((value) => !value)}><svg viewBox="0 0 24 24"><path d=${interactive ? 'M18 8h-1V6a5 5 0 0 0-9.9-1H9.2A3 3 0 0 1 15 6v2H6a2 2 0 0 0-2 2v10a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V10a2 2 0 0 0-2-2z' : 'M18 8h-1V6A5 5 0 0 0 7 6v2H6a2 2 0 0 0-2 2v10a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V10a2 2 0 0 0-2-2zM9 6a3 3 0 0 1 6 0v2H9z'} /></svg></button></div>
-                  <svg class="dag-minimap" viewBox="0 0 200 150" onPointerDown=${(e) => e.stopPropagation()}><rect width="200" height="150" fill="#f0f0f0" /><rect class="dag-minimap-viewport" x=${mapX - viewport.x / viewport.zoom * mapScale} y=${mapY - viewport.y / viewport.zoom * mapScale} width=${size.width / viewport.zoom * mapScale} height=${size.height / viewport.zoom * mapScale} fill="white" stroke="#ddd" />${nodes.filter((n) => !n.id.startsWith('group-')).map((n) => html`<rect x=${mapX + n.position.x * mapScale} y=${mapY + n.position.y * mapScale} width=${nodeSize(n).width * mapScale} height=${nodeSize(n).height * mapScale} fill="#161922" />`)}</svg>
+                  ${selectionBox ? html`<div style=${{ position: 'absolute', left: selectionBox.x, top: selectionBox.y, width: selectionBox.width, height: selectionBox.height, background: 'rgba(0, 89, 220, .08)', border: '1px dotted rgba(0, 89, 220, .8)', pointerEvents: 'none' }} />` : null}
+                  <div class="dag-controls" onPointerDown=${stopPropagation} onClick=${stopPropagation} onDblClick=${stopPropagation}><button type="button" class="dag-zoom-in" title="Zoom In" aria-label="Zoom In" disabled=${viewport.zoom >= DAG_MAX_ZOOM} onClick=${() => zoomFromCenter(1.2)}>${dagControlIcon(DAG_CONTROL_ICONS.zoomIn)}</button><button type="button" class="dag-zoom-out" title="Zoom Out" aria-label="Zoom Out" disabled=${viewport.zoom <= DAG_MIN_ZOOM} onClick=${() => zoomFromCenter(1 / 1.2)}>${dagControlIcon(DAG_CONTROL_ICONS.zoomOut)}</button><button type="button" class="dag-fit-view" title="Fit View" aria-label="Fit View" onClick=${fit}>${dagControlIcon(DAG_CONTROL_ICONS.fitView)}</button><button type="button" class="dag-toggle-interactivity" title="Toggle Interactivity" aria-label="Toggle Interactivity" aria-pressed=${!interactive} onClick=${() => setInteractive((value) => !value)}>${dagControlIcon(interactive ? DAG_CONTROL_ICONS.unlocked : DAG_CONTROL_ICONS.locked)}</button></div>
+                  <svg class="dag-minimap" viewBox=${`${mapBoxX} ${mapBoxY} ${mapBoxWidth} ${mapBoxHeight}`} onPointerDown=${stopPropagation} onClick=${stopPropagation} onDblClick=${stopPropagation}>${nodes.map((n) => html`<rect key=${n.id} class="dag-minimap-node" x=${n.position.x} y=${n.position.y} rx="5" ry="5" width=${nodeSize(n).width} height=${nodeSize(n).height} shape-rendering=${window.chrome ? "crispEdges" : "geometricPrecision"} style=${{ fill: n.style?.background }} />`)}<path class="dag-minimap-mask" d=${mapMask} fill-rule="evenodd" pointer-events="none" /></svg>
                 </div>`;
-              }
+              });
 
               function DagView({ dag, liveTasks, onBack, onOpenTask }) {
                 // The DAG payload is fetched once; overlay the live task list
@@ -3896,7 +3989,7 @@ const html = htm.bind(preact.h);
                   }).filter(Boolean);
                 }, [groups, positions]);
 
-                // Group label nodes (React Flow group type doesn't render labels)
+                // Group label nodes (DagCanvas renders no text on a group node)
                 const groupLabelNodes = useMemo(() => {
                   return groupNodes.map((gn) => ({
                     id: `${gn.id}-label`,
@@ -3930,7 +4023,7 @@ const html = htm.bind(preact.h);
                   position: positions[task.task_id] || { x: 0, y: 0 },
                   data: {
                     label: (
-                      html`<div> <div class=${"mono"}>${task.task_id}</div> <div class=${"secondary"}>${task.title || "Task"}</div> <div class=${"status-badge"} style=${statusBadgeStyle(task.status || "ready")}> ${task.status || "ready"} </div> </div>`
+                      html`<div><div class=${"mono"}>${task.task_id}</div><div class=${"secondary"}>${task.title || "Task"}</div><div class=${"status-badge"} style=${statusBadgeStyle(task.status || "ready")}>${task.status || "ready"}</div></div>`
                     )
                   },
                   style: {
@@ -3965,6 +4058,10 @@ const html = htm.bind(preact.h);
                 const allEdges = [...dependsEdges, ...antiAffinityEdges];
                 const [flowNodes, setFlowNodes] = useState(allNodes);
                 const [flowEdges, setFlowEdges] = useState(allEdges);
+                // App recreates onOpenTask on every render; a stable wrapper lets DagCanvas skip those renders.
+                const latestOpenTask = useRef(onOpenTask);
+                latestOpenTask.current = onOpenTask;
+                const stableOpenTask = useRef((taskId) => latestOpenTask.current(taskId)).current;
                 // flowNodes owns positions and selection after the first render;
                 // refresh only each task node's label and border on status changes.
                 const taskStateKey = JSON.stringify(tasks.map((task) => [task.task_id, task.title || "", task.status || ""]));
@@ -3976,34 +4073,42 @@ const html = htm.bind(preact.h);
                   }));
                 }, [taskStateKey]);
                 return (
-                  html`<div class=${"dag-shell"}> <div class=${"page"}> <button type=${"button"} class=${"secondary-button"} onClick=${onBack}> ${icon("arrow-left", { width: 16, height: 16 })} Back to Monitor </button> </div> ${dag ? (
-                      html`<div class=${"dag-canvas"}><${DagCanvas} nodes=${flowNodes} edges=${flowEdges} setNodes=${setFlowNodes} setEdges=${setFlowEdges} onOpenTask=${onOpenTask} /></div>`
+                  html`<div class=${"dag-shell"}><div class=${"page"}><button type=${"button"} class=${"secondary-button"} onClick=${onBack}>${icon("arrow-left", { width: 16, height: 16 })} Back to Monitor</button></div>${dag ? (
+                      html`<div class=${"dag-canvas"}><${DagCanvas} nodes=${flowNodes} edges=${flowEdges} setNodes=${setFlowNodes} setEdges=${setFlowEdges} onOpenTask=${stableOpenTask} /></div>`
                     ) : (
                       html`<div class=${"empty-state"}>DAG data will appear here once a session has a graph.</div>`
-                    )} </div>`
+                    )}</div>`
                 );
               }
 
               function HistoryView({ sessions, settings, selectedSession, selectedTasks, onOpenSession, onOpenSettings, onPurgeSession, onPurgeAll }) {
                 const completed = sessions.filter((session) => session.status === "completed" || session.status === "aborted");
                 return (
-                  html`<main class=${"page"}> <div class=${"row"} style=${{ justifyContent: "space-between", marginBottom: "24px" }}> <h1 style=${{ margin: 0, fontFamily: "var(--font-display)", fontSize: "var(--text-xl)" }}>Session History</h1> <div class=${"action-row"}> <button type=${"button"} class=${"secondary-button"} onClick=${onOpenSettings}> Retention </button> <button type=${"button"} class=${"danger-button"} onClick=${onPurgeAll}> Purge All </button> </div> </div> <section class=${"history-list"}> ${completed.length === 0 ? (
-                        html`<div class=${"empty-state"}> ${icon("inbox", { width: 32, height: 32 })} <div>No sessions yet</div> </div>`
+                  html`<main class=${"page"}><div class=${"row"} style=${{ justifyContent: "space-between", marginBottom: "24px" }}><h1 style=${{ margin: 0, fontFamily: "var(--font-display)", fontSize: "var(--text-xl)" }}>Session History</h1><div class=${"action-row"}><button type=${"button"} class=${"secondary-button"} onClick=${onOpenSettings}>Retention</button><button type=${"button"} class=${"danger-button"} onClick=${onPurgeAll}>Purge All</button></div></div><section class=${"history-list"}>${completed.length === 0 ? (
+                        html`<div class=${"empty-state"}>${icon("inbox", { width: 32, height: 32 })}<div>No sessions yet</div></div>`
                       ) : completed.map((session) => (
-                        html`<article key=${session.id} class=${"session-card"}> <div class=${"session-card-header"}> <div onClick=${() => onOpenSession(session)} style=${{ cursor: "pointer", flex: 1 }}> <div style=${{ fontFamily: "var(--font-display)", fontWeight: 600 }}>${session.name}</div> <div class=${"secondary mono"}>${session.pack}</div> <div class=${"secondary mono"} style=${{ marginTop: "12px" }}> ${`${session.created_at} -> ${session.completed_at || "in progress"}`} </div> </div> <div class=${"stack"} style=${{ justifyItems: "end" }}> <span class=${"status-badge"} style=${statusBadgeStyle(session.status)}>${session.status}</span> <button type=${"button"} class=${"icon-button"} onClick=${() => onPurgeSession(session.id)} aria-label=${`Purge ${session.name}`}> ${icon("trash-2", { width: 16, height: 16 })} </button> </div> </div> </article>`
-                      ))} </section> ${selectedSession ? (
-                      html`<section class=${"setup-card"} style=${{ marginTop: "24px" }}> <div class=${"row"} style=${{ justifyContent: "space-between", alignItems: "flex-start" }}> <div> <h2 style=${{ margin: 0, fontFamily: "var(--font-display)", fontSize: "var(--text-lg)" }}>${selectedSession.name}</h2> <div class=${"secondary mono"}>${selectedSession.pack}</div> </div> <span class=${"status-badge"} style=${statusBadgeStyle(selectedSession.status)}>${selectedSession.status}</span> </div> <div class=${"secondary mono"} style=${{ marginTop: "12px" }}> ${`${selectedSession.started_at || selectedSession.created_at} -> ${selectedSession.completed_at || "in progress"}`} </div> ${selectedSession?.release_notes?.content ? (
-                          html`<section class=${"section-card"} style=${{ marginTop: "20px", padding: "16px" }}> <div style=${{ fontFamily: "var(--font-display)", fontSize: "var(--text-md)", fontWeight: 700, marginBottom: "12px" }}> Release Notes </div> <pre class=${"log-panel"} style=${{ margin: 0, whiteSpace: "pre-wrap" }}> ${selectedSession.release_notes.content} </pre> </section>`
-                        ) : null} <div class=${"stack"} style=${{ marginTop: "20px", gap: "12px" }}> ${(selectedTasks || []).map((task) => (
-                            html`<div key=${task.task_id} class=${"session-card"}> <div class=${"session-card-header"}> <div> <div style=${{ fontFamily: "var(--font-display)", fontWeight: 600 }}>${task.title}</div> <div class=${"secondary mono"}>${task.task_id}</div> </div> <span class=${"status-badge"} style=${statusBadgeStyle(task.status)}>${task.status}</span> </div> </div>`
-                          ))} </div> </section>`
-                    ) : null} <div class=${"retention-line"}> ${`Auto-purge: ${settings?.retention_days ? `sessions older than ${settings.retention_days} days` : "disabled"}`} </div> </main>`
+                        html`<article key=${session.id} class=${"session-card"}><div class=${"session-card-header"}><div onClick=${() => onOpenSession(session)} style=${{ cursor: "pointer", flex: 1 }}><div style=${{ fontFamily: "var(--font-display)", fontWeight: 600 }}>${session.name}</div><div class=${"secondary mono"}>${session.pack}</div><div class=${"secondary mono"} style=${{ marginTop: "12px" }}>${`${session.created_at} -> ${session.completed_at || "in progress"}`}</div></div><div class=${"stack"} style=${{ justifyItems: "end" }}><span class=${"status-badge"} style=${statusBadgeStyle(session.status)}>${session.status}</span><button type=${"button"} class=${"icon-button"} onClick=${() => onPurgeSession(session.id)} aria-label=${`Purge ${session.name}`}>${icon("trash-2", { width: 16, height: 16 })}</button></div></div></article>`
+                      ))}</section>${selectedSession ? (
+                      html`<section class=${"setup-card"} style=${{ marginTop: "24px" }}><div class=${"row"} style=${{ justifyContent: "space-between", alignItems: "flex-start" }}><div><h2 style=${{ margin: 0, fontFamily: "var(--font-display)", fontSize: "var(--text-lg)" }}>${selectedSession.name}</h2><div class=${"secondary mono"}>${selectedSession.pack}</div></div><span class=${"status-badge"} style=${statusBadgeStyle(selectedSession.status)}>${selectedSession.status}</span></div><div class=${"secondary mono"} style=${{ marginTop: "12px" }}>${`${selectedSession.started_at || selectedSession.created_at} -> ${selectedSession.completed_at || "in progress"}`}</div>${selectedSession?.release_notes?.content ? (
+                          html`<section class=${"section-card"} style=${{ marginTop: "20px", padding: "16px" }}><div style=${{ fontFamily: "var(--font-display)", fontSize: "var(--text-md)", fontWeight: 700, marginBottom: "12px" }}>Release Notes</div><pre class=${"log-panel"} style=${{ margin: 0, whiteSpace: "pre-wrap" }}>${selectedSession.release_notes.content}</pre></section>`
+                        ) : null}<div class=${"stack"} style=${{ marginTop: "20px", gap: "12px" }}>${(selectedTasks || []).map((task) => (
+                            html`<div key=${task.task_id} class=${"session-card"}><div class=${"session-card-header"}><div><div style=${{ fontFamily: "var(--font-display)", fontWeight: 600 }}>${task.title}</div><div class=${"secondary mono"}>${task.task_id}</div></div><span class=${"status-badge"} style=${statusBadgeStyle(task.status)}>${task.status}</span></div></div>`
+                          ))}</div></section>`
+                    ) : null}<div class=${"retention-line"}>${`Auto-purge: ${settings?.retention_days ? `sessions older than ${settings.retention_days} days` : "disabled"}`}</div></main>`
                 );
+              }
+
+              // React leaves a number input alone while its text parses to the value. Preact compares strictly, so
+              // passing the number would rewrite "1." to "1" and lose the typed decimal point.
+              function SettingsNumberInput({ value, onValue }) {
+                const input = useRef(null);
+                const text = input.current?.value;
+                return html`<input class="text-input" type="number" ref=${input} value=${text && Number(text) === value ? text : value} onInput=${(event) => onValue(Number(event.target.value))} />`;
               }
 
               function SettingsView({ settingsDraft, setSettingsDraft, packs, onSave }) {
                 return (
-                  html`<main class=${"page"}> <section class=${"setup-card"} style=${{ margin: "0 auto" }}> <h1 style=${{ fontFamily: "var(--font-display)", fontSize: "var(--text-xl)", marginTop: 0 }}>Settings</h1> <div class=${"settings-grid"}> <div> <label class=${"field-label"}>Session Retention (days)</label> <input class=${"text-input"} type=${"number"} value=${settingsDraft.retention_days} onInput=${(event) => setSettingsDraft((draft) => ({ ...draft, retention_days: Number(event.target.value) }))} /> </div> <div class=${"row"}> <div style=${{ flex: 1 }}> <label class=${"field-label"}>Default Planner Count</label> <input class=${"text-input"} type=${"number"} value=${settingsDraft.default_planners} onInput=${(event) => setSettingsDraft((draft) => ({ ...draft, default_planners: Number(event.target.value) }))} /> </div> <div style=${{ flex: 1 }}> <label class=${"field-label"}>Default Worker Count</label> <input class=${"text-input"} type=${"number"} value=${settingsDraft.default_workers} onInput=${(event) => setSettingsDraft((draft) => ({ ...draft, default_workers: Number(event.target.value) }))} /> </div> </div> <div> <label class=${"field-label"}>Default Pack</label> <select class=${"select-input"} value=${settingsDraft.default_pack} onInput=${(event) => setSettingsDraft((draft) => ({ ...draft, default_pack: event.target.value }))}> ${packs.map((pack) => html`<option key=${pack.name} value=${pack.name}>${pack.name}</option>`)} </select> </div> <div> <label class=${"field-label"}>Terminal Application</label> <input class=${"text-input"} list=${"terminal-options"} value=${settingsDraft.terminal_app || ""} onInput=${(event) => setSettingsDraft((draft) => ({ ...draft, terminal_app: event.target.value }))} placeholder=${"e.g. iTerm, Terminal, Kitty"} /> <datalist id=${"terminal-options"}> <option value=${"iTerm"} /> <option value=${"Terminal"} /> <option value=${"Wezterm"} /> <option value=${"Kitty"} /> <option value=${"Alacritty"} /> </datalist> </div> <button type=${"button"} class=${"action-button"} onClick=${onSave}>Save Settings</button> </div> </section> </main>`
+                  html`<main class=${"page"}><section class=${"setup-card"} style=${{ margin: "0 auto" }}><h1 style=${{ fontFamily: "var(--font-display)", fontSize: "var(--text-xl)", marginTop: 0 }}>Settings</h1><div class=${"settings-grid"}><div><label class=${"field-label"}>Session Retention (days)</label><${SettingsNumberInput} value=${settingsDraft.retention_days} onValue=${(value) => setSettingsDraft((draft) => ({ ...draft, retention_days: value }))} /></div><div class=${"row"}><div style=${{ flex: 1 }}><label class=${"field-label"}>Default Planner Count</label><${SettingsNumberInput} value=${settingsDraft.default_planners} onValue=${(value) => setSettingsDraft((draft) => ({ ...draft, default_planners: value }))} /></div><div style=${{ flex: 1 }}><label class=${"field-label"}>Default Worker Count</label><${SettingsNumberInput} value=${settingsDraft.default_workers} onValue=${(value) => setSettingsDraft((draft) => ({ ...draft, default_workers: value }))} /></div></div><div><label class=${"field-label"}>Default Pack</label><select class=${"select-input"} value=${shownOption(settingsDraft.default_pack, packs.map((pack) => pack.name))} onInput=${(event) => setSettingsDraft((draft) => ({ ...draft, default_pack: event.target.value }))}>${packs.map((pack) => html`<option key=${pack.name} value=${pack.name}>${pack.name}</option>`)}</select></div><div><label class=${"field-label"}>Terminal Application</label><input class=${"text-input"} list=${"terminal-options"} value=${settingsDraft.terminal_app || ""} onInput=${(event) => setSettingsDraft((draft) => ({ ...draft, terminal_app: event.target.value }))} placeholder=${"e.g. iTerm, Terminal, Kitty"} /><datalist id=${"terminal-options"}><option value=${"iTerm"} /><option value=${"Terminal"} /><option value=${"Wezterm"} /><option value=${"Kitty"} /><option value=${"Alacritty"} /></datalist></div><button type=${"button"} class=${"action-button"} onClick=${onSave}>Save Settings</button></div></section></main>`
                 );
               }
 

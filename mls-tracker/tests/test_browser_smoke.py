@@ -4,6 +4,7 @@ import socket
 import sys
 import threading
 import time
+import urllib.request
 
 from playwright.sync_api import expect, sync_playwright
 import uvicorn
@@ -287,7 +288,7 @@ def test_native_body_baseline_remains_when_tailwind_is_unavailable(monkeypatch):
 
 
 def test_page_loads_offline(monkeypatch):
-    from tools.testkit import block_external_requests, assert_no_external_resources, assert_offline_page_source
+    from tools.testkit import assert_fonts_loaded, block_external_requests, assert_no_external_resources, assert_offline_page_source
     _install_synthetic_data(monkeypatch)
     with live_server(mls_tracker.app) as url, sync_playwright() as playwright:
         browser = playwright.chromium.launch(headless=True)
@@ -299,6 +300,7 @@ def test_page_loads_offline(monkeypatch):
             expect(page.get_by_text("Current Points")).to_be_visible(timeout=15_000)
             expect(page.locator("img").first).to_be_visible()
             assert page.locator("img").first.get_attribute("src").startswith("data:image/png;base64,")
+            assert_fonts_loaded(page, ["Oswald", "Source Sans 3"])
             assert_no_external_resources(page, blocked)
             assert_offline_page_source(page.content())
         browser.close()
@@ -338,3 +340,59 @@ def test_initial_scenarios_wait_for_selected_team(monkeypatch):
             assert requests
             assert all("Synthetic%20Team%201" in request for request in requests)
         browser.close()
+
+
+def test_rejected_line_input_restores_the_shown_value(monkeypatch):
+    _install_synthetic_data(monkeypatch)
+    with live_server(mls_tracker.app) as url, sync_playwright() as playwright:
+        browser = playwright.chromium.launch(headless=True)
+        page = browser.new_page()
+        with guard_browser_errors(page):
+            page.goto(url)
+            expect(page.get_by_role("heading", name="Synthetic Team 1")).to_be_visible()
+            line = page.locator('input[type="number"]')
+            line.fill("")
+            expect(line).to_have_value("9")
+            line.fill("0")
+            expect(line).to_have_value("9")
+            line.fill("5")
+            expect(line).to_have_value("5")
+            expect(page.get_by_text("Playoff cutoff line (position 5)")).to_be_visible()
+            line.fill("")
+            expect(line).to_have_value("9")
+            expect(page.get_by_text("Playoff cutoff line (position 9)")).to_be_visible()
+        browser.close()
+
+
+def test_refresh_and_page_stay_responsive_during_a_slow_fetch(monkeypatch):
+    started = threading.Event()
+    release = threading.Event()
+
+    def slow_teams():
+        started.set()
+        assert release.wait(30)
+        return []
+
+    monkeypatch.setattr(mls_tracker, "fetch_teams_from_espn", slow_teams)
+    monkeypatch.setattr(mls_tracker, "fetch_standings_from_espn", lambda season: {})
+    mls_tracker.cache.invalidate()
+
+    def timed(request):
+        begin = time.monotonic()
+        with urllib.request.urlopen(request, timeout=20) as response:
+            assert response.status == 200
+        return time.monotonic() - begin
+
+    with live_server(mls_tracker.app) as url:
+        data_request = threading.Thread(target=timed, args=(f"{url}/api/data?season=2025",))
+        data_request.start()
+        try:
+            assert started.wait(10)
+            refresh = urllib.request.Request(f"{url}/api/refresh", method="POST")
+            assert timed(refresh) < 2
+            assert timed(f"{url}/") < 2
+        finally:
+            release.set()
+            data_request.join(20)
+    assert not data_request.is_alive()
+    assert mls_tracker.cache._teams is None

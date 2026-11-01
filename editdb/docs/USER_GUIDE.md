@@ -129,8 +129,10 @@ The UI page size is fixed at **100 rows**. The underlying table API accepts a ma
 
 | Action | How |
 |--------|-----|
-| **Save** | Press **Enter** or click away |
-| **Cancel** | Press **Escape** |
+| **Save** | Press **Enter**, or click away after changing the text |
+| **Cancel** | Press **Escape**, or click away without changing the text |
+
+Enter always writes the text in the input, even if it is unchanged, so pressing Enter in an empty NULL cell stores an empty string. Clicking away from unchanged text writes nothing, which leaves NULL, large integers and BLOBs as stored.
 
 Single-cell updates require the table to have a primary key so EditDB can locate the row. Double-click editing is available on every displayed cell, including a primary-key cell.
 
@@ -198,7 +200,7 @@ Each column is shown as a card with:
 | Field | Description |
 |-------|-------------|
 | **Name** | Editable text input for the column name |
-| **Type** | Dropdown: TEXT, INTEGER, REAL, BLOB |
+| **Type** | Dropdown: TEXT, INTEGER, REAL, BLOB, plus the column's existing declared type when it is something else (`(none)` for a column with no declared type) |
 | **Delete** | Button to mark the column for deletion |
 
 ### Adding Columns

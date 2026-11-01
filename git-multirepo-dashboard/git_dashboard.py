@@ -48,7 +48,7 @@ except ImportError:  # pragma: no cover - Windows
 
 # ── Constants ─────────────────────────────────────────────────────────────────
 DEFAULT_PORT = 8300
-VERSION = "0.3.0"
+VERSION = "0.3.1"
 
 # Populated by build_tools_dict() during preflight; global so /api/status can
 # return it without re-running which() on every request.
@@ -3409,7 +3409,7 @@ const htmlTag = htm.bind(preact.h);
               textAlign: 'center',
               color: 'var(--status-red)',
               fontFamily: 'var(--font-mono)',
-            }}> <p style=${{ fontSize: '16px', marginBottom: '8px' }}>Something went wrong</p> <p style=${{ fontSize: '13px', color: 'var(--text-muted)' }}> ${this.state.error && this.state.error.toString()} </p> </div>`
+            }}><p style=${{ fontSize: '16px', marginBottom: '8px' }}>Something went wrong</p><p style=${{ fontSize: '13px', color: 'var(--text-muted)' }}>${this.state.error && this.state.error.toString()}</p></div>`
           );
         }
         return this.props.children;
@@ -3456,12 +3456,12 @@ const htmlTag = htm.bind(preact.h);
           justifyContent: 'space-between',
           padding: '0 24px',
           zIndex: 100,
-        }}> <span style=${{
+        }}><span style=${{
             fontFamily: 'var(--font-heading)',
             fontSize: '18px',
             fontWeight: 700,
             color: 'var(--text-primary)',
-          }}> Git Fleet </span> <div style=${{ display: 'flex', gap: '8px', alignItems: 'center' }}> <button onClick=${onScanDir} style=${{
+          }}>Git Fleet</span><div style=${{ display: 'flex', gap: '8px', alignItems: 'center' }}><button onClick=${onScanDir} style=${{
                 background: 'transparent',
                 border: '1px solid var(--border-default)',
                 color: 'var(--text-secondary)',
@@ -3472,7 +3472,7 @@ const htmlTag = htm.bind(preact.h);
                 borderRadius: 'var(--radius-sm)',
                 cursor: 'pointer',
                 transition: 'all var(--transition-fast)',
-              }}> Scan Dir </button> <button onClick=${onFullScan} disabled=${scanActive} style=${{
+              }}>Scan Dir</button><button onClick=${onFullScan} disabled=${scanActive} style=${{
                 background: scanActive ? 'var(--text-muted)' : 'var(--accent-blue)',
                 border: 'none',
                 color: '#fff',
@@ -3484,7 +3484,7 @@ const htmlTag = htm.bind(preact.h);
                 cursor: scanActive ? 'not-allowed' : 'pointer',
                 transition: 'all var(--transition-fast)',
                 opacity: scanActive ? 0.6 : 1,
-              }}> Full Scan </button> </div> </header>`
+              }}>Full Scan</button></div></header>`
       );
     }
 
@@ -3522,7 +3522,7 @@ const htmlTag = htm.bind(preact.h);
           alignItems: 'flex-end',
           padding: '0 24px',
           zIndex: 99,
-        }}> <div style=${{ position: 'relative', display: 'flex' }}> ${TABS.map((tab, i) => (
+        }}><div style=${{ position: 'relative', display: 'flex' }}>${TABS.map((tab, i) => (
               htmlTag`<a key=${tab.id} href=${tab.hash} ref=${el => tabRefs.current[i] = el} style=${{
                   display: 'block',
                   padding: '10px 16px',
@@ -3533,8 +3533,8 @@ const htmlTag = htm.bind(preact.h);
                   textDecoration: 'none',
                   transition: 'color var(--transition-fast)',
                   whiteSpace: 'nowrap',
-                }}> ${tab.label} </a>`
-            ))} <div ref=${indicatorRef} style=${{
+                }}>${tab.label}</a>`
+            ))}<div ref=${indicatorRef} style=${{
                 position: 'absolute',
                 bottom: 0,
                 height: '3px',
@@ -3543,7 +3543,7 @@ const htmlTag = htm.bind(preact.h);
                 transition: 'left var(--transition-normal), width var(--transition-normal)',
                 left: 0,
                 width: 0,
-              }} /> </div> </nav>`
+              }} /></div></nav>`
       );
     }
 
@@ -3586,7 +3586,7 @@ const htmlTag = htm.bind(preact.h);
           alignItems: 'center',
           justifyContent: 'space-between',
           gap: '12px',
-        }}> <div style=${{ display: 'flex', flexDirection: 'column', gap: '2px' }}> <strong style=${{ fontFamily: 'var(--font-heading)', fontSize: '13px', color: 'var(--text-primary)' }}> Tool status </strong> <span style=${{ fontFamily: 'var(--font-body)', fontSize: '12px', color: 'var(--text-secondary)' }}> Version ${status.version} with ${toolCount} detected helper tool${toolCount === 1 ? '' : 's'}. </span> </div> <button onClick=${() => {
+        }}><div style=${{ display: 'flex', flexDirection: 'column', gap: '2px' }}><strong style=${{ fontFamily: 'var(--font-heading)', fontSize: '13px', color: 'var(--text-primary)' }}>Tool status</strong><span style=${{ fontFamily: 'var(--font-body)', fontSize: '12px', color: 'var(--text-secondary)' }}>Version ${status.version} with ${toolCount} detected helper tool${toolCount === 1 ? '' : 's'}.</span></div><button onClick=${() => {
               try {
                 sessionStorage.setItem('git-fleet-status-banner-dismissed', '1');
               } catch (_err) {
@@ -3602,7 +3602,7 @@ const htmlTag = htm.bind(preact.h);
               fontFamily: 'var(--font-body)',
               fontSize: '12px',
               padding: '6px 10px',
-            }}> Dismiss </button> </div>`
+            }}>Dismiss</button></div>`
       );
     }
 
@@ -3622,12 +3622,12 @@ const htmlTag = htm.bind(preact.h);
           height: '3px',
           background: 'var(--border-default)',
           zIndex: 98,
-        }}> <div style=${{
+        }}><div style=${{
             height: '3px',
             width: pct + '%',
             background: fillColor,
             transition: 'width 300ms ease-out, background 300ms ease-out',
-          }} /> </div>`
+          }} /></div>`
       );
     }
 
@@ -3710,15 +3710,15 @@ const htmlTag = htm.bind(preact.h);
       };
 
       return (
-        htmlTag`<div style=${overlayStyle} onClick=${(e) => { if (e.target === e.currentTarget) onClose(); }}> <div style=${modalStyle}> <div style=${headerStyle}> <span style=${{ fontWeight: 600, fontSize: '15px', color: 'var(--text-primary)', fontFamily: 'var(--font-body)' }}> Select Directory to Scan </span> <button onClick=${onClose} style=${{ ...btnBase, background: 'none', color: 'var(--text-muted)', fontSize: '18px', padding: '4px 8px' }}>${'\u00d7'}</button> </div> <div style=${inputRowStyle}> <input type=${"text"} value=${pathInput} onInput=${(e) => setPathInput(e.target.value)} onKeyDown=${handleKeyDown} style=${inputStyle} placeholder=${"/path/to/directory"} /> <button onClick=${() => browse(pathInput)} style=${{ ...btnBase, background: 'var(--bg-secondary)', color: 'var(--text-primary)', border: '1px solid var(--border-default)' }}>Go</button> </div> <div style=${listStyle}> ${error && htmlTag`<div style=${{ padding: '12px 20px', color: 'var(--status-red)', fontSize: '13px' }}>${error}</div>`} ${loading && htmlTag`<div style=${{ padding: '12px 20px', color: 'var(--text-muted)', fontSize: '13px' }}>Loading...</div>`} ${!loading && !error && (
-                htmlTag` ${parentPath && (
-                    htmlTag`<div onClick=${() => browse(parentPath)} style=${{ ...itemStyle(false), color: 'var(--text-muted)' }} onMouseEnter=${(e) => e.currentTarget.style.background = 'var(--bg-secondary)'} onMouseLeave=${(e) => e.currentTarget.style.background = 'transparent'}> ${'\u2190'} .. </div>`
-                  )} ${dirs.length === 0 && !parentPath && (
+        htmlTag`<div style=${overlayStyle} onClick=${(e) => { if (e.target === e.currentTarget) onClose(); }}><div style=${modalStyle}><div style=${headerStyle}><span style=${{ fontWeight: 600, fontSize: '15px', color: 'var(--text-primary)', fontFamily: 'var(--font-body)' }}>Select Directory to Scan</span><button onClick=${onClose} style=${{ ...btnBase, background: 'none', color: 'var(--text-muted)', fontSize: '18px', padding: '4px 8px' }}>${'\u00d7'}</button></div><div style=${inputRowStyle}><input type=${"text"} value=${pathInput} onInput=${(e) => setPathInput(e.target.value)} onKeyDown=${handleKeyDown} style=${inputStyle} placeholder=${"/path/to/directory"} /><button onClick=${() => browse(pathInput)} style=${{ ...btnBase, background: 'var(--bg-secondary)', color: 'var(--text-primary)', border: '1px solid var(--border-default)' }}>Go</button></div><div style=${listStyle}>${error && htmlTag`<div style=${{ padding: '12px 20px', color: 'var(--status-red)', fontSize: '13px' }}>${error}</div>`}${loading && htmlTag`<div style=${{ padding: '12px 20px', color: 'var(--text-muted)', fontSize: '13px' }}>Loading...</div>`}${!loading && !error && (
+                htmlTag`${parentPath && (
+                    htmlTag`<div onClick=${() => browse(parentPath)} style=${{ ...itemStyle(false), color: 'var(--text-muted)' }} onMouseEnter=${(e) => e.currentTarget.style.background = 'var(--bg-secondary)'} onMouseLeave=${(e) => e.currentTarget.style.background = 'transparent'}>${'\u2190'} ..</div>`
+                  )}${dirs.length === 0 && !parentPath && (
                     htmlTag`<div style=${{ padding: '12px 20px', color: 'var(--text-muted)', fontSize: '13px' }}>No subdirectories</div>`
-                  )} ${dirs.map(d => (
-                    htmlTag`<div key=${d.path} onClick=${() => browse(d.path)} style=${itemStyle(d.is_git)} onMouseEnter=${(e) => e.currentTarget.style.background = 'var(--bg-secondary)'} onMouseLeave=${(e) => e.currentTarget.style.background = 'transparent'}> <span style=${{ fontFamily: 'monospace' }}>${d.is_git ? '[repo]' : '[dir]'}</span> <span style=${{ flex: 1 }}>${d.name}</span> ${d.is_git && htmlTag`<span style=${{ fontSize: '11px', color: 'var(--accent-blue)', fontWeight: 500 }}>git</span>`} </div>`
-                  ))} `
-              )} </div> <div style=${footerStyle}> <button onClick=${onClose} style=${{ ...btnBase, background: 'var(--bg-secondary)', color: 'var(--text-primary)', border: '1px solid var(--border-default)' }}>Cancel</button> <button onClick=${() => { onSelect(currentPath); onClose(); }} style=${{ ...btnBase, background: 'var(--accent-blue)', color: '#fff' }}> Scan This Directory </button> </div> </div> </div>`
+                  )}${dirs.map(d => (
+                    htmlTag`<div key=${d.path} onClick=${() => browse(d.path)} style=${itemStyle(d.is_git)} onMouseEnter=${(e) => e.currentTarget.style.background = 'var(--bg-secondary)'} onMouseLeave=${(e) => e.currentTarget.style.background = 'transparent'}><span style=${{ fontFamily: 'monospace' }}>${d.is_git ? '[repo]' : '[dir]'}</span><span style=${{ flex: 1 }}>${d.name}</span>${d.is_git && htmlTag`<span style=${{ fontSize: '11px', color: 'var(--accent-blue)', fontWeight: 500 }}>git</span>`}</div>`
+                  ))}`
+              )}</div><div style=${footerStyle}><button onClick=${onClose} style=${{ ...btnBase, background: 'var(--bg-secondary)', color: 'var(--text-primary)', border: '1px solid var(--border-default)' }}>Cancel</button><button onClick=${() => { onSelect(currentPath); onClose(); }} style=${{ ...btnBase, background: 'var(--accent-blue)', color: '#fff' }}>Scan This Directory</button></div></div></div>`
       );
     }
 
@@ -3769,13 +3769,13 @@ const htmlTag = htm.bind(preact.h);
           animation: slideOut
             ? 'toastSlideOut var(--transition-slow) forwards'
             : 'toastSlideIn var(--transition-slow) forwards',
-        }}> <div style=${{
+        }}><div style=${{
             fontFamily: 'var(--font-heading)',
             fontSize: '13px',
             fontWeight: 600,
             color: 'var(--text-primary)',
             marginBottom: '6px',
-          }}> ${heading} </div> ${currentRepo && (
+          }}>${heading}</div>${currentRepo && (
             htmlTag`<div style=${{
               fontFamily: 'var(--font-mono)',
               fontSize: '12px',
@@ -3784,23 +3784,23 @@ const htmlTag = htm.bind(preact.h);
               overflow: 'hidden',
               textOverflow: 'ellipsis',
               whiteSpace: 'nowrap',
-            }}> ${currentRepo} </div>`
-          )} <div style=${{ marginBottom: '4px' }}> <div style=${{
+            }}>${currentRepo}</div>`
+          )}<div style=${{ marginBottom: '4px' }}><div style=${{
               height: '4px',
               background: 'var(--border-default)',
               borderRadius: '2px',
               overflow: 'hidden',
-            }}> <div style=${{
+            }}><div style=${{
                 height: '4px',
                 width: pct + '%',
                 background: fillColor,
                 transition: 'width 300ms ease-out, background 300ms ease-out',
-              }} /> </div> </div> <div style=${{
+              }} /></div></div><div style=${{
             fontFamily: 'var(--font-body)',
             fontSize: '12px',
             color: 'var(--text-muted)',
             textAlign: 'right',
-          }}> ${progress} / ${total || '?'} </div> </div>`
+          }}>${progress} / ${total || '?'}</div></div>`
       );
     }
 
@@ -3865,7 +3865,7 @@ const htmlTag = htm.bind(preact.h);
           color: color,
           fontFamily: 'var(--font-heading)',
           fontSize: '11px', fontWeight: 700,
-        }}> ${label} </span>`
+        }}>${label}</span>`
       );
     }
 
@@ -3892,13 +3892,13 @@ const htmlTag = htm.bind(preact.h);
         label: `${staged_count} staged`, color: 'var(--accent-blue)', bg: 'var(--accent-blue-dim)'
       });
       return (
-        htmlTag`<span style=${{ display: 'inline-flex', gap: '4px', flexWrap: 'wrap' }}> ${pills.map(p => (
+        htmlTag`<span style=${{ display: 'inline-flex', gap: '4px', flexWrap: 'wrap' }}>${pills.map(p => (
             htmlTag`<span key=${p.label} style=${{
               fontSize: '11px', fontFamily: 'var(--font-body)', fontWeight: 500,
               padding: '2px 8px', borderRadius: '4px',
               color: p.color, background: p.bg,
             }}>${p.label}</span>`
-          ))} </span>`
+          ))}</span>`
       );
     }
 
@@ -3938,10 +3938,10 @@ const htmlTag = htm.bind(preact.h);
       if (!label) return null;
 
       return (
-        htmlTag`<span style=${{ display: 'inline-flex', alignItems: 'center', gap: '4px' }}> <span title=${dotTitle} style=${{
+        htmlTag`<span style=${{ display: 'inline-flex', alignItems: 'center', gap: '4px' }}><span title=${dotTitle} style=${{
               display: 'inline-block', width: '6px', height: '6px',
               borderRadius: '50%', background: dotColor, flexShrink: 0,
-            }} /> ${label} ${total > 0 && analysisError && htmlTag`<span style=${{color: 'var(--status-orange)'}}>Analysis error</span>`} </span>`
+            }} />${label}${total > 0 && analysisError && htmlTag`<span style=${{color: 'var(--status-orange)'}}>Analysis error</span>`}</span>`
       );
     }
 
@@ -3955,9 +3955,9 @@ const htmlTag = htm.bind(preact.h);
           transform: visible ? 'translateY(0)' : 'translateY(100%)',
           transition: visible ? '150ms ease-out' : '100ms ease-in',
           background: 'linear-gradient(transparent, var(--bg-card) 30%)',
-        }}> ${data.length > 0 && (
-            htmlTag`<${svgCharts.CartesianChart} kind=${"area"} compact=${true} height=${28} data=${data} xKey=${"i"} margin=${{ top: 0, right: 0, bottom: 0, left: 0 }} series=${[{key:'v', color:'var(--accent-blue)', fill:'var(--accent-blue-dim)', strokeWidth:1}]} />`
-          )} </div>`
+        }}>${data.length > 0 && (
+            htmlTag`<${svgCharts.CartesianChart} kind=${"area"} compact=${true} height=${28} data=${data} xKey=${"i"} margin=${{ top: 0, right: 0, bottom: 0, left: 0 }} series=${[{key:'v', color:'var(--accent-blue)', fill:'var(--accent-blue-dim)', fillOpacity:0.6, strokeWidth:1}]} />`
+          )}</div>`
       );
     }
 
@@ -4001,27 +4001,27 @@ const htmlTag = htm.bind(preact.h);
               e.preventDefault();
               window.location.hash = '#/repo/' + repo.id;
             }
-          }}>  <button class=${"card-delete-btn"} onClick=${handleDelete} title=${`Remove ${repo.name}`} aria-label=${`Remove ${repo.name}`} style=${{
+          }}><button class=${"card-delete-btn"} onClick=${handleDelete} title=${`Remove ${repo.name}`} aria-label=${`Remove ${repo.name}`} style=${{
               position: 'absolute', top: '8px', right: '8px', zIndex: 5,
               background: 'var(--bg-secondary)', border: '1px solid var(--border-default)',
               color: 'var(--text-muted)', cursor: 'pointer',
               width: '22px', height: '22px', borderRadius: '4px',
               display: 'flex', alignItems: 'center', justifyContent: 'center',
               fontSize: '14px', lineHeight: 1, padding: 0,
-            }}>${'\u00d7'}</button>  ${repo.scan_error && (
+            }}>${'\u00d7'}</button>${repo.scan_error && (
             htmlTag`<div class=${"scan-failed-badge"} style=${{
               position: 'absolute', top: '8px', right: '8px',
               fontSize: '10px', fontFamily: 'var(--font-body)', fontWeight: 600,
               color: 'var(--status-red)', background: 'var(--status-red-bg)',
               padding: '2px 6px', borderRadius: '3px',
-            }}> scan failed </div>`
-          )}  <div style=${{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '6px' }}> <${RuntimeBadge} runtime=${repo.runtime} /> <div style=${{ position: 'relative', flex: 1, minWidth: 0 }}> <span style=${{
+            }}>scan failed</div>`
+          )}<div style=${{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '6px' }}><${RuntimeBadge} runtime=${repo.runtime} /><div style=${{ position: 'relative', flex: 1, minWidth: 0 }}><span style=${{
                   display: 'block',
                   fontFamily: 'var(--font-heading)', fontSize: '16px', fontWeight: 600,
                   color: 'var(--text-primary)',
                   overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
                   cursor: 'pointer',
-                }} onMouseEnter=${() => setTooltipVisible(true)} onMouseLeave=${() => setTooltipVisible(false)}> ${repo.name} </span> ${tooltipVisible && (
+                }} onMouseEnter=${() => setTooltipVisible(true)} onMouseLeave=${() => setTooltipVisible(false)}>${repo.name}</span>${tooltipVisible && (
                 htmlTag`<div style=${{
                   position: 'absolute', bottom: '100%', left: 0, zIndex: 10,
                   background: 'var(--bg-secondary)', border: '1px solid var(--border-default)',
@@ -4030,25 +4030,25 @@ const htmlTag = htm.bind(preact.h);
                   color: 'var(--text-secondary)', maxWidth: '500px',
                   whiteSpace: 'nowrap', pointerEvents: 'none',
                   marginBottom: '4px',
-                }}> ${repo.path} </div>`
-              )} </div> <span style=${{
+                }}>${repo.path}</div>`
+              )}</div><span style=${{
               flexShrink: 0, fontSize: '13px',
               fontFamily: 'var(--font-body)', color: 'var(--text-secondary)',
-            }}> ${timeAgo(repo.last_commit_date)} </span> </div>  <div style=${{
+            }}>${timeAgo(repo.last_commit_date)}</span></div><div style=${{
             fontSize: '13px', fontFamily: 'var(--font-body)',
             color: pathMissing ? 'var(--status-red)' : 'var(--text-secondary)',
             overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
             marginBottom: '8px', marginLeft: '32px',
             fontWeight: pathMissing ? 600 : 400,
-          }}> ${pathMissing
+          }}>${pathMissing
               ? 'Path not found'
-              : (repo.last_commit_message || htmlTag`<span style=${{ color: 'var(--text-muted)' }}>—</span>`)} </div>  <div style=${{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}> <${StatusPills} repo=${repo} /> <span style=${{ flex: 1 }} /> <span style=${{
+              : (repo.last_commit_message || htmlTag`<span style=${{ color: 'var(--text-muted)' }}>—</span>`)}</div><div style=${{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}><${StatusPills} repo=${repo} /><span style=${{ flex: 1 }} /><span style=${{
               fontSize: '13px', fontFamily: 'var(--font-mono)', fontWeight: 400,
               color: 'var(--text-secondary)',
-            }}> ${repo.current_branch} </span> <span style=${{
+            }}>${repo.current_branch}</span><span style=${{
               fontSize: '13px', fontFamily: 'var(--font-mono)', fontWeight: 400,
               color: branchColor,
-            }}> ${repo.branch_count || 0}br </span> <${DepBadge} dep=${repo.dep_summary} missingTools=${repo.missing_dep_tools} analysisError=${repo.dep_check_error} /> </div> <${SparklineOverlay} sparkline=${repo.sparkline} visible=${active} /> </div>`
+            }}>${repo.branch_count || 0}br</span><${DepBadge} dep=${repo.dep_summary} missingTools=${repo.missing_dep_tools} analysisError=${repo.dep_check_error} /></div><${SparklineOverlay} sparkline=${repo.sparkline} visible=${active} /></div>`
       );
     }
 
@@ -4062,16 +4062,16 @@ const htmlTag = htm.bind(preact.h);
             borderRadius: 'var(--radius-md)',
             padding: '16px 20px',
             cursor: tooltip ? 'help' : undefined,
-          }}> <div style=${{
+          }}><div style=${{
             fontFamily: 'var(--font-heading)', fontSize: '28px', fontWeight: 700,
             color: color || 'var(--text-primary)',
             lineHeight: 1.1,
-          }}>${value}</div> <div style=${{
+          }}>${value}</div><div style=${{
             fontFamily: 'var(--font-body)', fontSize: '12px', fontWeight: 500,
             color: 'var(--text-secondary)',
             textTransform: 'uppercase', letterSpacing: '0.5px',
             marginTop: '4px',
-          }}>${label}</div> </div>`
+          }}>${label}</div></div>`
       );
     }
 
@@ -4087,7 +4087,7 @@ const htmlTag = htm.bind(preact.h);
         : String(kpis.net_lines_this_week ?? 0);
       const vulnValue = `${kpis.vulnerable_deps ?? 0} / ${kpis.outdated_deps ?? 0}`;
       return (
-        htmlTag`<div style=${{ display: 'flex', gap: '16px', flexWrap: 'wrap' }}> <${KpiCard} value=${kpis.total_repos ?? 0} label=${"Repos"} tooltip=${"Total repositories tracked"} /> <${KpiCard} value=${kpis.repos_with_changes ?? 0} label=${"Dirty"} color=${dirtyColor} tooltip=${"Repos with uncommitted changes (modified, untracked, or staged files)"} /> <${KpiCard} value=${commitValue} label=${"Commits"} tooltip=${"Commits this week / this month (across all repos)"} /> <${KpiCard} value=${locValue} label=${"Net LOC"} tooltip=${"Net lines of code changed this week (insertions minus deletions, across all repos)"} /> <${KpiCard} value=${kpis.stale_branches ?? 0} label=${"Stale Branches"} color=${staleColor} tooltip=${"Branches with no commits in the last 30 days (across all repos)"} /> <${KpiCard} value=${vulnValue} label=${"Vuln / Outdated"} color=${vulnColor} tooltip=${"Vulnerable dependencies / outdated dependencies (across all repos)"} /> <${KpiCard} value=${kpis.unchecked_deps ?? 0} label=${"Not Checked"} color=${kpis.unchecked_deps > 0 ? 'var(--status-orange)' : undefined} tooltip=${"Declarations with incomplete outdated or vulnerability coverage, including those with findings"} /> </div>`
+        htmlTag`<div style=${{ display: 'flex', gap: '16px', flexWrap: 'wrap' }}><${KpiCard} value=${kpis.total_repos ?? 0} label=${"Repos"} tooltip=${"Total repositories tracked"} /><${KpiCard} value=${kpis.repos_with_changes ?? 0} label=${"Dirty"} color=${dirtyColor} tooltip=${"Repos with uncommitted changes (modified, untracked, or staged files)"} /><${KpiCard} value=${commitValue} label=${"Commits"} tooltip=${"Commits this week / this month (across all repos)"} /><${KpiCard} value=${locValue} label=${"Net LOC"} tooltip=${"Net lines of code changed this week (insertions minus deletions, across all repos)"} /><${KpiCard} value=${kpis.stale_branches ?? 0} label=${"Stale Branches"} color=${staleColor} tooltip=${"Branches with no commits in the last 30 days (across all repos)"} /><${KpiCard} value=${vulnValue} label=${"Vuln / Outdated"} color=${vulnColor} tooltip=${"Vulnerable dependencies / outdated dependencies (across all repos)"} /><${KpiCard} value=${kpis.unchecked_deps ?? 0} label=${"Not Checked"} color=${kpis.unchecked_deps > 0 ? 'var(--status-orange)' : undefined} tooltip=${"Declarations with incomplete outdated or vulnerability coverage, including those with findings"} /></div>`
       );
     }
 
@@ -4113,38 +4113,38 @@ const htmlTag = htm.bind(preact.h);
       }, [open]);
 
       return (
-        htmlTag`<div ref=${ref} style=${{ position: 'relative', display: 'inline-block' }}> <button onClick=${() => setOpen(o => !o)} style=${{
+        htmlTag`<div ref=${ref} style=${{ position: 'relative', display: 'inline-block' }}><button onClick=${() => setOpen(o => !o)} style=${{
               background: 'var(--bg-input)', border: '1px solid var(--border-default)',
               borderRadius: 'var(--radius-sm)', padding: '6px 12px',
               color: 'var(--text-primary)', fontFamily: 'var(--font-body)', fontSize: '13px',
               cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '6px',
               whiteSpace: 'nowrap',
-            }}> ${current.label} <svg width=${"10"} height=${"6"} viewBox=${"0 0 10 6"} fill=${"none"}> <path d=${"M1 1l4 4 4-4"} stroke=${"currentColor"} stroke-width=${"1.5"} stroke-linecap=${"round"} /> </svg> </button> ${open && (
+            }}>${current.label}<svg width=${"10"} height=${"6"} viewBox=${"0 0 10 6"} fill=${"none"}><path d=${"M1 1l4 4 4-4"} stroke=${"currentColor"} stroke-width=${"1.5"} stroke-linecap=${"round"} /></svg></button>${open && (
             htmlTag`<div style=${{
               position: 'absolute', top: '100%', left: 0, zIndex: 20, marginTop: '4px',
               background: 'var(--bg-input)', border: '1px solid var(--border-default)',
               borderRadius: 'var(--radius-sm)', minWidth: '180px', overflow: 'hidden',
-            }}> ${options.map(opt => (
+            }}>${options.map(opt => (
                 htmlTag`<div key=${opt.value} onClick=${() => { onChange(opt.value); setOpen(false); }} style=${{
                     padding: '8px 12px', cursor: 'pointer',
                     fontFamily: 'var(--font-body)', fontSize: '13px',
                     color: opt.value === value ? 'var(--accent-blue)' : 'var(--text-primary)',
                     background: opt.value === value ? 'var(--accent-blue-dim)' : 'transparent',
-                  }} onMouseEnter=${e => { if (opt.value !== value) e.currentTarget.style.background = 'var(--bg-card-hover)'; }} onMouseLeave=${e => { if (opt.value !== value) e.currentTarget.style.background = 'transparent'; }}> ${opt.label} </div>`
-              ))} </div>`
-          )} </div>`
+                  }} onMouseEnter=${e => { if (opt.value !== value) e.currentTarget.style.background = 'var(--bg-card-hover)'; }} onMouseLeave=${e => { if (opt.value !== value) e.currentTarget.style.background = 'transparent'; }}>${opt.label}</div>`
+              ))}</div>`
+          )}</div>`
       );
     }
 
     // GridControls — sort dropdown + filter input
     function GridControls({ sortBy, filterText, onSortChange, onFilterChange }) {
       return (
-        htmlTag`<div style=${{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '16px' }}> <${SortDropdown} value=${sortBy} onChange=${onSortChange} /> <input type=${"text"} placeholder=${"Filter projects..."} value=${filterText} onInput=${e => onFilterChange(e.target.value)} style=${{
+        htmlTag`<div style=${{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '16px' }}><${SortDropdown} value=${sortBy} onChange=${onSortChange} /><input type=${"text"} placeholder=${"Filter projects..."} value=${filterText} onInput=${e => onFilterChange(e.target.value)} style=${{
               background: 'var(--bg-input)', border: '1px solid var(--border-default)',
               borderRadius: 'var(--radius-sm)', padding: '6px 12px',
               fontFamily: 'var(--font-body)', fontSize: '13px',
               color: 'var(--text-primary)', outline: 'none', width: '220px',
-            }} onFocus=${e => { e.target.style.borderColor = 'var(--accent-blue)'; }} onBlur=${e => { e.target.style.borderColor = 'var(--border-default)'; }} /> </div>`
+            }} onFocus=${e => { e.target.style.borderColor = 'var(--accent-blue)'; }} onBlur=${e => { e.target.style.borderColor = 'var(--border-default)'; }} /></div>`
       );
     }
 
@@ -4154,7 +4154,7 @@ const htmlTag = htm.bind(preact.h);
         htmlTag`<div style=${{
           textAlign: 'center', padding: '64px 24px',
           color: 'var(--text-muted)',
-        }}> <svg width=${"48"} height=${"48"} viewBox=${"0 0 24 24"} fill=${"none"} style=${{ color: 'var(--text-muted)', marginBottom: '16px' }}> <path d=${"M3 3h18v18H3zM9 9h6M9 12h6M9 15h4"} stroke=${"currentColor"} stroke-width=${"1.5"} stroke-linecap=${"round"} /> </svg> <p style=${{ fontFamily: 'var(--font-heading)', fontSize: '16px', marginBottom: '8px' }}> No repositories registered </p> <p style=${{ fontFamily: 'var(--font-body)', fontSize: '14px' }}> Use "Scan Dir" in the header to add repositories. </p> </div>`
+        }}><svg width=${"48"} height=${"48"} viewBox=${"0 0 24 24"} fill=${"none"} style=${{ color: 'var(--text-muted)', marginBottom: '16px' }}><path d=${"M3 3h18v18H3zM9 9h6M9 12h6M9 15h4"} stroke=${"currentColor"} stroke-width=${"1.5"} stroke-linecap=${"round"} /></svg><p style=${{ fontFamily: 'var(--font-heading)', fontSize: '16px', marginBottom: '8px' }}>No repositories registered</p><p style=${{ fontFamily: 'var(--font-body)', fontSize: '14px' }}>Use "Scan Dir" in the header to add repositories.</p></div>`
       );
     }
 
@@ -4200,7 +4200,7 @@ const htmlTag = htm.bind(preact.h);
           display: 'flex',
           flexDirection: 'column',
           gap: '8px',
-        }}> <div style=${barStyle('60%')} /> <div style=${barStyle('80%')} /> <div style=${barStyle('50%')} /> </div>`
+        }}><div style=${barStyle('60%')} /><div style=${barStyle('80%')} /><div style=${barStyle('50%')} /></div>`
       );
     }
 
@@ -4224,7 +4224,7 @@ const htmlTag = htm.bind(preact.h);
             gridTemplateColumns: 'repeat(auto-fill, minmax(340px, 1fr))',
             gap: '16px',
             marginTop: '24px',
-          }}> <${SkeletonCard} /> <${SkeletonCard} /> <${SkeletonCard} /> </div>`
+          }}><${SkeletonCard} /><${SkeletonCard} /><${SkeletonCard} /></div>`
         );
       }
 
@@ -4237,17 +4237,17 @@ const htmlTag = htm.bind(preact.h);
       const sorted = sortRepos(filtered, sortBy);
 
       return (
-        htmlTag`<div> <${KpiRow} kpis=${kpis} /> <div style=${{ marginTop: '24px' }}> <${GridControls} sortBy=${sortBy} filterText=${filterText} onSortChange=${setSortBy} onFilterChange=${setFilterText} /> ${repos.length === 0
+        htmlTag`<div><${KpiRow} kpis=${kpis} /><div style=${{ marginTop: '24px' }}><${GridControls} sortBy=${sortBy} filterText=${filterText} onSortChange=${setSortBy} onFilterChange=${setFilterText} />${repos.length === 0
               ? htmlTag`<${EmptyState} />`
               : (
                 htmlTag`<div style=${{
                   display: 'grid',
                   gridTemplateColumns: 'repeat(auto-fill, minmax(340px, 1fr))',
                   gap: '16px',
-                }}> ${sorted.map(repo => htmlTag`<${ProjectCard} key=${repo.id} repo=${repo} onDelete=${(id) => {
+                }}>${sorted.map(repo => htmlTag`<${ProjectCard} key=${repo.id} repo=${repo} onDelete=${(id) => {
                     setData(prev => prev ? { ...prev, repos: prev.repos.filter(r => r.id !== id) } : prev);
-                  }} />`)} </div>`
-              )} </div> </div>`
+                  }} />`)}</div>`
+              )}</div></div>`
       );
     }
 
@@ -4291,16 +4291,16 @@ const htmlTag = htm.bind(preact.h);
       }
 
       return (
-        htmlTag`<div class=${"detail-header"}> <div> <button class=${"detail-back-btn"} onClick=${() => { window.location.hash = '#/fleet'; }} aria-label=${"Back to fleet"}> <svg width=${"14"} height=${"14"} viewBox=${"0 0 14 14"} fill=${"none"} aria-hidden=${"true"}> <path d=${"M9 2L4 7L9 12"} stroke=${"currentColor"} stroke-width=${"1.5"} stroke-linecap=${"round"} stroke-linejoin=${"round"} /> </svg> Back </button> <h1 style=${{ fontFamily: 'var(--font-heading)', fontSize: '24px', fontWeight: 700, color: 'var(--text-primary)', marginBottom: '4px' }}> ${repo.name} </h1> <p style=${{ fontFamily: 'var(--font-mono)', fontSize: '12px', color: pathMissing ? 'var(--status-red)' : 'var(--text-muted)', marginBottom: '6px' }}> ${repo.path}${pathMissing && ' — Path not found'} </p> <div style=${{ display: 'flex', alignItems: 'center', gap: '8px', fontFamily: 'var(--font-body)', fontSize: '13px', color: 'var(--text-secondary)' }}> <${RuntimeBadge} runtime=${repo.runtime} /> <span onClick=${onGoToBranches} style=${{ cursor: 'pointer', borderBottom: '1px dotted var(--text-muted)' }} title=${"Switch branch"}> ${selectedBranch || repo.default_branch} </span> <span>·</span> <span>Last scanned ${scanAge}</span> </div> ${pathMissing && (
-              htmlTag`<div style=${{ display: 'flex', gap: '8px', marginTop: '12px', alignItems: 'center', flexWrap: 'wrap' }}> <button class=${"btn btn-secondary"} style=${{ color: 'var(--status-red)' }} onClick=${handleRemove}> Remove </button> <button class=${"btn btn-secondary"} onClick=${() => setShowUpdatePath(v => !v)}> Update Path </button> ${showUpdatePath && (
-                  htmlTag` <input type=${"text"} value=${newPath} onInput=${e => setNewPath(e.target.value)} placeholder=${"New absolute path…"} style=${{
+        htmlTag`<div class=${"detail-header"}><div><button class=${"detail-back-btn"} onClick=${() => { window.location.hash = '#/fleet'; }} aria-label=${"Back to fleet"}><svg width=${"14"} height=${"14"} viewBox=${"0 0 14 14"} fill=${"none"} aria-hidden=${"true"}><path d=${"M9 2L4 7L9 12"} stroke=${"currentColor"} stroke-width=${"1.5"} stroke-linecap=${"round"} stroke-linejoin=${"round"} /></svg>Back</button><h1 style=${{ fontFamily: 'var(--font-heading)', fontSize: '24px', fontWeight: 700, color: 'var(--text-primary)', marginBottom: '4px' }}>${repo.name}</h1><p style=${{ fontFamily: 'var(--font-mono)', fontSize: '12px', color: pathMissing ? 'var(--status-red)' : 'var(--text-muted)', marginBottom: '6px' }}>${repo.path}${pathMissing && ' — Path not found'}</p><div style=${{ display: 'flex', alignItems: 'center', gap: '8px', fontFamily: 'var(--font-body)', fontSize: '13px', color: 'var(--text-secondary)' }}><${RuntimeBadge} runtime=${repo.runtime} /><span onClick=${onGoToBranches} style=${{ cursor: 'pointer', borderBottom: '1px dotted var(--text-muted)' }} title=${"Switch branch"}>${selectedBranch || repo.default_branch}</span><span>·</span><span>Last scanned ${scanAge}</span></div>${pathMissing && (
+              htmlTag`<div style=${{ display: 'flex', gap: '8px', marginTop: '12px', alignItems: 'center', flexWrap: 'wrap' }}><button class=${"btn btn-secondary"} style=${{ color: 'var(--status-red)' }} onClick=${handleRemove}>Remove</button><button class=${"btn btn-secondary"} onClick=${() => setShowUpdatePath(v => !v)}>Update Path</button>${showUpdatePath && (
+                  htmlTag`<input type=${"text"} value=${newPath} onInput=${e => setNewPath(e.target.value)} placeholder=${"New absolute path…"} style=${{
                         fontFamily: 'var(--font-mono)', fontSize: '13px',
                         background: 'var(--bg-input)', border: '1px solid var(--border-default)',
                         borderRadius: 'var(--radius-sm)', padding: '5px 10px',
                         color: 'var(--text-primary)', width: '320px',
-                      }} /> <button class=${"btn btn-secondary"} onClick=${handleSavePath} disabled=${saving}> ${saving ? 'Saving…' : 'Save'} </button> `
-                )} </div>`
-            )} </div> <button style=${{
+                      }} /><button class=${"btn btn-secondary"} onClick=${handleSavePath} disabled=${saving}>${saving ? 'Saving…' : 'Save'}</button>`
+                )}</div>`
+            )}</div><button style=${{
               background: 'none',
               border: '1px solid var(--border-default)',
               borderRadius: 'var(--radius-sm)',
@@ -4311,7 +4311,7 @@ const htmlTag = htm.bind(preact.h);
               padding: '6px 14px',
               transition: 'border-color var(--transition-fast), color var(--transition-fast)',
               marginTop: '24px',
-            }} onClick=${() => {}} title=${"Scan Now (not yet wired)"}> Scan Now </button> </div>`
+            }} onClick=${() => {}} title=${"Scan Now (not yet wired)"}>Scan Now</button></div>`
       );
     }
 
@@ -4324,9 +4324,9 @@ const htmlTag = htm.bind(preact.h);
 
     function SubTabNav({ active, onChange }) {
       return (
-        htmlTag`<nav class=${"sub-tab-nav"} role=${"tablist"}> ${SUB_TABS.map(t => (
-            htmlTag`<button key=${t.id} role=${"tab"} aria-selected=${active === t.id} class=${'sub-tab-btn' + (active === t.id ? ' active' : '')} onClick=${() => onChange(t.id)}> ${t.label} </button>`
-          ))} </nav>`
+        htmlTag`<nav class=${"sub-tab-nav"} role=${"tablist"}>${SUB_TABS.map(t => (
+            htmlTag`<button key=${t.id} role=${"tab"} aria-selected=${active === t.id} class=${'sub-tab-btn' + (active === t.id ? ' active' : '')} onClick=${() => onChange(t.id)}>${t.label}</button>`
+          ))}</nav>`
       );
     }
 
@@ -4340,9 +4340,9 @@ const htmlTag = htm.bind(preact.h);
 
     function TimeRangeSelector({ selected, onChange }) {
       return (
-        htmlTag`<div class=${"time-range-group"} role=${"group"} aria-label=${"Time range"}> ${TIME_RANGES.map(r => (
-            htmlTag`<button key=${r.days} class=${'time-range-btn' + (selected === r.days ? ' active' : '')} onClick=${() => onChange(r.days)}> ${r.label} </button>`
-          ))} </div>`
+        htmlTag`<div class=${"time-range-group"} role=${"group"} aria-label=${"Time range"}>${TIME_RANGES.map(r => (
+            htmlTag`<button key=${r.days} class=${'time-range-btn' + (selected === r.days ? ' active' : '')} onClick=${() => onChange(r.days)}>${r.label}</button>`
+          ))}</div>`
       );
     }
 
@@ -4383,7 +4383,7 @@ const htmlTag = htm.bind(preact.h);
 
       if (!data || data.length === 0) {
         return (
-          htmlTag`<div style=${{ height: '300px', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--text-muted)', fontFamily: 'var(--font-body)', fontSize: '14px' }}> No activity data for this period </div>`
+          htmlTag`<div style=${{ height: '300px', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--text-muted)', fontFamily: 'var(--font-body)', fontSize: '14px' }}>No activity data for this period</div>`
         );
       }
 
@@ -4410,7 +4410,7 @@ const htmlTag = htm.bind(preact.h);
             borderRadius: 'var(--radius-sm)', padding: '10px 14px',
             fontFamily: 'var(--font-body)', fontSize: '12px', color: 'var(--text-secondary)',
             lineHeight: '1.7',
-          }}> <div style=${{ color: 'var(--text-primary)', fontWeight: 600, marginBottom: '4px' }}>${label}</div> <div style=${{ color: 'var(--status-green)' }}>+${ins ? ins.value : 0} insertions</div> <div style=${{ color: 'var(--status-red)' }}>-${rawDel} deletions</div> <div style=${{ color: 'var(--accent-blue)' }}>net ${netVal >= 0 ? '+' : ''}${netVal}</div> <div>${commits} commits</div> </div>`
+          }}><div style=${{ color: 'var(--text-primary)', fontWeight: 600, marginBottom: '4px' }}>${label}</div><div style=${{ color: 'var(--status-green)' }}>+${ins ? ins.value : 0} insertions</div><div style=${{ color: 'var(--status-red)' }}>-${rawDel} deletions</div><div style=${{ color: 'var(--accent-blue)' }}>net ${netVal >= 0 ? '+' : ''}${netVal}</div><div>${commits} commits</div></div>`
         );
       }
 
@@ -4418,7 +4418,7 @@ const htmlTag = htm.bind(preact.h);
       const tickInterval = Math.max(Math.floor(chartData.length / 10), 6);
 
       return (
-        htmlTag`<div class="activity-chart"><${svgCharts.CartesianChart} kind=${"area"} data=${chartData} xKey=${"date"} height=${300} margin=${{top:10, right:40, bottom:30, left:60}} grid=${{horizontal:true, vertical:false}} xAxisLine=${true} stackOffset=${"sign"} tickEvery=${tickInterval + 1} yDomain=${chartData.every(d => d.insertions === 0 && d.deletions === 0) ? [0, 4] : undefined} yFormat=${v => String(Math.abs(v))} referenceY=${0} tooltip=${props => htmlTag`<${CustomTooltip} ...${props} />`} series=${[
+        htmlTag`<div class="activity-chart"><${svgCharts.CartesianChart} kind=${"area"} data=${chartData} xKey=${"date"} height=${300} margin=${{top:4, right:4, bottom:30, left:60}} grid=${{horizontal:true, vertical:false}} xAxisLine=${true} stackOffset=${"sign"} tickEvery=${tickInterval + 1} ariaLabel=${"Commit activity"} yFormat=${v => String(Math.abs(v))} referenceY=${0} tooltip=${props => htmlTag`<${CustomTooltip} ...${props} />`} series=${[
           {key:'insertions', stack:true, color:'var(--status-green)', fillOpacity:0.2, strokeWidth:1.5},
           {key:'deletions', stack:true, color:'var(--status-red)', fillOpacity:0.2, strokeWidth:1.5},
           {key:'net', color:'var(--accent-blue)', fill:'none', strokeWidth:2},
@@ -4442,9 +4442,9 @@ const htmlTag = htm.bind(preact.h);
       }, [repoId, selectedDays]);
 
       return (
-        htmlTag`<div> <${TimeRangeSelector} selected=${selectedDays} onChange=${setSelectedDays} /> ${historyData === null
+        htmlTag`<div><${TimeRangeSelector} selected=${selectedDays} onChange=${setSelectedDays} />${historyData === null
             ? htmlTag`<div style=${{ height: '300px', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--text-muted)', fontFamily: 'var(--font-body)', fontSize: '14px' }}>Loading…</div>`
-            : htmlTag`<${ActivityChart} data=${historyData} />`} </div>`
+            : htmlTag`<${ActivityChart} data=${historyData} />`}</div>`
       );
     }
 
@@ -4483,21 +4483,21 @@ const htmlTag = htm.bind(preact.h);
       }
 
       return (
-        htmlTag`<div> ${branch && (
+        htmlTag`<div>${branch && (
             htmlTag`<div style=${{
               fontSize: '12px', fontFamily: 'var(--font-heading)', fontWeight: 600,
               color: 'var(--accent-blue)', marginBottom: '10px',
               textTransform: 'uppercase', letterSpacing: '0.5px',
               display: 'flex', alignItems: 'center', gap: '6px',
-            }}> <span style=${{ color: 'var(--text-muted)' }}>Branch:</span> ${branch} <span style=${{
+            }}><span style=${{ color: 'var(--text-muted)' }}>Branch:</span>${branch}<span style=${{
                 fontFamily: 'var(--font-mono)', fontSize: '11px', fontWeight: 400,
                 color: 'var(--text-muted)', textTransform: 'none',
-              }}> (${total} ${total === 1 ? 'commit' : 'commits'}) </span> </div>`
-          )} <div class=${"table-container"}> <div class=${"table-header"} style=${{ gridTemplateColumns: '120px 1fr 110px 70px' }}> <span>Date</span> <span>Message</span> <span>+/-</span> <span>Files</span> </div> ${commits.length === 0 ? (
+              }}>(${total} ${total === 1 ? 'commit' : 'commits'})</span></div>`
+          )}<div class=${"table-container"}><div class=${"table-header"} style=${{ gridTemplateColumns: '120px 1fr 110px 70px' }}><span>Date</span><span>Message</span><span>+/-</span><span>Files</span></div>${commits.length === 0 ? (
               htmlTag`<div class=${"table-empty"}>No commits found</div>`
             ) : commits.map(c => (
-              htmlTag`<div key=${c.hash} class=${"table-row"} style=${{ gridTemplateColumns: '120px 1fr 110px 70px' }}> <span style=${{ fontFamily: 'var(--font-mono)', fontSize: '13px', color: 'var(--text-secondary)' }}> ${fmtDate(c.date)} </span> <span style=${{ fontFamily: 'var(--font-body)', fontSize: '14px', color: 'var(--text-primary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}> ${c.message && c.message.length > 80 ? c.message.slice(0, 80) + '…' : (c.message || '')} </span> <span style=${{ fontFamily: 'var(--font-mono)', fontSize: '13px' }}> <span style=${{ color: 'var(--status-green)' }}>+${c.insertions}</span> ${' '} <span style=${{ color: 'var(--status-red)' }}>-${c.deletions}</span> </span> <span style=${{ fontFamily: 'var(--font-body)', fontSize: '13px', color: 'var(--text-muted)' }}> ${c.files_changed} </span> </div>`
-            ))} </div> <div style=${{ marginTop: '16px', display: 'flex', justifyContent: 'center', alignItems: 'center', gap: '12px' }}> <button class=${"btn btn-secondary"} disabled=${page <= 1} onClick=${() => setPage(p => p - 1)}>Prev</button> <span style=${{ fontSize: '13px', fontFamily: 'var(--font-body)', color: 'var(--text-secondary)' }}> Page ${page} of ${totalPages} </span> <button class=${"btn btn-secondary"} disabled=${page >= totalPages} onClick=${() => setPage(p => p + 1)}>Next</button> </div> </div>`
+              htmlTag`<div key=${c.hash} class=${"table-row"} style=${{ gridTemplateColumns: '120px 1fr 110px 70px' }}><span style=${{ fontFamily: 'var(--font-mono)', fontSize: '13px', color: 'var(--text-secondary)' }}>${fmtDate(c.date)}</span><span style=${{ fontFamily: 'var(--font-body)', fontSize: '14px', color: 'var(--text-primary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>${c.message && c.message.length > 80 ? c.message.slice(0, 80) + '…' : (c.message || '')}</span><span style=${{ fontFamily: 'var(--font-mono)', fontSize: '13px' }}><span style=${{ color: 'var(--status-green)' }}>+${c.insertions}</span>${' '}<span style=${{ color: 'var(--status-red)' }}>-${c.deletions}</span></span><span style=${{ fontFamily: 'var(--font-body)', fontSize: '13px', color: 'var(--text-muted)' }}>${c.files_changed}</span></div>`
+            ))}</div><div style=${{ marginTop: '16px', display: 'flex', justifyContent: 'center', alignItems: 'center', gap: '12px' }}><button class=${"btn btn-secondary"} disabled=${page <= 1} onClick=${() => setPage(p => p - 1)}>Prev</button><span style=${{ fontSize: '13px', fontFamily: 'var(--font-body)', color: 'var(--text-secondary)' }}>Page ${page} of ${totalPages}</span><button class=${"btn btn-secondary"} disabled=${page >= totalPages} onClick=${() => setPage(p => p + 1)}>Next</button></div></div>`
       );
     }
 
@@ -4539,7 +4539,7 @@ const htmlTag = htm.bind(preact.h);
       const gridCols = '1fr 80px 110px 70px 120px 130px';
 
       return (
-        htmlTag`<div class=${"table-container"}> <div class=${"table-header"} style=${{ gridTemplateColumns: gridCols }}> <span>Branch</span> <span>Commits</span> <span>+/−</span> <span>Files</span> <span>Last Commit</span> <span>Status</span> </div> ${branches.length === 0 ? (
+        htmlTag`<div class=${"table-container"}><div class=${"table-header"} style=${{ gridTemplateColumns: gridCols }}><span>Branch</span><span>Commits</span><span>+/−</span><span>Files</span><span>Last Commit</span><span>Status</span></div>${branches.length === 0 ? (
             htmlTag`<div class=${"table-empty"}>No branches found</div>`
           ) : branches.map(b => {
             const isSelected = selectedBranch === b.name;
@@ -4549,26 +4549,26 @@ const htmlTag = htm.bind(preact.h);
                   cursor: 'pointer',
                   borderLeft: isSelected ? '2px solid var(--accent-blue)' : '2px solid transparent',
                   background: isSelected ? 'var(--accent-blue-dim)' : undefined,
-                }} onClick=${() => onSelectBranch(b.name)} title=${'View commits for ' + b.name}> <span style=${{
+                }} onClick=${() => onSelectBranch(b.name)} title=${'View commits for ' + b.name}><span style=${{
                   fontFamily: 'var(--font-mono)', fontSize: '14px',
                   color: isSelected ? 'var(--accent-blue)' : 'var(--text-primary)',
                   fontWeight: isSelected ? 600 : 400,
                   overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
-                }}> ${b.name} </span> <span style=${{ fontFamily: 'var(--font-mono)', fontSize: '13px', color: 'var(--text-secondary)' }}> ${b.is_default ? '\u2014' : (b.commits_ahead || 0)} </span> <span style=${{ fontFamily: 'var(--font-mono)', fontSize: '13px' }}> ${b.is_default ? (
+                }}>${b.name}</span><span style=${{ fontFamily: 'var(--font-mono)', fontSize: '13px', color: 'var(--text-secondary)' }}>${b.is_default ? '\u2014' : (b.commits_ahead || 0)}</span><span style=${{ fontFamily: 'var(--font-mono)', fontSize: '13px' }}>${b.is_default ? (
                     htmlTag`<span style=${{ color: 'var(--text-muted)' }}>—</span>`
                   ) : (b.insertions || b.deletions) ? (
-                    htmlTag` <span style=${{ color: 'var(--status-green)' }}>+${b.insertions || 0}</span> ${' '} <span style=${{ color: 'var(--status-red)' }}>−${b.deletions || 0}</span> `
+                    htmlTag`<span style=${{ color: 'var(--status-green)' }}>+${b.insertions || 0}</span>${' '}<span style=${{ color: 'var(--status-red)' }}>−${b.deletions || 0}</span>`
                   ) : (
                     htmlTag`<span style=${{ color: 'var(--text-muted)' }}>0</span>`
-                  )} </span> <span style=${{ fontFamily: 'var(--font-mono)', fontSize: '13px', color: 'var(--text-secondary)' }}> ${b.is_default ? '\u2014' : (b.files_changed || 0)} </span> <span style=${{ fontSize: '13px', fontFamily: 'var(--font-body)', color: 'var(--text-secondary)' }}> ${fmtDate(b.last_commit_date)} </span> <span> ${b.is_default ? (
-                    htmlTag`<span style=${{ color: 'var(--accent-blue)', background: 'var(--accent-blue-dim)', fontSize: '11px', fontFamily: 'var(--font-body)', fontWeight: 500, padding: '2px 8px', borderRadius: '4px' }}> default </span>`
+                  )}</span><span style=${{ fontFamily: 'var(--font-mono)', fontSize: '13px', color: 'var(--text-secondary)' }}>${b.is_default ? '\u2014' : (b.files_changed || 0)}</span><span style=${{ fontSize: '13px', fontFamily: 'var(--font-body)', color: 'var(--text-secondary)' }}>${fmtDate(b.last_commit_date)}</span><span>${b.is_default ? (
+                    htmlTag`<span style=${{ color: 'var(--accent-blue)', background: 'var(--accent-blue-dim)', fontSize: '11px', fontFamily: 'var(--font-body)', fontWeight: 500, padding: '2px 8px', borderRadius: '4px' }}>default</span>`
                   ) : isStale(b.last_commit_date) ? (
-                    htmlTag`<span style=${{ color: 'var(--status-orange)', background: 'var(--status-orange-bg)', fontSize: '11px', fontFamily: 'var(--font-body)', fontWeight: 500, padding: '2px 8px', borderRadius: '4px' }}> stale (${staleDays(b.last_commit_date)}d) </span>`
+                    htmlTag`<span style=${{ color: 'var(--status-orange)', background: 'var(--status-orange-bg)', fontSize: '11px', fontFamily: 'var(--font-body)', fontWeight: 500, padding: '2px 8px', borderRadius: '4px' }}>stale (${staleDays(b.last_commit_date)}d)</span>`
                   ) : (
-                    htmlTag`<span style=${{ fontSize: '13px', fontFamily: 'var(--font-body)', color: 'var(--text-muted)' }}> active </span>`
-                  )} </span> </div>`
+                    htmlTag`<span style=${{ fontSize: '13px', fontFamily: 'var(--font-body)', color: 'var(--text-muted)' }}>active</span>`
+                  )}</span></div>`
             );
-          })} </div>`
+          })}</div>`
       );
     }
 
@@ -4682,16 +4682,16 @@ const htmlTag = htm.bind(preact.h);
         downloadBlob(md, 'deps-export.md', 'text/markdown');
       }
       function dependencyTable(rows) {
-        return htmlTag`<div class=${"table-container"} style=${{overflowX: 'auto'}}> <table class=${"data-table"} style=${{width: '100%', textAlign: 'left', fontSize: '13px'}}> <thead><tr>${['Package', 'Declared', 'Version', 'Latest', 'Status / Coverage', 'Source / Reasons'].map(h => htmlTag`<th key=${h} style=${{padding: '8px'}}>${h}</th>`)}</tr></thead> <tbody>${rows.map(pkg => htmlTag`<tr key=${JSON.stringify([pkg._manager, pkg.source_path, pkg.name])}> <td style=${{padding: '8px'}}>${pkg.name}</td><td>${pkg.declared_spec || '—'}</td><td>${currentText(pkg)}</td><td>${pkg.latest_version || '—'}</td> <td style=${{color: severityColor(pkg.severity)}}>${statusText(pkg)}<br /><small>outdated: ${pkg.outdated_state || 'unchecked'}; vulnerability: ${pkg.vuln_state || 'unchecked'}</small></td> <td>${pkg._label}<br />${pkg.check_note}</td> </tr>`)}</tbody> </table> </div>`;
+        return htmlTag`<div class=${"table-container"} style=${{overflowX: 'auto'}}><table class=${"data-table"} style=${{width: '100%', textAlign: 'left', fontSize: '13px'}}><thead><tr>${['Package', 'Declared', 'Version', 'Latest', 'Status / Coverage', 'Source / Reasons'].map(h => htmlTag`<th key=${h} style=${{padding: '8px'}}>${h}</th>`)}</tr></thead><tbody>${rows.map(pkg => htmlTag`<tr key=${JSON.stringify([pkg._manager, pkg.source_path, pkg.name])}><td style=${{padding: '8px'}}>${pkg.name}</td><td>${pkg.declared_spec || '—'}</td><td>${currentText(pkg)}</td><td>${pkg.latest_version || '—'}</td><td style=${{color: severityColor(pkg.severity)}}>${statusText(pkg)}<br /><small>outdated: ${pkg.outdated_state || 'unchecked'}; vulnerability: ${pkg.vuln_state || 'unchecked'}</small></td><td>${pkg._label}<br />${pkg.check_note}</td></tr>`)}</tbody></table></div>`;
       }
       if (loading) return htmlTag`<div class=${"table-empty"}>Loading…</div>`;
-      return htmlTag`<div> <div style=${{display: 'flex', justifyContent: 'flex-end', gap: '8px', marginBottom: '12px'}}> <button class=${"btn btn-secondary"} onClick=${handleExportMD} disabled=${!repo || !appStatus}>Export MD</button> <button class=${"btn btn-secondary"} onClick=${handleExportJSON} disabled=${!repo || !appStatus}>Export JSON</button> <button class=${"btn btn-secondary"} onClick=${() => fetchDeps(true)} disabled=${scanning}>${scanning ? 'Checking…' : 'Check Now'}</button> </div> ${error && htmlTag`<div role=${"alert"}>${error}</div>`} <div data-testid=${"dep-coverage"} style=${{padding: '12px', marginBottom: '16px', color: incomplete ? 'var(--status-orange)' : 'var(--text-secondary)'}}> ${incomplete && htmlTag`<strong>Incomplete coverage — </strong>`}${summary.declarations} declarations; ${summary.manifests} manifests; ${summary.fullyChecked} fully checked; ${summary.unchecked} not checked. ${missingTools.map(t => htmlTag`<div key=${t.tool}>${t.tool} — ${t.description}</div>`)} </div> ${issues.length > 0 && htmlTag`<section><h3>Attention Required</h3>${dependencyTable(issues)}</section>`} ${unchecked.length > 0 && htmlTag`<section data-testid=${"dep-not-checked"}><h3>Not Checked</h3>${dependencyTable(unchecked)}</section>`} ${summary.declarations > 0 && issues.length === 0 && summary.fullyChecked === summary.declarations && !incomplete &&
-          htmlTag`<div style=${{color: 'var(--status-green)'}}>No issues found — all dependencies are up to date.</div>`} <section data-testid=${"dep-all"}><h3>All Dependencies</h3>${managerGroups.map(group => htmlTag`<div key=${JSON.stringify([group.manager, group.source_path])} style=${{marginBottom: '16px'}}> <h4>${group.label || group.manager}</h4>${dependencyTable(packages.filter(pkg => pkg._manager === group.manager && pkg.source_path === group.source_path))} </div>`)}${!packages.length && htmlTag`<div>No dependencies detected</div>`}</section> <section><h3>Manifests Scanned</h3>${manifests.map(m => htmlTag`<div key=${m.path}>${m.path} — ${m.kind} — ${m.dependencies} declarations${m.error ? ' — ' + m.error : ''}</div>`)}</section> <div style=${{marginTop: '12px', color: 'var(--text-muted)'}}>Newest declaration check: ${newestScan ? timeAgo(newestScan) : 'No declaration check timestamp available'} · Git Fleet ${appStatus?.version}</div> </div>`;
+      return htmlTag`<div><div style=${{display: 'flex', justifyContent: 'flex-end', gap: '8px', marginBottom: '12px'}}><button class=${"btn btn-secondary"} onClick=${handleExportMD} disabled=${!repo || !appStatus}>Export MD</button><button class=${"btn btn-secondary"} onClick=${handleExportJSON} disabled=${!repo || !appStatus}>Export JSON</button><button class=${"btn btn-secondary"} onClick=${() => fetchDeps(true)} disabled=${scanning}>${scanning ? 'Checking…' : 'Check Now'}</button></div>${error && htmlTag`<div role=${"alert"}>${error}</div>`}<div data-testid=${"dep-coverage"} style=${{padding: '12px', marginBottom: '16px', color: incomplete ? 'var(--status-orange)' : 'var(--text-secondary)'}}>${incomplete && htmlTag`<strong>Incomplete coverage — </strong>`}${summary.declarations} declarations; ${summary.manifests} manifests; ${summary.fullyChecked} fully checked; ${summary.unchecked} not checked.${missingTools.map(t => htmlTag`<div key=${t.tool}>${t.tool} — ${t.description}</div>`)}</div>${issues.length > 0 && htmlTag`<section><h3>Attention Required</h3>${dependencyTable(issues)}</section>`}${unchecked.length > 0 && htmlTag`<section data-testid=${"dep-not-checked"}><h3>Not Checked</h3>${dependencyTable(unchecked)}</section>`}${summary.declarations > 0 && issues.length === 0 && summary.fullyChecked === summary.declarations && !incomplete &&
+          htmlTag`<div style=${{color: 'var(--status-green)'}}>No issues found — all dependencies are up to date.</div>`}<section data-testid=${"dep-all"}><h3>All Dependencies</h3>${managerGroups.map(group => htmlTag`<div key=${JSON.stringify([group.manager, group.source_path])} style=${{marginBottom: '16px'}}><h4>${group.label || group.manager}</h4>${dependencyTable(packages.filter(pkg => pkg._manager === group.manager && pkg.source_path === group.source_path))}</div>`)}${!packages.length && htmlTag`<div>No dependencies detected</div>`}</section><section><h3>Manifests Scanned</h3>${manifests.map(m => htmlTag`<div key=${m.path}>${m.path} — ${m.kind} — ${m.dependencies} declarations${m.error ? ' — ' + m.error : ''}</div>`)}</section><div style=${{marginTop: '12px', color: 'var(--text-muted)'}}>Newest declaration check: ${newestScan ? timeAgo(newestScan) : 'No declaration check timestamp available'} · Git Fleet ${appStatus?.version}</div></div>`;
     }
 
     function PlaceholderTab({ text }) {
       return (
-        htmlTag`<div class=${"table-container"}> <div class=${"table-empty"}>${text} — coming in a later packet</div> </div>`
+        htmlTag`<div class=${"table-container"}><div class=${"table-empty"}>${text} — coming in a later packet</div></div>`
       );
     }
 
@@ -4740,12 +4740,12 @@ const htmlTag = htm.bind(preact.h);
 
       if (!repo) {
         return (
-          htmlTag`<div style=${{ padding: '48px', textAlign: 'center', color: 'var(--text-muted)', fontFamily: 'var(--font-body)', fontSize: '14px' }}> Loading… </div>`
+          htmlTag`<div style=${{ padding: '48px', textAlign: 'center', color: 'var(--text-muted)', fontFamily: 'var(--font-body)', fontSize: '14px' }}>Loading…</div>`
         );
       }
 
       return (
-        htmlTag`<div class=${"detail-view"}> <${DetailHeader} repo=${repo} selectedBranch=${selectedBranch} onGoToBranches=${() => handleSubTabChange('branches')} /> <${SubTabNav} active=${activeSubTab} onChange=${handleSubTabChange} /> <div class=${"detail-content"}> ${activeSubTab === 'activity'  && htmlTag`<${ActivityTab} repoId=${repoId} />`} ${activeSubTab === 'deps'      && htmlTag`<${DepsTab} repoId=${repoId} />`} ${activeSubTab === 'branches'  && htmlTag`<${BranchesTab} repoId=${repoId} selectedBranch=${selectedBranch} onSelectBranch=${handleSelectBranch} />`} ${activeSubTab === 'commits'   && htmlTag`<${CommitsTab} repoId=${repoId} branch=${selectedBranch} />`} </div> </div>`
+        htmlTag`<div class=${"detail-view"}><${DetailHeader} repo=${repo} selectedBranch=${selectedBranch} onGoToBranches=${() => handleSubTabChange('branches')} /><${SubTabNav} active=${activeSubTab} onChange=${handleSubTabChange} /><div class=${"detail-content"}>${activeSubTab === 'activity'  && htmlTag`<${ActivityTab} repoId=${repoId} />`}${activeSubTab === 'deps'      && htmlTag`<${DepsTab} repoId=${repoId} />`}${activeSubTab === 'branches'  && htmlTag`<${BranchesTab} repoId=${repoId} selectedBranch=${selectedBranch} onSelectBranch=${handleSelectBranch} />`}${activeSubTab === 'commits'   && htmlTag`<${CommitsTab} repoId=${repoId} branch=${selectedBranch} />`}</div></div>`
       );
     }
 
@@ -4846,7 +4846,7 @@ const htmlTag = htm.bind(preact.h);
       };
 
       return (
-        htmlTag`<div data-heatmap-root style=${{ position: 'relative', display: 'inline-block' }}>  <div style=${{ display: 'flex', marginLeft: '36px', marginBottom: '4px', position: 'relative', height: '16px' }}> ${monthLabels.map(({ col, label }) => (
+        htmlTag`<div data-heatmap-root style=${{ position: 'relative', display: 'inline-block' }}><div style=${{ display: 'flex', marginLeft: '36px', marginBottom: '4px', position: 'relative', height: '16px' }}>${monthLabels.map(({ col, label }) => (
               htmlTag`<span key=${col + '-' + label} style=${{
                   position: 'absolute',
                   left: `${col * step}px`,
@@ -4855,14 +4855,14 @@ const htmlTag = htm.bind(preact.h);
                   color: 'var(--text-muted)',
                   userSelect: 'none',
                 }}>${label}</span>`
-            ))} </div> <div style=${{ display: 'flex', alignItems: 'flex-start' }}>  <div style=${{ width: '30px', marginRight: '6px', flexShrink: 0 }}> ${['Sun','Mon','Tue','Wed','Thu','Fri','Sat'].map((name, idx) => (
-                htmlTag`<div key=${idx} style=${{ ...dayLabelStyle, visibility: (name === 'Mon' || name === 'Wed' || name === 'Fri') ? 'visible' : 'hidden' }}> ${name} </div>`
-              ))} </div>  <div style=${{
+            ))}</div><div style=${{ display: 'flex', alignItems: 'flex-start' }}><div style=${{ width: '30px', marginRight: '6px', flexShrink: 0 }}>${['Sun','Mon','Tue','Wed','Thu','Fri','Sat'].map((name, idx) => (
+                htmlTag`<div key=${idx} style=${{ ...dayLabelStyle, visibility: (name === 'Mon' || name === 'Wed' || name === 'Fri') ? 'visible' : 'hidden' }}>${name}</div>`
+              ))}</div><div style=${{
                 display: 'grid',
                 gridTemplateColumns: `repeat(52, ${CELL}px)`,
                 gridTemplateRows: `repeat(7, ${CELL}px)`,
                 gap: `${GAP}px`,
-              }}> ${cells.map((week, col) =>
+              }}>${cells.map((week, col) =>
                 week.map((cellDate, row) => {
                   const iso = cellDate.toISOString().slice(0, 10);
                   const count = countMap.get(iso) || 0;
@@ -4886,7 +4886,7 @@ const htmlTag = htm.bind(preact.h);
                       }} onMouseLeave=${() => setTooltip(null)} />`
                   );
                 })
-              )} </div> </div>  ${tooltip && (
+              )}</div></div>${tooltip && (
             htmlTag`<div style=${{
                 position: 'fixed',
                 left: tooltip.x + 16,
@@ -4901,8 +4901,8 @@ const htmlTag = htm.bind(preact.h);
                 fontFamily: 'var(--font-body)',
                 color: 'var(--text-primary)',
                 whiteSpace: 'nowrap',
-              }}> ${new Date(tooltip.iso + 'T12:00:00').toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' })}: ${tooltip.count} commits </div>`
-          )} </div>`
+              }}>${new Date(tooltip.iso + 'T12:00:00').toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' })}: ${tooltip.count} commits</div>`
+          )}</div>`
       );
     }
 
@@ -5004,19 +5004,19 @@ const htmlTag = htm.bind(preact.h);
 
       if (loading) {
         return (
-          htmlTag`<div style=${{ padding: '16px', color: 'var(--text-muted)', fontFamily: 'var(--font-body)', fontSize: '13px' }}> Loading… </div>`
+          htmlTag`<div style=${{ padding: '16px', color: 'var(--text-muted)', fontFamily: 'var(--font-body)', fontSize: '13px' }}>Loading…</div>`
         );
       }
 
       return (
-        htmlTag`<div> <div style=${{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '12px' }}> <h3 style=${{ fontFamily: 'var(--font-heading)', fontSize: '14px', color: 'var(--text-primary)', margin: 0 }}> Time Allocation </h3> <${TimeRangeSelector} selected=${selectedDays} onChange=${setSelectedDays} /> </div> ${chartData.length === 0 ? (
-            htmlTag`<div style=${{ padding: '32px', textAlign: 'center', color: 'var(--text-muted)', fontFamily: 'var(--font-body)', fontSize: '13px' }}> No commit data in this range. </div>`
+        htmlTag`<div><div style=${{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '12px' }}><h3 style=${{ fontFamily: 'var(--font-heading)', fontSize: '14px', color: 'var(--text-primary)', margin: 0 }}>Time Allocation</h3><${TimeRangeSelector} selected=${selectedDays} onChange=${setSelectedDays} /></div>${chartData.length === 0 ? (
+            htmlTag`<div style=${{ padding: '32px', textAlign: 'center', color: 'var(--text-muted)', fontFamily: 'var(--font-body)', fontSize: '13px' }}>No commit data in this range.</div>`
           ) : (
-            htmlTag`<div class="allocation-chart"><${svgCharts.CartesianChart} kind=${"area"} data=${chartData} xKey=${"date"} height=${260} margin=${{top:10, right:40, bottom:30, left:36}} grid=${{horizontal:true, vertical:true}} tickEvery=${Math.max(1, Math.ceil(chartData.length / 10))} yDomain=${[0, Math.max(1, ...chartData.map(row => processedSeries.reduce((sum, s) => sum + (row[s.name] || 0), 0)))]} series=${processedSeries.map((s, i) => ({
+            htmlTag`<div class="allocation-chart"><${svgCharts.CartesianChart} kind=${"area"} data=${chartData} xKey=${"date"} height=${260} margin=${{top:4, right:8, bottom:30, left:36}} grid=${{horizontal:true, vertical:true}} ariaLabel=${"Time allocation"} series=${processedSeries.map((s, i) => ({
               key:s.name, stack:true, color:s.name === 'Other' ? 'var(--text-muted)' : ALLOC_COLORS[i % ALLOC_COLORS.length],
-              fillOpacity:hidden.has(s.name) ? 0 : 0.75, strokeOpacity:hidden.has(s.name) ? 0 : 1,
-            }))} tooltip=${({label, payload}) => htmlTag`<div style=${{background:'var(--bg-card)', border:'1px solid var(--border-default)', borderRadius:'var(--radius-sm)', padding:'8px 12px', fontSize:'12px', fontFamily:'var(--font-body)'}}><div>${label}</div>${payload.filter(p => !hidden.has(p.dataKey)).map(p => htmlTag`<div style=${{color:p.color}}>${p.name}: ${p.value}</div>`)}</div>`} /></div>`
-          )}  <div style=${{ display: 'flex', flexWrap: 'wrap', gap: '12px 20px', marginTop: '12px' }}> ${processedSeries.map((s, i) => {
+              fillOpacity:hidden.has(s.name) ? 0 : 0.75, strokeOpacity:hidden.has(s.name) ? 0 : 1, strokeWidth:1,
+            }))} tooltip=${({label, payload}) => htmlTag`<div style=${{background:'var(--bg-card)', border:'1px solid var(--border-default)', borderRadius:'var(--radius-sm)', padding:'8px 12px', fontSize:'12px', fontFamily:'var(--font-body)', whiteSpace:'nowrap'}}><div>${label}</div>${[...payload].sort((a, b) => a.name < b.name ? -1 : a.name > b.name ? 1 : 0).map(p => htmlTag`<div style=${{color:p.color, padding:'4px 0'}}>${p.name}${' : '}${p.value}</div>`)}</div>`} /></div>`
+          )}<div style=${{ display: 'flex', flexWrap: 'wrap', gap: '12px 20px', marginTop: '12px' }}>${processedSeries.map((s, i) => {
               const color = s.name === 'Other' ? 'var(--text-muted)' : ALLOC_COLORS[i % ALLOC_COLORS.length];
               const isHidden = hidden.has(s.name);
               return (
@@ -5032,16 +5032,16 @@ const htmlTag = htm.bind(preact.h);
                     fontFamily: 'var(--font-body)',
                     color: isHidden ? 'var(--text-muted)' : 'var(--text-primary)',
                     opacity: isHidden ? 0.5 : 1,
-                  }}> <span style=${{
+                  }}><span style=${{
                     display: 'inline-block',
                     width: '8px',
                     height: '8px',
                     borderRadius: '50%',
                     backgroundColor: color,
                     flexShrink: 0,
-                  }} /> ${s.name} </button>`
+                  }} />${s.name}</button>`
               );
-            })} </div> </div>`
+            })}</div></div>`
       );
     }
 
@@ -5073,28 +5073,28 @@ const htmlTag = htm.bind(preact.h);
 
       if (loading) {
         return (
-          htmlTag`<div style=${{ padding: '16px', color: 'var(--text-muted)', fontFamily: 'var(--font-body)', fontSize: '13px' }}> Loading… </div>`
+          htmlTag`<div style=${{ padding: '16px', color: 'var(--text-muted)', fontFamily: 'var(--font-body)', fontSize: '13px' }}>Loading…</div>`
         );
       }
 
       if (packages.length === 0) {
         return (
-          htmlTag`<div style=${{ padding: '32px', textAlign: 'center', color: 'var(--text-muted)', fontFamily: 'var(--font-body)', fontSize: '13px' }}> No shared dependencies found across repos. </div>`
+          htmlTag`<div style=${{ padding: '32px', textAlign: 'center', color: 'var(--text-muted)', fontFamily: 'var(--font-body)', fontSize: '13px' }}>No shared dependencies found across repos.</div>`
         );
       }
 
       return (
-        htmlTag`<div> <h3 style=${{ fontFamily: 'var(--font-heading)', fontSize: '14px', color: 'var(--text-primary)', margin: '0 0 12px 0' }}> Dependency Overlap </h3> <table class=${"data-table"} style=${{ width: '100%', borderCollapse: 'collapse' }}> <thead> <tr> <th style=${{ textAlign: 'left', padding: '8px 12px', fontFamily: 'var(--font-body)', fontSize: '12px', color: 'var(--text-muted)', fontWeight: 600 }}>Package</th> <th style=${{ textAlign: 'left', padding: '8px 12px', fontFamily: 'var(--font-body)', fontSize: '12px', color: 'var(--text-muted)', fontWeight: 600 }}>Manager</th> <th style=${{ textAlign: 'left', padding: '8px 12px', fontFamily: 'var(--font-body)', fontSize: '12px', color: 'var(--text-muted)', fontWeight: 600 }}>Used In</th> <th style=${{ textAlign: 'left', padding: '8px 12px', fontFamily: 'var(--font-body)', fontSize: '12px', color: 'var(--text-muted)', fontWeight: 600 }}>Version Spread</th> </tr> </thead> <tbody> ${packages.map(pkg => {
+        htmlTag`<div><h3 style=${{ fontFamily: 'var(--font-heading)', fontSize: '14px', color: 'var(--text-primary)', margin: '0 0 12px 0' }}>Dependency Overlap</h3><table class=${"data-table"} style=${{ width: '100%', borderCollapse: 'collapse' }}><thead><tr><th style=${{ textAlign: 'left', padding: '8px 12px', fontFamily: 'var(--font-body)', fontSize: '12px', color: 'var(--text-muted)', fontWeight: 600 }}>Package</th><th style=${{ textAlign: 'left', padding: '8px 12px', fontFamily: 'var(--font-body)', fontSize: '12px', color: 'var(--text-muted)', fontWeight: 600 }}>Manager</th><th style=${{ textAlign: 'left', padding: '8px 12px', fontFamily: 'var(--font-body)', fontSize: '12px', color: 'var(--text-muted)', fontWeight: 600 }}>Used In</th><th style=${{ textAlign: 'left', padding: '8px 12px', fontFamily: 'var(--font-body)', fontSize: '12px', color: 'var(--text-muted)', fontWeight: 600 }}>Version Spread</th></tr></thead><tbody>${packages.map(pkg => {
                 const key = pkg.name + ':' + pkg.manager;
                 const isExpanded = expanded.has(key);
                 return (
-                  htmlTag`<${preact.Fragment} key=${key}> <tr style=${{ borderTop: '1px solid var(--border-default)' }}> <td style=${{ padding: '8px 12px', fontFamily: 'var(--font-mono)', fontSize: '14px', color: 'var(--text-primary)' }}> ${pkg.name} </td> <td style=${{ padding: '8px 12px', fontFamily: 'var(--font-body)', fontSize: '12px', color: 'var(--text-muted)', textTransform: 'uppercase' }}> ${pkg.manager} </td> <td style=${{ padding: '8px 12px' }}> <span onClick=${() => toggleExpanded(key)} style=${{ fontFamily: 'var(--font-body)', fontSize: '13px', color: 'var(--accent-blue)', cursor: 'pointer' }}> ${isExpanded ? '▾' : '▸'} ${pkg.count} uses in ${pkg.repo_count} repos </span> </td> <td style=${{ padding: '8px 12px', fontFamily: 'var(--font-mono)', fontSize: '13px', color: 'var(--text-secondary)' }}> ${pkg.version_spread} </td> </tr> ${isExpanded && (
-                      htmlTag`<tr style=${{ borderTop: '1px solid var(--border-default)' }}> <td colSpan=${4} style=${{ paddingLeft: '24px', paddingBottom: '8px', paddingTop: '4px' }}> ${pkg.repos.map(repo => (
-                            htmlTag`<div key=${JSON.stringify([repo.repo_id, repo.source_path])} style=${{ fontFamily: 'var(--font-mono)', fontSize: '12px', color: 'var(--text-secondary)', lineHeight: '1.6' }}> ${repo.name} — ${repo.source_path} — ${repo.version !== null ? repo.version : '(unknown)'} </div>`
-                          ))} </td> </tr>`
-                    )} <//>`
+                  htmlTag`<${preact.Fragment} key=${key}><tr style=${{ borderTop: '1px solid var(--border-default)' }}><td style=${{ padding: '8px 12px', fontFamily: 'var(--font-mono)', fontSize: '14px', color: 'var(--text-primary)' }}>${pkg.name}</td><td style=${{ padding: '8px 12px', fontFamily: 'var(--font-body)', fontSize: '12px', color: 'var(--text-muted)', textTransform: 'uppercase' }}>${pkg.manager}</td><td style=${{ padding: '8px 12px' }}><span onClick=${() => toggleExpanded(key)} style=${{ fontFamily: 'var(--font-body)', fontSize: '13px', color: 'var(--accent-blue)', cursor: 'pointer' }}>${isExpanded ? '▾' : '▸'} ${pkg.count} uses in ${pkg.repo_count} repos</span></td><td style=${{ padding: '8px 12px', fontFamily: 'var(--font-mono)', fontSize: '13px', color: 'var(--text-secondary)' }}>${pkg.version_spread}</td></tr>${isExpanded && (
+                      htmlTag`<tr style=${{ borderTop: '1px solid var(--border-default)' }}><td colSpan=${4} style=${{ paddingLeft: '24px', paddingBottom: '8px', paddingTop: '4px' }}>${pkg.repos.map(repo => (
+                            htmlTag`<div key=${JSON.stringify([repo.repo_id, repo.source_path])} style=${{ fontFamily: 'var(--font-mono)', fontSize: '12px', color: 'var(--text-secondary)', lineHeight: '1.6' }}>${repo.name} — ${repo.source_path} — ${repo.version !== null ? repo.version : '(unknown)'}</div>`
+                          ))}</td></tr>`
+                    )}<//>`
                 );
-              })} </tbody> </table> </div>`
+              })}</tbody></table></div>`
       );
     }
 
@@ -5130,15 +5130,15 @@ const htmlTag = htm.bind(preact.h);
       const totalUnchecked = reposWithDeps.reduce((sum, r) => sum + (r.dep_summary?.unchecked || 0), 0);
 
       return (
-        htmlTag`<div style=${{ display: 'flex', flexDirection: 'column', gap: '32px' }}>  <div style=${{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))', gap: '12px' }}> <${KpiCard} label=${"Total Deps"} value=${loading ? '...' : totalDeps} tooltip=${"Total dependencies detected across all repos"} /> <${KpiCard} label=${"Outdated"} value=${loading ? '...' : totalOutdated} tooltip=${"Dependencies with newer versions available (minor or major)"} /> <${KpiCard} label=${"Vulnerable"} value=${loading ? '...' : totalVuln} tooltip=${"Dependencies with known security vulnerabilities"} /> <${KpiCard} label=${"Not Checked"} value=${loading ? '...' : totalUnchecked} tooltip=${"Declarations with incomplete check coverage, including findings"} /> <${KpiCard} label=${"Repos w/ Deps"} value=${loading ? '...' : reposWithDeps.length} tooltip=${"Repos where at least one dependency manifest was detected"} /> </div>  <section> <h2 style=${sectionHeaderStyle}>Per-Repo Health</h2> ${loading ? (
+        htmlTag`<div style=${{ display: 'flex', flexDirection: 'column', gap: '32px' }}><div style=${{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))', gap: '12px' }}><${KpiCard} label=${"Total Deps"} value=${loading ? '...' : totalDeps} tooltip=${"Total dependencies detected across all repos"} /><${KpiCard} label=${"Outdated"} value=${loading ? '...' : totalOutdated} tooltip=${"Dependencies with newer versions available (minor or major)"} /><${KpiCard} label=${"Vulnerable"} value=${loading ? '...' : totalVuln} tooltip=${"Dependencies with known security vulnerabilities"} /><${KpiCard} label=${"Not Checked"} value=${loading ? '...' : totalUnchecked} tooltip=${"Declarations with incomplete check coverage, including findings"} /><${KpiCard} label=${"Repos w/ Deps"} value=${loading ? '...' : reposWithDeps.length} tooltip=${"Repos where at least one dependency manifest was detected"} /></div><section><h2 style=${sectionHeaderStyle}>Per-Repo Health</h2>${loading ? (
               htmlTag`<div style=${{ color: 'var(--text-muted)', fontFamily: 'var(--font-body)', fontSize: '13px' }}>Loading...</div>`
             ) : reposWithCoverage.length === 0 ? (
-              htmlTag`<div style=${{ padding: '32px', textAlign: 'center', color: 'var(--text-muted)', fontFamily: 'var(--font-body)', fontSize: '13px' }}> No dependencies detected. Run a Full Scan to discover dependencies in your repos. </div>`
+              htmlTag`<div style=${{ padding: '32px', textAlign: 'center', color: 'var(--text-muted)', fontFamily: 'var(--font-body)', fontSize: '13px' }}>No dependencies detected. Run a Full Scan to discover dependencies in your repos.</div>`
             ) : (
-              htmlTag`<div class=${"table-container"}> <div class=${"table-header"} style=${{ gridTemplateColumns: '1fr repeat(4, 100px)' }}> <span>Repo</span> <span>Total</span> <span>Outdated</span> <span>Vulnerable</span> <span>Not Checked</span> </div> ${reposWithCoverage.map(r => (
-                  htmlTag`<div key=${r.id} class=${"table-row"} style=${{ gridTemplateColumns: '1fr repeat(4, 100px)', cursor: 'pointer' }} onClick=${() => { window.location.hash = '#/repo/' + r.id + '/deps'; }}> <span style=${{ fontFamily: 'var(--font-mono)', fontSize: '14px', color: 'var(--text-primary)' }}> <span>${r.name}</span> <span style=${{display: 'block', fontSize: '11px'}}><${DepBadge} dep=${r.dep_summary} missingTools=${r.missing_dep_tools} analysisError=${r.dep_check_error} /></span> </span> <span style=${{ fontSize: '13px', fontFamily: 'var(--font-mono)', color: 'var(--text-secondary)' }}> ${r.dep_summary?.total || 0} </span> <span style=${{ fontSize: '13px', fontFamily: 'var(--font-mono)', color: r.dep_summary?.outdated > 0 ? 'var(--status-yellow)' : 'var(--text-muted)' }}> ${r.dep_summary?.outdated || 0} </span> <span style=${{ fontSize: '13px', fontFamily: 'var(--font-mono)', color: r.dep_summary?.vulnerable > 0 ? 'var(--status-red)' : 'var(--text-muted)' }}> ${r.dep_summary?.vulnerable || 0} </span> <span style=${{color: 'var(--status-orange)'}}>${r.dep_summary?.unchecked || 0}</span> </div>`
-                ))} </div>`
-            )} </section>  <section> <h2 style=${sectionHeaderStyle}>Dependency Overlap</h2> <${DepOverlap} /> </section> </div>`
+              htmlTag`<div class=${"table-container"}><div class=${"table-header"} style=${{ gridTemplateColumns: '1fr repeat(4, 100px)' }}><span>Repo</span><span>Total</span><span>Outdated</span><span>Vulnerable</span><span>Not Checked</span></div>${reposWithCoverage.map(r => (
+                  htmlTag`<div key=${r.id} class=${"table-row"} style=${{ gridTemplateColumns: '1fr repeat(4, 100px)', cursor: 'pointer' }} onClick=${() => { window.location.hash = '#/repo/' + r.id + '/deps'; }}><span style=${{ fontFamily: 'var(--font-mono)', fontSize: '14px', color: 'var(--text-primary)' }}><span>${r.name}</span><span style=${{display: 'block', fontSize: '11px'}}><${DepBadge} dep=${r.dep_summary} missingTools=${r.missing_dep_tools} analysisError=${r.dep_check_error} /></span></span><span style=${{ fontSize: '13px', fontFamily: 'var(--font-mono)', color: 'var(--text-secondary)' }}>${r.dep_summary?.total || 0}</span><span style=${{ fontSize: '13px', fontFamily: 'var(--font-mono)', color: r.dep_summary?.outdated > 0 ? 'var(--status-yellow)' : 'var(--text-muted)' }}>${r.dep_summary?.outdated || 0}</span><span style=${{ fontSize: '13px', fontFamily: 'var(--font-mono)', color: r.dep_summary?.vulnerable > 0 ? 'var(--status-red)' : 'var(--text-muted)' }}>${r.dep_summary?.vulnerable || 0}</span><span style=${{color: 'var(--status-orange)'}}>${r.dep_summary?.unchecked || 0}</span></div>`
+                ))}</div>`
+            )}</section><section><h2 style=${sectionHeaderStyle}>Dependency Overlap</h2><${DepOverlap} /></section></div>`
       );
     }
 
@@ -5153,7 +5153,7 @@ const htmlTag = htm.bind(preact.h);
       };
 
       return (
-        htmlTag`<div style=${{ display: 'flex', flexDirection: 'column', gap: '32px' }}> <section> <h2 style=${sectionHeaderStyle}>Activity Heatmap</h2> <${Heatmap} /> </section> <section> <h2 style=${sectionHeaderStyle}>Time Allocation</h2> <${TimeAllocation} /> </section> <section> <h2 style=${sectionHeaderStyle}>Dependency Overlap</h2> <${DepOverlap} /> </section> </div>`
+        htmlTag`<div style=${{ display: 'flex', flexDirection: 'column', gap: '32px' }}><section><h2 style=${sectionHeaderStyle}>Activity Heatmap</h2><${Heatmap} /></section><section><h2 style=${sectionHeaderStyle}>Time Allocation</h2><${TimeAllocation} /></section><section><h2 style=${sectionHeaderStyle}>Dependency Overlap</h2><${DepOverlap} /></section></div>`
       );
     }
 
@@ -5283,7 +5283,7 @@ const htmlTag = htm.bind(preact.h);
       }
 
       return (
-        htmlTag`<div> <${Header} onFullScan=${handleFullScan} onScanDir=${handleScanDir} scanActive=${scanState.active} /> <${NavTabs} activeTab=${navTab} /> <${ScanProgressBar} scanState=${scanState} /> <${ScanToast} scanState=${scanState} /> <${DirectoryBrowser} open=${browseOpen} onClose=${() => setBrowseOpen(false)} onSelect=${handleSelectDir} /> ${scanResult && (
+        htmlTag`<div><${Header} onFullScan=${handleFullScan} onScanDir=${handleScanDir} scanActive=${scanState.active} /><${NavTabs} activeTab=${navTab} /><${ScanProgressBar} scanState=${scanState} /><${ScanToast} scanState=${scanState} /><${DirectoryBrowser} open=${browseOpen} onClose=${() => setBrowseOpen(false)} onSelect=${handleSelectDir} />${scanResult && (
             htmlTag`<div style=${{
               position: 'fixed', bottom: '24px', right: '24px', zIndex: 300,
               padding: '12px 20px', borderRadius: 'var(--radius-sm)',
@@ -5292,13 +5292,13 @@ const htmlTag = htm.bind(preact.h);
               fontFamily: 'var(--font-body)', fontSize: '13px', fontWeight: 500,
               border: scanResult.ok ? '1px solid var(--status-green)' : '1px solid var(--status-red)',
               boxShadow: '0 4px 12px rgba(0,0,0,0.2)',
-            }}> ${scanResult.message} </div>`
-          )} <main style=${{ paddingTop: '100px' }}> <${ToolStatusBanner} /> <${ContentArea} route=${route} refetchKey=${refetchKey} /> </main> </div>`
+            }}>${scanResult.message}</div>`
+          )}<main style=${{ paddingTop: '100px' }}><${ToolStatusBanner} /><${ContentArea} route=${route} refetchKey=${refetchKey} /></main></div>`
       );
     }
 
     // ── Mount ────────────────────────────────────────────────────────────────
-    preact.render(htmlTag`<${ErrorBoundary}> <${App} /> <//>`, document.getElementById('root'));
+    preact.render(htmlTag`<${ErrorBoundary}><${App} /><//>`, document.getElementById('root'));
   </script>
 </body>
 </html>
@@ -5785,15 +5785,58 @@ OTHER DEALINGS IN THE FONT SOFTWARE.
     const [a,b]=domain.map(number), [c,d]=range.map(number);
     return value => a===b ? (c+d)/2 : c+(number(value)-a)*(d-c)/(b-a);
   }
+  // The tick helpers through fixedTicks are adapted from recharts-scale (MIT License,
+  // (c) the recharts-scale authors, https://github.com/recharts/recharts-scale).
+  const roundTick=value=>Number(value.toPrecision(14));
+  const digitCount=value=>value===0?1:Math.floor(Math.log10(Math.abs(value)))+1;
+  function tickStep(rough,correction=0) {
+    if(!(rough>0)) return 0;
+    const digits=digitCount(rough), unit=10**digits, ratioScale=digits===1?.1:.05;
+    return roundTick((Math.ceil(roundTick(rough/unit/ratioScale))+correction)*ratioScale*unit);
+  }
+  function singleValueTicks(value,count) {
+    const middleIndex=Math.floor((count-1)/2);
+    let step=1, middle=value;
+    if(!Number.isInteger(value)) {
+      if(Math.abs(value)<1) {step=10**(digitCount(value)-1);middle=Math.floor(value/step)*step;}
+      else middle=Math.floor(value);
+    } else if(value===0) middle=middleIndex;
+    return Array.from({length:count},(_,i)=>roundTick(middle+(i-middleIndex)*step));
+  }
   function niceTicks(min,max,count=5) {
-    min=number(min); max=number(max); count=Math.max(1,number(count));
+    min=number(min); max=number(max); count=Math.max(2,Math.floor(number(count)));
     if(min>max) [min,max]=[max,min];
-    if(min===max) {const pad=Math.abs(min)*0.1||1;min-=pad;max+=pad;}
-    const raw=(max-min)/count, magnitude=10**Math.floor(Math.log10(raw));
-    const factor=raw/magnitude, step=(factor<=1?1:factor<=2?2:factor<=5?5:10)*magnitude;
-    const start=Math.floor(min/step), end=Math.ceil(max/step), result=[];
-    for(let i=start;i<=end && result.length<1000;i++) result.push(Number((i*step).toPrecision(14)));
-    return result;
+    if(min===max) return singleValueTicks(min,count);
+    if(!Number.isFinite(max-min)) return [min,max];
+    for(let correction=0;correction<1000;correction++) {
+      const step=tickStep((max-min)/(count-1),correction);
+      let middle=0;
+      if(min>0||max<0) {const centre=(min+max)/2;middle=roundTick(centre-centre%step);}
+      let below=Math.ceil(roundTick((middle-min)/step)), above=Math.ceil(roundTick((max-middle)/step));
+      const used=below+above+1;
+      if(used>count) continue;
+      if(max>0) above+=count-used; else below+=count-used;
+      return Array.from({length:below+above+1},(_,i)=>roundTick(middle+(i-below)*step));
+    }
+    return [min,max];
+  }
+  function fixedTicks(min,max,count=5) {
+    min=number(min); max=number(max); count=Math.max(2,Math.floor(number(count)));
+    if(min>max) [min,max]=[max,min];
+    if(min===max) return [min];
+    const step=tickStep((max-min)/(count-1)), result=[];
+    for(let i=0;i<1000;i++) {const tick=roundTick(min+i*step);if(tick>=max)break;result.push(tick);}
+    return [...result,max];
+  }
+  function axisDomain(spec,dataMin,dataMax) {
+    const bound=value=>typeof value==='number'&&Number.isFinite(value);
+    let [first,second]=Array.isArray(spec)?spec:[0,'auto'];
+    if(bound(first)&&bound(second)&&first>second) [first,second]=[second,first];
+    const min=bound(first)?Math.min(first,dataMin):dataMin;
+    const max=bound(second)?Math.max(second,dataMax):dataMax;
+    if(bound(first)&&bound(second)) return {ticks:fixedTicks(min,max),lo:min,hi:max};
+    const ticks=niceTicks(min,max);
+    return {ticks,lo:ticks[0],hi:ticks.at(-1)};
   }
   function stack(rows,keys,offset='none') {
     const result=keys.map(()=>[]);
@@ -5805,11 +5848,22 @@ OTHER DEALINGS IN THE FONT SOFTWARE.
     });});return result;
   }
   const xy=p=>Array.isArray(p)?[number(p[0]),number(p[1])]:[number(p.x),number(p.y)];
+  // Adapted from d3-shape's curveMonotoneX (ISC License, (c) Mike Bostock, https://github.com/d3/d3-shape).
   function monotonePath(points) {
     const p=points.map(xy);if(!p.length)return '';
     let path=`M${p[0][0]},${p[0][1]}`;if(p.length===1)return path;
-    const slopes=p.slice(1).map((v,i)=>v[0]===p[i][0]?0:(v[1]-p[i][1])/(v[0]-p[i][0]));
-    const tangents=p.map((_,i)=>i===0?slopes[0]:i===p.length-1?slopes.at(-1):slopes[i-1]*slopes[i]<=0?0:2/(1/slopes[i-1]+1/slopes[i]));
+    if(p.length===2)return `${path}L${p[1][0]},${p[1][1]}`;
+    const slope=(a,b)=>b[0]===a[0]?0:(b[1]-a[1])/(b[0]-a[0]);
+    const tangents=p.map((point,i)=>{
+      if(i===0||i===p.length-1) return 0;
+      const before=slope(p[i-1],point), after=slope(point,p[i+1]);
+      const h0=point[0]-p[i-1][0], h1=p[i+1][0]-point[0];
+      const mean=h0+h1?(before*h1+after*h0)/(h0+h1):0;
+      return (Math.sign(before)+Math.sign(after))*Math.min(Math.abs(before),Math.abs(after),.5*Math.abs(mean))||0;
+    });
+    const edge=(a,b,tangent)=>{const h=b[0]-a[0];return h?(3*(b[1]-a[1])/h-tangent)/2:tangent;};
+    tangents[0]=edge(p[0],p[1],tangents[1]);
+    tangents[p.length-1]=edge(p[p.length-2],p[p.length-1],tangents[p.length-2]);
     for(let i=0;i<p.length-1;i++) {const dx=(p[i+1][0]-p[i][0])/3;path+=`C${p[i][0]+dx},${p[i][1]+dx*tangents[i]} ${p[i+1][0]-dx},${p[i+1][1]-dx*tangents[i+1]} ${p[i+1][0]},${p[i+1][1]}`;}
     return path;
   }
@@ -5821,24 +5875,30 @@ OTHER DEALINGS IN THE FONT SOFTWARE.
     const arcs=(r,a,d,s)=>{const n=Math.abs(d)>=2*Math.PI-1e-9?2:1;let out='';for(let i=1;i<=n;i++)out+=`A${r},${r} 0 ${Math.abs(d/n)>Math.PI?1:0} ${s} ${point(r,a+d*i/n)}`;return out;};
     return `M${point(outer,start)}${arcs(outer,start,delta,sweep)}L${point(inner,start+delta)}${arcs(inner,start+delta,-delta,1-sweep)}Z`;
   }
+  function barPath(start,end,y,height,radius=4) {
+    const sign=end<start?-1:1, r=Math.min(radius,Math.abs(end-start)/2,height/2), sweep=sign>0?1:0;
+    return `M${start},${y}L${end-sign*r},${y}A${r},${r} 0 0 ${sweep} ${end},${y+r}L${end},${y+height-r}A${r},${r} 0 0 ${sweep} ${end-sign*r},${y+height}L${start},${y+height}Z`;
+  }
   function useWidth(width) {
     const ref=useRef(null), [measured,setMeasured]=useState(number(width)||400);
-    useEffect(()=>{if(width || !ref.current)return;const node=ref.current;const update=()=>setMeasured(node.getBoundingClientRect().width||400);update();if(typeof ResizeObserver==='undefined')return;const observer=new ResizeObserver(update);observer.observe(node);return()=>observer.disconnect();},[width]);
+    useEffect(()=>{if(width || !ref.current)return;const node=ref.current;const update=()=>setMeasured(Math.round(node.getBoundingClientRect().width)||400);update();if(typeof ResizeObserver==='undefined')return;const observer=new ResizeObserver(update);observer.observe(node);return()=>observer.disconnect();},[width]);
     return [ref,number(width)||measured];
   }
-  const selectable=(item,onSelect)=>onSelect?{role:'button',tabindex:0,onClick:()=>onSelect(item),onKeyDown:event=>{if(event.key==='Enter'||event.key===' '){event.preventDefault();onSelect(item);}}}:{};
+  const selectable=(item,onSelect)=>onSelect&&item.selectable!==false?{role:'button',tabindex:0,onClick:()=>onSelect(item),onKeyDown:event=>{if(event.key==='Enter'||event.key===' '){event.preventDefault();onSelect(item);}}}:{};
   const style={position:'relative',width:'100%'};
+  const wrapperStyle={position:'absolute',top:0,left:0,width:'100%'};
+  const keyboardFocus=event=>event.currentTarget.matches?.(':focus-visible')!==false;
   function tooltipPosition(point,size,chart,viewport) {
-    const left=Math.max(chart.left,viewport.left)-chart.left;
-    const top=Math.max(chart.top,viewport.top)-chart.top;
-    const right=Math.max(left,Math.min(chart.right,viewport.right)-chart.left);
-    const bottom=Math.max(top,Math.min(chart.bottom,viewport.bottom)-chart.top);
-    const place=(value,extent,min,max)=>{
-      const forward=value+10, flipped=value-10-extent;
-      const preferred=forward+extent<=max?forward:flipped;
-      return Math.max(min,Math.min(preferred,Math.max(min,max-extent)));
-    };
-    return {left:place(point.x,size.width,left,right),top:place(point.y,size.height,top,bottom)};
+    const plot=point.plot||{left:0,top:0,right:chart.right-chart.left,bottom:chart.bottom-chart.top};
+    const left=Math.max(plot.left,viewport.left-chart.left);
+    const top=Math.max(plot.top,viewport.top-chart.top);
+    const right=Math.max(left,Math.min(plot.right,viewport.right-chart.left));
+    const bottom=Math.max(top,Math.min(plot.bottom,viewport.bottom-chart.top));
+    const forward=value=>value+10, flipped=(value,extent)=>value-10-extent;
+    const x=forward(point.x)+size.width<=right?forward(point.x):flipped(point.x,size.width);
+    const y=forward(point.y)+size.height<=bottom?forward(point.y):Math.max(top,flipped(point.y,size.height));
+    return {left:Math.max(left,Math.min(x,Math.max(left,right-size.width))),
+      top:Math.max(viewport.top-chart.top,Math.min(y,viewport.bottom-chart.top-size.height))};
   }
   function Tooltip({children,position,onDismiss}) {
     const ref=useRef(null);
@@ -5849,9 +5909,8 @@ OTHER DEALINGS IN THE FONT SOFTWARE.
         const bounds=chart.getBoundingClientRect();
         const viewport={left:0,top:0,right:window.innerWidth,bottom:window.innerHeight};
         const availableWidth=Math.max(0,Math.min(bounds.right,viewport.right)-Math.max(bounds.left,viewport.left));
-        const availableHeight=Math.max(0,Math.min(bounds.bottom,viewport.bottom)-Math.max(bounds.top,viewport.top));
         node.style.maxWidth=`${availableWidth}px`;
-        node.style.maxHeight=`${availableHeight}px`;
+        node.style.maxHeight=`${viewport.bottom-viewport.top}px`;
         const size=node.getBoundingClientRect();
         const constrained=node.scrollWidth>node.clientWidth || node.scrollHeight>node.clientHeight;
         node.style.pointerEvents=constrained?'auto':'none';
@@ -5878,41 +5937,74 @@ OTHER DEALINGS IN THE FONT SOFTWARE.
     },[position.x,position.y,children]);
     return h('div',{ref,class:'svgc-tooltip',
       onMouseMove:event=>event.stopPropagation(),
-      onFocusOut:event=>{if(!event.currentTarget.contains(event.relatedTarget)) onDismiss();}
+      onFocusOut:event=>{if(!event.currentTarget.parentElement?.contains(event.relatedTarget)) onDismiss();}
     },children);
   }
   function tooltipNode(tooltip,payload,position,onDismiss) {
     if(!tooltip||!payload) return null;
     return h(Tooltip,{position,onDismiss},typeof tooltip==='function'?tooltip(payload):tooltip);
   }
-  function spacedTicks(ticks,scale,minSpacing=20) {
-    if(ticks.length<2) return ticks;
-    const first=ticks[0], last=ticks.at(-1);
-    if(Math.abs(scale(first)-scale(last))<minSpacing) return [first];
-    const shown=[first];
-    for(const tick of ticks.slice(1,-1)) {
-      if(Math.abs(scale(tick)-scale(shown.at(-1)))>=minSpacing &&
-         Math.abs(scale(tick)-scale(last))>=minSpacing) shown.push(tick);
-    }
-    return [...shown,last];
-  }
   const leaveChart=(event,setHover)=>{
     const tooltip=event.currentTarget.querySelector('.svgc-tooltip');
     if(!tooltip?.contains(window.document?.activeElement)) setHover(null);
   };
-  function itemHover(event,item) {
-    const bounds=event.currentTarget?.ownerSVGElement?.parentElement?.getBoundingClientRect();
-    return {item,x:bounds?event.clientX-bounds.left:event.offsetX,
-      y:bounds?event.clientY-bounds.top:event.offsetY};
+  const measuredText=new Map();
+  let measureContext;
+  const textContext=()=>measureContext??=window.document?.body
+    ?window.document.createElement('canvas').getContext('2d'):undefined;
+  function textWidth(text,fontSize,family) {
+    const value=String(text??''), key=`${family}|${fontSize}|${value}`, known=measuredText.get(key);
+    if(known!==undefined) return known;
+    const context=textContext();
+    if(!context) return Array.from(value).length*fontSize*.6;
+    context.font=`${fontSize}px ${family}`;
+    const width=context.measureText(value).width;
+    if(window.document.fonts?.status==='loaded') {
+      if(measuredText.size>200000) measuredText.clear();
+      measuredText.set(key,width);
+    }
+    return width;
+  }
+  function pageFont() {
+    const body=window.document?.body, style=body&&window.getComputedStyle(body);
+    const family=style?.fontFamily||'sans-serif', size=(style&&parseFloat(style.fontSize))||16;
+    const ratio=style?parseFloat(style.lineHeight)/size:NaN, context=textContext();
+    const line=fontSize=>{
+      if(Number.isFinite(ratio)) return ratio*fontSize;
+      if(!context) return fontSize*1.2;
+      context.font=`${fontSize}px ${family}`;
+      const metrics=context.measureText('x');
+      return Math.round(metrics.fontBoundingBoxAscent)+Math.round(metrics.fontBoundingBoxDescent);
+    };
+    return {family,size,line};
+  }
+  const labelFamily=(node,page)=>{
+    const label=node?.querySelector?.('svg text');
+    return label?window.getComputedStyle(label).fontFamily:page.family;
+  };
+  const withEdges=(lines,low,high)=>[low,...lines.filter(line=>Math.abs(line-low)>1e-6&&Math.abs(line-high)>1e-6),high];
+  function preserveEndTicks(ticks,start,end,gap=5) {
+    const shown=[];
+    let limit=end;
+    for(let i=ticks.length-1;i>=0;i--) {
+      const tick=ticks[i], half=tick.size/2;
+      const at=i===ticks.length-1?Math.min(tick.x,end-half):tick.x;
+      if(at-half>=start&&at+half<=limit) {shown.push({...tick,at});limit=at-half-gap;}
+    }
+    return shown.reverse();
+  }
+  function intervalTicks(ticks,every,start,end) {
+    return ticks.filter(({i})=>i%every===0).map(tick=>({...tick,
+      at:Math.max(start+tick.size/2,Math.min(tick.x,end-tick.size/2))}));
   }
   function CartesianChart({
     kind='area', data=[], xKey, series=[], stackOffset='none', height=300,
     width, margin={}, yFormat=String, xFormat=String, tickEvery, yDomain,
     referenceX, referenceY, referenceOpacity=1, grid=true, xAxisLine=false,
-    yAxisLine=false, plotClass='', tooltip,
+    yAxisLine=false, tickLine=false, plotClass='', tooltip, ariaLabel='Chart',
     compact=false
   }) {
-    const [ref,w]=useWidth(width), [hover,setHover]=useState(null);
+    const [ref,w]=useWidth(width), [hover,setHover]=useState(null), keyboardReading=useRef(false);
     const m={top:10,right:10,bottom:compact?0:25,left:compact?0:55,...margin};
     const left=m.left, right=Math.max(left,w-m.right), top=m.top;
     const bottom=Math.max(top,height-m.bottom), pw=right-left;
@@ -5925,41 +6017,41 @@ OTHER DEALINGS IN THE FONT SOFTWARE.
       if(stackSlot===undefined) stackSlot=slotCount++;
       return stackSlot;
     });
-    const values=bands.flat(2).concat([0]);
-    let lo=Math.min(...values), hi=Math.max(...values);
-    const explicitDomain=Array.isArray(yDomain) && yDomain.length>=2 &&
-      Number.isFinite(yDomain[0]) && Number.isFinite(yDomain[1]);
-    if(Array.isArray(yDomain)) {
-      if(Number.isFinite(yDomain[0])) lo=yDomain[0];
-      if(Number.isFinite(yDomain[1])) hi=yDomain[1];
-    }
-    let ticks=niceTicks(lo,hi,4);
-    if(explicitDomain) {
-      const min=Math.min(lo,hi), max=Math.max(lo,hi);
-      ticks=[min,...ticks.filter(t=>t>min && t<max),...(min===max?[]:[max])];
-    } else if(!yDomain) {
-      lo=ticks[0]; hi=ticks.at(-1);
-    }
+    let dataMin=Infinity, dataMax=-Infinity;
+    const include=value=>{if(value<dataMin)dataMin=value;if(value>dataMax)dataMax=value;};
+    bands.forEach((band,j)=>band.forEach(pair=>{include(pair[1]);if(series[j].stack)include(pair[0]);}));
+    if(dataMin>dataMax) dataMin=dataMax=0;
+    const {ticks,lo,hi}=axisDomain(yDomain,dataMin,dataMax);
     const y=linearScale([lo,hi],[bottom,top]);
-    const renderedTicks=spacedTicks(ticks,y);
+    const base=Math.max(lo,Math.min(hi,0));
+    const yLabelTicks=size=>preserveEndTicks(ticks.map(tick=>({tick,x:height-y(tick),size})),0,height)
+      .map(({tick,at})=>({tick,at:height-at}));
+    const page=pageFont(), axisFamily=labelFamily(ref.current,page);
+    const shownY=compact?[]:yLabelTicks(page.line(11));
     const x=i=>data.length<=1?(left+right)/2:kind==='bar'
       ?left+(i+.5)*pw/data.length:left+i*pw/(data.length-1);
+    const band=data.length?pw/data.length:0, bandOffset=band*.1;
+    const barGap=slotCount>1&&band-2*bandOffset-(slotCount-1)*4>0?4:0;
+    const rawBarWidth=slotCount?(band-2*bandOffset-(slotCount-1)*barGap)/slotCount:0;
+    const barWidth=rawBarWidth>1?Math.round(rawBarWidth):rawBarWidth;
     const marks=series.map((s,j)=>{
       const b=bands[j], color=s.color||'currentColor';
+      const low=pair=>s.stack?pair[0]:base;
       if(kind==='bar') {
-        const groupWidth=data.length?pw/data.length*.8:0;
-        const barWidth=slotCount?groupWidth/slotCount:0;
-        return b.map((pair,i)=>h('rect',{
-          class:'svgc-bar',x:x(i)-groupWidth/2+slots[j]*barWidth,
-          y:Math.min(y(pair[0]),y(pair[1])),width:barWidth,
-          height:Math.abs(y(pair[1])-y(pair[0])),fill:s.fill||color,
-          'fill-opacity':s.fillOpacity??1,stroke:color,
-          'stroke-opacity':s.strokeOpacity??1,'stroke-width':s.strokeWidth??2,
-          'stroke-dasharray':s.strokeDasharray
-        }));
+        return b.map((pair,i)=>{
+          const barHeight=Math.abs(y(pair[1])-y(low(pair)));
+          return barHeight>0&&h('rect',{
+            class:'svgc-bar',x:x(i)-band/2+bandOffset+(barWidth+barGap)*slots[j],
+            y:Math.min(y(low(pair)),y(pair[1])),width:barWidth,
+            height:barHeight,fill:s.fill||color,
+            'fill-opacity':s.fillOpacity??1,stroke:color,
+            'stroke-opacity':s.strokeOpacity??1,'stroke-width':s.strokeWidth??2,
+            'stroke-dasharray':s.strokeDasharray
+          });
+        });
       }
       const upper=b.map((v,i)=>[x(i),y(v[1])]);
-      const lower=b.map((v,i)=>[x(i),y(v[0])]);
+      const lower=b.map((v,i)=>[x(i),y(low(v))]);
       return h('g',null,
         kind==='area'&&s.fill!=='none'&&h('path',{
           class:'svgc-area',d:areaPath(upper,lower),fill:s.fill||color,
@@ -5975,51 +6067,82 @@ OTHER DEALINGS IN THE FONT SOFTWARE.
       );
     });
     const move=e=>{
-      if(!data.length) return;
-      const rect=e.currentTarget.getBoundingClientRect(), local=e.clientX-rect.left;
-      const fraction=pw?Math.max(0,Math.min(1,(local-left)/pw)):0;
+      if(!data.length||!tooltip) return;
+      const rect=e.currentTarget.getBoundingClientRect();
+      const local=e.clientX-rect.left, localY=e.clientY-rect.top;
+      if(local<left||local>right||localY<top||localY>bottom) {leaveChart(e,setHover);return;}
+      const fraction=pw?(local-left)/pw:0;
       const index=data.length===1?0:kind==='bar'
         ?Math.min(data.length-1,Math.floor(fraction*data.length))
         :Math.round(fraction*(data.length-1));
-      setHover({index,x:local,y:e.clientY-rect.top});
+      setHover({index,x:x(index),y:localY});
     };
+    const keyHover=index=>({index,x:x(index),y:(top+bottom)/2});
+    const surface=tooltip?{tabindex:0,role:'application','aria-label':ariaLabel,
+      onFocus:event=>{
+        keyboardReading.current=keyboardFocus(event);
+        if(data.length&&!hover&&keyboardReading.current)setHover(keyHover(0));
+      },
+      onBlur:event=>{if(!event.currentTarget.parentElement?.contains(event.relatedTarget))setHover(null);},
+      onKeyDown:event=>{
+        if(!data.length) return;
+        if(event.key==='Escape') {setHover(null);return;}
+        const step=event.key==='ArrowRight'?1:event.key==='ArrowLeft'?-1:0;
+        if(!step) return;
+        event.preventDefault();
+        // A page shortcut keeps these keys after a mouse click. Judged at focus, because
+        // Chromium also matches :focus-visible on a mouse-focused element once a key is down.
+        if(keyboardReading.current) event.stopPropagation();
+        const index=hover?hover.index+step:step>0?0:data.length-1;
+        setHover(keyHover(Math.max(0,Math.min(data.length-1,index))));
+      }}:{};
     const row=hover&&data[hover.index];
     const payload=row&&{
       active:true,label:row[xKey],row,index:hover.index,
       payload:series.map(s=>({dataKey:s.key,name:s.label||s.key,
         value:row[s.key],color:s.color,payload:row}))
     };
+    const cursorX=payload?x(hover.index):0;
     const refIndex=data.findIndex(row=>row[xKey]===referenceX);
     const options=typeof grid==='object' && grid!==null?grid:{};
     const horizontal=typeof grid==='object'?options.horizontal!==false:!!grid;
     const vertical=typeof grid==='object'&&options.vertical===true;
     const gridStroke=options.stroke??'var(--border-default, #334155)';
     const gridDash=options.strokeDasharray??'3 3';
-    const xLabels=data.map((row,i)=>({i,label:xFormat(row[xKey])}));
-    const maxLabelWidth=Math.max(0,...xLabels.map(({label})=>Array.from(String(label??'')).length*9+12));
+    const tickStroke=typeof tickLine==='string'?tickLine:'var(--border-default, #334155)';
+    const xLabels=compact?[]:data.map((row,i)=>{
+      const label=xFormat(row[xKey]);
+      return {i,label,x:x(i),size:textWidth(label,11,axisFamily)};
+    });
+    let widestLabel=0;
+    for(const {size} of xLabels) if(size>widestLabel) widestLabel=size;
     const categoryGap=data.length>1?pw/(kind==='bar'?data.length:data.length-1):pw;
-    const interval=Number.isFinite(tickEvery)?Math.max(1,Math.floor(tickEvery)):
-      Math.max(1,categoryGap>0?Math.ceil(maxLabelWidth/categoryGap):data.length);
-    const shownX=xLabels.filter(({i})=>i%interval===0);
+    const shownX=Number.isFinite(tickEvery)
+      ?intervalTicks(xLabels,Math.max(1,Math.floor(tickEvery),categoryGap>0?Math.ceil((widestLabel+5)/categoryGap):1),0,w)
+      :preserveEndTicks(xLabels,0,w);
+    const gridX=vertical&&!compact?withEdges((Number.isFinite(tickEvery)?shownX
+      :preserveEndTicks(xLabels.map(tick=>({...tick,size:textWidth(tick.label,page.size,page.family)})),0,w)).map(tick=>tick.x),left,right):[];
+    const gridY=horizontal&&!compact?withEdges(yLabelTicks(page.line(page.size)).map(({tick})=>y(tick)),bottom,top):[];
     return h('div',{ref,class:'svgc-responsive',style:{...style,height,width:width||'100%'}},
-      h('div',{class:'svgc-wrapper',style:{...style,height},
+      h('div',{class:'svgc-wrapper',style:{...wrapperStyle,height},
         onMouseMove:move,onMouseLeave:event=>leaveChart(event,setHover)},
-        h('svg',{width:w,height,viewBox:`0 0 ${w} ${height}`},
+        h('svg',{width:w,height,viewBox:`0 0 ${w} ${height}`,...surface},
           h('rect',{class:plotClass,x:left,y:top,width:pw,height:bottom-top,fill:'transparent'}),
-          !compact&&renderedTicks.map(t=>h('g',null,
-            horizontal&&h('line',{class:'svgc-grid-horizontal',x1:left,x2:right,
-              y1:y(t),y2:y(t),stroke:gridStroke,'stroke-dasharray':gridDash}),
-            h('text',{x:left-6,y:y(t),fill:'var(--text-muted, #94a3b8)',
-              'text-anchor':'end','font-size':11},yFormat(t))
-          )),
-          !compact&&vertical&&shownX.map(({i})=>h('line',{
-            class:'svgc-grid-vertical',x1:x(i),x2:x(i),y1:top,y2:bottom,
+          gridY.map(line=>h('line',{class:'svgc-grid-horizontal',x1:left,x2:right,
+            y1:line,y2:line,stroke:gridStroke,'stroke-dasharray':gridDash})),
+          gridX.map(lineX=>h('line',{
+            class:'svgc-grid-vertical',x1:lineX,x2:lineX,y1:top,y2:bottom,
             stroke:gridStroke,'stroke-dasharray':gridDash
           })),
-          !compact&&shownX.map(({label,i})=>h('text',{
-            x:x(i),y:height-4,fill:'var(--text-muted, #94a3b8)',
-            'text-anchor':'middle','font-size':11
-          },label)),
+          payload&&kind==='bar'&&h('rect',{class:'svgc-cursor',x:cursorX-band/2,y:top+.5,
+            width:band,height:Math.max(0,bottom-top-1),fill:'#ccc','pointer-events':'none'}),
+          marks,
+          refIndex>=0&&h('line',{class:'svgc-reference-line',x:referenceX,
+            x1:x(refIndex),x2:x(refIndex),y1:top,y2:bottom,
+            stroke:'#94a3b8','stroke-opacity':referenceOpacity,'stroke-dasharray':'3 3'}),
+          referenceY!=null&&h('line',{class:'svgc-reference-line',x:referenceY,
+            x1:left,x2:right,y1:y(referenceY),y2:y(referenceY),
+            stroke:'var(--border-default, #94a3b8)','stroke-opacity':referenceOpacity}),
           !compact&&xAxisLine&&h('line',{
             class:'svgc-x-axis-line',x1:left,x2:right,y1:bottom,y2:bottom,
             stroke:typeof xAxisLine==='string'?xAxisLine:'var(--border-default, #334155)'
@@ -6028,86 +6151,127 @@ OTHER DEALINGS IN THE FONT SOFTWARE.
             class:'svgc-y-axis-line',x1:left,x2:left,y1:top,y2:bottom,
             stroke:typeof yAxisLine==='string'?yAxisLine:'var(--border-default, #334155)'
           }),
-          marks,
-          refIndex>=0&&h('line',{class:'svgc-reference-line',x:referenceX,
-            x1:x(refIndex),x2:x(refIndex),y1:top,y2:bottom,
-            stroke:'#94a3b8','stroke-opacity':referenceOpacity,'stroke-dasharray':'3 3'}),
-          referenceY!=null&&h('line',{class:'svgc-reference-line',x:referenceY,
-            x1:left,x2:right,y1:y(referenceY),y2:y(referenceY),
-            stroke:'var(--border-default, #94a3b8)','stroke-opacity':referenceOpacity})
+          !compact&&tickLine&&shownX.map(({x:tickX})=>h('line',{class:'svgc-tick-line',
+            x1:tickX,x2:tickX,y1:bottom,y2:bottom+6,stroke:tickStroke})),
+          tickLine&&shownY.map(({tick})=>h('line',{class:'svgc-tick-line',
+            x1:left-6,x2:left,y1:y(tick),y2:y(tick),stroke:tickStroke})),
+          payload&&kind!=='bar'&&h('line',{class:'svgc-cursor',x1:cursorX,x2:cursorX,y1:top,y2:bottom,
+            stroke:'#ccc','pointer-events':'none'}),
+          payload&&kind!=='bar'&&series.map((s,j)=>h('circle',{class:'svgc-active-dot',cx:cursorX,
+            cy:y(bands[j][hover.index][1]),r:4,fill:s.color||'currentColor',stroke:'#fff','stroke-width':2,
+            'pointer-events':'none'})),
+          shownY.map(({tick,at})=>h('text',{x:left-8,y:at,dy:'.355em',
+            fill:'var(--text-muted, #94a3b8)','text-anchor':'end','font-size':11},yFormat(tick))),
+          !compact&&shownX.map(({label,at})=>h('text',{
+            x:at,y:bottom+8,dy:'.71em',fill:'var(--text-muted, #94a3b8)',
+            'text-anchor':'middle','font-size':11
+          },label))
         ),
-        tooltipNode(tooltip,payload,hover||{},()=>setHover(null))
+        tooltipNode(tooltip,payload,{...hover,plot:{left,top,right,bottom}},()=>setHover(null))
       )
     );
   }
+  const itemPayload=hover=>hover&&{active:true,label:hover.item.label,payload:[{dataKey:'value',
+    name:hover.item.label,value:hover.item.value,color:hover.item.color,payload:hover.item}]};
   function DonutChart({items=[],height=250,innerRadius=50,outerRadius=85,tooltip,onSelect,
-    startAngle=-Math.PI/2,clockwise=true,stroke,strokeWidth}) {
+    startAngle=-Math.PI/2,clockwise=true,stroke,strokeWidth,cy}) {
     const [ref,w]=useWidth(),[hover,setHover]=useState(null);
+    const centreY=number(cy)||height/2;
     const total=items.reduce((sum,item)=>sum+Math.max(0,number(item.value)),0);
     let angle=number(startAngle);
     const sectors=items.map(item=>{
       const start=angle;
       angle+=total?(clockwise?1:-1)*Math.max(0,number(item.value))/total*2*Math.PI:0;
-      return h('path',{class:'svgc-sector',d:arcPath(w/2,height/2,innerRadius,outerRadius,start,angle),
+      const middle=(start+angle)/2, radius=(innerRadius+outerRadius)/2;
+      const show=()=>setHover({item,x:w/2+radius*Math.cos(middle),y:centreY+radius*Math.sin(middle)});
+      const hide=()=>setHover(null);
+      return h('path',{class:'svgc-sector',d:arcPath(w/2,centreY,innerRadius,outerRadius,start,angle),
         fill:item.color,stroke,'stroke-width':strokeWidth,...selectable(item,onSelect),
-        onMouseMove:e=>setHover(itemHover(e,item))},h('title',null,item.label));
+        onMouseMove:show,onMouseLeave:hide,
+        onFocus:event=>{if(keyboardFocus(event))show();},onBlur:hide},h('title',null,item.label));
     });
     return h('div',{ref,class:'svgc-responsive',style:{...style,height}},
-      h('div',{class:'svgc-wrapper',style:{...style,height},onMouseLeave:event=>leaveChart(event,setHover)},
+      h('div',{class:'svgc-wrapper',style:{...wrapperStyle,height},onMouseLeave:event=>leaveChart(event,setHover)},
         h('svg',{width:w,height},sectors),
-        tooltipNode(tooltip,hover&&{active:true,label:hover.item.label,payload:[{dataKey:'value',name:hover.item.label,value:hover.item.value,color:hover.item.color,payload:hover.item}]},hover||{},()=>setHover(null))));
+        tooltipNode(tooltip,itemPayload(hover),hover||{},()=>setHover(null))));
   }
   function HBarChart({items=[],height=250,valueFormat=String,labelWidth=130,labelMaxChars=Infinity,onSelect,tooltip}) {
     const [ref,w]=useWidth(),[hover,setHover]=useState(null);
-    const max=Math.max(0,...items.map(i=>number(i.value)));
-    const plotHeight=Math.max(0,height-24), rowHeight=plotHeight/Math.max(1,items.length);
-    const plotWidth=Math.max(0,w-labelWidth-8);
-    const ticks=max?niceTicks(0,max,4):[0], axisMax=ticks.at(-1);
+    const left=5+labelWidth, right=Math.max(left,w-5), top=5, bottom=Math.max(top,height-35);
+    let dataMin=0, dataMax=0;
+    for(const item of items) {const value=number(item.value);if(value<dataMin)dataMin=value;if(value>dataMax)dataMax=value;}
+    const ticks=niceTicks(dataMin,dataMax), position=linearScale([ticks[0],ticks.at(-1)],[left,right]);
+    const rowHeight=(bottom-top)/Math.max(1,items.length), zero=position(0);
+    const axisStroke='var(--border-default, #475569)';
+    const rowHover=(index,x)=>({index,item:items[index],x,y:top+(index+.5)*rowHeight});
+    const move=event=>{
+      if(!tooltip||!items.length) return;
+      const rect=event.currentTarget.getBoundingClientRect();
+      const localX=event.clientX-rect.left, localY=event.clientY-rect.top;
+      if(localX<left||localX>right||localY<top||localY>bottom) {leaveChart(event,setHover);return;}
+      setHover(rowHover(Math.min(items.length-1,Math.floor((localY-top)/rowHeight)),localX));
+    };
+    const page=pageFont(), axisFamily=labelFamily(ref.current,page);
+    const shownRows=new Set(preserveEndTicks(items.map((_,i)=>({i,x:top+(i+.5)*rowHeight,size:page.line(page.size)})),0,height).map(({i})=>i));
     const bars=items.map((item,i)=>{
-      const label=String(item.label??'');
-      const short=label.length>labelMaxChars?label.slice(0,Math.max(0,labelMaxChars-1))+'…':label;
+      const label=String(item.label??''), value=number(item.value), end=position(value);
+      const short=label.length>labelMaxChars?label.slice(0,Math.max(0,labelMaxChars-2))+'…':label;
+      const barY=top+i*rowHeight+rowHeight*.1, barHeight=rowHeight*.8;
       return h('g',null,
-        h('text',{x:labelWidth-6,y:(i+.5)*rowHeight,'text-anchor':'end',
-          'dominant-baseline':'middle',fill:'var(--text-muted, #94a3b8)','font-size':10},h('title',null,label),short),
-        h('rect',{class:'svgc-bar',x:labelWidth,y:i*rowHeight+rowHeight*.15,
-          width:axisMax?plotWidth*Math.max(0,number(item.value))/axisMax:0,height:rowHeight*.7,rx:4,
-          fill:item.color,'aria-label':item.ariaLabel||`${label}: ${valueFormat(item.value)}`,
-          ...selectable(item,onSelect),onMouseMove:e=>setHover(itemHover(e,item))})
+        shownRows.has(i)&&h('text',{x:left-12,y:top+(i+.5)*rowHeight,dy:4,'text-anchor':'end',
+          fill:'var(--text-muted, #94a3b8)','font-size':10},h('title',null,label),short),
+        shownRows.has(i)&&h('line',{class:'svgc-tick-line',x1:left-6,x2:left,y1:top+(i+.5)*rowHeight,y2:top+(i+.5)*rowHeight,stroke:axisStroke}),
+        h('path',{class:'svgc-bar',d:barPath(zero,end,barY,barHeight),x:Math.min(zero,end),y:barY,
+          width:Math.abs(end-zero),height:barHeight,
+          fill:item.color,'aria-label':item.ariaLabel||`${label}: ${valueFormat(value)}`,
+          ...selectable(item,onSelect),
+          onFocus:event=>{if(keyboardFocus(event))setHover(rowHover(i,Math.max(zero,end)));},
+          onBlur:()=>setHover(null)})
       );
     });
+    const tickLabels=preserveEndTicks(ticks.map((value,i)=>{
+      const label=valueFormat(value);
+      return {i,value,label,x:position(value),size:textWidth(label,11,axisFamily)};
+    }),0,w);
     return h('div',{ref,class:'svgc-responsive',style:{...style,height}},
-      h('div',{class:'svgc-wrapper',style:{...style,height},onMouseLeave:event=>leaveChart(event,setHover)},
-        h('svg',{width:w,height},bars,
-          h('line',{class:'svgc-hbar-axis',x1:labelWidth,x2:labelWidth+plotWidth,y1:plotHeight,y2:plotHeight,stroke:'var(--border-default, #475569)'}),
-          ticks.map((t,i)=>h('text',{class:'svgc-hbar-tick',x:labelWidth+(axisMax?t/axisMax*plotWidth:0),y:height-4,
-            'text-anchor':i===0?'start':i===ticks.length-1?'end':'middle',
-            fill:'var(--text-muted, #94a3b8)','font-size':11},valueFormat(t)))
+      h('div',{class:'svgc-wrapper',style:{...wrapperStyle,height},onMouseMove:move,onMouseLeave:event=>leaveChart(event,setHover)},
+        h('svg',{width:w,height},
+          hover&&h('rect',{class:'svgc-cursor',x:left+.5,y:top+hover.index*rowHeight,
+            width:Math.max(0,right-left-1),height:rowHeight,fill:'#ccc','pointer-events':'none'}),
+          bars,
+          h('line',{class:'svgc-hbar-axis',x1:left,x2:right,y1:bottom,y2:bottom,stroke:axisStroke}),
+          h('line',{class:'svgc-hbar-category-axis',x1:left,x2:left,y1:top,y2:bottom,stroke:axisStroke}),
+          tickLabels.map(({x:tickX,at,label})=>[
+            h('line',{class:'svgc-tick-line',x1:tickX,x2:tickX,y1:bottom,y2:bottom+6,stroke:axisStroke}),
+            h('text',{class:'svgc-hbar-tick',x:at,y:bottom+8,dy:'.71em','text-anchor':'middle',
+              fill:axisStroke,'font-size':11},label)
+          ])
         ),
-        tooltipNode(tooltip,hover&&{active:true,label:hover.item.label,payload:[{dataKey:'value',name:hover.item.label,value:hover.item.value,color:hover.item.color,payload:hover.item}]},hover||{},()=>setHover(null))));
+        tooltipNode(tooltip,itemPayload(hover),{...hover,plot:{left,top,right,bottom}},()=>setHover(null))));
   }
   function Legend({series=[],hidden=new Set(),onToggle,kind='area'}) {
     return h('div',{class:'svgc-legend'},series.map(s=>{
       const color=s.color||'currentColor';
       const symbol=kind==='bar'
-        ?h('rect',{x:1,y:1,width:14,height:8,fill:s.fill||color,stroke:color,'stroke-dasharray':s.strokeDasharray})
-        :[h('line',{x1:1,y1:5,x2:15,y2:5,stroke:color,'stroke-width':2,'stroke-dasharray':s.strokeDasharray}),
-          h('circle',{cx:8,cy:5,r:3,fill:color})];
+        ?h('path',{d:'M0,4h32v24h-32z',fill:color,stroke:'none'})
+        :h('path',{d:'M0,16h10.67A5.33,5.33,0,1,1,21.33,16H32M21.33,16A5.33,5.33,0,1,1,10.67,16',
+          fill:'none',stroke:color,'stroke-width':4,'stroke-dasharray':s.strokeDasharray});
       return h('button',{type:'button',class:'svgc-legend-item',
         'aria-pressed':!hidden.has(s.key),onClick:()=>onToggle?.(s.key),
         style:{color:s.color,opacity:hidden.has(s.key)?.45:1}},
-        h('svg',{'aria-hidden':'true',width:16,height:10,viewBox:'0 0 16 10'},symbol),s.label||s.key);
+        h('svg',{'aria-hidden':'true',width:14,height:14,viewBox:'0 0 32 32'},symbol),s.label||s.key);
     }));
   }
-  window.svgCharts={geometry:{linearScale,niceTicks,stack,monotonePath,areaPath,arcPath,tooltipPosition},CartesianChart,DonutChart,HBarChart,Legend};
+  window.svgCharts={geometry:{linearScale,niceTicks,fixedTicks,axisDomain,preserveEndTicks,barPath,stack,monotonePath,areaPath,arcPath,tooltipPosition},CartesianChart,DonutChart,HBarChart,Legend};
 })();
 
 </script>
 <style>
 /* SVG charts: keep overlays and controls usable in either theme. */
 .svgc-responsive, .svgc-wrapper { min-width: 0; }
-.svgc-tooltip { position: absolute; z-index: 2; width: max-content; box-sizing: border-box; overflow: auto; pointer-events: none; visibility: hidden; }
+.svgc-tooltip { position: absolute; z-index: 1000; width: max-content; box-sizing: border-box; overflow: auto; pointer-events: none; visibility: hidden; }
 .svgc-legend { display: flex; flex-wrap: wrap; justify-content: center; gap: .75rem; }
-.svgc-legend-item { display: inline-flex; align-items: center; gap: .3em; background: transparent; border: 0; cursor: pointer; font: inherit; }
+.svgc-legend-item { display: inline-flex; align-items: center; gap: 4px; background: transparent; border: 0; cursor: pointer; font: inherit; }
 .svgc-bar[role="button"], .svgc-sector[role="button"] { cursor: pointer; }
 
 </style>

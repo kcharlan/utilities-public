@@ -19,6 +19,7 @@ sys.path.insert(0, str(REPO_ROOT))
 
 from tools.testkit import (
     ASGISyncClient,
+    assert_exact_text,
     capture_browser_errors,
     load_launcher,
 )
@@ -55,6 +56,14 @@ synthetic-beta-request,2026-09-16T13:00:00+00:00,synthetic/beta,Synthetic Provid
     )
     assert response.status_code == 200
     assert response.json() == {"status": "ok", "inserted": 2, "skipped": 0}
+
+
+# Selector hooks for scripts and tests; none of them carries a style of its own.
+SCRIPT_HOOK_CLASSES = (
+    "rv-main-chart-plot", "rv-main-legend", "svgc-area", "svgc-bar", "svgc-curve", "svgc-grid-horizontal",
+    "svgc-grid-vertical", "svgc-hbar-axis", "svgc-hbar-category-axis", "svgc-hbar-tick", "svgc-point",
+    "svgc-reference-line", "svgc-sector", "svgc-tick-line", "svgc-x-axis-line", "svgc-y-axis-line",
+)
 
 
 def rendered_plot_bounds(wrapper):
@@ -111,7 +120,7 @@ def test_embedded_frontend_contract():
     assert_offline_page_source(load_launcher(PROJECT_ROOT / "routerview").HTML_TEMPLATE)
 
 
-def test_dashboard_chart_interactions_and_offline_resources(tmp_path):
+def test_dashboard_chart_interactions_and_theme_styles(tmp_path):
     module = load_launcher(Path(__file__).resolve().parents[1] / "routerview")
     from tools.testkit import assert_classes_styled, assert_offline_page_source
     assert_offline_page_source(module.HTML_TEMPLATE)
@@ -119,16 +128,17 @@ def test_dashboard_chart_interactions_and_offline_resources(tmp_path):
     module.init_database(module._db_path)
     seed_synthetic_dashboard(module)
 
-    requests = []
     with live_server(module.app) as url, sync_playwright() as playwright:
         browser = playwright.chromium.launch(headless=True)
         page = browser.new_page()
         errors = capture_browser_errors(page)
-        page.on("request", lambda request: requests.append(request.url))
         page.goto(f"{url}?range=all", wait_until="domcontentloaded")
         page.get_by_text("RouterView", exact=True).wait_for(timeout=15_000)
+        page.get_by_role("heading", name="Cost by Model").wait_for()
+        page.locator(".svgc-sector").first.wait_for()
+        page.locator("tbody tr").first.wait_for()
 
-        assert_classes_styled(page)
+        assert_classes_styled(page, ignore=SCRIPT_HOOK_CLASSES)
 
         kpi_card = page.locator(".bg-card").first
         page.wait_for_function(
@@ -141,7 +151,6 @@ def test_dashboard_chart_interactions_and_offline_resources(tmp_path):
         page.wait_for_function(
             "getComputedStyle(document.querySelector('.bg-card')).backgroundColor === 'rgb(51, 65, 85)'"
         )
-        requests.clear()
         page.reload(wait_until="domcontentloaded")
         page.get_by_text("RouterView", exact=True).wait_for(timeout=15_000)
         page.wait_for_function("document.documentElement.classList.contains('dark')")
@@ -568,6 +577,17 @@ def test_search_updates_on_each_keystroke(synthetic_page):
         assert search.input_value() == typed
 
 
+def test_chart_title_gap_comes_from_margin_not_padding_spaces(synthetic_page):
+    # JSX dropped the source line break before the span, so the title has no text
+    # space there: the visible gap is the span's ml-1 margin alone.
+    heading = synthetic_page.get_by_role('heading', name=re.compile(r'Cost over Time'))
+    assert_exact_text(heading, 'Cost over Timeby model')
+    assert heading.locator('span').evaluate('element => getComputedStyle(element).marginLeft') == '4px'
+    synthetic_page.get_by_title('Toggle cumulative view').click()
+    expect(heading).to_contain_text('(Cumulative)')
+    assert_exact_text(heading, 'Cost over Time (Cumulative)by model')
+
+
 def test_save_name_field_takes_focus_when_opened(synthetic_page):
     synthetic_page.get_by_role('button', name='Views').click()
     synthetic_page.get_by_role('button', name='Save current view').click()
@@ -626,9 +646,10 @@ def test_charts_render_with_empty_and_single_bucket_data(synthetic_page, buckets
     synthetic_page.reload()
     if buckets:
         expect(synthetic_page.locator('.rv-main-chart-plot')).to_have_count(1)
-        assert 'NaN' not in synthetic_page.locator('.svgc-wrapper').first.inner_html()
     else:
-        expect(synthetic_page.get_by_role('heading', name='Cost by Model')).to_be_visible()
+        expect(synthetic_page.get_by_text('No data for this range').first).to_be_visible()
+    expect(synthetic_page.get_by_role('heading', name='Cost by Model')).to_be_visible()
+    assert_every_chart_is_finite(synthetic_page)
 
 
 def test_breakdown_axes_and_donut_geometry(synthetic_page):
@@ -642,7 +663,8 @@ def test_breakdown_axes_and_donut_geometry(synthetic_page):
     expect(sector).to_have_attribute('stroke', 'var(--color-white)')
     expect(sector).to_have_attribute('stroke-width', '1')
     path = sector.get_attribute('d')
-    assert path and re.match(r'^M[\d.]+,100A85,85 0 [01] 0 ', path)
+    # The old pie was centred 45% down its plot, above a one-row legend here.
+    assert path and re.match(r'^M[\d.]+,92\.97[\d]*A85,85 0 [01] 0 ', path)
     assert provider.locator('.svgc-legend-item').count() == 0
 
 
@@ -707,8 +729,9 @@ def test_all_zero_chart_has_finite_geometry(synthetic_page, kind):
     synthetic_page.locator('select:has(option[value="bar"])').select_option(kind)
     chart = synthetic_page.get_by_role('heading', name=re.compile(r'Cost over Time')).locator("xpath=ancestor::div[contains(@class,'bg-slate-800')][1]")
     expect(chart.locator('.svgc-wrapper')).to_have_count(1)
-    html = chart.locator('.svgc-wrapper').inner_html()
-    assert 'NaN' not in html and 'Infinity' not in html
+    assert_every_chart_is_finite(synthetic_page)
+    labels = chart.locator('.svgc-wrapper svg text').all_text_contents()
+    assert [label for label in labels if label.startswith('$')] == ['$0.00', '$1.00', '$2.00', '$3.00', '$4.00']
 
 
 def test_dense_minute_ticks_remain_readable_after_resize(synthetic_page):
@@ -763,10 +786,9 @@ def test_main_legend_preserves_compact_symbols_and_order(synthetic_page, kind, d
     assert buttons.first.evaluate("n => getComputedStyle(n).fontSize") == '11px'
     assert chart.locator('.svgc-legend').evaluate("n => getComputedStyle(n).paddingTop") == '8px'
     assert buttons.locator('svg[aria-hidden="true"]').count() == len(names)
-    symbol = buttons.first.locator('svg rect' if kind == 'bar' else 'svg line')
+    symbol = buttons.first.locator('svg path')
     expect(symbol).to_have_count(1)
-    if kind != 'bar':
-        expect(buttons.first.locator('svg circle')).to_have_count(1)
+    assert symbol.get_attribute('fill') != 'none' if kind == 'bar' else symbol.get_attribute('fill') == 'none'
     color = symbol.get_attribute('fill' if kind == 'bar' else 'stroke')
     assert color == chart.locator('.svgc-curve' if kind != 'bar' else '.svgc-bar').nth(1 if kind != 'bar' else 2).get_attribute('stroke')
     positions = buttons.evaluate_all("nodes => nodes.map(n => n.getBoundingClientRect().top)")
@@ -816,3 +838,491 @@ def test_donut_legend_is_sorted_without_reordering_sectors(synthetic_page):
     legend = panel.locator('.rv-donut-legend')
     expect(legend.locator(':scope > span')).to_have_count(2)
     assert legend.locator(':scope > span').all_text_contents() == ['Synthetic Provider A', 'Synthetic Provider B']
+
+
+def assert_every_chart_is_finite(page):
+    markup = page.locator('.svgc-wrapper').evaluate_all('nodes => nodes.map(node => node.outerHTML)')
+    for chart in markup:
+        assert not re.search(r'NaN|Infinity|undefined', chart), chart[:500]
+
+
+def panel_for(page, heading):
+    return page.get_by_role('heading', name=heading).locator("xpath=ancestor::div[contains(@class,'bg-slate-800')][1]")
+
+
+def main_chart(page):
+    return panel_for(page, re.compile(r'Cost over Time'))
+
+
+def fulfil_timeseries(page, **payload):
+    page.route('**/api/timeseries*', lambda route: route.fulfill(json={'bucket_size': 'day', **payload}))
+    page.reload()
+
+
+STACKED = dict(
+    buckets=['2026-09-01', '2026-09-02', '2026-09-03'],
+    series=[{'name': 'synthetic A', 'data': [1, 2, 3]}, {'name': 'synthetic B', 'data': [3, 2, 1]}],
+)
+
+
+def test_series_beyond_the_spread_limit_renders(synthetic_page):
+    buckets = [f'2024-{month:02d}-{day:02d}' for month in range(1, 13) for day in range(1, 29)][:500]
+    series = [{'name': f'synthetic-{index}', 'data': [1] * len(buckets)} for index in range(130)]
+    while len(buckets) < 500:
+        buckets.append(f'2025-synthetic-{len(buckets)}')
+    fulfil_timeseries(synthetic_page, buckets=buckets, series=series)
+    expect(main_chart(synthetic_page).locator('path.svgc-curve')).to_have_count(130, timeout=30_000)
+    assert synthetic_page.get_by_text('Something went wrong').count() == 0
+
+
+def test_log_page_field_rejects_bad_input(synthetic_page):
+    field = synthetic_page.locator('tfoot input, input.w-10').first
+    field.wait_for()
+    assert field.input_value() == '1'
+    for typed in ('x', '99', '0'):
+        field.focus()
+        field.evaluate("(el, value) => { el.value = value; el.dispatchEvent(new InputEvent('input', {bubbles:true})); }", typed)
+        assert field.input_value() == '1', typed
+    field.press('Control+a')
+    field.press('Delete')
+    assert field.input_value() == '1'
+    field.press_sequentially('x')
+    assert field.input_value() == '1'
+
+
+def test_header_select_shows_first_option_for_an_unknown_value(synthetic_page):
+    page = synthetic_page
+    page.goto(page.url.split('?')[0] + '?range=synthetic-unknown', wait_until='domcontentloaded')
+    page.get_by_text('RouterView', exact=True).wait_for()
+    assert page.locator('select').first.input_value() == 'today'
+
+
+def test_chart_tooltip_and_marks_follow_the_keyboard(synthetic_page):
+    page = synthetic_page
+    fulfil_timeseries(page, **STACKED)
+    chart = main_chart(page)
+    surface = chart.locator('.svgc-wrapper svg[role="application"]')
+    surface.focus()
+    expect(surface).to_be_focused()
+    page.keyboard.press('Shift+Tab')
+    page.keyboard.press('Tab')
+    expect(surface).to_be_focused()
+    tooltip = chart.locator('.svgc-tooltip')
+    expect(tooltip).to_contain_text('2026-09-01')
+    expect(chart.locator('.svgc-active-dot')).to_have_count(2)
+    page.keyboard.press('ArrowRight')
+    expect(tooltip).to_contain_text('2026-09-02')
+    assert 'Total' in tooltip.inner_text()
+    page.keyboard.press('ArrowLeft')
+    expect(tooltip).to_contain_text('2026-09-01')
+    # Keyboard reading keeps the arrows from the page's time-range shortcut. All Time is the
+    # last preset, so only ArrowLeft could have moved it.
+    page.evaluate('() => new Promise(done => requestAnimationFrame(() => requestAnimationFrame(done)))')
+    assert page.locator('select').first.input_value() == 'all'
+    page.keyboard.press('Tab')
+    expect(tooltip).to_have_count(0)
+    expect(chart.locator('.svgc-active-dot')).to_have_count(0)
+
+
+def test_clicking_a_chart_does_not_open_the_keyboard_tooltip(synthetic_page):
+    page = synthetic_page
+    fulfil_timeseries(page, **STACKED)
+    chart = main_chart(page)
+    box = chart.locator('.rv-main-chart-plot').bounding_box()
+    page.mouse.click(box['x'] + box['width'] / 2, box['y'] + box['height'] / 2)
+    expect(chart.locator('.svgc-tooltip')).to_contain_text('2026-09-02')
+    page.mouse.move(2, 2)
+    expect(chart.locator('.svgc-tooltip')).to_have_count(0)
+
+
+def test_arrow_keys_step_the_range_after_a_mouse_click_on_a_chart(synthetic_page):
+    page = synthetic_page
+    fulfil_timeseries(page, **STACKED)
+    chart = main_chart(page)
+    box = chart.locator('.rv-main-chart-plot').bounding_box()
+    range_select = page.locator('select').first
+    expect(range_select).to_have_value('all')
+
+    page.mouse.click(box['x'] + box['width'] / 2, box['y'] + box['height'] / 2)
+    expect(chart.locator('.svgc-wrapper svg[role="application"]')).to_be_focused()
+    page.keyboard.press('ArrowLeft')
+
+    expect(range_select).not_to_have_value('all')
+
+
+def test_shift_tab_from_a_scrollable_tooltip_keeps_the_reading_position(synthetic_page):
+    page = synthetic_page
+    page.set_viewport_size({'width': 900, 'height': 300})
+    fulfil_timeseries(
+        page,
+        buckets=STACKED['buckets'],
+        series=[{'name': f'synthetic {index}', 'data': [1, 2, 3]} for index in range(60)],
+    )
+    chart = main_chart(page)
+    surface = chart.locator('.svgc-wrapper svg[role="application"]')
+    tooltip = chart.locator('.svgc-tooltip')
+    surface.focus()
+    page.keyboard.press('Shift+Tab')
+    page.keyboard.press('Tab')
+    page.keyboard.press('ArrowRight')
+    expect(tooltip).to_contain_text('2026-09-02')
+    expect(tooltip).to_have_attribute('role', 'region')
+
+    page.keyboard.press('Tab')
+    expect(tooltip).to_be_focused()
+    page.keyboard.press('Shift+Tab')
+
+    expect(surface).to_be_focused()
+    expect(tooltip).to_contain_text('2026-09-02')
+    page.keyboard.press('ArrowRight')
+    expect(tooltip).to_contain_text('2026-09-03')
+
+
+@pytest.mark.parametrize('kind', ['area', 'line', 'bar'])
+def test_hover_shows_cursor_and_active_marks(synthetic_page, kind):
+    page = synthetic_page
+    fulfil_timeseries(page, **STACKED)
+    page.locator('select:has(option[value="bar"])').select_option(kind)
+    chart = main_chart(page)
+    plot = chart.locator('.rv-main-chart-plot')
+    plot.scroll_into_view_if_needed()
+    box = plot.bounding_box()
+    page.mouse.move(box['x'] + box['width'] / 2, box['y'] + box['height'] / 2)
+    cursor = chart.locator('.svgc-cursor')
+    expect(cursor).to_have_count(1)
+    expect(chart.locator('.svgc-active-dot')).to_have_count(0 if kind == 'bar' else 2)
+    expect(cursor).to_have_attribute('fill' if kind == 'bar' else 'stroke', '#ccc')
+    page.mouse.move(2, 2)
+    expect(cursor).to_have_count(0)
+
+
+def test_hidden_series_keep_tooltip_rows_and_active_dots(synthetic_page):
+    page = synthetic_page
+    fulfil_timeseries(page, **STACKED)
+    chart = main_chart(page)
+    chart.locator('.svgc-legend-item', has_text='synthetic B').click()
+    plot = chart.locator('.rv-main-chart-plot')
+    box = plot.bounding_box()
+    page.mouse.move(box['x'] + box['width'] / 2, box['y'] + box['height'] / 2)
+    expect(chart.locator('.svgc-tooltip')).to_contain_text('synthetic B')
+    expect(chart.locator('.svgc-active-dot')).to_have_count(2)
+
+
+def test_tall_tooltip_shows_every_row_and_stays_on_screen(synthetic_page):
+    page = synthetic_page
+    page.set_viewport_size({'width': 1280, 'height': 900})
+    series = [{'name': f'synthetic-{index:02d}', 'data': [index + 1, 1]} for index in range(30)]
+    fulfil_timeseries(page, buckets=['2026-09-01', '2026-09-02'], series=series)
+    chart = main_chart(page)
+    plot = chart.locator('.rv-main-chart-plot')
+    plot.scroll_into_view_if_needed()
+    box = plot.bounding_box()
+    page.mouse.move(box['x'] + box['width'] / 2, box['y'] + box['height'] / 2)
+    tooltip = chart.locator('.svgc-tooltip')
+    expect(tooltip).to_be_visible()
+    assert tooltip.evaluate('el => el.scrollHeight <= el.clientHeight')
+    rendered = tooltip.bounding_box()
+    assert rendered['y'] >= 0 and rendered['y'] + rendered['height'] <= 901
+    total = tooltip.get_by_text('Total', exact=True).bounding_box()
+    assert total['y'] + total['height'] <= rendered['y'] + rendered['height']
+    assert 'synthetic-00' in tooltip.inner_text() and 'synthetic-29' in tooltip.inner_text()
+
+
+def test_negative_values_extend_the_axis_and_stay_in_the_plot(synthetic_page):
+    page = synthetic_page
+    fulfil_timeseries(page, buckets=['2026-09-01', '2026-09-02', '2026-09-03'],
+                      series=[{'name': 'synthetic', 'data': [-2, 6, -1]}])
+    chart = main_chart(page)
+    expect(chart.locator('path.svgc-curve')).to_have_count(1)
+    labels = chart.locator('.svgc-wrapper svg text').all_text_contents()
+    assert any(label.startswith('-$') or label.startswith('$-') for label in labels), labels
+    plot = chart.locator('.rv-main-chart-plot').evaluate('node => [Number(node.getAttribute("y")), Number(node.getAttribute("height"))]')
+    curve = chart.locator('path.svgc-curve').evaluate('node => { const box = node.getBBox(); return [box.y, box.height]; }')
+    assert curve[0] >= plot[0] - .01 and curve[0] + curve[1] <= plot[0] + plot[1] + .01
+    assert_every_chart_is_finite(page)
+
+
+def breakdown_items(*items):
+    return lambda route: route.fulfill(json={'data': [{'dimension': name, 'value': value} for name, value in items]})
+
+
+def test_breakdown_row_hover_reaches_tiny_and_negative_bars(synthetic_page):
+    page = synthetic_page
+    page.route('**/api/breakdown*', breakdown_items(('synthetic-large', 12.5), ('tiny-synthetic', .02), ('synthetic-refund', -3)))
+    page.reload()
+    panel = panel_for(page, 'Cost by Model')
+    bars = panel.locator('.svgc-bar')
+    expect(bars).to_have_count(3)
+    bars.first.scroll_into_view_if_needed()
+    assert bars.nth(2).get_attribute('width') not in (None, '0')
+    wrapper = panel.locator('.svgc-wrapper').bounding_box()
+    tooltip = panel.locator('.svgc-tooltip')
+    for index, name in ((1, 'tiny-synthetic'), (2, 'synthetic-refund')):
+        bar = bars.nth(index).bounding_box()
+        page.mouse.move(wrapper['x'] + wrapper['width'] - 20, bar['y'] + bar['height'] / 2)
+        expect(tooltip).to_contain_text(name)
+        expect(panel.locator('.svgc-cursor')).to_have_count(1)
+    page.mouse.move(wrapper['x'] + 20, wrapper['y'] + 20)
+    expect(tooltip).to_have_count(0)
+    expect(panel.locator('.svgc-cursor')).to_have_count(0)
+
+
+def test_breakdown_label_keeps_exactly_twenty_characters(synthetic_page):
+    page = synthetic_page
+    exact, longer = 'synthetic-20-chars-x', 'synthetic-21-chars-xy'
+    assert (len(exact), len(longer)) == (20, 21)
+    page.route('**/api/breakdown*', breakdown_items((exact, 2), (longer, 1)))
+    page.reload()
+    panel = panel_for(page, 'Cost by Model')
+    expect(panel.locator('.svgc-bar')).to_have_count(2)
+    labels = panel.locator('.svgc-wrapper svg text').all_text_contents()
+    assert any(label.endswith(exact) for label in labels), labels
+    assert any(label.endswith(longer[:18] + '…') for label in labels), labels
+
+
+def test_donut_tooltip_hides_after_leaving_a_sector(synthetic_page):
+    page = synthetic_page
+    panel = panel_for(page, 'Requests by Provider')
+    sector = panel.locator('.svgc-sector').first
+    sector.scroll_into_view_if_needed()
+    wrapper = panel.locator('.svgc-wrapper').bounding_box()
+    page.mouse.move(wrapper['x'] + wrapper['width'] / 2 + 67, wrapper['y'] + 90)
+    tooltip = panel.locator('.svgc-tooltip')
+    expect(tooltip).to_be_visible()
+    page.mouse.move(wrapper['x'] + 4, wrapper['y'] + 4)
+    expect(tooltip).to_have_count(0)
+
+
+def test_rolled_up_donut_slice_is_not_a_button(synthetic_page):
+    page = synthetic_page
+    page.route('**/api/breakdown*', breakdown_items(*[(f'synthetic-{index}', 10 - index) for index in range(9)]))
+    page.reload()
+    sectors = panel_for(page, 'Requests by Provider').locator('.svgc-sector')
+    expect(sectors).to_have_count(7)
+    assert sectors.nth(5).get_attribute('role') == 'button'
+    assert sectors.nth(6).get_attribute('role') is None
+    assert sectors.nth(6).get_attribute('tabindex') is None
+    assert sectors.nth(6).evaluate('node => getComputedStyle(node).cursor') != 'pointer'
+
+
+def test_donut_legend_rows_are_tight(synthetic_page):
+    page = synthetic_page
+    page.route('**/api/breakdown*', breakdown_items(*[(f'synthetic-long-provider-{index}', 5) for index in range(6)]))
+    page.reload()
+    legend = panel_for(page, 'Requests by Provider').locator('.rv-donut-legend')
+    legend.wait_for()
+    assert legend.evaluate('el => getComputedStyle(el).rowGap') in ('0px', 'normal')
+    tops = sorted(set(legend.locator('> span').evaluate_all('nodes => nodes.map(n => Math.round(n.getBoundingClientRect().top))')))
+    assert len(tops) >= 2
+    assert all(second - first <= 17 for first, second in zip(tops, tops[1:]))
+
+
+@pytest.mark.parametrize('kind', ['area', 'line', 'bar'])
+def test_last_label_is_kept_and_unclipped_at_narrow_width(synthetic_page, kind):
+    page = synthetic_page
+    page.set_viewport_size({'width': 390, 'height': 800})
+    buckets = [f'2026-09-{day:02d}' for day in range(1, 15)]
+    fulfil_timeseries(page, buckets=buckets, series=[{'name': 'synthetic', 'data': list(range(14))}])
+    page.locator('select:has(option[value="bar"])').select_option(kind)
+    wrapper = main_chart(page).locator('.svgc-wrapper').first
+    labels = wrapper.locator('svg text').evaluate_all(
+        """nodes => nodes.filter(n => /^09-/.test(n.textContent))
+            .map(n => ({text:n.textContent, ...n.getBoundingClientRect().toJSON()}))""")
+    assert labels[-1]['text'] == '09-14'
+    assert labels[-1]['right'] <= wrapper.bounding_box()['x'] + wrapper.bounding_box()['width'] + .5
+    assert all(a['right'] <= b['left'] for a, b in zip(labels, labels[1:]))
+
+
+def test_exports_resolve_css_variables(synthetic_page):
+    page = synthetic_page
+    panel = panel_for(page, 'Requests by Provider')
+    panel.locator('.svgc-sector').first.wait_for()
+    expected = panel.locator('.svgc-sector').first.evaluate(
+        "node => getComputedStyle(node).getPropertyValue('--color-white').trim()")
+    assert expected
+    menu = panel.locator('button').first
+    menu.click()
+    with page.expect_download() as download:
+        panel.get_by_role('button', name='SVG', exact=True).click()
+    markup = Path(download.value.path()).read_text(encoding='utf-8')
+    assert 'var(' not in markup
+    assert f'stroke="{expected}"' in markup
+    menu.click()
+    with page.expect_download() as download:
+        panel.get_by_role('button', name='PNG', exact=True).click()
+    assert Path(download.value.path()).read_bytes().startswith(b'\x89PNG')
+
+
+@pytest.mark.parametrize('kind', ['area', 'line', 'bar'])
+@pytest.mark.parametrize('values', [[0, 0], [None, None], [1, None], [5]], ids=['zeros', 'nulls', 'partial', 'single'])
+def test_degenerate_series_and_all_hidden_stay_finite(synthetic_page, kind, values):
+    page = synthetic_page
+    buckets = [f'synthetic-{index}' for index in range(len(values))]
+    fulfil_timeseries(page, buckets=buckets, series=[{'name': 'synthetic A', 'data': values}, {'name': 'synthetic B', 'data': values}])
+    page.locator('select:has(option[value="bar"])').select_option(kind)
+    chart = main_chart(page)
+    chart.locator('.svgc-wrapper').first.wait_for()
+    assert_every_chart_is_finite(page)
+    for name in ('synthetic A', 'synthetic B'):
+        chart.locator('.svgc-legend-item', has_text=name).click()
+    expect(chart.locator('.svgc-legend-item[aria-pressed="false"]')).to_have_count(2)
+    box = chart.locator('.rv-main-chart-plot').bounding_box()
+    page.mouse.move(box['x'] + box['width'] / 2, box['y'] + box['height'] / 2)
+    assert_every_chart_is_finite(page)
+
+
+def test_chart_shrinks_inside_an_auto_min_width_parent(synthetic_page):
+    page = synthetic_page
+    widths = page.evaluate("""async () => {
+        const outer = document.createElement('div');
+        Object.assign(outer.style, {display:'flex', width:'800px'});
+        const item = document.createElement('div');
+        item.style.flex = '1 1 auto';
+        outer.append(item);
+        document.body.append(outer);
+        preact.render(preact.h(svgCharts.CartesianChart, {
+            data:[{x:'a', v:1}, {x:'b', v:2}], xKey:'x', series:[{key:'v'}], height:120}), item);
+        const settle = () => new Promise(done => requestAnimationFrame(() => setTimeout(done, 50)));
+        await settle();
+        const wide = item.querySelector('svg').getBoundingClientRect().width;
+        outer.style.width = '400px';
+        await settle();
+        const narrow = item.querySelector('svg').getBoundingClientRect().width;
+        preact.render(null, item);
+        outer.remove();
+        return [wide, narrow];
+    }""")
+    assert widths == [800, 400]
+
+
+def test_heatmap_renders_the_seeded_activity(tmp_path, monkeypatch):
+    monkeypatch.setenv('ROUTERVIEW_HOME', str(tmp_path / 'home'))
+    module = load_launcher(PROJECT_ROOT / 'routerview')
+    module._db_path = str(tmp_path / 'routerview.db')
+    module.init_database(module._db_path)
+    seed_synthetic_dashboard(module)
+    with live_server(module.app) as url, sync_playwright() as playwright:
+        browser = playwright.chromium.launch(headless=True)
+        context = browser.new_context(timezone_id='UTC')
+        page = context.new_page()
+        errors = capture_browser_errors(page)
+        page.goto(f'{url}?range=all', wait_until='domcontentloaded')
+        page.get_by_text('RouterView', exact=True).wait_for()
+        page.locator('select:has(option[value="heatmap"])').select_option('heatmap')
+        heading = page.get_by_role('heading', name='Usage Heatmap')
+        heading.wait_for()
+        panel = heading.locator("xpath=ancestor::div[contains(@class,'bg-slate-800')][1]")
+        cells = panel.locator('[title*=":00 —"]')
+        expect(cells).to_have_count(7 * 24)
+        # Seeded 2026-09-15 12:00 UTC is a Tuesday and 2026-09-16 13:00 UTC a Wednesday.
+        tuesday = panel.locator('[title="Tue 12:00 — 0.1200"]')
+        wednesday = panel.locator('[title="Wed 13:00 — 0.3400"]')
+        expect(tuesday).to_have_count(1)
+        expect(wednesday).to_have_count(1)
+        empty = panel.locator('[title="Mon 9:00 — no data"]')
+        expect(empty).to_have_count(1)
+        background = lambda cell: cell.evaluate('node => getComputedStyle(node).backgroundColor')
+        assert background(wednesday) == 'rgb(59, 130, 246)'
+        assert background(empty) == 'rgb(30, 41, 59)'
+        assert background(tuesday) not in (background(wednesday), background(empty))
+        metric = page.locator('select:has(option[value="latency"])')
+        for name, title in (('requests', 'Tue 12:00 — 1.0000'), ('tokens', 'Tue 12:00 — '), ('latency', 'Tue 12:00 — 123.0000')):
+            with page.expect_response(lambda response: '/api/heatmap?' in response.url and f'metric={name}' in response.url) as response:
+                metric.select_option(name)
+            assert response.value.status == 200
+            expect(panel.locator(f'[title^="{title}"]')).to_have_count(1)
+        browser.close()
+    assert errors == []
+
+
+def test_all_zero_heatmap_has_valid_cell_colors(synthetic_page):
+    page = synthetic_page
+    page.route('**/api/heatmap*', lambda route: route.fulfill(json={'matrix': [[0] * 24 for _ in range(7)], 'metric': 'cost'}))
+    page.locator('select:has(option[value="heatmap"])').select_option('heatmap')
+    cell = page.locator('[title="Mon 9:00 — 0.0000"]')
+    cell.wait_for()
+    assert cell.evaluate('node => getComputedStyle(node).backgroundColor') == 'rgba(59, 130, 246, 0.1)'
+
+
+THIRTY_DAYS = dict(
+    buckets=[f'2026-09-{day:02d}' for day in range(1, 31)],
+    series=[
+        {'name': 'synthetic-a', 'data': [(i * 7 % 11) + .5 for i in range(30)]},
+        {'name': 'synthetic-b', 'data': [(i * 5 % 9) + .25 for i in range(30)]},
+        {'name': 'synthetic-c', 'data': [i * 3 % 7 for i in range(30)]},
+    ],
+)
+
+
+def line_positions(chart, selector, attribute):
+    return chart.locator(selector).evaluate_all(f"nodes => nodes.map(node => Number(node.getAttribute('{attribute}')))")
+
+
+def test_axis_ticks_and_grid_match_the_old_chart(synthetic_page):
+    page = synthetic_page
+    page.set_viewport_size({'width': 1400, 'height': 1000})
+    fulfil_timeseries(page, **THIRTY_DAYS)
+    chart = main_chart(page)
+    expect(chart.locator('.svgc-curve').first).to_be_visible()
+    labels = chart.locator('svg text[text-anchor="end"]')
+    assert labels.all_text_contents() == ['$0.00', '$7.00', '$14.00', '$21.00', '$24.94']
+    assert float(labels.last.get_attribute('y')) == pytest.approx(8.25)
+    assert sorted(round(y, 1) for y in line_positions(chart, '.svgc-grid-horizontal', 'y1')) == [5, 54.8, 143.4, 231.9, 320.5]
+    vertical = sorted(line_positions(chart, '.svgc-grid-vertical', 'x1'))
+    assert [round(x, 1) for x in vertical[:3]] == [75, 118.3, 204.9]
+    assert vertical[-1] == 1331 and len(vertical) == 16
+    marks = chart.locator('.svgc-tick-line').evaluate_all(
+        "nodes => nodes.filter(n => n.getAttribute('x1') === n.getAttribute('x2')).map(n => Number(n.getAttribute('x1')))")
+    assert marks[-1] == 1331
+    last = chart.locator('svg text[text-anchor="middle"]').last
+    assert 1300 < float(last.get_attribute('x')) < 1331
+
+
+def test_main_legend_sits_where_the_old_legend_did(synthetic_page):
+    page = synthetic_page
+    page.set_viewport_size({'width': 1400, 'height': 1000})
+    fulfil_timeseries(page, **THIRTY_DAYS)
+    chart = main_chart(page)
+    expect(chart.locator('.svgc-legend-item')).to_have_count(3)
+    svg = chart.locator('.svgc-wrapper svg').bounding_box()
+    legend = chart.locator('.svgc-legend').bounding_box()
+    assert legend['y'] == pytest.approx(svg['y'] + 350.5, abs=.6)
+    assert legend['width'] == svg['width'] - 10
+    expect(chart.locator('.svgc-legend-item svg').first).to_have_attribute('width', '14')
+
+
+def test_tooltip_flips_at_the_plot_bottom(synthetic_page):
+    page = synthetic_page
+    page.set_viewport_size({'width': 1400, 'height': 1000})
+    fulfil_timeseries(page, **THIRTY_DAYS)
+    chart = main_chart(page)
+    plot = chart.locator('.rv-main-chart-plot').first
+    expect(plot).to_be_visible()
+    plot.scroll_into_view_if_needed()
+    box = plot.bounding_box()
+    page.mouse.move(box['x'] + 300, box['y'] + 195)
+    tooltip = chart.locator('.svgc-tooltip')
+    expect(tooltip).to_be_visible()
+    assert tooltip.bounding_box()['y'] + tooltip.bounding_box()['height'] <= box['y'] + box['height']
+
+
+@pytest.mark.parametrize('rows,shown', [(6, [0, 1, 2, 3, 4, 5]), (7, [0, 2, 4, 6]), (8, [1, 3, 5, 7]), (9, [0, 2, 4, 6, 8])])
+def test_breakdown_row_labels_thin_like_the_old_chart(synthetic_page, rows, shown):
+    page = synthetic_page
+    page.route('**/api/breakdown*', breakdown_items(*[(f'synthetic-row-{i}', 30 - i) for i in range(rows)]))
+    page.reload()
+    panel = panel_for(page, 'Cost by Model')
+    expect(panel.locator('.svgc-bar')).to_have_count(rows)
+    labels = panel.locator('svg text title').all_text_contents()
+    assert labels == [f'synthetic-row-{i}' for i in shown]
+    assert panel.locator('.svgc-wrapper svg').get_attribute('width').isdigit()
+
+
+def test_donut_panel_keeps_the_old_height_when_the_legend_wraps_further(synthetic_page):
+    page = synthetic_page
+    page.set_viewport_size({'width': 390, 'height': 1000})
+    page.route('**/api/breakdown*', breakdown_items(*[(f'synthetic-provider-{i}', 9 - i) for i in range(9)]))
+    page.reload()
+    panel = panel_for(page, 'Requests by Provider')
+    expect(panel.locator('.svgc-sector').first).to_be_visible()
+    assert panel.bounding_box()['height'] == 336
