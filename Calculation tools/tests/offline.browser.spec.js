@@ -39,7 +39,7 @@ for (const name of names) {
       await expect(page.locator('#saveTbl tbody tr').last().locator('td')).toHaveText(['24', '559.37', '100.00']);
       await page.locator('#vendorRate').fill('12');
       await page.locator('#calcBtn').click();
-      await expect(page.locator('#amortTbl tbody tr').first().locator('td')).toHaveText(['1', '706.10', '556.10', '150.00', '14,443.90']);
+      await expect(page.locator('#amortTbl tbody tr').first().locator('td')).toHaveText(['1', '699.11', '699.11', '0.00', '14,300.89']);
       await expect.poll(() => page.evaluate(() => window._chart?.config?.type)).toBe('line');
     }
     expect(blocked).toEqual([]);

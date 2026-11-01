@@ -198,17 +198,18 @@ function remainingBalance(P, i, n, x){
   return P * (1 - Math.pow(1 + i, -(n - x))) / i;
 }
 
-/** Present value of a scenario: down payment at t=0 + payments 1..X + lump at X (immediate) or X+1 (end) */
+/** P is the ordinary payment; immediate payments use its annuity-due equivalent. */
 function scenarioPV({price, down, term, P, i_v, i_d, X, timing}){
   let pv = 0;
   // down payment at time 0
   pv += down;
 
   if (timing === 'immediate'){
+    const dueP = P / (1 + i_v);
     // first payment at t=0 (month index 0), then at t=1..X-1
-    if (X >= 1) pv += P; // t=0
+    if (X >= 1) pv += dueP; // t=0
     for (let m=2; m<=X; m++){
-      pv += P / Math.pow(1 + i_d, m - 1);
+      pv += dueP / Math.pow(1 + i_d, m - 1);
     }
     if (X < term){
       const RB = remainingBalance(P, i_v, term, X);
@@ -221,7 +222,7 @@ function scenarioPV({price, down, term, P, i_v, i_d, X, timing}){
     }
     if (X < term){
       const RB = remainingBalance(P, i_v, term, X);
-      pv += RB / Math.pow(1 + i_d, X + 1); // lump at month X+1
+      pv += RB * (1 + i_v) / Math.pow(1 + i_d, X + 1); // accrue until payoff at month X+1
     }
   }
   if (DEBUG) console.log(`PV(X=${X}) = ${pv.toFixed(6)}`);
@@ -240,15 +241,16 @@ function build(){
   const financed = Math.max(0, price - down);
   const P = paymentPMT(vendorRate, term, financed);
 
-  // Amortization table (independent of timing for schedule)
+  // The immediate schedule pays at time zero before interest accrues.
   const amort = [];
+  const scheduledPayment = timing === 'immediate' ? P / (1 + vendorRate) : P;
   let bal = financed, totPay=0, totInt=0, totPrin=0;
   for (let m=1; m<=term; m++){
-    const int = bal * vendorRate;
-    const prin = P - int;
+    const int = timing === 'immediate' && m === 1 ? 0 : bal * vendorRate;
+    const prin = scheduledPayment - int;
     bal = Math.max(0, bal - prin);
-    amort.push([m, P, prin, int, bal]);
-    totPay += P; totPrin += prin; totInt += int;
+    amort.push([m, scheduledPayment, prin, int, bal]);
+    totPay += scheduledPayment; totPrin += prin; totInt += int;
   }
   state.amortRows = amort;
   state.amortTotals = { totalPay: totPay, totalPrin: totPrin, totalInt: totInt };
