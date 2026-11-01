@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
+import glob
+import hashlib
 import json
 import re
 import threading
@@ -148,8 +150,8 @@ def run_planning_phase(
     collisions: list[str] = []
     for intake_path in intake_paths:
         prefix = intake_path.name.split("_", 1)[0].split(".", 1)[0]
-        done_matches = list(session_paths.done.glob(f"{prefix}_*.plan.md")) + list(
-            session_paths.done.glob(f"{prefix}-*.plan.md")
+        done_matches = list(session_paths.done.glob(f"{glob.escape(prefix)}_*.plan.md")) + list(
+            session_paths.done.glob(f"{glob.escape(prefix)}-*.plan.md")
         )
         if done_matches:
             collisions.append(
@@ -281,18 +283,17 @@ def run_planning_phase(
                         "planner_task_id": planner_task_id,
                     })
                 except ArtifactParseError:
-                    # Planner returned unparseable output.  Before creating an
-                    # error entry, check whether the agent already wrote plan
-                    # files directly (agent did its own file I/O).  If so, the
-                    # return text is just a conversational summary — skip it.
-                    task_prefix = claimed_path.stem.split("_", 1)[0]
+                    # The agent may have written plans directly and returned a
+                    # summary. Catalogue matches, but preserve the input because
+                    # matches can also come from other planner invocations.
+                    task_prefix = _safe_intake_prefix(claimed_path)
                     agent_wrote_files = (
                         any(session_paths.staging.glob(f"{task_prefix}*.plan.md"))
                         or any(session_paths.review.glob(f"{task_prefix}*.plan.md"))
                     )
                     if agent_wrote_files:
-                        # Agent handled file management itself.  Catalogue what
-                        # it wrote so the pipeline accounts for the files.
+                        # Catalogue matching plans, but retain the input: their
+                        # existence does not prove this invocation wrote them.
                         for p in sorted(session_paths.review.glob(f"{task_prefix}*.plan.md")):
                             tid = p.name.removesuffix(".plan.md")
                             with lock:
@@ -305,7 +306,7 @@ def run_planning_phase(
                                 if tid not in staged_task_ids:
                                     staged_task_ids.append(tid)
                             _emit("file_planned", {"task_id": tid, "destination": "staging"})
-                        claimed_path.unlink(missing_ok=True)
+                        _preserve_failed_intake(claimed_path, session_paths.root)
                         _emit("planner_finished", {
                             "file": claimed_path.name,
                             "planner_task_id": planner_task_id,
@@ -326,7 +327,7 @@ def run_planning_phase(
                         )
                         review_path = session_paths.review / f"{task_prefix}.plan.md"
                         _atomic_write_text(review_path, error_header + error_body)
-                        claimed_path.unlink(missing_ok=True)
+                        _preserve_failed_intake(claimed_path, session_paths.root)
                         with lock:
                             review_task_ids.append(task_prefix)
                         _emit("file_planned", {"task_id": task_prefix, "destination": "review"})
@@ -336,7 +337,7 @@ def run_planning_phase(
                         })
                 except Exception as exc:
                     # Item-level failure: send to review so other items can proceed.
-                    task_prefix = claimed_path.stem.split("_", 1)[0]
+                    task_prefix = _safe_intake_prefix(claimed_path)
                     error_header = (
                         f"---\nPLAN_ID: {task_prefix}\nPRIORITY: normal\n"
                         f"ESTIMATED_SCOPE: unknown\nDEPENDS_ON: none\n"
@@ -351,7 +352,7 @@ def run_planning_phase(
                     )
                     review_path = session_paths.review / f"{task_prefix}.plan.md"
                     _atomic_write_text(review_path, error_header + error_body)
-                    claimed_path.unlink(missing_ok=True)
+                    _preserve_failed_intake(claimed_path, session_paths.root)
                     with lock:
                         review_task_ids.append(task_prefix)
                     _emit("file_planned", {"task_id": task_prefix, "destination": "review"})
@@ -449,6 +450,7 @@ def run_resolution_phase(
                 plan_paths=input_paths,
                 pack_manifest=pack_manifest,
             )
+            resolution = parse_resolution_json(resolution_text, source=session_paths.resolution)
         except (ClaudeCliRuntimeError, Exception) as exc:
             # Agent resolver failed (API error, timeout, etc.).  Move all
             # staged plans to review so the pipeline can continue on the
@@ -464,11 +466,6 @@ def run_resolution_phase(
                 session_id=session_id,
                 conflicts=(f"Resolution agent failed: {exc}",),
             )
-        _atomic_write_text(session_paths.resolution, resolution_text)
-        resolution = parse_resolution_json(
-            session_paths.resolution.read_text(encoding="utf-8"),
-            source=session_paths.resolution,
-        )
         _atomic_write_text(session_paths.resolution, _serialize_resolution_graph(resolution))
     else:
         raise ValueError(
@@ -732,6 +729,24 @@ def _serialize_resolution_graph(graph: ResolutionGraph) -> str:
         "notes": graph.notes,
     }
     return json.dumps(payload, indent=2) + "\n"
+
+
+def _safe_intake_prefix(path: Path) -> str:
+    prefix = path.stem.split("_", 1)[0]
+    if re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9-]*", prefix):
+        return prefix
+    return "intake-" + hashlib.sha256(path.name.encode()).hexdigest()[:16]
+
+
+def _preserve_failed_intake(path: Path, session_root: Path) -> None:
+    directory = session_root / "intake_failed"
+    directory.mkdir(parents=True, exist_ok=True)
+    target = directory / path.name
+    counter = 1
+    while target.exists():
+        target = directory / f"{path.stem}.{counter}{path.suffix}"
+        counter += 1
+    path.rename(target)
 
 
 def _find_existing_plan_path(session_paths, task_id: str) -> Path | None:

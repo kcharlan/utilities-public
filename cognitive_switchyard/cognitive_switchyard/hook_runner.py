@@ -1,11 +1,11 @@
 from __future__ import annotations
 
 import os
-import subprocess
 from pathlib import Path
 from typing import Mapping, Sequence
 
 from .config import RuntimePaths, build_runtime_paths, canonical_pack_path
+from .agent_runtime import _run_bounded_process
 from .models import (
     HookInvocationResult,
     PackManifest,
@@ -55,14 +55,11 @@ def run_prerequisite_checks(
         command_env.update(env)
 
     for prerequisite in pack_manifest.prerequisites:
-        completed = subprocess.run(
+        completed = _run_bounded_process(
             prerequisite.check,
             shell=True,
             cwd=cwd or pack_manifest.root,
             env=command_env,
-            text=True,
-            capture_output=True,
-            check=False,
         )
         results.append(
             PrerequisiteResult(
@@ -105,13 +102,10 @@ def run_short_lived_hook(
     if env is not None:
         command_env.update(env)
 
-    completed = subprocess.run(
+    completed = _run_bounded_process(
         [str(resolved_script), *args],
         cwd=run_cwd,
         env=command_env,
-        text=True,
-        capture_output=True,
-        check=False,
     )
     return HookInvocationResult(
         hook_name=hook_name or resolved_script.stem,

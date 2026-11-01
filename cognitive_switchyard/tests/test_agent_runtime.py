@@ -150,16 +150,15 @@ def test_claude_cli_runner_builds_planner_invocation_from_model_prompt_and_sessi
     assert captured["cwd"] == session_root
     assert captured["command"] == [
         "claude",
-        "--dangerously-skip-permissions",
         "--model",
         "claude-opus-4-1",
         "--output-format",
         "stream-json",
         "--verbose",
         "-p",
-        "Shared system rules.\n\nPlanner system prompt.",
     ]
     assert captured["input_text"] == (
+        "Shared system rules.\n\nPlanner system prompt.\n\n"
         f"Session root: {session_root}\n"
         f"Intake file: {intake_path}\n"
         "--- BEGIN INTAKE ---\n"
@@ -218,6 +217,7 @@ def test_claude_cli_runner_uses_phase_prompt_when_shared_system_prompt_is_absent
 
     def fake_runner(*, command: list[str], cwd: Path, input_text: str) -> subprocess.CompletedProcess[str]:
         captured["command"] = command
+        captured["input_text"] = input_text
         return subprocess.CompletedProcess(command, 0, stdout="ok\n", stderr="")
 
     runtime = ClaudeCliRuntime(command="claude", subprocess_runner=fake_runner)
@@ -232,15 +232,21 @@ def test_claude_cli_runner_uses_phase_prompt_when_shared_system_prompt_is_absent
 
     assert captured["command"] == [
         "claude",
-        "--dangerously-skip-permissions",
         "--model",
         "claude-opus-4-1",
         "--output-format",
         "stream-json",
         "--verbose",
         "-p",
-        "Planner prompt only.",
     ]
+    assert captured["input_text"] == (
+        "Planner prompt only.\n\n"
+        f"Session root: {tmp_path}\n"
+        f"Intake file: {tmp_path / '001_feature.md'}\n"
+        "--- BEGIN INTAKE ---\n"
+        "test\n"
+        "--- END INTAKE ---\n"
+    )
 
 
 def test_codex_cli_runner_builds_planner_invocation_with_reasoning_config_and_combined_prompt(
@@ -281,11 +287,18 @@ def test_codex_cli_runner_builds_planner_invocation_with_reasoning_config_and_co
 
     assert result == "planned output"
     assert captured["cwd"] == session_root
-    assert captured["input_text"] == ""
+    assert captured["input_text"] == (
+        "Shared system rules.\n\nPlanner system prompt.\n\n"
+        f"Session root: {session_root}\n"
+        f"Intake file: {intake_path}\n"
+        "--- BEGIN INTAKE ---\n"
+        "# Feature\n"
+        "Implement packet 13.\n"
+        "--- END INTAKE ---"
+    )
     assert captured["command"] == [
         "codex",
         "exec",
-        "--dangerously-bypass-approvals-and-sandbox",
         "--json",
         "-m",
         "gpt-5.6-sol",
@@ -295,15 +308,7 @@ def test_codex_cli_runner_builds_planner_invocation_with_reasoning_config_and_co
         'model_reasoning_effort="xhigh"',
         "-c",
         'model_reasoning_summary="detailed"',
-        (
-            "Shared system rules.\n\nPlanner system prompt.\n\n"
-            f"Session root: {session_root}\n"
-            f"Intake file: {intake_path}\n"
-            "--- BEGIN INTAKE ---\n"
-            "# Feature\n"
-            "Implement packet 13.\n"
-            "--- END INTAKE ---"
-        ),
+        "-",
     ]
 
 
