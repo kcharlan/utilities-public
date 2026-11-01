@@ -1,5 +1,7 @@
 from typing import Any, Dict, List
 import xmltodict
+from xml.sax.saxutils import escape
+from xml.parsers.expat import ParserCreate, ExpatError
 from .temporal import iso_temporal
 
 def load_xml(text: str) -> Any:
@@ -22,12 +24,12 @@ def _to_xml_recursive(obj: Any) -> str:
             else:
                 parts.append(f"<{key}>{_to_xml_recursive(value)}</{key}>")
     elif isinstance(obj, (str, int, float, bool)):
-        return str(obj).lower() if isinstance(obj, bool) else str(obj)
+        return escape(str(obj).lower() if isinstance(obj, bool) else str(obj))
     elif obj is None:
         return ""
     else:
         try:
-            return iso_temporal(obj)
+            return escape(iso_temporal(obj))
         except TypeError:
             raise TypeError(f"Unsupported type for XML conversion: {type(obj)}") from None
     return "".join(parts)
@@ -43,4 +45,9 @@ def dump_xml(obj: Any) -> str:
     root_key = list(obj.keys())[0]
     content = _to_xml_recursive(obj[root_key])
     
-    return f"<{root_key}>{content}</{root_key}>"
+    result = f"<{root_key}>{content}</{root_key}>"
+    try:
+        ParserCreate().Parse(result, True)
+    except ExpatError as exc:
+        raise ValueError(f"Cannot represent data as XML: {exc}") from exc
+    return result

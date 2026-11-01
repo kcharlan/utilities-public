@@ -12,6 +12,7 @@ import argparse
 import json
 import os
 import sys
+import tempfile
 from typing import Any, Optional
 
 from converters.json_conv import load_json, dump_pretty, dump_compact
@@ -121,15 +122,26 @@ def main(argv=None) -> int:
         output_ext = args.to if args.to != 'jsonc' else 'json'
         output_path = f"{basename}.{output_ext}"
 
+    temp_path = None
     try:
-        with open(output_path, 'w', encoding='utf-8') as f:
+        if os.path.exists(output_path) and os.path.samefile(args.input, output_path):
+            exit_with_error(5, "Input and output refer to the same file.")
+        with tempfile.NamedTemporaryFile(mode='w', encoding='utf-8',
+                                         dir=os.path.dirname(os.path.abspath(output_path)),
+                                         delete=False) as f:
+            temp_path = f.name
             f.write(output_contents)
             # Add trailing newline for non-JSON formats as per spec
             if args.to not in ['json', 'jsonc']:
                 if not output_contents.endswith('\n'):
                     f.write('\n')
+        os.replace(temp_path, output_path)
+        temp_path = None
     except IOError as e:
         exit_with_error(5, f"Could not write to output file: {output_path}", str(e))
+    finally:
+        if temp_path is not None:
+            os.unlink(temp_path)
 
     print(f"Successfully converted {args.input} to {output_path}")
     return 0

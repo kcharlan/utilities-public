@@ -1084,7 +1084,7 @@ window.TOML={parse:parse$1,stringify:stringify$1};
             const toXmlRecursive = (val) => {
                 if (val === null || val === undefined) return '';
                 if (typeof val !== 'object') {
-                    return String(val);
+                    return String(val).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
                 }
                 if (Array.isArray(val)) {
                     return val.map(item => `<item>${toXmlRecursive(item)}</item>`).join('');
@@ -1098,7 +1098,11 @@ window.TOML={parse:parse$1,stringify:stringify$1};
                 }).join('');
             };
             
-            return `<${rootKey}>${toXmlRecursive(obj[rootKey])}</${rootKey}>`;
+            const xml = `<${rootKey}>${toXmlRecursive(obj[rootKey])}</${rootKey}>`;
+            if (new DOMParser().parseFromString(xml, 'application/xml').getElementsByTagName('parsererror').length) {
+                throw new Error('Cannot represent data as XML.');
+            }
+            return xml;
         }
 
         function jsonFromXml(xmlStr) {
@@ -1221,14 +1225,25 @@ window.TOML={parse:parse$1,stringify:stringify$1};
         }
 
         function jsonFromYaml(text) {
-            const documents = jsyaml.loadAll(text, { schema: yamlLoadSchema });
+            const documents = jsyaml.loadAll(text, { schema: yamlLoadSchema, maxTotalMergeKeys: 10000 });
             if (!text.trim()) {
                 throw new Error('YAML input cannot be empty.');
             }
             if (documents.length > 1) {
                 throw new Error('YAML input must contain exactly one document.');
             }
-            return documents.length ? documents[0] : null;
+            const value = documents.length ? documents[0] : null;
+            let remaining = 100000;
+            const stack = [value];
+            while (stack.length) {
+                const item = stack.pop();
+                remaining -= 1 + (typeof item === 'string' ? item.length : 0);
+                if (remaining < 0) throw new Error('YAML expansion limit exceeded');
+                if (item && typeof item === 'object') {
+                    for (const [key, child] of Object.entries(item)) stack.push(key, child);
+                }
+            }
+            return value;
         }
 
         // TOML Converters
