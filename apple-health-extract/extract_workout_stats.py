@@ -9,6 +9,7 @@
 import xml.etree.ElementTree as ET
 import pandas as pd
 from tqdm import tqdm
+from record_utils import deduplicate_sources
 
 XML_PATH = "export.xml"
 
@@ -26,8 +27,8 @@ for event, elem in ET.iterparse(XML_PATH, events=("start",)):
         workouts.append({
             "id": len(workouts),
             "type": elem.attrib.get("workoutActivityType"),
-            "start": pd.to_datetime(elem.attrib.get("startDate")[:19]),
-            "end": pd.to_datetime(elem.attrib.get("endDate")[:19]),
+            "start": pd.to_datetime(elem.attrib.get("startDate"), utc=True),
+            "end": pd.to_datetime(elem.attrib.get("endDate"), utc=True),
             "duration_min": float(elem.attrib.get("duration", "0")),
             "device": elem.attrib.get("sourceName"),
         })
@@ -42,17 +43,19 @@ for event, elem in tqdm(ET.iterparse(XML_PATH, events=("start",)), total=5_000_0
     if elem.tag == "Record" and elem.attrib.get("type") in [
         HEART_RATE_TYPE, STEP_TYPE, DISTANCE_TYPE, CALORIES_TYPE
     ]:
-        start = pd.to_datetime(elem.attrib.get("startDate")[:19])
+        start = pd.to_datetime(elem.attrib.get("startDate"), utc=True)
         value = float(elem.attrib.get("value", "0"))
         records.append({
             "type": elem.attrib.get("type"),
             "start": start,
+            "sourceName": elem.attrib.get("sourceName"),
             "value": value
         })
     elem.clear()
 print(f"Loaded {len(records)} health records.")
 
 records_df = pd.DataFrame(records)
+records_df = deduplicate_sources(records_df, ["type", "start", "value"])
 
 # Create summary and detail output lists
 summary_rows = []

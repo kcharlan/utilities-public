@@ -79,7 +79,7 @@ export default tool({
         "Make sure docpipe is installed and executable:",
         "- `/Users/example/source/utilities/docpipe/docpipe`",
         "- or available on `PATH` as `docpipe`",
-      ].join("\\n")
+      ].join("\n")
     }
 
     // Read the markdown output to return inline
