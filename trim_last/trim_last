@@ -71,6 +71,7 @@ shift
 
 command -v ffmpeg >/dev/null 2>&1 || die "ffmpeg was not found in PATH"
 command -v ffprobe >/dev/null 2>&1 || die "ffprobe was not found in PATH"
+command -v perl >/dev/null 2>&1 || die "perl was not found in PATH"
 
 result_code=0
 tmpdir=""
@@ -92,6 +93,12 @@ for input in "$@"; do
     output="${dir}/${name}${suffix}.${ext}"
   else
     output="${dir}/${base}${suffix}"
+  fi
+
+  if [[ -d "$output" ]]; then
+    print -u2 "Skipping $input: output is a directory: $output"
+    result_code=1
+    continue
   fi
 
   collision=0
@@ -148,7 +155,7 @@ for input in "$@"; do
     -t "$keep_seconds" \
     -map_metadata 0 \
     "${codec_args[@]}" \
-    "$tmpdir/${output:t}" && mv -f -- "$tmpdir/${output:t}" "$output"; then
+    "$tmpdir/${output:t}" && perl -e 'rename($ARGV[0], $ARGV[1]) or die "rename failed: $!\n"' "$tmpdir/${output:t}" "$output"; then
     print "Created: $output"
   else
     print -u2 "Failed: $input"

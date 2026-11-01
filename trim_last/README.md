@@ -15,6 +15,7 @@ limited by the available keyframes.
 - `zsh`
 - `ffmpeg`
 - `ffprobe` (normally installed with `ffmpeg`)
+- `perl`
 
 The script is executable in place:
 
@@ -46,5 +47,6 @@ output already exists without `--force`; it continues processing any remaining
 inputs. Any skipped or failed input produces a nonzero exit status. Outputs are
 written to a temporary file beside the destination and published only after
 encoding succeeds; aliases and links to an input are refused even with `--force`.
+Directory destinations, including links to directories, are also refused.
 
 Run `bash tests/test_trim_last.sh` for the synthetic input-safety checks.
