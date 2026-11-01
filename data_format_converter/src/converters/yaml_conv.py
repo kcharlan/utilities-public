@@ -10,7 +10,46 @@ def load_yaml(text: str) -> Any:
     """
     Parses a YAML string into a Python object using safe_load.
     """
-    return yaml.safe_load(text)
+    # Inspect the composed node graph before SafeLoader flattens merge keys.
+    # Repeated aliases must be counted repeatedly, including recursive aliases.
+    root = yaml.compose(text, Loader=yaml.SafeLoader)
+    remaining = 100_000
+    nodes = [root] if root is not None else []
+    while nodes:
+        node = nodes.pop()
+        remaining -= 1
+        if isinstance(node, yaml.ScalarNode):
+            remaining -= len(node.value)
+        elif isinstance(node, yaml.SequenceNode):
+            if len(nodes) + len(node.value) > remaining:
+                raise ValueError('YAML expansion limit exceeded')
+            nodes.extend(node.value)
+        elif isinstance(node, yaml.MappingNode):
+            if len(nodes) + 2 * len(node.value) > remaining:
+                raise ValueError('YAML expansion limit exceeded')
+            for key, child in node.value:
+                nodes.extend((key, child))
+        if remaining < 0:
+            raise ValueError('YAML expansion limit exceeded')
+    value = yaml.safe_load(text)
+    # Count every occurrence, including aliases, before a serializer expands it.
+    remaining = 100_000
+    stack = [value]
+    while stack:
+        item = stack.pop()
+        remaining -= 1 + (len(item) if isinstance(item, (str, bytes)) else 0)
+        if remaining < 0:
+            raise ValueError('YAML expansion limit exceeded')
+        if isinstance(item, dict):
+            if len(stack) + 2 * len(item) > remaining:
+                raise ValueError('YAML expansion limit exceeded')
+            for key, child in item.items():
+                stack.extend((key, child))
+        elif isinstance(item, (list, tuple, set)):
+            if len(stack) + len(item) > remaining:
+                raise ValueError('YAML expansion limit exceeded')
+            stack.extend(item)
+    return value
 
 
 def _normalize(obj: Any) -> Any:

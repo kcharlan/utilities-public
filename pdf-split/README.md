@@ -29,6 +29,15 @@ Arguments:
 
 Output files are written to the current directory unless the prefix includes a
 path. Their names follow `<output_prefix>_<number>.pdf`.
+An output that refers to the input is refused, including through a link. Chunks
+are prepared in a temporary directory beside the output and published after all
+page ranges have been generated successfully.
+If publishing a chunk fails, the script restores earlier destinations. If a
+rollback also fails, it reports the retained temporary directory and backup
+paths so the original outputs can be recovered manually.
+
+Run `bash tests/test_pdf_split.sh` for synthetic input-safety checks; it also
+requires Node.js to generate the test PDF.
 
 ## How it works
 
