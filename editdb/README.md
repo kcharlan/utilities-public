@@ -54,18 +54,17 @@ launcher dependencies have been resolved.
 See [docs/USER_GUIDE.md](docs/USER_GUIDE.md) for detailed operation and
 current limitations.
 
-## Important schema-editor limitation
+## Schema changes
 
-Back up the database before applying schema-editor changes. The current
-shadow-table migration rebuilds columns from their names and declared types.
+Back up the database before applying schema-editor changes. Rename, add and
+delete use SQLite's native column alterations, which can reject changes that
+conflict with dependent schema objects. Changing a declared type rebuilds the
+table, preserving its constraints, indexes, triggers and dependent views. The
+whole migration runs in a transaction and rolls back on failure. Some unusual
+table definitions may be rejected when they cannot be rewritten safely.
+
 The type list offers `TEXT`, `INTEGER`, `REAL` and `BLOB`, plus the column's
-existing declared type when it is something else. It does **not** preserve
-primary keys, `AUTOINCREMENT`, `NOT NULL`, default values, unique or check
-constraints, foreign-key declarations, indexes, or triggers.
-
-The rebuild and data copy are transactional, and source-column mappings are
-validated, but those safeguards do not preserve omitted schema objects. Use
-the SQL console or another SQLite migration tool when those objects matter.
+existing declared type when it is something else.
 
 ## Security and limits
 

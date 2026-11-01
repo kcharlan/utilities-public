@@ -123,6 +123,55 @@ def validate_identifier(name: str):
 def quote_identifier(name: str) -> str:
     return '"' + name.replace('"', '""') + '"'
 
+def change_column_types(create_sql, old_types, new_types):
+    """Rewrite only column type spans in CREATE TABLE, retaining all other SQL."""
+    token = re.compile(r"(?:--[^\n]*(?:\n|$)|/\*.*?\*/|'(?:''|[^'])*'|\"(?:\"\"|[^\"])*\"|`(?:``|[^`])*`|\[[^\]]*\]|[()]|,)", re.S)
+    start = create_sql.find('(')
+    if start < 0:
+        raise ValueError('Unsupported CREATE TABLE statement')
+    depth, parts, mark, end = 0, [], start + 1, None
+    for match in token.finditer(create_sql, start):
+        value = match.group()
+        if value == '(':
+            depth += 1
+        elif value == ')':
+            depth -= 1
+            if depth == 0:
+                parts.append(create_sql[mark:match.start()])
+                end = match.start()
+                break
+        elif value == ',' and depth == 1:
+            parts.append(create_sql[mark:match.start()])
+            mark = match.end()
+    if end is None:
+        raise ValueError('Unsupported CREATE TABLE statement')
+    found = set()
+    ident = re.compile(r'^\s*(?:"((?:""|[^"])*)"|`((?:``|[^`])*)`|\[([^\]]*)\]|([A-Za-z_][A-Za-z0-9_]*))')
+    for i, part in enumerate(parts):
+        match = ident.match(part)
+        if not match:
+            continue
+        name = next(group for group in match.groups() if group is not None).replace('""', '"').replace('``', '`')
+        if name not in new_types:
+            continue
+        if name in found:
+            raise ValueError(f'Ambiguous column definition: {name}')
+        old_type = old_types[name]
+        tail = part[match.end():]
+        if old_type:
+            pattern = r'^\s+' + r'\s+'.join(map(re.escape, old_type.split())) + r'(?=\s|,|$)'
+            type_match = re.match(pattern, tail, re.I)
+            if not type_match:
+                raise ValueError(f'Cannot safely change type of {name}')
+            tail = ' ' + new_types[name] + tail[type_match.end():]
+        else:
+            tail = ' ' + new_types[name] + tail
+        parts[i] = part[:match.end()] + tail
+        found.add(name)
+    if found != set(new_types):
+        raise ValueError('Cannot safely locate all changed columns')
+    return create_sql[:start + 1] + ','.join(parts) + create_sql[end:]
+
 # --- Database Logic ---
 
 class DBManager:
@@ -170,36 +219,71 @@ class DBManager:
             cursor.execute(f"PRAGMA foreign_key_list({quote_identifier(table_name)});")
             return [dict(row) for row in cursor.fetchall()]
 
-    def execute_migration(self, table_name: str, new_cols_def: List[str], mapping: Dict[str, str]):
+    def execute_migration(self, table_name: str, columns):
         validate_identifier(table_name)
         conn = self.get_connection()
         try:
-            # Finding 7: Validate mapping against existing schema
-            existing_cols = {col['name'] for col in self.get_schema(table_name)}
-            for new_name, old_name in mapping.items():
-                if old_name and old_name not in existing_cols:
-                    return False, f"Column '{old_name}' does not exist in table '{table_name}'"
-
+            conn.isolation_level = None
             conn.execute("PRAGMA foreign_keys = OFF;")
-            cursor = conn.cursor()
-            
-            temp_name = f"_{table_name}_new_{int(time.time())}"
-            cols_sql = ", ".join(new_cols_def)
-            cursor.execute(f"CREATE TABLE {quote_identifier(temp_name)} ({cols_sql});")
-            
-            # Map existing columns
-            new_names = [n for n, o in mapping.items() if o] # Only columns that have an old name
-            old_names = [mapping[n] for n in new_names]
-            
-            if new_names:
-                quoted_new = [quote_identifier(n) for n in new_names]
-                quoted_old = [quote_identifier(o) for o in old_names]
-                insert_sql = f"INSERT INTO {quote_identifier(temp_name)} ({', '.join(quoted_new)}) SELECT {', '.join(quoted_old)} FROM {quote_identifier(table_name)}"
-                cursor.execute(insert_sql)
-            
-            cursor.execute(f"DROP TABLE {quote_identifier(table_name)}")
-            cursor.execute(f"ALTER TABLE {quote_identifier(temp_name)} RENAME TO {quote_identifier(table_name)}")
-            
+            conn.execute("PRAGMA legacy_alter_table = ON")
+            conn.execute("BEGIN IMMEDIATE")
+            existing = {row['name']: row['type'] for row in conn.execute(f'PRAGMA table_info({quote_identifier(table_name)})')}
+            old_names = [col.old_name for col in columns if col.old_name]
+            if len(old_names) != len(set(old_names)) or set(old_names) != set(existing):
+                raise ValueError('Migration must specify every existing column exactly once')
+            for col in columns:
+                if col.old_name:
+                    validate_identifier(col.old_name)
+                if not col.delete:
+                    validate_identifier(col.new_name)
+                    if not re.fullmatch(r'[A-Za-z][A-Za-z0-9_ ]*(?:\(\s*\d+\s*(?:,\s*\d+\s*)?\))?|', col.type):
+                        raise ValueError('Invalid declared type')
+                    if re.search(r'\b(?:CONSTRAINT|PRIMARY|NOT|NULL|UNIQUE|CHECK|DEFAULT|COLLATE|REFERENCES|GENERATED|AS)\b', col.type, re.I):
+                        raise ValueError('Invalid declared type')
+            table = quote_identifier(table_name)
+            for col in columns:
+                if col.old_name and col.delete:
+                    conn.execute(f'ALTER TABLE {table} DROP COLUMN {quote_identifier(col.old_name)}')
+            for col in columns:
+                if col.old_name and not col.delete and col.old_name != col.new_name:
+                    conn.execute(f'ALTER TABLE {table} RENAME COLUMN {quote_identifier(col.old_name)} TO {quote_identifier(col.new_name)}')
+            for col in columns:
+                if not col.old_name and not col.delete:
+                    conn.execute(f'ALTER TABLE {table} ADD COLUMN {quote_identifier(col.new_name)} {col.type}')
+            changes = {col.new_name: col.type for col in columns if col.old_name and not col.delete and col.type.upper() != existing[col.old_name].upper()}
+            if changes:
+                schema = conn.execute("SELECT sql FROM sqlite_master WHERE type='table' AND name=?", (table_name,)).fetchone()
+                name_pattern = re.escape(table_name)
+                if not schema or not re.match(r'\s*CREATE\s+TABLE\s+(?:"' + name_pattern + r'"|`' + name_pattern + r'`|\[' + name_pattern + r'\]|' + name_pattern + r')\s*\(', schema['sql'], re.I):
+                    raise ValueError('Unsupported table definition')
+                old_types = {col.new_name: existing[col.old_name] for col in columns if col.old_name and not col.delete}
+                rewritten = change_column_types(schema['sql'], old_types, changes)
+                temp_name = f'_{table_name}_new_{time.time_ns()}'
+                prefix_end = rewritten.find('(')
+                create = f'CREATE TABLE {quote_identifier(temp_name)} ' + rewritten[prefix_end:]
+                objects = [row['sql'] for row in conn.execute("SELECT sql FROM sqlite_master WHERE tbl_name=? AND type IN ('index','trigger') AND sql IS NOT NULL ORDER BY type, name", (table_name,))]
+                has_sequence = conn.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='sqlite_sequence'").fetchone()
+                sequence = conn.execute('SELECT seq FROM sqlite_sequence WHERE name=?', (table_name,)).fetchone() if has_sequence else None
+                conn.execute(create)
+                names = [row['name'] for row in conn.execute(f'PRAGMA table_info({table})')]
+                quoted = ', '.join(map(quote_identifier, names))
+                table_info = next(row for row in conn.execute('PRAGMA table_list') if row['schema'] == 'main' and row['name'] == table_name)
+                if not table_info['wr']:
+                    all_names = {row['name'].lower() for row in conn.execute(f'PRAGMA table_xinfo({table})')}
+                    rowid = next((name for name in ('rowid', '_rowid_', 'oid') if name not in all_names), None)
+                    if rowid is None:
+                        raise ValueError('Cannot preserve hidden rowid: all aliases are shadowed')
+                    quoted = quote_identifier(rowid) + ', ' + quoted
+                conn.execute(f'INSERT INTO {quote_identifier(temp_name)} ({quoted}) SELECT {quoted} FROM {table}')
+                conn.execute(f'DROP TABLE {table}')
+                conn.execute(f'ALTER TABLE {quote_identifier(temp_name)} RENAME TO {table}')
+                if sequence is not None:
+                    conn.execute('DELETE FROM sqlite_sequence WHERE name=?', (table_name,))
+                    conn.execute('INSERT INTO sqlite_sequence(name, seq) VALUES (?, ?)', (table_name, sequence['seq']))
+                for sql in objects:
+                    conn.execute(sql)
+                if conn.execute('PRAGMA foreign_key_check').fetchone():
+                    raise ValueError('Migration would violate foreign key constraints')
             conn.commit()
             return True, None
         except Exception as e:
@@ -542,16 +626,7 @@ async def get_count(table_name: str):
 @app.post("/api/migrate/{table_name}")
 async def migrate_table(table_name: str, migration: TableMigration):
     validate_identifier(table_name)
-    new_defs = []
-    mapping = {}
-    for col in migration.columns:
-        if col.delete: continue
-        validate_identifier(col.new_name)
-        # Simple definition, could be expanded for PK/Not Null
-        new_defs.append(f"{quote_identifier(col.new_name)} {col.type}")
-        mapping[col.new_name] = col.old_name
-    
-    success, err = db_manager.execute_migration(table_name, new_defs, mapping)
+    success, err = db_manager.execute_migration(table_name, migration.columns)
     if not success:
         raise HTTPException(status_code=400, detail=err)
     return {"status": "success"}
@@ -3054,7 +3129,8 @@ const {focusOnMount} = frontendKit;
                         delete: c.delete
                     }))
                 };
-                if (!confirm("This will migrate the table structure. Continue?")) return;
+                const rebuild = cols.some(c => !c.isNew && !c.delete && c.type.toUpperCase() !== c.declaredType.toUpperCase());
+                if (!confirm(rebuild ? "Changing a type rebuilds the table. Back up your database before continuing. Continue?" : "This will migrate the table structure. Continue?")) return;
                 const res = await fetch(`/api/migrate/${table}`, {
                     method: 'POST',
                     headers: {'Content-Type': 'application/json'},

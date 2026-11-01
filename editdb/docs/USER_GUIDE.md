@@ -215,14 +215,9 @@ Click the delete button on a column card. The card turns red with reduced opacit
 
 ### Applying Changes
 
-Click the green **Apply Changes** button. A confirmation dialog appears before the migration runs. EditDB uses a shadow-table migration pattern behind the scenes:
+Click the green **Apply Changes** button. A confirmation dialog appears before the migration runs. Renames, additions and deletions use SQLite's native column alterations. A type change rebuilds the table while retaining its constraints, indexes, triggers and dependent views. The transaction rolls back if a change fails; SQLite may reject changes that conflict with dependent schema objects or definitions that cannot be safely rewritten.
 
-1. Creates a new table with the updated schema
-2. Copies data from the old table (preserving values for renamed columns, discarding deleted columns)
-3. Drops the old table and renames the new one
-4. All wrapped in a transaction — if anything fails, it rolls back completely
-
-> **Back up the database before applying schema changes.** The current editor rebuilds only column names and the selected declared types. It does not preserve primary keys, `AUTOINCREMENT`, `NOT NULL`, default values, unique or check constraints, foreign-key declarations, indexes, or triggers. Use the SQL Console or another SQLite migration tool when those schema objects must be retained.
+> **Back up the database before applying schema changes.** A type change copies the table and may change how SQLite stores its values.
 
 ---
 

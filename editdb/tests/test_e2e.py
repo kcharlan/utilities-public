@@ -354,6 +354,21 @@ def test_schema_type_select_shows_each_columns_declared_type(server, page, tmp_p
             assert [row[1:3] for row in conn.execute('PRAGMA table_info(typed)')] == [
                 ('id', 'INTEGER'), ('code', 'VARCHAR(20)'), ('stamp', 'DATETIME'), ('plain', ''), ('title', 'BLOB')]
 
+def test_type_change_warns_before_rebuild_and_cancel_prevents_write(server, page):
+    messages = []
+    with guard_browser_errors(page):
+        writes = record_writes(page)
+        page.on('dialog', lambda dialog: (messages.append(dialog.message), dialog.dismiss()))
+        page.goto(server)
+        page.get_by_role('button', name='typed').click()
+        page.get_by_role('button', name='Schema', exact=True).click()
+        page.locator('select').nth(4).select_option('BLOB')
+        page.get_by_role('button', name='Apply Changes').click()
+        assert len(messages) == 1
+        assert 'rebuild' in messages[0].lower()
+        assert 'back up' in messages[0].lower()
+        assert writes == []
+
 def test_enter_on_an_untouched_null_cell_writes_an_empty_string(server, page, tmp_path):
     with guard_browser_errors(page):
         writes = record_writes(page)
