@@ -7,9 +7,49 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { randomUUID } from 'node:crypto';
 import http from 'node:http';
+import { PassThrough } from 'node:stream';
 
 const config = process.env.NGINX_TEST_CONFIG || fileURLToPath(new URL('../nginx/default.conf', import.meta.url));
 const docker = (...args) => execFileSync('docker', args, { encoding: 'utf8', timeout: 30000 }).trim();
+
+function observeFrames(stream, onFrame) {
+  let pending = Buffer.alloc(0);
+  stream.on('data', chunk => {
+    pending = Buffer.concat([pending, chunk]);
+    while (pending.length >= 2) {
+      const masked = Boolean(pending[1] & 0x80);
+      let length = pending[1] & 0x7f, offset = 2;
+      if (length === 126) {
+        if (pending.length < 4) return;
+        length = pending.readUInt16BE(2); offset = 4;
+      } else if (length === 127) {
+        if (pending.length < 10) return;
+        const large = pending.readBigUInt64BE(2);
+        if (large > BigInt(Number.MAX_SAFE_INTEGER)) throw new Error('Fixture frame too large');
+        length = Number(large); offset = 10;
+      }
+      const bodyOffset = offset + (masked ? 4 : 0);
+      if (pending.length < bodyOffset + length) return;
+      const body = Buffer.from(pending.subarray(bodyOffset, bodyOffset + length));
+      if (masked) for (let i = 0; i < length; i++) body[i] ^= pending[offset + i % 4];
+      pending = pending.subarray(bodyOffset + length);
+      onFrame(body);
+    }
+  });
+}
+
+test('fixture frame reader handles fragmented and coalesced TCP data', () => {
+  const stream = new PassThrough();
+  const frames = [];
+  observeFrames(stream, body => frames.push(body.toString()));
+  stream.write(Buffer.from([0x81]));
+  assert.deepEqual(frames, []);
+  stream.write(Buffer.from([3, 97]));
+  assert.deepEqual(frames, []);
+  stream.write(Buffer.from([98, 99, 0x81, 1, 120]));
+  assert.deepEqual(frames, ['abc', 'x']);
+  stream.destroy();
+});
 
 test('real Nginx preserves calculator caching and shared routing', { timeout: 90000 }, async t => {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), 'synthetic-nginx-'));
@@ -138,14 +178,21 @@ test('dynamic WebSocket crosses real Nginx and Fastify', { timeout: 90000 }, asy
   await fs.writeFile(path.join(root, 'backend.mjs'), `
 import http from 'node:http';
 import crypto from 'node:crypto';
-const server = http.createServer(async (req, res) => { for await (const chunk of req) res.write(chunk); res.end(); });
+import fs from 'node:fs';
+${observeFrames.toString()}
+const server = http.createServer(async (req, res) => {
+  if (req.headers.host !== '127.0.0.1:8080') { res.writeHead(403).end(); return; }
+  for await (const chunk of req) res.write(chunk); res.end();
+});
 server.on('upgrade', (req, socket) => {
+  fs.appendFileSync('/fixture/upgrades.log', JSON.stringify({ host: req.headers.host, forwardedHost: req.headers['x-forwarded-host'], url: req.url }) + '\\n');
+  if (req.headers.host !== '127.0.0.1:8080') return socket.end('HTTP/1.1 403 Forbidden\\r\\nConnection: close\\r\\n\\r\\n');
   const accept = crypto.createHash('sha1').update(req.headers['sec-websocket-key'] + '258EAFA5-E914-47DA-95CA-C5AB0DC85B11').digest('base64');
   socket.write('HTTP/1.1 101 Switching Protocols\\r\\nUpgrade: websocket\\r\\nConnection: Upgrade\\r\\nSec-WebSocket-Accept: ' + accept + '\\r\\n\\r\\n');
-  socket.once('data', frame => {
-    const len = frame[1] & 127; const mask = frame.subarray(2, 6); const data = Buffer.from(frame.subarray(6, 6 + len));
-    for (let i = 0; i < data.length; i++) data[i] ^= mask[i % 4];
-    socket.write(Buffer.concat([Buffer.from([0x81, data.length]), data]));
+  observeFrames(socket, data => {
+    const frame = Buffer.concat([Buffer.from([0x81, data.length]), data]);
+    socket.write(frame.subarray(0, 1));
+    setImmediate(() => socket.write(frame.subarray(1)));
   });
 });
 server.listen(8080, '0.0.0.0');
@@ -190,23 +237,31 @@ await import('/index/server.js');
   const forwarded = await fetch(origin + '/socket/upload', { method: 'POST', headers: { origin, 'content-type': 'application/octet-stream' }, body: bytes });
   assert.equal(forwarded.status, 200);
   assert.deepEqual(Buffer.from(await forwarded.arrayBuffer()), bytes);
-  const upgrade = (route, requestOrigin) => new Promise((resolve, reject) => {
-    const request = http.request(origin + route, { headers: { connection: 'Upgrade', upgrade: 'websocket', origin: requestOrigin, 'sec-websocket-version': '13', 'sec-websocket-key': 'c3ludGhldGljLWtleS0xMg==' } });
+  const upgrade = (route, requestOrigin, requestHost = `127.0.0.1:${port}`) => new Promise((resolve, reject) => {
+    const request = http.request(origin + route, { headers: { host: requestHost, connection: 'Upgrade', upgrade: 'websocket', origin: requestOrigin, 'sec-websocket-version': '13', 'sec-websocket-key': 'c3ludGhldGljLWtleS0xMg==' } });
     request.setTimeout(5000, () => request.destroy(new Error('WebSocket timed out')));
     request.on('response', response => { response.resume(); resolve({ status: response.statusCode }); });
     request.on('upgrade', (_response, socket) => {
       const message = Buffer.from('synthetic message'), mask = Buffer.from([1, 2, 3, 4]);
       const masked = Buffer.from(message.map((byte, i) => byte ^ mask[i % 4]));
-      socket.write(Buffer.concat([Buffer.from([0x81, 0x80 | message.length]), mask, masked]));
-      socket.once('data', data => { socket.destroy(); resolve({ status: 101, message: data.subarray(2).toString() }); });
+      const frame = Buffer.concat([Buffer.from([0x81, 0x80 | message.length]), mask, masked]);
+      socket.write(frame.subarray(0, 3));
+      setImmediate(() => socket.write(frame.subarray(3)));
+      observeFrames(socket, data => { socket.destroy(); resolve({ status: 101, message: data.toString() }); });
       socket.on('error', reject);
     });
     request.on('error', reject);
     request.end();
   });
-  assert.deepEqual(await upgrade('/socket', origin), { status: 101, message: 'synthetic message' });
+  assert.deepEqual(await upgrade('/socket/a%2Fb?x=one%26two', origin), { status: 101, message: 'synthetic message' });
   assert.deepEqual(await upgrade('/socket', origin), { status: 101, message: 'synthetic message' });
   assert.equal((await upgrade('/unknown', origin)).status, 404);
   assert.equal((await upgrade('/%66iles', origin)).status, 404);
   assert.equal((await upgrade('/socket', 'http://evil.example')).status, 403);
+  assert.equal((await upgrade('/socket', origin, 'evil.example')).status, 421);
+  const upstreamRequests = (await fs.readFile(path.join(root, 'upgrades.log'), 'utf8')).trim().split('\n').map(JSON.parse);
+  assert.deepEqual(upstreamRequests, [
+    { host: '127.0.0.1:8080', forwardedHost: `127.0.0.1:${port}`, url: '/a%2Fb?x=one%26two' },
+    { host: '127.0.0.1:8080', forwardedHost: `127.0.0.1:${port}`, url: '/' }
+  ]);
 });

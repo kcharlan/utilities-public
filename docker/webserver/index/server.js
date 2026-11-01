@@ -1396,7 +1396,7 @@ app.server.on('upgrade', (raw, socket, head) => {
   if (!match) return reject(404, 'Not Found');
   const target = new URL(buildUpstreamUrl(match.endpoint, match.remainder, raw.url));
   const transport = target.protocol === 'https:' ? https : http;
-  const upstream = transport.request(target, { headers: { ...raw.headers, 'x-forwarded-host': raw.headers.host, 'x-forwarded-proto': raw.headers['x-forwarded-proto'] || 'http', 'x-forwarded-for': buildForwardedFor(req), 'x-endpoint-id': match.endpoint.id } });
+  const upstream = transport.request(target, { headers: { ...raw.headers, host: target.host, 'x-forwarded-host': raw.headers.host, 'x-forwarded-proto': raw.headers['x-forwarded-proto'] || 'http', 'x-forwarded-for': buildForwardedFor(req), 'x-endpoint-id': match.endpoint.id } });
   socket.on('error', () => upstream.destroy());
   upstream.on('upgrade', (response, upstreamSocket, upstreamHead) => {
     socket.write(`HTTP/1.1 ${response.statusCode} ${response.statusMessage}\r\n` + response.rawHeaders.reduce((result, value, i, values) => i % 2 ? result : result + `${value}: ${values[i + 1]}\r\n`, '') + '\r\n');
