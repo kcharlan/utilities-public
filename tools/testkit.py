@@ -82,6 +82,73 @@ def guard_browser_errors(page, expected: Sequence[str] = ()):
             raise captured_browser_failure
 
 
+def _probe(app, scope):
+    async def run():
+        messages = []
+        ready = asyncio.Event()
+
+        async def receive():
+            if scope['type'] == 'websocket':
+                return {'type': 'websocket.connect'}
+            return {'type': 'http.request', 'body': b'', 'more_body': False}
+
+        async def send(message):
+            messages.append(message)
+            if message['type'] in ('http.response.start', 'websocket.accept', 'websocket.close'):
+                ready.set()
+
+        task = asyncio.create_task(app(scope, receive, send))
+        waiter = asyncio.create_task(ready.wait())
+        try:
+            await asyncio.wait((task, waiter), return_when=asyncio.FIRST_COMPLETED)
+            if task.done():
+                await task
+        finally:
+            for pending in (task, waiter):
+                if not pending.done():
+                    pending.cancel()
+            await asyncio.gather(task, waiter, return_exceptions=True)
+        return messages
+
+    return asyncio.run(run())
+
+
+def _probe_scope(kind, path, host, origin, port):
+    parsed = urlsplit(path)
+    headers = [(b'host', host.encode('latin-1'))]
+    if origin is not None:
+        headers.append((b'origin', origin.encode('latin-1')))
+    return {'type': kind, 'asgi': {'version': '3.0'}, 'http_version': '1.1',
+            'scheme': 'ws' if kind == 'websocket' else 'http', 'path': parsed.path,
+            'raw_path': parsed.path.encode(), 'query_string': parsed.query.encode(),
+            'headers': headers, 'server': ('127.0.0.1', port), 'client': ('127.0.0.1', 12345),
+            'root_path': ''}
+
+
+def probe_http(app, method, path, *, host, origin=None, port=8000) -> int:
+    scope = _probe_scope('http', path, host, origin, port)
+    scope['method'] = method
+    return next(m['status'] for m in _probe(app, scope) if m['type'] == 'http.response.start')
+
+
+def probe_websocket(app, path, *, host, origin=None, port=8000) -> str:
+    scope = _probe_scope('websocket', path, host, origin, port)
+    scope['subprotocols'] = []
+    return next(m['type'].split('.')[1] for m in _probe(app, scope)
+                if m['type'] in ('websocket.accept', 'websocket.close'))
+
+
+def assert_local_server_guard(app, *, get_path='/', post_path, ws_path=None, port=8000):
+    host = f'127.0.0.1:{port}'
+    assert probe_http(app, 'GET', get_path, host=host, port=port) != 403
+    assert probe_http(app, 'GET', get_path, host='evil.example', port=port) == 403
+    for origin in (None, 'http://evil.example'):
+        assert probe_http(app, 'POST', post_path, host=host, origin=origin, port=port) == 403
+        if ws_path is not None:
+            assert probe_websocket(app, ws_path, host=host, origin=origin, port=port) == 'close'
+
+
+
 class ASGISyncClient:
     """Small synchronous facade over HTTPX's async ASGI transport for tests."""
 
@@ -89,7 +156,7 @@ class ASGISyncClient:
         self,
         app,
         *,
-        base_url: str = "http://testserver",
+        base_url: str = "http://127.0.0.1:8000",
         raise_server_exceptions: bool = True,
     ) -> None:
         self.app = app
@@ -113,6 +180,7 @@ class ASGISyncClient:
             client = httpx.AsyncClient(
                 transport=transport,
                 base_url=self.base_url,
+                headers={"Origin": self.base_url},
             )
             await client.__aenter__()
             return client
@@ -145,10 +213,18 @@ class ASGISyncClient:
             async with httpx.AsyncClient(
                 transport=transport,
                 base_url=self.base_url,
+                headers={"Origin": self.base_url},
             ) as client:
                 return await client.request(method, url, **kwargs)
 
         return asyncio.run(send())
+
+    def websocket_url(self, path: str) -> str:
+        """Build an absolute WebSocket URL for this client's origin."""
+        from urllib.parse import urljoin
+
+        url = urlsplit(urljoin(self.base_url.rstrip('/') + '/', path))
+        return url._replace(scheme='wss' if url.scheme == 'https' else 'ws').geturl()
 
     def get(self, url: str, **kwargs):
         return self.request("GET", url, **kwargs)

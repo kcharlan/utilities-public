@@ -270,3 +270,57 @@ def test_no_external_resources_allows_explicitly_allowed_timed_origin():
     context = Context()
     blocked = testkit.block_external_requests(context, ['http://localhost:123'])
     testkit.assert_no_external_resources(Page(['http://localhost:123/asset.js']), blocked)
+
+
+def test_asgi_probes_and_guard_assertion():
+    from tools.local_server_guard import LocalOriginGuard
+    seen = []
+    async def app(scope, receive, send):
+        seen.append(scope)
+        if scope['type'] == 'websocket':
+            await send({'type': 'websocket.accept'})
+        else:
+            await send({'type': 'http.response.start', 'status': 200, 'headers': []})
+            await send({'type': 'http.response.body', 'body': b''})
+    guarded = LocalOriginGuard(app)
+    assert testkit.probe_http(guarded, 'GET', '/x?a=1', host='127.0.0.1:8000') == 200
+    assert seen[-1]['path'] == '/x' and seen[-1]['query_string'] == b'a=1'
+    assert testkit.probe_websocket(guarded, '/ws', host='localhost:8000', origin='http://localhost:8000') == 'accept'
+    testkit.assert_local_server_guard(guarded, get_path='/x', post_path='/write', ws_path='/ws')
+    assert all(s.get('method') != 'POST' for s in seen)
+
+
+def test_asgi_sync_client_defaults_and_websocket_url():
+    client = testkit.ASGISyncClient(None)
+    assert client.base_url == 'http://127.0.0.1:8000'
+    assert client.websocket_url('/ws?x=1') == 'ws://127.0.0.1:8000/ws?x=1'
+    assert testkit.ASGISyncClient(None, base_url='https://localhost:123').websocket_url('/ws') == 'wss://localhost:123/ws'
+
+
+def test_asgi_sync_client_sends_origin_in_both_lifecycles(monkeypatch):
+    import sys
+    from types import SimpleNamespace
+    captured = []
+    class Client:
+        def __init__(self, **kwargs):
+            captured.append(kwargs)
+        async def __aenter__(self):
+            return self
+        async def __aexit__(self, *args):
+            pass
+        async def request(self, *args, **kwargs):
+            return 200
+    monkeypatch.setitem(sys.modules, 'httpx', SimpleNamespace(ASGITransport=lambda **kw: kw, AsyncClient=Client))
+    client = testkit.ASGISyncClient(None)
+    assert client.get('/') == 200
+    with client:
+        assert client.get('/') == 200
+    assert [item['headers'] for item in captured] == [{'Origin': 'http://127.0.0.1:8000'}] * 2
+
+
+def test_websocket_probe_returns_after_accept_for_live_connection():
+    import asyncio
+    async def app(scope, receive, send):
+        await send({'type': 'websocket.accept'})
+        await asyncio.Event().wait()
+    assert testkit.probe_websocket(app, '/ws', host='localhost:8000', origin='http://localhost:8000') == 'accept'
