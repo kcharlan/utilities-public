@@ -1,9 +1,11 @@
 from __future__ import annotations
 
-import importlib.util
 import json
+import os
+import signal
+import subprocess
 import sys
-import traceback
+import tempfile
 from collections import defaultdict
 from datetime import datetime
 from pathlib import Path
@@ -22,33 +24,67 @@ CATEGORY_MAX = {
 }
 
 
-def _load_model(workspace: Path):
-    module_path = workspace / "cron_eval.py"
-    spec = importlib.util.spec_from_file_location("cron_eval_model", module_path)
-    if spec is None or spec.loader is None:
-        raise ImportError(f"could not load {module_path}")
-    module = importlib.util.module_from_spec(spec)
-    sys.modules["cron_eval_model"] = module
-    spec.loader.exec_module(module)
-    return module
+_MODEL_CHILD = r'''
+import contextlib, importlib.util, json, resource, sys
+from datetime import datetime
+resource.setrlimit(resource.RLIMIT_FSIZE, (4 * 1024 * 1024, 4 * 1024 * 1024))
+inputs = json.load(sys.stdin)
+try:
+    with contextlib.redirect_stdout(sys.stderr):
+        spec = importlib.util.spec_from_file_location("cron_eval_model", sys.argv[1])
+        module = importlib.util.module_from_spec(spec)
+        sys.modules["cron_eval_model"] = module
+        spec.loader.exec_module(module)
+        invalid = module.InvalidCronExpr
+        results = []
+        for item in inputs:
+            item["after"] = datetime.fromisoformat(item["after"])
+            try:
+                value = module.next_fires(**item)
+            except Exception as exc:
+                results.append({"kind": "raises", "value": type(exc).__name__, "valid": isinstance(exc, invalid)})
+            else:
+                if isinstance(value, list) and all(isinstance(v, datetime) and v.tzinfo is not None and v.utcoffset() is not None for v in value):
+                    results.append({"kind": "fires", "value": [v.isoformat() for v in value]})
+                else:
+                    results.append({"kind": "other", "value": "invalid result"})
+    json.dump({"import_ok": True, "results": results}, sys.stdout)
+except Exception as exc:
+    json.dump({"import_ok": False, "error": str(exc)}, sys.stdout)
+'''
 
 
-def _parse_after(text: str) -> datetime:
-    return datetime.fromisoformat(text)
-
-
-def _serialize_dt(value: Any) -> str:
-    if not isinstance(value, datetime):
-        return repr(value)
-    if value.tzinfo is None or value.utcoffset() is None:
-        return value.isoformat()
-    return value.isoformat()
-
-
-def _serialize_result(result: Any) -> dict[str, Any]:
-    if not isinstance(result, list):
-        return {"kind": "other", "value": repr(result)}
-    return {"kind": "fires", "value": [_serialize_dt(item) for item in result]}
+def _run_model(workspace: Path, inputs: list[dict[str, Any]]) -> dict[str, Any]:
+    with tempfile.TemporaryFile() as output:
+        process = subprocess.Popen(
+            [sys.executable, "-I", "-c", _MODEL_CHILD, str(workspace / "cron_eval.py")],
+            stdin=subprocess.PIPE, stdout=output, stderr=subprocess.DEVNULL,
+            env={key: os.environ[key] for key in ("PATH", "LANG", "LC_ALL", "TZ", "TMPDIR") if key in os.environ},
+            start_new_session=True,
+        )
+        try:
+            process.communicate(json.dumps(inputs).encode(), timeout=60)
+        except BaseException:
+            try:
+                os.killpg(process.pid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+            process.wait()
+            raise
+        try:
+            os.killpg(process.pid, signal.SIGKILL)
+        except ProcessLookupError:
+            pass
+        if process.returncode != 0:
+            raise ValueError(f"model process exited {process.returncode}")
+        output.seek(0)
+        data = output.read(4 * 1024 * 1024 + 1)
+        if len(data) > 4 * 1024 * 1024:
+            raise ValueError("model output exceeds limit")
+        payload = json.loads(data)
+        if not isinstance(payload, dict) or not isinstance(payload.get("import_ok"), bool):
+            raise ValueError("invalid model response")
+        return payload
 
 
 def _matches_expected_fires(actual: Any, expected: list[str]) -> bool:
@@ -135,11 +171,16 @@ def main(argv: list[str] | None = None) -> int:
     hidden_dir = Path(argv[2])
     run_dir.mkdir(parents=True, exist_ok=True)
 
+    fixtures = [json.loads(path.read_text(encoding="utf-8")) for path in sorted((hidden_dir / "conformance").glob("*.json"))]
     try:
-        model = _load_model(workspace)
-        invalid_cron_expr = model.InvalidCronExpr
-    except Exception:
-        _write_zero_score(run_dir, traceback.format_exc())
+        response = _run_model(workspace, [dict(fixture["input"]) for fixture in fixtures])
+        if not response["import_ok"]:
+            raise ValueError(str(response.get("error", "model import failed")))
+        results = response.get("results")
+        if not isinstance(results, list) or len(results) != len(fixtures):
+            raise ValueError("invalid model result count")
+    except (OSError, ValueError, RecursionError, subprocess.TimeoutExpired) as exc:
+        _write_zero_score(run_dir, str(exc))
         return 0
 
     category_earned: dict[str, float] = defaultdict(float)
@@ -149,27 +190,27 @@ def main(argv: list[str] | None = None) -> int:
     total_cases = 0
     passed_cases = 0
 
-    for path in sorted((hidden_dir / "conformance").glob("*.json")):
-        fixture = json.loads(path.read_text(encoding="utf-8"))
+    for fixture, actual in zip(fixtures, results):
         total_cases += 1
         category = fixture["category"]
         weight = float(fixture["weight"])
         category_total[category] += weight
-        payload = dict(fixture["input"])
-        payload["after"] = _parse_after(payload["after"])
         expected = fixture["expected"]
-        try:
-            result = model.next_fires(**payload)
-        except Exception as exc:
-            actual = {"kind": "raises", "value": type(exc).__name__}
-            passed = (
-                expected["kind"] == "raises"
-                and isinstance(exc, invalid_cron_expr)
-                and type(exc).__name__ == expected["value"]
-            )
+        if not isinstance(actual, dict):
+            actual = {"kind": "other", "value": "invalid response"}
+        if actual.get("kind") == "raises" and not isinstance(actual.get("value"), str):
+            actual = {"kind": "other", "value": "invalid response"}
+        passed = False
+        if actual.get("kind") == "raises":
+            passed = expected["kind"] == "raises" and actual.get("valid") is True and actual.get("value") == expected["value"]
+        elif actual.get("kind") == "fires" and isinstance(actual.get("value"), list):
+            try:
+                parsed = [datetime.fromisoformat(item) for item in actual["value"] if isinstance(item, str)]
+                passed = len(parsed) == len(actual["value"]) and expected["kind"] == "fires" and _matches_expected_fires(parsed, expected["value"])
+            except ValueError:
+                pass
         else:
-            actual = _serialize_result(result)
-            passed = expected["kind"] == "fires" and _matches_expected_fires(result, expected["value"])
+            actual = {"kind": "other", "value": "invalid response"}
 
         if passed:
             passed_cases += 1

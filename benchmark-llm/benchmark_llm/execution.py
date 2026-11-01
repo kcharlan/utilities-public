@@ -16,6 +16,22 @@ CommandProgressCallback = Callable[[dict[str, Any]], None]
 _TAIL_LINE_LIMIT = 20
 
 
+def _stop_process_group(process: subprocess.Popen) -> None:
+    try:
+        os.killpg(process.pid, signal.SIGTERM)
+    except ProcessLookupError:
+        pass
+    try:
+        process.wait(timeout=5)
+    except subprocess.TimeoutExpired:
+        pass
+    try:
+        os.killpg(process.pid, signal.SIGKILL)
+    except ProcessLookupError:
+        pass
+    process.wait()
+
+
 def _load_metrics_payload(metrics_path: Path | None) -> tuple[dict[str, Any] | None, str | None]:
     if metrics_path is None or not metrics_path.exists():
         return None, None
@@ -108,41 +124,35 @@ def run_command(
         last_activity = time.monotonic()
         last_sizes = (0, 0)
 
-        while True:
-            exit_code = process.poll()
-            stdout_size = stdout_path.stat().st_size if stdout_path.exists() else 0
-            stderr_size = stderr_path.stat().st_size if stderr_path.exists() else 0
-            if (stdout_size, stderr_size) != last_sizes:
-                last_sizes = (stdout_size, stderr_size)
-                last_activity = time.monotonic()
-            now = time.monotonic()
-            if exit_code is not None:
-                break
-            if deadline is not None and now >= deadline:
-                timed_out = True
-                os.killpg(process.pid, signal.SIGTERM)
-                try:
-                    process.wait(timeout=5)
-                except subprocess.TimeoutExpired:
-                    os.killpg(process.pid, signal.SIGKILL)
-                    process.wait()
-                break
-            if inactivity_timeout_sec is not None and now - last_activity >= inactivity_timeout_sec:
-                inactivity_timed_out = True
-                os.killpg(process.pid, signal.SIGTERM)
-                try:
-                    process.wait(timeout=5)
-                except subprocess.TimeoutExpired:
-                    os.killpg(process.pid, signal.SIGKILL)
-                    process.wait()
-                break
-            time.sleep(0.25)
+        try:
+            while True:
+                exit_code = process.poll()
+                stdout_size = stdout_path.stat().st_size if stdout_path.exists() else 0
+                stderr_size = stderr_path.stat().st_size if stderr_path.exists() else 0
+                if (stdout_size, stderr_size) != last_sizes:
+                    last_sizes = (stdout_size, stderr_size)
+                    last_activity = time.monotonic()
+                now = time.monotonic()
+                if exit_code is not None:
+                    break
+                if deadline is not None and now >= deadline:
+                    timed_out = True
+                    _stop_process_group(process)
+                    break
+                if inactivity_timeout_sec is not None and now - last_activity >= inactivity_timeout_sec:
+                    inactivity_timed_out = True
+                    _stop_process_group(process)
+                    break
+                time.sleep(0.25)
+        except BaseException:
+            _stop_process_group(process)
+            raise
 
         completed = subprocess.CompletedProcess(
             command,
             process.returncode if process.returncode is not None else -signal.SIGTERM,
-            stdout_path.read_text(encoding="utf-8"),
-            stderr_path.read_text(encoding="utf-8"),
+            stdout_path.read_text(encoding="utf-8", errors="replace"),
+            stderr_path.read_text(encoding="utf-8", errors="replace"),
         )
 
     ended = utc_now()

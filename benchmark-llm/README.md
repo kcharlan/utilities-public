@@ -384,6 +384,8 @@ For `visibility.expose` and `visibility.hide`, the runtime strips the static pat
 - `visible/**` copies into the workspace root without a top-level `visible/` folder
 - `evaluator-only/**` copies into `BENCH_HIDDEN_DIR` without a top-level `evaluator-only/` folder
 
+Hidden files are staged only after the last model step. Earlier non-model steps receive an empty hidden directory. Repo-task commands run as the same operating-system user as the runner, so this staging is not a security sandbox: model commands can access files that user can read or write, including the original benchmark package.
+
 ## Examples
 
 - [examples/logic-mini](./examples/logic-mini/README.md)

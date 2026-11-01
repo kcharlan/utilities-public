@@ -146,6 +146,8 @@ def _looks_like_retryable_llm_failure(record: dict[str, Any]) -> tuple[bool, str
         return True, "timeout"
     if record.get("inactivity_timed_out"):
         return True, "inactivity_timeout"
+    if record.get("exit_code") == 0:
+        return False, None
     combined = f"{record.get('stdout', '')}\n{record.get('stderr', '')}".lower()
     for pattern in _RETRYABLE_LLM_ERROR_PATTERNS:
         if pattern in combined:
@@ -580,6 +582,8 @@ def run_repo_task(
     workspace_root = runtime_home / "worktrees" / bench_id / safe_slug(model)
     workspace_root.mkdir(parents=True, exist_ok=True)
 
+    workspace = None
+    branch_name = None
     try:
         attempt_number = 0
         while True:
@@ -618,16 +622,15 @@ def run_repo_task(
             visibility = config.get("visibility", {})
             _copy_pattern_matches(benchmark_dir, workspace, visibility.get("expose", []))
             hidden_patterns = visibility.get("hide", [])
-            if hidden_patterns:
-                _copy_pattern_matches(
-                    benchmark_dir,
-                    hidden_stage_dir,
-                    hidden_patterns,
-                    require_match=True,
-                )
+            last_model_index = max((i for i, item in enumerate(steps) if item.model_visible), default=-1)
+            hidden_staged = False
 
             try:
                 for index, step in enumerate(steps, start=1):
+                    if not hidden_staged and index - 1 > last_model_index:
+                        if hidden_patterns:
+                            _copy_pattern_matches(benchmark_dir, hidden_stage_dir, hidden_patterns, require_match=True)
+                        hidden_staged = True
                     metrics_path = attempt_dir / "command-metrics" / f"{index:02d}__{safe_slug(step.phase)}.json"
                     stdout_path = attempt_dir / "command-output" / f"{index:02d}__{safe_slug(step.phase)}.stdout.log"
                     stderr_path = attempt_dir / "command-output" / f"{index:02d}__{safe_slug(step.phase)}.stderr.log"
@@ -914,5 +917,10 @@ def run_repo_task(
                         }
                     )
                 raise
+    except KeyboardInterrupt:
+        if workspace is not None and branch_name is not None:
+            _cleanup_failed_repo_task(source_repo, workspace, branch_name, run_dir)
+            _prune_empty_worktree_dirs(workspace_root, runtime_home / "worktrees")
+        raise
     except Exception:
         raise

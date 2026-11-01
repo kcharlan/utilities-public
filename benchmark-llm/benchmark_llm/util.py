@@ -47,7 +47,6 @@ _MODEL_ENV_KEYS = {
     "TEMP",
     "USER",
     "LOGNAME",
-    "SSH_AUTH_SOCK",
 }
 _MODEL_ENV_PREFIXES = (
     "OPENAI_",
@@ -73,9 +72,6 @@ _MODEL_ENV_PREFIXES = (
     "HTTPS_",
 )
 _MODEL_ENV_SUFFIXES = (
-    "_API_KEY",
-    "_ACCESS_TOKEN",
-    "_TOKEN",
     "_BASE_URL",
     "_ENDPOINT",
     "_URL",
