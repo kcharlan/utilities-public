@@ -18,9 +18,7 @@ Once started, the application will be available at:
 The setup uses Docker Compose with the following parameters:
 
 - **Image:** `excalidraw/excalidraw:latest`
-- **Port Mapping:** Host port `5010` on all interfaces is mapped to container
-  port `80`. The service may therefore be reachable from the local network,
-  subject to the host firewall.
+- **Port Mapping:** Host port `5010` on loopback is mapped to container port `80`.
 - **Restart Policy:** Set to `unless-stopped`, ensuring the whiteboard is available after system reboots or Docker restarts.
 
 ### Manual Commands
@@ -48,8 +46,10 @@ To change the port Excalidraw runs on, edit the `ports` section in `docker-compo
 
 ```yaml
 ports:
-  - "NEW_PORT:80"
+  - "127.0.0.1:NEW_PORT:80"
 ```
+
+Run `node --test docker/excalidraw/tests/compose.test.mjs` from the repository root to check the published interface without starting the service.
 
 ---
 *Note: This setup is intended for local development and personal use.*

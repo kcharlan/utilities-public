@@ -3,5 +3,5 @@ services:
     image: excalidraw/excalidraw:latest
     container_name: excalidraw
     ports:
-      - "5010:80"
+      - "127.0.0.1:5010:80"
     restart: unless-stopped
