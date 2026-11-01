@@ -3,7 +3,7 @@ set -euo pipefail
 project_dir="${1:-$(cd "$(dirname "$0")/.." && pwd -P)}"
 case "$project_dir" in /*) ;; *) echo 'Project directory must be absolute' >&2; exit 2;; esac
 scratch_dir="$(mktemp -d "${TMPDIR:-/tmp}/apple-health-extraction-test.XXXXXX")"
-trap 'rm -r -- "$scratch_dir"' EXIT
+trap 'rm -r -- "${scratch_dir:?}"' EXIT
 cd "$scratch_dir"
 cat > export.xml <<'XML'
 <?xml version="1.0" encoding="UTF-8"?>

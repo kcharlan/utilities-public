@@ -378,6 +378,7 @@ inspected_config_dir_mode=""
 
 cleanup_repair_artifacts() {
   local cleanup_path
+  integer cleanup_failed=0
   local role expected_device expected_inode expected_owner cleanup_metadata cleanup_device cleanup_inode cleanup_owner cleanup_group cleanup_mode cleanup_size cleanup_links
   for role in candidate snapshot; do
     if [[ "${role}" == candidate ]]; then
@@ -395,24 +396,32 @@ cleanup_repair_artifacts() {
     cleanup_metadata="$("${STAT_BIN}" -f '%d|%i|%u|%g|%Lp|%z|%l' -- "${cleanup_path}" 2>/dev/null)" || continue
     IFS='|' read -r cleanup_device cleanup_inode cleanup_owner cleanup_group cleanup_mode cleanup_size cleanup_links <<< "${cleanup_metadata}"
     if [[ -f "${cleanup_path}" && ! -L "${cleanup_path}" && "${cleanup_device}" == "${expected_device}" && "${cleanup_inode}" == "${expected_inode}" && "${cleanup_owner}" == "${expected_owner}" && "${cleanup_owner}" == "${EUID}" && "${cleanup_links}" == 1 ]]; then
-      /bin/rm -f -- "${cleanup_path}" 2>/dev/null || true
+      /bin/rm -- "${cleanup_path:?}" 2>/dev/null || { print -u2 'Unable to remove a private repair artifact.'; cleanup_failed=1; }
     fi
   done
   if (( ${repair_lock_owned:-0} )) && [[ "${repair_lock_pid:-}" == "$$" && -d "${repair_lock_dir}" && ! -L "${repair_lock_dir}" ]]; then
-    cleanup_metadata="$("${STAT_BIN}" -f '%d|%i|%u|%g|%Lp|%z|%l' -- "${repair_lock_dir}" 2>/dev/null)" || return 0
+    cleanup_metadata="$("${STAT_BIN}" -f '%d|%i|%u|%g|%Lp|%z|%l' -- "${repair_lock_dir}" 2>/dev/null)" || return "$cleanup_failed"
     IFS='|' read -r cleanup_device cleanup_inode cleanup_owner cleanup_group cleanup_mode cleanup_size cleanup_links <<< "${cleanup_metadata}"
-    [[ "${cleanup_device}" == "${repair_lock_device}" && "${cleanup_inode}" == "${repair_lock_inode}" && "${cleanup_owner}" == "${repair_lock_owner}" && "${cleanup_owner}" == "${EUID}" ]] || return 0
+    [[ "${cleanup_device}" == "${repair_lock_device}" && "${cleanup_inode}" == "${repair_lock_inode}" && "${cleanup_owner}" == "${repair_lock_owner}" && "${cleanup_owner}" == "${EUID}" ]] || return "$cleanup_failed"
     local marker_path="${repair_lock_dir}/owner"
     if [[ -n "${repair_lock_marker_inode:-}" ]]; then
-      cleanup_metadata="$("${STAT_BIN}" -f '%d|%i|%u|%g|%Lp|%z|%l' -- "${marker_path}" 2>/dev/null)" || return 0
+      cleanup_metadata="$("${STAT_BIN}" -f '%d|%i|%u|%g|%Lp|%z|%l' -- "${marker_path}" 2>/dev/null)" || return "$cleanup_failed"
       IFS='|' read -r cleanup_device cleanup_inode cleanup_owner cleanup_group cleanup_mode cleanup_size cleanup_links <<< "${cleanup_metadata}"
-      [[ -f "${marker_path}" && ! -L "${marker_path}" && "${cleanup_device}" == "${repair_lock_marker_device}" && "${cleanup_inode}" == "${repair_lock_marker_inode}" && "${cleanup_owner}" == "${repair_lock_marker_owner}" && "${cleanup_owner}" == "${EUID}" && "${cleanup_mode}" == 600 && "${cleanup_links}" == 1 ]] || return 0
-      /bin/rm -f -- "${marker_path}" 2>/dev/null || true
+      [[ -f "${marker_path}" && ! -L "${marker_path}" && "${cleanup_device}" == "${repair_lock_marker_device}" && "${cleanup_inode}" == "${repair_lock_marker_inode}" && "${cleanup_owner}" == "${repair_lock_marker_owner}" && "${cleanup_owner}" == "${EUID}" && "${cleanup_mode}" == 600 && "${cleanup_links}" == 1 ]] || return "$cleanup_failed"
+      /bin/rm -- "${marker_path:?}" 2>/dev/null || { print -u2 'Unable to remove the private repair lock marker.'; return 1; }
     elif [[ -e "${marker_path}" || -L "${marker_path}" ]]; then
-      return 0
+      return "$cleanup_failed"
     fi
-    /bin/rmdir -- "${repair_lock_dir}" 2>/dev/null || true
+    /bin/rmdir -- "${repair_lock_dir}" 2>/dev/null || { print -u2 'Unable to remove the private repair lock.'; cleanup_failed=1; }
   fi
+  return "$cleanup_failed"
+}
+
+repair_cleanup_exit() {
+  local incoming=$?
+  trap - EXIT
+  cleanup_repair_artifacts || { (( incoming != 0 )) || incoming=1; }
+  exit "$incoming"
 }
 
 inspect_path_acl() {
@@ -862,7 +871,7 @@ write_repair_candidate_to_path() {
 
 run_repair_config() {
   local snapshot_result expected_metadata replacement_host answer
-  trap cleanup_repair_artifacts EXIT
+  trap repair_cleanup_exit EXIT
   trap 'repair_signal_exit 130' INT
   trap 'repair_signal_exit 143' TERM
   acquire_repair_lock || repair_failure "Another config repair is already active, or the private repair lock could not be created. No configuration or backup files were changed."
@@ -965,7 +974,7 @@ run_repair_config() {
 repair_signal_exit() {
   local signal_status="$1"
   trap - EXIT INT TERM
-  cleanup_repair_artifacts
+  cleanup_repair_artifacts || true
   exit "${signal_status}"
 }
 
@@ -1082,14 +1091,26 @@ find_output_tmp=""
 find_error_tmp=""
 
 cleanup_temp_files() {
-  [[ -z "${find_output_tmp:-}" ]] || /bin/rm -f -- "${find_output_tmp}"
-  [[ -z "${find_error_tmp:-}" ]] || /bin/rm -f -- "${find_error_tmp}"
+  local path
+  integer failed=0
+  for path in "${find_output_tmp:-}" "${find_error_tmp:-}"; do
+    [[ -n "$path" && ( -e "$path" || -L "$path" ) ]] || continue
+    /bin/rm -- "${path:?}" 2>/dev/null || { print -u2 'Unable to remove a private scan artifact.'; failed=1; }
+  done
+  return "$failed"
+}
+
+scan_cleanup_exit() {
+  local incoming=$?
+  trap - EXIT
+  cleanup_temp_files || { (( incoming != 0 )) || incoming=1; }
+  exit "$incoming"
 }
 
 if ! find_output_tmp="$("${MKTEMP_BIN}" -t "${SCRIPT_NAME}.find.XXXXXX")"; then
   exit_with_error "Unable to initialize the private scan workspace; no cleanup was attempted."
 fi
-trap cleanup_temp_files EXIT
+trap scan_cleanup_exit EXIT
 trap 'exit 130' INT
 trap 'exit 143' TERM
 if ! find_error_tmp="$("${MKTEMP_BIN}" -t "${SCRIPT_NAME}.find.err.XXXXXX")"; then
@@ -1127,8 +1148,8 @@ else
   fi
   exit_with_error "Failed to enumerate backup files; no files were removed."
 fi
-cleanup_temp_files
 trap - EXIT INT TERM
+cleanup_temp_files || exit_with_error "Unable to remove the private scan workspace; no files were removed."
 
 if (( classification_failures > 0 )); then
   exit_with_error "Unable to classify ${classification_failures} eligible backup file(s); no files were removed."
@@ -1227,7 +1248,7 @@ for file in "${purge_candidates[@]}"; do
     continue
   fi
 
-  if "${RM_BIN}" -f -- "${file}" 2>/dev/null; then
+  if "${RM_BIN}" -- "${file:?}" 2>/dev/null; then
     (( removed += 1 ))
     terminal_detail "Removed: ${(q)file}"
   else

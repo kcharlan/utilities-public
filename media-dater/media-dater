@@ -20,6 +20,7 @@ RECURSIVE=false
 PREFIX="IMG_"
 EXTENSIONS="" # Empty means all
 TARGET_DIR=""
+argfile=""
 
 # ------------------------------------------------------------------------------
 # Helpers
@@ -28,6 +29,15 @@ TARGET_DIR=""
 die() {
     echo "Error: $1" >&2
     exit 1
+}
+
+cleanup_argfile() {
+    local exit_code=$?
+    trap - EXIT
+    if [[ -n "$argfile" && ( -e "$argfile" || -L "$argfile" ) ]]; then
+        rm -- "${argfile:?}" || { echo "Error: could not remove temporary file: $argfile" >&2; [[ "$exit_code" -ne 0 ]] || exit_code=1; }
+    fi
+    exit "$exit_code"
 }
 
 log() {
@@ -178,11 +188,10 @@ main() {
     # 2. Filter Files
     # We create a temporary file to hold the list of files to process.
     # We use mktemp for safety.
-    local argfile
     argfile=$(mktemp) || die "Could not create temporary file."
     
     # Ensure cleanup on exit
-    trap "rm -f \"$argfile\"" EXIT
+    trap cleanup_argfile EXIT
 
     local count=0
     local skipped=0

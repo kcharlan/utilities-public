@@ -6,7 +6,7 @@ set -euo pipefail
 root=$(cd "$(dirname "$0")/../.." && pwd)
 scratch=$(mktemp -d "${TMPDIR:-/tmp}/telltale-check-test.XXXXXX")
 chmod 700 "$scratch"
-trap 'rm -rf "$scratch"' EXIT
+trap 'code=$?; rm -r -- "${scratch:?}" || { [ "$code" -ne 0 ] || code=1; }; exit "$code"' EXIT
 mkdir -p "$scratch/bin" "$scratch/home" "$scratch/tmp" "$scratch/work/Fake Telltale.app/Contents/MacOS" "$scratch/work/NoExecutable.app/Contents/MacOS"
 printf '#!/bin/bash\nexit 0\n' > "$scratch/work/Fake Telltale.app/Contents/MacOS/Telltale"
 chmod 755 "$scratch/work/Fake Telltale.app/Contents/MacOS/Telltale"

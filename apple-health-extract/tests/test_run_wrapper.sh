@@ -4,7 +4,7 @@ set -euo pipefail
 PROJECT_ROOT="$(cd "$(dirname "$0")/.." && pwd -P)"
 WRAPPER="$PROJECT_ROOT/run.sh"
 TEST_ROOT="$(mktemp -d "${TMPDIR:-/tmp}/apple-health-wrapper-test.XXXXXX")"
-trap 'rm -r -- "$TEST_ROOT"' EXIT
+trap 'rm -r -- "${TEST_ROOT:?}"' EXIT
 mkdir -p "$TEST_ROOT/bin"
 cat > "$TEST_ROOT/bin/uv" <<'EOF'
 #!/bin/bash

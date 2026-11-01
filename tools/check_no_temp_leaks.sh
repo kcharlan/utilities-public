@@ -68,13 +68,14 @@ marker_only() {
         [ -f "$1/.keep-directory" ] && [ ! -L "$1/.keep-directory" ] && [ ! -s "$1/.keep-directory" ]
 }
 sweep() {
-    local name removed=0 kept=()
+    local name marker removed=0 kept=()
     if [ "$markers_listed" -eq 0 ]; then
         echo "check_no_temp_leaks: skipped the marker sweep: couldn't list $darwin before the run" >&2
         return 0
     fi
     while IFS= read -r name; do
-        if marker_only "$darwin/$name" && rm -- "$darwin/$name/.keep-directory" && rmdir -- "$darwin/$name"; then
+        marker="$darwin/$name/.keep-directory"
+        if marker_only "$darwin/$name" && rm -- "${marker:?}" && rmdir -- "$darwin/$name"; then
             removed=$((removed + 1))
         else
             kept+=("$name")
@@ -109,14 +110,24 @@ if [ "$sweep_only" -eq 1 ]; then
 fi
 run=$(mktemp -d "$real/no-temp-leaks-run.XXXXXX") || exit 1
 chmod 700 "$run"
-trap 'rm -rf "$run"' EXIT
+cleanup_run() {
+    [ -e "$run" ] || [ -L "$run" ] || return 0
+    rm -r -- "${run:?}" || { echo "check_no_temp_leaks: cannot remove private run directory: $run" >&2; return 1; }
+}
+cleanup_on_exit() {
+    local incoming=$?
+    trap - EXIT
+    cleanup_run || { [ "$incoming" -ne 0 ] || incoming=1; }
+    exit "$incoming"
+}
+trap cleanup_on_exit EXIT
 TMPDIR="$run/" "$@"
 status=$?
 # SwiftPM names a package's lock files after its .build path, slashes turned into underscores.
 own=$(pwd -P | tr / _)
 inside=$(entries "$run" | grep -v -F -x -e "${own}_.build.lock" -e "${own}_.build_workspace-state.json.lock")
-rm -rf "$run"
 trap - EXIT
+cleanup_run || { [ "$status" -ne 0 ] || status=1; }
 outside=$(added "$before" "$(entries "$real")")
 darwin_outside=""
 [ "$darwin" = "$real" ] || darwin_outside=$(added "$darwin_before" "$(entries "$darwin")")

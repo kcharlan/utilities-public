@@ -3,7 +3,17 @@ set -eu
 scanner="$(cd "$(dirname "$0")/../.." && pwd)/tools/check_secrets.sh"
 work=$(mktemp -d "${TMPDIR:-/tmp}/prime-secrets-tests.XXXXXX")
 work=$(cd "$work" && pwd -P)
-trap 'chmod -R u+rwX "$work"; rm -rf "$work"' EXIT
+cleanup() {
+  local code=$? path
+  trap - EXIT
+  chmod -R u+rwX "$work" || { [ "$code" -ne 0 ] || code=1; }
+  for path in "$work" "${patterns:-}"; do
+    [ -n "$path" ] && { [ -e "$path" ] || [ -L "$path" ]; } || continue
+    rm -r -- "${path:?}" || { [ "$code" -ne 0 ] || code=1; }
+  done
+  exit "$code"
+}
+trap cleanup EXIT
 chmod 700 "$work"
 # TMPDIR may sit inside a checkout (`make test` points it into .build/tmp); stop Git's repository
 # discovery above $work, so the case without a repository finds none.
@@ -18,7 +28,6 @@ cp .secrets-patterns patterns-copy
 # the trap has removed $work, and rm -f would then silently keep the file.
 patterns="${work%/*}/${work##*/}.patterns"
 mv patterns-copy "$patterns"
-trap 'chmod -R u+rwX "$work"; rm -rf "$work"; rm -f "$patterns"' EXIT
 check() {
   local want=$1 code=0
   ANKER_CHARGE_MONITOR_SECRETS_FILE="$work/.secrets-patterns" bash "$scanner" > result 2>&1 || code=$?
@@ -46,10 +55,10 @@ while IFS= read -r literal; do
   git add protocol
   touch "$literal"
   check 1
-  rm "$literal"
+  rm -- "${literal:?}"
   touch "$literal"
   git add -- "$literal"
-  rm "$literal"
+  rm -- "${literal:?}"
   check 1
   git rm --cached -q -- "$literal"
 done < "$patterns"
@@ -98,7 +107,7 @@ rm link
 mkdir tracked-dir ignored/nested
 printf "safe\n" > tracked-dir/file
 git add tracked-dir/file
-rm -rf tracked-dir
+rm -r -- tracked-dir
 cp "$patterns" ignored/nested/file
 ln -s ignored/nested tracked-dir
 check 0
@@ -126,7 +135,7 @@ exec "$realgit" "\$@"
 SH
 chmod +x fakebin/git
 PATH="$work/fakebin:$PATH" check 2
-rm -rf fakebin
+rm -r -- fakebin
 mv .git git-unavailable
 check 2
 mv git-unavailable .git

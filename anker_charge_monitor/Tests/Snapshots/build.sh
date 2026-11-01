@@ -17,11 +17,18 @@ fi
 package_dir="$snapshot_home/package"
 finish() {
   local code=$?
+  trap - EXIT
   if $owned; then
-    if (( code )); then rm -rf -- "$snapshot_home"
-    else rm -rf -- "$package_dir"; find "$snapshot_home" -mindepth 1 -maxdepth 1 -type d -exec rm -rf -- {} +; fi
+    local path failed_build=$code
+    local -a cleanup_paths
+    if (( code )); then cleanup_paths=("$snapshot_home"); else cleanup_paths=("$snapshot_home"/*(DN)); fi
+    for path in "${cleanup_paths[@]}"; do
+      if (( ! failed_build )) && [[ ! -d "$path" || -L "$path" ]]; then continue; fi
+      [[ -e "$path" || -L "$path" ]] || continue
+      rm -r -- "${path:?}" || { print -u2 -- "Cannot remove $path"; (( code )) || code=1; }
+    done
   fi
-  return $code
+  exit $code
 }
 trap finish EXIT
 trap 'exit 130' INT

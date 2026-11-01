@@ -602,7 +602,7 @@ install_file() {
   staged="${destination:h}/.${destination:t}.propagate-$$"
   cp -p "$SOURCE_ROOT/$relative" "$staged" &&
     mv -f "$staged" "$destination" ||
-    { rm -f -- "${staged:?}"; return 1; }
+    { if [[ -e "$staged" || -L "$staged" ]]; then rm -- "${staged:?}" || warn "cannot remove staged file: $staged"; fi; return 1; }
 }
 
 # Copies one stack's tracked files. Prints nothing for unchanged files.

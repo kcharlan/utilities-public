@@ -25,7 +25,8 @@ TMSM_COMMAND_TIMEOUT=${TMSM_COMMAND_TIMEOUT:-30}
 remove_owned_file() {
     case "$1" in ''|/) return 1 ;; esac
     [ -e "$1" ] || [ -L "$1" ] || return 0
-    /bin/rm -- "$1"
+    tmsm_remove_path=$1
+    /bin/rm -- "${tmsm_remove_path:?}"
 }
 
 bounded_child_alive() {

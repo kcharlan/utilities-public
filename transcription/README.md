@@ -173,17 +173,17 @@ copy_counter() {
   parent=$(dirname "$destination")
   mkdir -p "$parent"
   temp=$(mktemp "$parent/.counter-migration.XXXXXX")
-  if ! chmod 600 "$temp" || ! cat "$source" > "$temp"; then rm -f "$temp"; return 1; fi
+  if ! chmod 600 "$temp" || ! cat "$source" > "$temp"; then rm -- "${temp:?}" || printf 'Could not remove temporary file: %s\n' "$temp" >&2; return 1; fi
   if ln "$temp" "$destination" 2>/dev/null; then
     printf 'Copied: %s\n' "$destination"
   elif [ -e "$destination" ] || [ -L "$destination" ]; then
     printf 'Skipped existing destination: %s\n' "$destination"
   else
-    rm -f "$temp"
+    rm -- "${temp:?}" || printf 'Could not remove temporary file: %s\n' "$temp" >&2
     printf 'Could not publish destination: %s\n' "$destination" >&2
     return 1
   fi
-  rm -f "$temp"
+  rm -- "${temp:?}"
 }
 copy_counter "$HOME/transcription/session_backup.json" "$cumulative"
 copy_counter "$HOME/transcription/transcription_odometer.txt" "$lifetime"

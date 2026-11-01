@@ -41,6 +41,29 @@ expect_leak() {
 }
 
 expect_pass true
+expect_pass sh -c 'r=${TMPDIR%/}; rmdir -- "${r:?}"'
+if TMPDIR="$fake" "$checker" --names "$names" sh -c 'r=${TMPDIR%/}; rmdir -- "${r:?}"; exit 7' > "$scratch/out.log" 2>&1; then
+    echo 'FAIL: missing run directory hid child failure'; exit 1
+else
+    [ "$?" -eq 7 ] || { echo 'FAIL: missing run directory changed child failure'; exit 1; }
+fi
+! grep -q 'cannot remove private run directory' "$scratch/out.log" || { echo 'FAIL: absent directory reported as cleanup failure'; exit 1; }
+# A synthetic shell function fails the removal without attempting an OS deletion.
+for child_exit in 0 7; do
+    : > "$scratch/attempts"
+    export FAIL_RECORD="$scratch/attempts" RUN_RECORD="$scratch/run-path" CHILD_EXIT="$child_exit"
+    result=0
+    ( rm() { printf 'attempt\n' >> "$FAIL_RECORD"; return 88; }; export -f rm
+      TMPDIR="$fake" "$checker" --names "$names" sh -c 'printf %s "${TMPDIR%/}" > "$RUN_RECORD"; exit "$CHILD_EXIT"'
+    ) > "$scratch/out.log" 2>&1 || result=$?
+    expected=$child_exit; [ "$expected" -ne 0 ] || expected=1
+    [ "$result" -eq "$expected" ] || { echo 'FAIL: cleanup status'; exit 1; }
+    [ "$(wc -l < "$FAIL_RECORD" | tr -d ' ')" = 1 ] || { echo 'FAIL: cleanup was retried'; exit 1; }
+    grep -q 'cannot remove private run directory' "$scratch/out.log" || { echo 'FAIL: cleanup error not reported'; exit 1; }
+    retained=$(cat "$RUN_RECORD")
+    [ -d "$retained" ] || { echo 'FAIL: failed cleanup did not retain directory'; exit 1; }
+    remove_fixture_paths "$retained"
+done
 # The command runs with a private TMPDIR, removed afterwards with whatever the toolchain left.
 expect_pass sh -c 'case "$TMPDIR" in "$OUTER"/no-temp-leaks-run.*) mkdir "$TMPDIR/TemporaryDirectory.AbCdEf" ;; *) exit 1 ;; esac'
 [ -z "$(ls -A "$fake")" ] || { echo "FAIL: the private TMPDIR was not removed"; ls -A "$fake"; exit 1; }

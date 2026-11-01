@@ -20,10 +20,17 @@ package_dir="$acceptance_home/package"
 build_tmp="$acceptance_home/tmp"
 finish() {
   local code=$?
+  trap - EXIT
   if $owned; then
-    if (( code )); then rm -rf -- "$acceptance_home"; else rm -rf -- "$package_dir" "$build_tmp"; fi
+    local path
+    local -a cleanup_paths
+    if (( code )); then cleanup_paths=("$acceptance_home"); else cleanup_paths=("$package_dir" "$build_tmp"); fi
+    for path in "${cleanup_paths[@]}"; do
+      [[ -e "$path" || -L "$path" ]] || continue
+      rm -r -- "${path:?}" || { print -u2 -- "Cannot remove $path"; (( code )) || code=1; }
+    done
   fi
-  return $code
+  exit $code
 }
 trap finish EXIT
 trap 'exit 130' INT

@@ -5,7 +5,7 @@ root=$(cd "$(dirname "$0")/../.." && pwd)
 checker="$root/Tests/ReleaseChecks/check_test_isolation.sh"
 scratch=$(mktemp -d "${TMPDIR:-/tmp}/telltale-isolation-test.XXXXXX")
 chmod 700 "$scratch"
-trap 'rm -rf "$scratch"' EXIT
+trap 'code=$?; rm -r -- "${scratch:?}" || { [ "$code" -ne 0 ] || code=1; }; exit "$code"' EXIT
 fail() { echo "FAIL: $*" >&2; exit 1; }
 
 # Each forbidden pattern is reported with file:line and a nonzero exit.

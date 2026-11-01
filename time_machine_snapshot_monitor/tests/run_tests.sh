@@ -11,9 +11,19 @@ TMP_ROOT=$(/usr/bin/mktemp -d "${TMPDIR:-/tmp}/tm-snapshot-monitor-tests.XXXXXX"
 remove_test_tree() {
     case "$1" in "$TMP_ROOT"|"$TMP_ROOT"/*) ;; *) return 1 ;; esac
     [ -e "$1" ] || [ -L "$1" ] || return 0
-    /bin/rm -r -- "$1"
+    test_remove_path=$1
+    /bin/rm -r -- "${test_remove_path:?}"
 }
-trap 'remove_test_tree "$TMP_ROOT"' EXIT HUP INT TERM
+cleanup_test_tree() {
+    test_exit_code=$?
+    trap - EXIT
+    remove_test_tree "$TMP_ROOT" || { [ "$test_exit_code" -ne 0 ] || test_exit_code=1; }
+    exit "$test_exit_code"
+}
+trap cleanup_test_tree EXIT
+trap 'exit 129' HUP
+trap 'exit 130' INT
+trap 'exit 143' TERM
 TMPDIR="$TMP_ROOT"
 export TMPDIR
 HOME="$TMP_ROOT/home"

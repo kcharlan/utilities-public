@@ -9,7 +9,7 @@ set -euo pipefail
 root=$(cd "$(dirname "$0")/../.." && pwd)
 scratch=$(mktemp -d "${TMPDIR:-/tmp}/telltale-bundle.XXXXXX")
 chmod 700 "$scratch"
-trap 'code=$?; if [ "$code" != 0 ]; then tail -20 "$scratch"/*.log 2>/dev/null || true; fi; rm -rf "$scratch"' EXIT
+trap 'code=$?; if [ "$code" != 0 ]; then tail -20 "$scratch"/*.log 2>/dev/null || true; fi; rm -r -- "${scratch:?}" || { [ "$code" -ne 0 ] || code=1; }; exit "$code"' EXIT
 mkdir -p "$scratch/project" "$scratch/bin" "$scratch/home" "$scratch/tmp"
 # Ruling R28: SwiftPM's per-package lock files and every other temporary file of this run stay in
 # the scratch, which the trap removes.
@@ -51,8 +51,9 @@ if [[ "$*" = *--sign* ]]; then
  [[ "$*" = *'--sign AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA --timestamp=none'* ]] || exit 91
 fi
 if [[ "$*" = *--verify* && "${!#}" = "$TELLTALE_APPS_DIR/Telltale.app" && -e "$TELLTALE_TEST_FAILURE" && -e "$TELLTALE_TEST_ACTIVATED" ]]; then
- rm "$TELLTALE_TEST_FAILURE" "$TELLTALE_TEST_ACTIVATED"; exit 92
+ rm -- "${TELLTALE_TEST_FAILURE:?}" "${TELLTALE_TEST_ACTIVATED:?}"; exit 92
 fi
+if [[ "$*" = *--verify* && "${!#}" = "$TELLTALE_APPS_DIR/Telltale.app" && "${SYNTHETIC_FAIL_POST_ACTIVATION:-0}" = 1 && -e "$TELLTALE_TEST_ACTIVATED" ]]; then exit 92; fi
 MOCK
 cat > "$scratch/bin/pgrep" <<'MOCK'
 #!/bin/bash
@@ -60,12 +61,13 @@ exit "${SYNTHETIC_RUNNING:-1}"
 MOCK
 cat > "$scratch/bin/mv" <<'MOCK'
 #!/bin/bash
+if [[ "${SYNTHETIC_FAIL_STAGE_MOVE:-0}" = 1 && "$1" = *'.telltale-stage-'*'/Telltale.app' ]]; then exit 91; fi
 /bin/mv "$@" || exit
 if [[ "$1" = *'.telltale-stage-'*'/Telltale.app' && "${!#}" = "$TELLTALE_APPS_DIR/Telltale.app" ]]; then
  touch "$TELLTALE_TEST_ACTIVATED"
 fi
 if [ "${!#}" = "$TELLTALE_APPS_DIR/Telltale.app" ] && [ -e "$TELLTALE_TEST_CORRUPT" ]; then
- rm "$TELLTALE_TEST_CORRUPT"
+ rm -- "${TELLTALE_TEST_CORRUPT:?}"
  /usr/libexec/PlistBuddy -c 'Set :CFBundleIdentifier synthetic.invalid' "${!#}/Contents/Info.plist"
 fi
 MOCK
@@ -122,7 +124,7 @@ check_fonts() {
 check_fonts
 # Keep an open reader of the prior executable: release must replace, not truncate.
 printf 'synthetic prior executable\n' > "$scratch/prior"
-rm "$exe"; cp "$scratch/prior" "$exe"; chmod 755 "$exe"
+rm -- "${exe:?}"; cp "$scratch/prior" "$exe"; chmod 755 "$exe"
 printf 'stale\n' > "$app/Contents/Resources/synthetic-stale.txt"
 exec 9< "$exe"
 old_inode=$(stat -f %i "$exe")
@@ -133,11 +135,16 @@ check_fonts
 cat <&9 > "$scratch/held"; cmp "$scratch/prior" "$scratch/held"; exec 9<&-
 # Successful activation, failed activation recovery, and notice preserve old readers.
 tools/install.sh "$app" > "$scratch/install.log"
-rm -f "$TELLTALE_TEST_ACTIVATED"
+if [ -e "$TELLTALE_TEST_ACTIVATED" ] || [ -L "$TELLTALE_TEST_ACTIVATED" ]; then rm -- "${TELLTALE_TEST_ACTIVATED:?}"; fi
 installed="$TELLTALE_APPS_DIR/Telltale.app"
 printf 'prior installed executable\n' > "$scratch/installed-prior"
-rm "$installed/Contents/MacOS/Telltale"; cp "$scratch/installed-prior" "$installed/Contents/MacOS/Telltale"; chmod 755 "$installed/Contents/MacOS/Telltale"
+installed_exe="$installed/Contents/MacOS/Telltale"
+rm -- "${installed_exe:?}"; cp "$scratch/installed-prior" "$installed_exe"; chmod 755 "$installed_exe"
 exec 8< "$installed/Contents/MacOS/Telltale"
+prior_inode=$(stat -f %i "$installed")
+if SYNTHETIC_FAIL_STAGE_MOVE=1 tools/install.sh "$app" > "$scratch/move-fail.log" 2>&1; then echo 'FAIL: failed activation move accepted'; exit 1; fi
+[ "$(stat -f %i "$installed")" = "$prior_inode" ]
+cmp "$scratch/installed-prior" "$installed_exe"
 touch "$TELLTALE_TEST_FAILURE"
 if tools/install.sh "$app" > "$scratch/recover.log" 2>&1; then echo 'FAIL: activation failure accepted'; exit 1; fi
 rg -q 'previous app restored' "$scratch/recover.log"
@@ -150,6 +157,31 @@ rg -q 'Quit and reopen Telltale' "$scratch/running.log"
 cmp "$exe" "$installed/Contents/MacOS/Telltale"
 cat <&8 > "$scratch/held-installed"; cmp "$scratch/installed-prior" "$scratch/held-installed"; exec 8<&-
 [ -z "$(find "$TELLTALE_APPS_DIR" -name '.telltale-stage-*' -print)" ]
+# The injected function records a synthetic failure without attempting OS removal.
+if [ -e "$TELLTALE_TEST_ACTIVATED" ]; then rm -- "${TELLTALE_TEST_ACTIVATED:?}"; fi
+prior_inode=$(stat -f %i "$installed")
+: > "$scratch/remove-attempts"
+export REMOVE_ATTEMPTS="$scratch/remove-attempts"
+if ( rm() { printf 'attempt\n' >> "$REMOVE_ATTEMPTS"; return 91; }; export -f rm
+     SYNTHETIC_FAIL_POST_ACTIVATION=1 tools/install.sh "$app" > "$scratch/remove-fail.log" 2>&1
+); then echo 'FAIL: target cleanup failure accepted'; exit 1; fi
+[ "$(wc -l < "$REMOVE_ATTEMPTS" | tr -d ' ')" = 1 ]
+rg -q 'Activation cleanup failed; preserve' "$scratch/remove-fail.log"
+stage=$(find "$TELLTALE_APPS_DIR" -maxdepth 1 -name '.telltale-stage-*' -type d -print)
+[ -n "$stage" ] && [ "$(stat -f %i "$stage/displaced-app")" = "$prior_inode" ]
+rm -r -- "${installed:?}"
+mv "$stage/displaced-app" "$installed"
+rm -r -- "${stage:?}"
+: > "$scratch/remove-attempts"
+if ( rm() { printf 'attempt\n' >> "$REMOVE_ATTEMPTS"; return 91; }; export -f rm
+     tools/install.sh "$app" > "$scratch/stage-fail.log" 2>&1
+); then echo 'FAIL: stage cleanup failure accepted'; exit 1; fi
+[ "$(wc -l < "$REMOVE_ATTEMPTS" | tr -d ' ')" = 1 ]
+rg -q 'Cannot remove stage:' "$scratch/stage-fail.log"
+cmp "$exe" "$installed_exe"
+stage=$(find "$TELLTALE_APPS_DIR" -maxdepth 1 -name '.telltale-stage-*' -type d -print)
+[ -n "$stage" ]
+rm -r -- "${stage:?}"
 rg -q -- '--force --sign AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA --timestamp=none' "$SYNTHETIC_SIGN_LOG"
 rg -q -- '--verify --strict' "$SYNTHETIC_SIGN_LOG"
 echo 'bundle/install structural checks passed (synthetic signing only)'

@@ -629,11 +629,10 @@ run_agent_exec() {
   timeout_file="$RUN_DIR/${slug}.timeout.json"
   profile_file="$RUN_DIR/${slug}.profile.json"
   : > "$event_log"
-  rm -f "$state_file"
-  rm -f "$timeline_file"
-  rm -f "$diagnostic_file"
-  rm -f "$timeout_file"
-  rm -f "$profile_file"
+  local stale_file
+  for stale_file in "$state_file" "$timeline_file" "$diagnostic_file" "$timeout_file" "$profile_file"; do
+    if [[ -e "$stale_file" || -L "$stale_file" ]]; then rm -- "${stale_file:?}" || return 1; fi
+  done
   log "Streaming $stage events to $event_log"
 
   if [[ "$cli_family" == "codex" ]]; then
@@ -1817,7 +1816,7 @@ run_bootstrap() {
   local before_status="$RUN_DIR/bootstrap.before.json"
   local -a packet_docs
 
-  if [[ -f "$STATUS_JSON" ]]; then cp "$STATUS_JSON" "$before_status"; else rm -f "$before_status"; fi
+  if [[ -f "$STATUS_JSON" ]]; then cp "$STATUS_JSON" "$before_status"; elif [[ -e "$before_status" || -L "$before_status" ]]; then rm -- "${before_status:?}" || return 1; fi
 
   write_bootstrap_prompt "$prompt_file"
   run_agent_exec "bootstrap" "$BOOTSTRAP_EFFORT" "$prompt_file" "$output_file"
@@ -1837,7 +1836,7 @@ run_planner() {
   local before_status="$RUN_DIR/planner.before.json"
   local -a packet_docs
 
-  if [[ -f "$STATUS_JSON" ]]; then cp "$STATUS_JSON" "$before_status"; else rm -f "$before_status"; fi
+  if [[ -f "$STATUS_JSON" ]]; then cp "$STATUS_JSON" "$before_status"; elif [[ -e "$before_status" || -L "$before_status" ]]; then rm -- "${before_status:?}" || return 1; fi
 
   write_planner_prompt "$prompt_file"
   run_agent_exec "planner" "$PLANNER_EFFORT" "$prompt_file" "$output_file"

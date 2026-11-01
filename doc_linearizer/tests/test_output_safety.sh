@@ -2,7 +2,7 @@
 set -euo pipefail
 project_dir=$(cd "$(dirname "$0")/.." && pwd)
 scratch_dir=$(mktemp -d "${TMPDIR:-/tmp}/doc-linearizer-safety.XXXXXX")
-trap 'rm -r -- "$scratch_dir"' EXIT
+trap 'rm -r -- "${scratch_dir:?}"' EXIT
 mkdir -p "$scratch_dir/input/site/assets" "$scratch_dir/output" "$scratch_dir/outside"
 printf 'source asset\n' > "$scratch_dir/input/site/assets/keep.txt"
 printf 'outside secret\n' > "$scratch_dir/outside/secret.png"

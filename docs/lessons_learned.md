@@ -1,5 +1,15 @@
 # Lessons learned
 
+## Synthetic directory modes and umask
+
+When a test requires a specific directory mode, explicitly chmod the synthetic fixture and assert its precondition: mkdir’s requested mode is filtered by the caller’s umask. Preserve the post-operation mode assertion so rejection and non-mutation remain tested under restrictive umasks.
+
+## Cleanup traps and temporary paths
+
+Keep a temporary path available for the lifetime of its EXIT trap and refer to it as data from a cleanup function. Interpolating a path into trap source breaks when its directory contains shell quoting characters. Preserve the original exit status, report cleanup failure, and make only one removal attempt.
+
+In Zsh, returning a failure from an EXIT trap does not replace the original successful exit status. Disable the trap and explicitly exit with the captured primary status or a cleanup-only failure status.
+
 ## 2026-10-31: Compare old and new in a browser when moving React code to Preact
 
 The offline port merged with every suite green; side-by-side browser comparison

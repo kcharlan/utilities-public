@@ -2,7 +2,7 @@
 set -euo pipefail
 project_dir="$(cd "$(dirname "$0")/.." && pwd -P)"
 scratch_dir="$(mktemp -d "${TMPDIR:-/tmp}/health-timezone.XXXXXX")"
-trap 'rm -r -- "$scratch_dir"' EXIT
+trap 'rm -r -- "${scratch_dir:?}"' EXIT
 cd "$scratch_dir"
 cat > export.xml <<'XML'
 <HealthData>

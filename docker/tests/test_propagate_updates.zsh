@@ -888,6 +888,25 @@ test_prune_orders_fractional_mtimes_before_names() {
     fail 'fractional modification times did not take precedence over names'
 }
 
+test_staged_publication_failures_preserve_destination() {
+  local failure
+  for failure in copy move; do
+    new_case "staged_${failure}_failure"
+    commit_change webserver/index/package-lock.json '// changed'
+    cp -p "$DEPLOY/webserver/index/package-lock.json" "$CASE/original"
+    if [[ "$failure" == copy ]]; then
+      write_stub cp 'if [[ "${@: -1}" == *.propagate-* ]]; then exit 41; fi; exec /bin/cp "$@"'
+    else
+      write_stub mv 'if [[ "$1" == -f && "$2" == *.propagate-* ]]; then exit 42; fi; exec /bin/mv "$@"'
+    fi
+    run_script deploy --stack webserver
+    assert_status 1
+    assert_contains "$CASE/out" 'copy failed for'
+    assert_same_file "$CASE/original" "$DEPLOY/webserver/index/package-lock.json"
+    [[ -z "$(find "$DEPLOY" -name '*.propagate-*' -print)" ]] || fail 'staged file remains'
+  done
+}
+
 test_prune_refuses_unwritable_root() {
   new_case unwritable_backup_root
   local root="$HOME_DIR/.utilities-deploy-backups" name

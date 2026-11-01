@@ -13,7 +13,7 @@ root=$(cd "$(dirname "$0")/../.." && pwd)
 # TMPDIR into .build/tmp).
 scratch=$(mktemp -d "$(getconf DARWIN_USER_TEMP_DIR)telltale-harnesses.XXXXXX")
 chmod 700 "$scratch"
-trap 'code=$?; if [ "$code" != 0 ]; then tail -20 "$scratch"/*.log 2>/dev/null || true; fi; rm -rf "$scratch"' EXIT
+trap 'code=$?; if [ "$code" != 0 ]; then tail -20 "$scratch"/*.log 2>/dev/null || true; fi; rm -r -- "${scratch:?}" || { [ "$code" -ne 0 ] || code=1; }; exit "$code"' EXIT
 cd "$root"
 export TELLTALE_HARNESS_ROOT="$scratch"
 

@@ -4,7 +4,7 @@ set -euo pipefail
 # leaves duplicates, loses rollback path/inode, or displaces an unknown bundle.
 root=$(cd "$(dirname "$0")/../.." && pwd)
 scratch=$(mktemp -d "${TMPDIR:-/tmp}/prime-rename.XXXXXX")
-trap 'code=$?; if [ "$code" != 0 ]; then cat "$scratch"/*.log 2>/dev/null || true; fi; rm -rf "$scratch"' EXIT
+trap 'code=$?; if [ "$code" != 0 ]; then cat "$scratch"/*.log 2>/dev/null || true; fi; rm -r -- "${scratch:?}" || { [ "$code" -ne 0 ] || code=1; }; exit "$code"' EXIT
 mkdir -p "$scratch/bin" "$scratch/source.app/Contents/MacOS"
 cp "$root/Resources/Info.plist" "$scratch/source.app/Contents/Info.plist"
 printf 'new executable bytes\n' > "$scratch/source.app/Contents/MacOS/PrimeMonitor"
@@ -24,8 +24,8 @@ bundle=${!#}
 }
 [ ! -e "$bundle/reject-signature" ] || exit 92
 if [ "$bundle" = "$PRIME_MONITOR_APPS_DIR/Anker Charge Monitor.app" ] && [ -e "$RENAME_ACTIVATED" ]; then
- rm "$RENAME_ACTIVATED"
- if [ -e "$RENAME_FAIL" ]; then rm "$RENAME_FAIL"; exit 93; fi
+ rm -- "${RENAME_ACTIVATED:?}"
+ if [ -e "$RENAME_FAIL" ]; then rm -- "${RENAME_FAIL:?}"; exit 93; fi
 fi
 MOCK
 cat > "$scratch/bin/mv" <<'MOCK'
@@ -77,7 +77,7 @@ cp -Rp "$scratch/source.app" "$target"
 if "$root/tools/install.sh" "$scratch/source.app" > "$scratch/collision.log" 2>&1; then echo 'FAIL: ambiguous destinations accepted'; exit 1; fi
 cmp "$scratch/old" "$legacy/Contents/MacOS/PrimeMonitor"
 cmp "$scratch/source.app/Contents/MacOS/PrimeMonitor" "$target/Contents/MacOS/PrimeMonitor"
-rm -rf "$target"
+if [ -e "$target" ] || [ -L "$target" ]; then rm -r -- "${target:?}"; fi
 # Unknown identity and invalid signature must never be displaced.
 /usr/libexec/PlistBuddy -c 'Set :CFBundleIdentifier synthetic.unknown' "$legacy/Contents/Info.plist"
 if "$root/tools/install.sh" "$scratch/source.app" > "$scratch/identity.log" 2>&1; then echo 'FAIL: unknown legacy identity accepted'; exit 1; fi
@@ -86,7 +86,8 @@ cmp "$scratch/old" "$legacy/Contents/MacOS/PrimeMonitor"
 touch "$legacy/reject-signature"
 if "$root/tools/install.sh" "$scratch/source.app" > "$scratch/signature.log" 2>&1; then echo 'FAIL: invalid legacy signature accepted'; exit 1; fi
 cmp "$scratch/old" "$legacy/Contents/MacOS/PrimeMonitor"
-rm "$legacy/reject-signature"
+reject_signature="$legacy/reject-signature"
+rm -- "${reject_signature:?}"
 echo 'collision, legacy identity and signature rejection passed'
 "$root/tools/install.sh" "$scratch/source.app" > "$scratch/success.log"
 [ ! -e "$legacy" ]

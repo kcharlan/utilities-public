@@ -26,13 +26,15 @@ ID_BIN=${ID_BIN:-/usr/bin/id}
 remove_owned() {
     case "$1" in ''|/) return 1 ;; esac
     [ -e "$1" ] || [ -L "$1" ] || return 0
-    /bin/rm -r -- "$1"
+    tmsm_remove_path=$1
+    /bin/rm -r -- "${tmsm_remove_path:?}"
 }
 
 remove_owned_file() {
     case "$1" in ''|/) return 1 ;; esac
     [ -e "$1" ] || [ -L "$1" ] || return 0
-    /bin/rm -- "$1"
+    tmsm_remove_path=$1
+    /bin/rm -- "${tmsm_remove_path:?}"
 }
 
 fail_install() {

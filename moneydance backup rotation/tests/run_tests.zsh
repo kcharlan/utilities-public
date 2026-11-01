@@ -270,7 +270,58 @@ EOF
 
 test_root="$(mktemp -d -t moneydance-rotation-tests.XXXXXX)"
 test_root="${test_root:A}"
-trap 'rm -rf -- "${test_root}"' EXIT
+remove_test_paths() {
+  local path
+  for path in "$@"; do
+    [[ -e "$path" || -L "$path" ]] || continue
+    /bin/rm -r -- "${path:?}" || return 1
+  done
+}
+trap 'code=$?; remove_test_paths "$test_root" || { (( code != 0 )) || code=1; }; exit "$code"' EXIT
+
+# Extract the production cleanup functions unchanged except for their absolute rm
+# callee; the stub reports a synthetic error without attempting an OS deletion.
+cleanup_functions="${test_root}/cleanup-functions.zsh"
+awk '/^(cleanup_repair_artifacts|repair_cleanup_exit|cleanup_temp_files|scan_cleanup_exit)\(\) \{$/ {copy=1; count++} copy {print} copy && /^}$/ {copy=0} END {if (count != 4) exit 1}' "${SCRIPT}" > "${cleanup_functions}" || { print -u2 'FAIL: cleanup extraction'; exit 1; }
+[[ "$(grep -c '/bin/rm --' "${cleanup_functions}")" == 3 ]] || { print -u2 'FAIL: cleanup extraction changed'; exit 1; }
+sed 's@/bin/rm --@synthetic_rm --@g' "${cleanup_functions}" > "${test_root}/cleanup-test-functions.zsh"
+[[ "$(grep -c 'synthetic_rm --' "${test_root}/cleanup-test-functions.zsh")" == 3 ]] || { print -u2 'FAIL: cleanup substitution changed'; exit 1; }
+cat > "${test_root}/cleanup-contract.zsh" <<'EOF'
+#!/bin/zsh
+set -eu
+source "$TEST_FUNCTIONS"
+synthetic_rm() { print attempt >> "$TEST_ATTEMPTS"; return 91; }
+STAT_BIN="$TEST_STAT"
+repair_candidate_tmp="$TEST_HOME/candidate"
+repair_snapshot_tmp="$TEST_HOME/snapshot"
+repair_candidate_device=1 repair_candidate_inode=2 repair_candidate_owner=$EUID
+repair_snapshot_device=1 repair_snapshot_inode=2 repair_snapshot_owner=$EUID
+repair_lock_owned=0
+find_output_tmp="$TEST_HOME/candidate"
+find_error_tmp="$TEST_HOME/snapshot"
+if [[ "$TEST_KIND" == repair ]]; then trap repair_cleanup_exit EXIT; else trap scan_cleanup_exit EXIT; fi
+exit "$TEST_EXIT"
+EOF
+cat > "${test_root}/cleanup-stat" <<'EOF'
+#!/bin/zsh
+print "1|2|$EUID|0|600|0|1"
+EOF
+chmod 755 "${test_root}/cleanup-stat"
+for cleanup_kind in repair scan; do
+  for original_exit in 0 7; do
+    cleanup_home="${test_root}/cleanup-${cleanup_kind}-${original_exit}"
+    mkdir "${cleanup_home}"
+    : > "${cleanup_home}/candidate"
+    : > "${cleanup_home}/snapshot"
+    cleanup_attempts="${test_root}/attempts-${cleanup_kind}-${original_exit}"
+    cleanup_code=0
+    TEST_FUNCTIONS="${test_root}/cleanup-test-functions.zsh" TEST_STAT="${test_root}/cleanup-stat" TEST_HOME="${cleanup_home}" TEST_ATTEMPTS="${cleanup_attempts}" TEST_KIND="${cleanup_kind}" TEST_EXIT="${original_exit}" zsh "${test_root}/cleanup-contract.zsh" > "${test_root}/cleanup-output" 2>&1 || cleanup_code=$?
+    expected_exit=$original_exit; (( expected_exit != 0 )) || expected_exit=1
+    [[ "$cleanup_code" == "$expected_exit" && "$(wc -l < "$cleanup_attempts" | tr -d ' ')" == 2 ]] || { print -u2 'FAIL: cleanup status or attempt count'; exit 1; }
+    grep -q 'Unable to remove a private' "${test_root}/cleanup-output" || { print -u2 'FAIL: cleanup error not reported'; exit 1; }
+    [[ -f "$cleanup_home/candidate" && -f "$cleanup_home/snapshot" ]] || { print -u2 'FAIL: synthetic cleanup failure removed evidence'; exit 1; }
+  done
+done
 
 retention_mount="${test_root}/retention-mount"
 retention_dir="${retention_mount}/SYNTHETIC_BACKUPS"
@@ -283,7 +334,7 @@ MONEYDANCE_MAX_DAYS_TO_KEEP=4
 export MONEYDANCE_MAX_DAYS_TO_KEEP
 for scenario in empty future undersized; do
   for file in "${retention_dir}"/*(N); do
-    /bin/rm -f -- "${file:?}"
+    remove_test_paths "${file:?}"
   done
   typeset -a good_files=()
   for day in {1..6}; do
@@ -541,7 +592,7 @@ BACKUP_FILENAME_SUFFIX=.SYNTHETIC-BACKUP
 EOF
 integer required_share_case_index
 for (( required_share_case_index = 1; required_share_case_index <= ${#invalid_required_share_lists[@]}; required_share_case_index += 1 )); do
-  /bin/rm -f -- "${required_shares_mount_marker}"
+  remove_test_paths "${required_shares_mount_marker}"
   invalid_required_shares_output="$(HOME="${test_root}/empty-home" MONEYDANCE_MOUNT_BIN="${required_shares_mount}" MONEYDANCE_REQUIRED_NAS_SHARES="${invalid_required_share_lists[${required_share_case_index}]}" "${SCRIPT}" --config "${invalid_required_shares_config}" 2>&1)"
   invalid_required_shares_status=$?
   assert_status "REQUIRED_NAS_SHARES rejects ${invalid_required_share_names[${required_share_case_index}]}" 2 "${invalid_required_shares_status}"
@@ -560,7 +611,7 @@ REQUIRED_NAS_SHARES= SYNTHETIC_COMPANION , SYNTHETIC_PRIMARY
 BACKUP_DIRECTORY_NAME=SYNTHETIC_BACKUPS
 BACKUP_FILENAME_SUFFIX=.SYNTHETIC-BACKUP
 EOF
-/bin/rm -f -- "${required_shares_mount_marker}"
+remove_test_paths "${required_shares_mount_marker}"
 normalized_required_shares_output="$(HOME="${test_root}/empty-home" MONEYDANCE_MOUNT_BIN="${required_shares_mount}" "${SCRIPT}" --config "${normalized_required_shares_config}" --dry-run 2>&1)"
 normalized_required_shares_status=$?
 assert_status "REQUIRED_NAS_SHARES normalizes whitespace around valid items" 0 "${normalized_required_shares_status}"
@@ -578,7 +629,7 @@ REQUIRED_NAS_SHARES=SYNTHETIC_FILE_ONLY
 BACKUP_DIRECTORY_NAME=SYNTHETIC_BACKUPS
 BACKUP_FILENAME_SUFFIX=.SYNTHETIC-BACKUP
 EOF
-/bin/rm -f -- "${required_shares_mount_marker}"
+remove_test_paths "${required_shares_mount_marker}"
 required_shares_override_output="$(HOME="${test_root}/empty-home" MONEYDANCE_MOUNT_BIN="${required_shares_mount}" MONEYDANCE_REQUIRED_NAS_SHARES='SYNTHETIC_PRIMARY,SYNTHETIC_COMPANION' "${SCRIPT}" --config "${required_shares_override_config}" --dry-run 2>&1)"
 required_shares_override_status=$?
 assert_status "MONEYDANCE_REQUIRED_NAS_SHARES overrides the file value" 0 "${required_shares_override_status}"
@@ -728,7 +779,9 @@ candidate_rm="${test_root}/candidate-rm"
 cat > "${candidate_rm}" <<EOF
 #!/bin/zsh
 print -r -- "\$*" >> "${candidate_rm_marker}"
-exec /bin/rm "\$@"
+[[ \$# -eq 2 && \$1 == -- ]] || exit 1
+target=\$2
+exec /bin/rm -- "\${target:?}"
 EOF
 chmod 755 "${candidate_rm}"
 
@@ -781,7 +834,7 @@ USE_SYSLOG=1
 EOF
   chmod 640 "${repair_config}"
   cp -p "${repair_config}" "${repair_original}"
-  rm -f -- "${candidate_rm_marker}" "${candidate_scan_marker}"
+  remove_test_paths "${candidate_rm_marker}" "${candidate_scan_marker}"
 }
 make_expected_repaired_config() {
   local target="$1"
@@ -833,7 +886,7 @@ for unsafe_dir_kind in group world; do
   mkdir "${unsafe_config_dir}"
   cp -p "${repair_config}" "${unsafe_config}"
   if [[ "${unsafe_dir_kind}" == group ]]; then chmod 770 "${unsafe_config_dir}"; else chmod 707 "${unsafe_config_dir}"; fi
-  rm -f -- "${unique_candidate_marker}"
+  remove_test_paths "${unique_candidate_marker}"
   PTY_INPUT=$'yes\n'
   run_with_pty 5 both-stderr-file /usr/bin/env HOME="${test_root}/empty-home" MONEYDANCE_MOUNT_BIN="${unique_candidate_mount}" "${SCRIPT}" --config "${unsafe_config}" --repair-config
   assert_status "repair rejects ${unsafe_dir_kind}-writable config directory" 2 "${PTY_STATUS}"
@@ -850,7 +903,7 @@ mkdir -p "${unsafe_nested_dir}"
 cp -p "${repair_config}" "${unsafe_ancestor_config}"
 chmod 770 "${unsafe_ancestor}"
 chmod 700 "${unsafe_nested_dir}"
-rm -f -- "${unique_candidate_marker}"
+remove_test_paths "${unique_candidate_marker}"
 PTY_INPUT=$'yes\n'
 run_with_pty 5 both-stderr-file /usr/bin/env HOME="${test_root}/empty-home" MONEYDANCE_MOUNT_BIN="${unique_candidate_mount}" "${SCRIPT}" --config "${unsafe_ancestor_config}" --repair-config
 assert_status "repair rejects unsafe config ancestor" 2 "${PTY_STATUS}"
@@ -895,7 +948,7 @@ EOF
       config) /bin/chmod +a 'everyone allow read' "${acl_fixture_config}" ;;
     esac
     acl_fixture_mode="$(stat -f '%Lp' "${acl_fixture_config}")"
-    rm -f -- "${unique_candidate_marker}" "${acl_mktemp_marker}" "${acl_mv_marker}"
+    remove_test_paths "${unique_candidate_marker}" "${acl_mktemp_marker}" "${acl_mv_marker}"
     : > "${candidate_logger_marker}"
     PTY_INPUT=$'yes\n'
     run_with_pty 5 both-stderr-file /usr/bin/env HOME="${test_root}/empty-home" MONEYDANCE_MKTEMP_BIN="${acl_mktemp}" MONEYDANCE_MV_BIN="${acl_mv}" MONEYDANCE_MOUNT_BIN="${unique_candidate_mount}" MONEYDANCE_LOGGER_BIN="${candidate_logger}" "${SCRIPT}" --config "${acl_fixture_config}" --repair-config
@@ -935,7 +988,7 @@ EOF
   /bin/chmod +a 'everyone deny delete' "${repair_config}"
   acl_config_before="$(/bin/ls -lde -- "${repair_config}")"
   acl_config_mode="$(stat -f '%Lp' "${repair_config}")"
-  rm -f -- "${unique_candidate_marker}" "${acl_mktemp_marker}" "${acl_mv_marker}"
+  remove_test_paths "${unique_candidate_marker}" "${acl_mktemp_marker}" "${acl_mv_marker}"
   : > "${candidate_log}"
   : > "${candidate_logger_marker}"
   PTY_INPUT=$'yes\n'
@@ -967,7 +1020,7 @@ print -r -- ' 7: group:everyone deny delete'
 exit 0
 EOF
     chmod 755 "${acl_inspector}"
-    rm -f -- "${unique_candidate_marker}" "${acl_mktemp_marker}" "${acl_mv_marker}"
+    remove_test_paths "${unique_candidate_marker}" "${acl_mktemp_marker}" "${acl_mv_marker}"
     : > "${candidate_log}"
     : > "${candidate_logger_marker}"
     PTY_INPUT=$'yes\n'
@@ -1034,7 +1087,7 @@ esac
 exec /bin/ls -lde -- "\${target}"
 EOF
   chmod 755 "${acl_parser_inspector}"
-  rm -f -- "${unique_candidate_marker}" "${acl_parser_mktemp_marker}" "${acl_parser_mv_marker}"
+  remove_test_paths "${unique_candidate_marker}" "${acl_parser_mktemp_marker}" "${acl_parser_mv_marker}"
   : > "${candidate_logger_marker}"
   PTY_INPUT=$'yes\n'
   run_with_pty 5 both-stderr-file /usr/bin/env HOME="${test_root}/empty-home" MONEYDANCE_ACL_BIN="${acl_parser_inspector}" MONEYDANCE_MKTEMP_BIN="${acl_parser_mktemp}" MONEYDANCE_MV_BIN="${acl_parser_mv}" MONEYDANCE_MOUNT_BIN="${unique_candidate_mount}" MONEYDANCE_LOGGER_BIN="${candidate_logger}" "${SCRIPT}" --config "${repair_config}" --repair-config
@@ -1197,7 +1250,7 @@ for control_name in SOH DEL; do
   if [[ "${control_name}" == SOH ]]; then control_byte=$'\001'; else control_byte=$'\177'; fi
   printf '# SYNTHETIC ignored comment contains control %s private-token\n' "${control_byte}" >> "${repair_config}"
   cp -p "${repair_config}" "${repair_original}"
-  rm -f -- "${unique_candidate_marker}"
+  remove_test_paths "${unique_candidate_marker}"
   : > "${candidate_log}"
   : > "${candidate_logger_marker}"
   PTY_INPUT=$'yes\n'
@@ -1227,7 +1280,7 @@ print -r -- invoked > "${inspector_mv_marker}"
 exit 97
 EOF
   chmod 755 "${inspector_tool}" "${inspector_mv}"
-  rm -f -- "${unique_candidate_marker}" "${inspector_mv_marker}"
+  remove_test_paths "${unique_candidate_marker}" "${inspector_mv_marker}"
   : > "${candidate_log}"
   : > "${candidate_logger_marker}"
   typeset -a inspector_env=(HOME="${test_root}/empty-home" MONEYDANCE_MOUNT_BIN="${unique_candidate_mount}" MONEYDANCE_MV_BIN="${inspector_mv}" MONEYDANCE_LOGGER_BIN="${candidate_logger}")
@@ -1348,9 +1401,9 @@ EOF
   if [[ ! -e "${hostile_mv_marker}" ]]; then pass "hostile ${hostile_temp_kind} temp is never renamed"; else fail "hostile ${hostile_temp_kind} temp is never renamed"; fi
   if [[ "${hostile_temp_path}" != "${repair_config}" && ( -e "${hostile_temp_path}" || -L "${hostile_temp_path}" ) ]]; then pass "hostile ${hostile_temp_kind} returned path is not removed"; else [[ "${hostile_temp_path}" == "${repair_config}" ]] && pass "hostile config return remains present" || fail "hostile ${hostile_temp_kind} returned path is not removed"; fi
   if [[ "${hostile_temp_path}" != "${repair_config}" ]]; then
-    rm -rf -- "${hostile_temp_path}"
+    remove_test_paths "${hostile_temp_path}"
   fi
-  rm -f -- "${test_root}/SYNTHETIC-HOSTILE-LINK-${hostile_temp_kind}"
+  remove_test_paths "${test_root}/SYNTHETIC-HOSTILE-LINK-${hostile_temp_kind}"
 done
 
 reset_repair_config
@@ -1361,7 +1414,7 @@ PTY_INPUT=$'yes\n'
 run_with_pty 5 both /usr/bin/env HOME="${test_root}/empty-home" MONEYDANCE_MOUNT_BIN="${unique_candidate_mount}" "${SCRIPT}" --config "${repair_config}" --repair-config
 assert_status "second cooperating repair is rejected by same-directory lock" 1 "${PTY_STATUS}"
 if [[ -d "${repair_lock_path}" ]]; then pass "repair does not remove another process lock"; else fail "repair does not remove another process lock"; fi
-rm -rf -- "${repair_lock_path}"
+remove_test_paths "${repair_lock_path}"
 
 for failure_kind in mktemp chmod cmp mv; do
   reset_repair_config
@@ -1393,7 +1446,7 @@ EOF
 done
 
 reset_repair_config
-rm -f -- "${unique_candidate_marker}"
+remove_test_paths "${unique_candidate_marker}"
 PTY_INPUT=$'yes\n'
 run_with_pty 5 both /usr/bin/env HOME="${test_root}/empty-home" MONEYDANCE_MV_BIN="${test_root}/missing-repair-mv" MONEYDANCE_MOUNT_BIN="${unique_candidate_mount}" "${SCRIPT}" --config "${repair_config}" --repair-config
 assert_status "repair requires its repair-only commands" 1 "${PTY_STATUS}"
@@ -1427,7 +1480,7 @@ run_with_pty 5 both /usr/bin/env HOME="${test_root}/empty-home" MONEYDANCE_MKTEM
 assert_status "wrong-owner temp is rejected" 1 "${PTY_STATUS}"
 wrong_temp_path="$(<"${wrong_temp_record}")"
 if [[ -f "${wrong_temp_path}" ]]; then pass "wrong-owner returned temp is not removed"; else fail "wrong-owner returned temp is not removed"; fi
-rm -f -- "${wrong_temp_path}"
+remove_test_paths "${wrong_temp_path}"
 
 reset_repair_config
 write_fail_count="${test_root}/write-fail-mktemp-count"
@@ -1513,7 +1566,7 @@ if cmp -s "${repair_config}" "${repair_original}"; then pass "candidate inode re
 if [[ ! -e "${temp_swap_mv_marker}" ]]; then pass "candidate inode replacement aborts before MV_BIN"; else fail "candidate inode replacement aborts before MV_BIN"; fi
 swapped_temp_path="$(<"${temp_swap_record}")"
 if [[ -f "${swapped_temp_path}" ]]; then pass "cleanup does not remove unvalidated swapped temp"; else fail "cleanup does not remove unvalidated swapped temp"; fi
-rm -f -- "${swapped_temp_path}"
+remove_test_paths "${swapped_temp_path}"
 
 reset_repair_config
 exposure_marker="${test_root}/repair-snapshot-exposed"
@@ -1700,7 +1753,7 @@ for private_token in "${repair_config}" "${candidate_config_dir}" synthetic-conf
   assert_not_contains "lock open logger redacts ${private_token}" "$(<"${candidate_logger_marker}")" "${private_token}"
 done
 /bin/chmod 700 "${candidate_config_dir}/.repair-config.repair.lock" 2>/dev/null || true
-rm -rf -- "${candidate_config_dir}/.repair-config.repair.lock"
+remove_test_paths "${candidate_config_dir}/.repair-config.repair.lock"
 
 reset_repair_config
 : > "${candidate_log}"
@@ -1781,7 +1834,7 @@ for private_token in "${repair_config}" "${candidate_config_dir}" synthetic-conf
   assert_not_contains "final directory identity persistent sinks redact ${private_token}" "${final_dir_persistent}" "${private_token}"
 done
 chmod 755 "${candidate_config_dir}"
-find "${candidate_config_dir}" -maxdepth 1 \( -name '.repair-config.snapshot.*' -o -name '.repair-config.candidate.*' -o -name '.repair-config.repair.lock' \) -exec rm -rf -- {} +
+find "${candidate_config_dir}" -maxdepth 1 \( -name '.repair-config.snapshot.*' -o -name '.repair-config.candidate.*' -o -name '.repair-config.repair.lock' \) -print0 | while IFS= read -r -d '' cleanup_path; do remove_test_paths "$cleanup_path" || exit 1; done
 
 # A hostile inherited umask cannot make the cooperating lock or owner marker
 # group/world accessible.
@@ -1834,7 +1887,7 @@ done
 reset_repair_config
 : > "${candidate_log}"
 : > "${candidate_logger_marker}"
-rm -f -- "${candidate_scan_marker}" "${candidate_rm_marker}"
+remove_test_paths "${candidate_scan_marker}" "${candidate_rm_marker}"
 PTY_INPUT=$'yes\n'
 run_with_pty 10 both /usr/bin/env HOME="${test_root}/empty-home" MONEYDANCE_MOUNT_BIN="${unique_candidate_mount}" MONEYDANCE_FIND_BIN="${candidate_scan_spy}" MONEYDANCE_RM_BIN="${candidate_rm}" MONEYDANCE_LOGGER_BIN="${candidate_logger}" "${SCRIPT}" --config "${repair_config}" --repair-config
 assert_status "privacy-checked repair succeeds" 0 "${PTY_STATUS}"
@@ -2346,7 +2399,7 @@ assert_status "empty-host SMB authorities are ignored safely" 0 "$?"
 assert_file_exists "empty-host SMB authorities cannot authorize deletion" "${inventory_old_file}"
 
 reset_inventory_candidate
-/bin/rm -f -- "${complete_inventory_marker}"
+remove_test_paths "${complete_inventory_marker}"
 single_read_output="$(HOME="${test_root}/empty-home" MONEYDANCE_MOUNT_BIN="${complete_inventory_mount}" "${SCRIPT}" --config "${inventory_config}" --dry-run 2>&1)"
 single_read_status=$?
 assert_status "single mount-table read run succeeds" 0 "${single_read_status}"
@@ -2533,8 +2586,9 @@ assert_file_exists "find failure preserves the newest retained file" "${new_file
 assert_file_exists "find failure preserves nonmatching files" "${nonmatching_file}"
 
 rm_fail="${test_root}/rm-fail"
-cat > "${rm_fail}" <<'EOF'
+cat > "${rm_fail}" <<EOF
 #!/bin/zsh
+print -r -- "\$#:\$1" > "${test_root}/rm-fail-arguments"
 exit 19
 EOF
 chmod 755 "${rm_fail}"
@@ -2546,6 +2600,11 @@ else
   fail "removal failure exits nonzero"
 fi
 assert_contains "removal failure is visibly reported" "${rm_fail_output}" "could not be safely revalidated or removed"
+if [[ "$(<"${test_root}/rm-fail-arguments")" == '2:--' ]]; then
+  pass "candidate removal uses one non-forced operand"
+else
+  fail "candidate removal uses one non-forced operand"
+fi
 assert_file_exists "removal failure preserves purge candidate" "${old_file}"
 assert_file_exists "removal failure preserves retained files" "${middle_file}"
 assert_file_exists "removal failure preserves the newest retained file" "${new_file}"
@@ -2641,7 +2700,7 @@ for deletion_mode in dry-run failure both-stderr-file stdout-only stdin-only; do
   assert_not_contains "${deletion_mode} persistent sinks omit escaped filename" "${deletion_persistent}" "SYNTHETIC SPACE"
   assert_not_contains "${deletion_mode} persistent sinks omit backup directory" "${deletion_persistent}" "SYNTHETIC_BACKUPS"
 done
-/bin/rm -f -- "${escaped_name_file}"
+remove_test_paths "${escaped_name_file}"
 fixture_touch -t 202001010101 "${old_file}"
 
 outside_dir="${test_root}/outside-backup-tree"

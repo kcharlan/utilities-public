@@ -14,3 +14,24 @@ printf '%s\n' 'synthetic.mov -> IMG_20370325_213000_00.mov' > "$d/manifest"
 TZ=America/New_York "$root/media-dater" "$d/media"
 test -f "$d/media/IMG_20370325_213000_00.mov"
 test ! -e "$d/media/synthetic.mov"
+
+# Exercise the EXIT cleanup with a pathname that cannot safely be embedded in shell code.
+mkdir "$d/bin" "$d/quote ' tmp" "$d/input"
+: > "$d/input/synthetic.jpg"
+cat > "$d/bin/exiftool" <<'SH'
+#!/bin/bash
+while [ "$#" -gt 0 ]; do
+    if [ "$1" = -@ ]; then printf '%s\n' "$2" > "$ARGFILE_RECORD"; break; fi
+    shift
+done
+exit "${EXIF_EXIT:-0}"
+SH
+chmod 755 "$d/bin/exiftool"
+for expected in 0 7; do
+    rc=0
+    ARGFILE_RECORD="$d/argfile-record" EXIF_EXIT="$expected" TMPDIR="$d/quote ' tmp" PATH="$d/bin:$PATH" \
+        "$root/media-dater" "$d/input" > "$d/synthetic-output" 2>&1 || rc=$?
+    [ "$rc" -eq "$expected" ] || { echo "FAIL: expected exit $expected, got $rc"; exit 1; }
+    argfile=$(cat "$d/argfile-record")
+    [ ! -e "$argfile" ] && [ ! -L "$argfile" ] || { echo 'FAIL: argfile remains'; exit 1; }
+done

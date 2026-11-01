@@ -14,7 +14,7 @@ while [ -n "$component" ]; do
 done
 umask 077
 scratch=$(mktemp -d "${TMPDIR:-/tmp}/prime-secrets-scan.XXXXXX") || fail 2
-trap 'rm -rf "$scratch"' EXIT
+trap 'code=$?; rm -r -- "${scratch:?}" || { [ "$code" -ne 0 ] || code=1; }; exit "$code"' EXIT
 # No -q: grep must finish reading every input and report read errors.
 match_file() {
   grep -a -F -f "$patterns" -- "$1" >/dev/null

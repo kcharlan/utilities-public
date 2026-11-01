@@ -3,7 +3,7 @@ set -euo pipefail
 
 project_dir=$(cd "$(dirname "$0")/.." && pwd)
 scratch_dir=$(mktemp -d "${TMPDIR:-/tmp}/doc-linearizer-test.XXXXXX")
-trap 'rm -r -- "$scratch_dir"' EXIT
+trap 'rm -r -- "${scratch_dir:?}"' EXIT
 
 mkdir -p "$scratch_dir/input/site" "$scratch_dir/output" "$scratch_dir/caller"
 cat > "$scratch_dir/input/site/toc.html" <<'HTML'
