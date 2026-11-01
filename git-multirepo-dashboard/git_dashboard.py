@@ -48,11 +48,13 @@ except ImportError:  # pragma: no cover - Windows
 
 # ── Constants ─────────────────────────────────────────────────────────────────
 DEFAULT_PORT = 8300
-VERSION = "0.3.1"
+VERSION = "0.3.2"
 
 # Populated by build_tools_dict() during preflight; global so /api/status can
 # return it without re-running which() on every request.
 TOOLS: dict = {}
+TRUST_REPO_TOOLS = False
+MAX_DEP_FILE_SIZE = 2 * 1024 * 1024
 
 logger = logging.getLogger("git_dashboard")
 
@@ -113,6 +115,8 @@ def parse_args(argv=None):
         metavar="PATH",
         help="Register and scan a directory on startup",
     )
+    parser.add_argument("--trust-repo-tools", action="store_true",
+                        help="Allow Bundler and cargo checks to run repository-controlled tools")
     parser.add_argument(
         "-y",
         "--yes",
@@ -322,6 +326,15 @@ def init_schema(db_path: Path) -> None:
         conn.close()
 
 
+def recover_interrupted_scans(db_path: Path) -> None:
+    """Mark scans from a previous server process as failed."""
+    with sqlite3.connect(str(db_path)) as conn:
+        conn.execute(
+            "UPDATE scan_log SET status = 'failed', finished_at = ? WHERE status = 'running'",
+            (datetime.now(timezone.utc).isoformat(),),
+        )
+
+
 _MIGRATION_SQL = [
     "ALTER TABLE working_state ADD COLUMN scan_error TEXT DEFAULT NULL",
     "ALTER TABLE working_state ADD COLUMN dep_check_error BOOLEAN DEFAULT FALSE",
@@ -412,7 +425,8 @@ async def run_git(repo_path, *args: str, timeout: float = 30.0) -> tuple:
     On timeout, kills the process and returns ("", "timeout", -1).
     """
     proc = await asyncio.create_subprocess_exec(
-        "git", "-C", str(repo_path), *args,
+        "git", "--no-optional-locks", "-c", "core.fsmonitor=false",
+        "-c", "core.hooksPath=/dev/null", "-C", str(repo_path), *args,
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.PIPE,
     )
@@ -721,7 +735,9 @@ async def scan_full_history(repo_path: str, since: str | None = None) -> list:
     if since is not None:
         cmd.append(f"--after={since}")
 
-    stdout, _stderr, _rc = await run_git(repo_path, *cmd)
+    stdout, stderr, rc = await run_git(repo_path, *cmd)
+    if rc != 0:
+        raise RuntimeError(f"Git history scan failed: {stderr or rc}")
     return parse_git_log(stdout)
 
 
@@ -778,26 +794,30 @@ async def compute_sparklines(db) -> dict:
 async def run_full_history_scan(db, repo_id: str, repo_path: str) -> int:
     """Orchestrate a full history scan for one repo.
 
-    Reads last_full_scan_at from DB (used as --after for incremental scan),
-    runs scan_full_history, aggregates, upserts daily_stats, and updates
-    last_full_scan_at. Returns count of commits parsed.
+    Recomputes the complete history and atomically replaces the stored snapshot.
+    Returns count of commits parsed.
     """
-    cursor = await db.execute(
-        "SELECT last_full_scan_at FROM repositories WHERE id = ?",
-        (repo_id,),
-    )
-    row = await cursor.fetchone()
-    since = row[0] if row else None
-
-    commits = await scan_full_history(repo_path, since=since)
+    commits = await scan_full_history(repo_path)
     daily_data = aggregate_daily_stats(commits)
-    await upsert_daily_stats(db, repo_id, daily_data)
-
-    await db.execute(
-        "UPDATE repositories SET last_full_scan_at = ? WHERE id = ?",
-        (datetime.now(timezone.utc).isoformat(), repo_id),
-    )
-    await db.commit()
+    await db.execute("SAVEPOINT history_snapshot")
+    try:
+        await db.execute("DELETE FROM daily_stats WHERE repo_id = ?", (repo_id,))
+        await db.executemany(
+            "INSERT INTO daily_stats (repo_id, date, commits, insertions, deletions, files_changed) VALUES (?, ?, ?, ?, ?, ?)",
+            [(repo_id, day, v['commits'], v['insertions'], v['deletions'], v['files_changed'])
+             for day, v in daily_data.items()],
+        )
+        await db.execute(
+            "UPDATE repositories SET last_full_scan_at = ? WHERE id = ?",
+            (datetime.now(timezone.utc).isoformat(), repo_id),
+        )
+    except BaseException:
+        await db.execute("ROLLBACK TO SAVEPOINT history_snapshot")
+        await db.execute("RELEASE SAVEPOINT history_snapshot")
+        raise
+    else:
+        await db.execute("RELEASE SAVEPOINT history_snapshot")
+        await db.commit()
 
     return len(commits)
 
@@ -867,11 +887,13 @@ async def scan_branches(repo_path: str, default_branch: str) -> list[dict]:
     Uses %(refname:short)%09%(committerdate:iso-strict) format with tab
     delimiter. Git interprets %09 as a real tab character.
     """
-    stdout, _stderr, _rc = await run_git(
+    stdout, stderr, rc = await run_git(
         repo_path,
         "branch",
         "--format=%(refname:short)%09%(committerdate:iso-strict)",
     )
+    if rc != 0:
+        raise RuntimeError(f"Git branch scan failed: {stderr or rc}")
     return parse_branches(stdout, default_branch)
 
 
@@ -1057,6 +1079,7 @@ async def run_fleet_scan(scan_id: int, scan_type: str) -> None:
     global _active_scan_id
     try:
         async with aiosqlite.connect(str(DB_PATH)) as db:
+            await db.execute("PRAGMA foreign_keys = ON")
             if scan_type == "deps":
                 # Iterate all repos sequentially, running dep scans only
                 cursor = await db.execute("SELECT id, name, path FROM repositories")
@@ -1324,11 +1347,18 @@ def detect_dep_files(repo_path: Path) -> list[dict]:
         except OSError:
             continue
         for entry in entries:
+            if entry.is_symlink():
+                continue
             if entry.is_dir():
                 if depth < _DEP_WALK_MAX_DEPTH and entry.name not in _DEP_WALK_SKIP and not entry.name.startswith('.'):
                     dirs_to_walk.append((entry, depth + 1))
                 continue
             if not entry.is_file():
+                continue
+            try:
+                if entry.stat().st_size > MAX_DEP_FILE_SIZE:
+                    continue
+            except OSError:
                 continue
             known = next(((filename, manager, runtime) for filename, manager, runtime
                           in _DEP_FILE_PRIORITY if runtime != 'python'
@@ -1472,7 +1502,7 @@ def parse_python_requirement(text: str) -> dict | None:
         return None
 
 
-def parse_requirements_txt(file_path: Path, _visited: set[str] | None = None, *, manifests_out: dict | None = None) -> list[dict]:
+def parse_requirements_txt(file_path: Path, _visited: set[str] | None = None, *, manifests_out: dict | None = None, repo_root: Path | None = None) -> list[dict]:
     """Parse PEP 508 declarations and direct URLs with circular-safe includes.
 
     Join continuations and remove comments/options while preserving extras and
@@ -1480,6 +1510,16 @@ def parse_requirements_txt(file_path: Path, _visited: set[str] | None = None, *,
     """
     if _visited is None:
         _visited = set()
+    if repo_root is None:
+        repo_root = file_path.parent.resolve()
+    try:
+        resolved_path = file_path.resolve()
+        resolved_path.relative_to(repo_root.resolve())
+        if not resolved_path.is_file() or resolved_path.stat().st_size > MAX_DEP_FILE_SIZE:
+            _manifest_record(manifests_out, file_path, 'requirements')['error'] = 'Not a regular file or exceeds size limit'
+            return []
+    except (OSError, ValueError):
+        return []
 
     resolved = str(file_path.resolve())
     if resolved in _visited:
@@ -1507,7 +1547,7 @@ def parse_requirements_txt(file_path: Path, _visited: set[str] | None = None, *,
             if len(parts) < 2:
                 continue
             include_path = file_path.parent / parts[1].strip()
-            deps.extend(parse_requirements_txt(include_path, _visited, manifests_out=manifests_out))
+            deps.extend(parse_requirements_txt(include_path, _visited, manifests_out=manifests_out, repo_root=repo_root))
             continue
         if line.startswith("-"):
             # Other flags: -i, --index-url, -f, --find-links, etc.
@@ -1769,7 +1809,7 @@ def parse_deps_for_repo(repo_path: Path, manifests_out: list[dict] | None = None
         kind = entry['kind']
         try:
             if kind == 'requirements':
-                parsed = parse_requirements_txt(file_path, visited, manifests_out=inventory)
+                parsed = parse_requirements_txt(file_path, visited, manifests_out=inventory, repo_root=repo_path)
             elif kind in ('pyproject', 'pep723'):
                 parsed = parsers[kind](file_path, manifests_out=inventory)
             else:
@@ -2212,7 +2252,9 @@ def _npm_installed_version(manifest_dir: Path, name: str) -> str | None:
 
 
 def _npm_latest_version(npm: str, manifest_dir: Path, name: str) -> str:
-    proc = subprocess.run([npm, 'view', name, 'version', '--json'], cwd=str(manifest_dir),
+    if name.startswith('-'):
+        raise ValueError('invalid npm package name')
+    proc = subprocess.run([npm, 'view', '--json', '--', name, 'version'], cwd=str(manifest_dir),
                           capture_output=True, text=True, timeout=30)
     _validate_tool_result(proc, 'npm view', (0,))
     version = _tool_version(json.loads(proc.stdout))
@@ -2729,6 +2771,11 @@ def check_rust_deps(repo_path: Path, deps: list[dict]) -> list[dict]:
     if not cargo_deps:
         return other_deps
 
+    if not TRUST_REPO_TOOLS:
+        for dep in cargo_deps:
+            mark_unchecked(dep, 'Skipped: enable --trust-repo-tools to run cargo checks')
+        return finalize_dep_health(cargo_deps) + other_deps
+
     cargo_deps = [d for directory, group in _group_by_manifest_dir(repo_path, cargo_deps).items()
                   for d in check_rust_vulns(directory, check_rust_outdated(directory, group))]
 
@@ -2863,6 +2910,11 @@ def check_ruby_deps(repo_path: Path, deps: list[dict]) -> list[dict]:
 
     if not ruby_deps:
         return other_deps
+
+    if not TRUST_REPO_TOOLS:
+        for dep in ruby_deps:
+            mark_unchecked(dep, 'Skipped: enable --trust-repo-tools to run Bundler checks')
+        return finalize_dep_health(ruby_deps) + other_deps
 
     ruby_deps = [d for directory, group in _group_by_manifest_dir(repo_path, ruby_deps).items()
                  for d in check_ruby_vulns(directory, check_ruby_outdated(directory, group))]
@@ -4211,7 +4263,8 @@ const htmlTag = htm.bind(preact.h);
       const [filterText, setFilterText] = useState('');
 
       useEffect(() => {
-        fetch('/api/fleet')
+        fetch('/api/fleet/refresh', { method: 'POST' })
+          .then(r => { if (!r.ok) throw new Error('Fleet refresh failed'); return fetch('/api/fleet'); })
           .then(r => r.json())
           .then(d => setData(d))
           .catch(err => console.error('Fleet fetch error:', err));
@@ -6283,7 +6336,39 @@ HTML_TEMPLATE = HTML_TEMPLATE.replace("<!-- frontend-vendor -->", FRONTEND_VENDO
 
 # ── FastAPI application ───────────────────────────────────────────────────────
 
+# local-server-guard:begin
+class LocalOriginGuard:
+    """Reject foreign Host on every request, and foreign Origin on state changes."""
+
+    def __init__(self, app):
+        self.app = app
+
+    async def __call__(self, scope, receive, send):
+        if scope["type"] not in ("http", "websocket"):
+            await self.app(scope, receive, send)
+            return
+        server = scope.get("server")
+        port = server[1] if server and len(server) > 1 else None
+        allowed = {f"127.0.0.1:{port}", f"localhost:{port}"}
+        headers = [(k.lower(), v.decode("latin-1")) for k, v in scope.get("headers", [])]
+        hosts = [v for k, v in headers if k == b"host"]
+        origins = [v for k, v in headers if k == b"origin"]
+        ok = type(port) is int and 1 <= port <= 65535 and len(hosts) == 1 and hosts[0] in allowed
+        if ok and (scope["type"] == "websocket" or scope["method"] not in ("GET", "HEAD")):
+            ok = len(origins) == 1 and origins[0] == f"http://{hosts[0]}"
+        if ok:
+            await self.app(scope, receive, send)
+        elif scope["type"] == "websocket":
+            await receive()
+            await send({"type": "websocket.close", "code": 1008})
+        else:
+            await send({"type": "http.response.start", "status": 403,
+                        "headers": [(b"content-type", b"text/plain")]})
+            await send({"type": "http.response.body", "body": b"Forbidden"})
+# local-server-guard:end
+
 app = FastAPI(title="Git Fleet")
+app.add_middleware(LocalOriginGuard)
 
 
 @app.get("/", response_class=HTMLResponse)
@@ -6494,7 +6579,15 @@ async def scan_progress_sse(scan_id: int):
     async def event_generator():
         try:
             while True:
-                event = await q.get()
+                try:
+                    event = await asyncio.wait_for(q.get(), timeout=60)
+                except asyncio.TimeoutError:
+                    if (_active_scan_id != scan_id or _scan_task is None
+                            or _scan_task.done()):
+                        break
+                    # An SSE comment keeps the stream open without altering UI state.
+                    yield ": scan still running\n\n"
+                    continue
                 yield f"data: {json.dumps(event)}\n\n"
                 if event.get("status") in ("completed", "failed"):
                     break
@@ -6622,7 +6715,11 @@ async def get_repo_commits(
         raise HTTPException(status_code=404, detail="Repo path not found on disk")
 
     # Determine ref target: specific branch or --all
-    ref_args = [branch] if branch else ["--all"]
+    if branch:
+        cursor = await db.execute("SELECT 1 FROM branches WHERE repo_id = ? AND name = ?", (repo_id, branch))
+        if not await cursor.fetchone():
+            raise HTTPException(status_code=400, detail="Unknown branch")
+    ref_args = ["--end-of-options", branch] if branch else ["--all"]
 
     # Total commit count
     stdout, _, rc = await run_git(repo_path, "rev-list", "--count", *ref_args)
@@ -6634,11 +6731,12 @@ async def get_repo_commits(
     skip = (page - 1) * per_page
     stdout, _, rc = await run_git(
         repo_path,
-        "log", *ref_args,
+        "log",
         "--format=%H%x00%aI%x00%an%x00%s",
         "--shortstat",
         f"--skip={skip}",
         f"--max-count={per_page}",
+        *ref_args,
     )
 
     parsed = parse_git_log(stdout) if rc == 0 else []
@@ -6713,7 +6811,7 @@ async def get_repo_branches(repo_id: str, db=Depends(get_db)):
                 # Aggregate insertions/deletions/files via shortstat
                 if entry["commits_ahead"] > 0:
                     stat_out, _, rc = await run_git(
-                        repo_path, "diff", "--shortstat",
+                        repo_path, "diff", "--no-ext-diff", "--shortstat",
                         f"{default_branch}...{name}",
                     )
                     if rc == 0 and stat_out.strip():
@@ -6907,13 +7005,27 @@ async def get_analytics_dep_overlap(db=Depends(get_db)):
 
 @app.get("/api/fleet")
 async def get_fleet(db=Depends(get_db)):
-    """Quick-scan all registered repos and return the fleet overview.
-
-    Runs up to 8 scans in parallel (asyncio.Semaphore(8)), upserts working_state,
-    and returns per-repo data with branch counts from the branches table and
-    KPIs aggregated from daily_stats.
-    """
-    results = await scan_fleet_quick(db)
+    """Return the stored fleet overview without dispatching scans."""
+    cursor = await db.execute(
+        "SELECT r.id, r.name, r.path, r.runtime, r.default_branch, "
+        "w.has_uncommitted, w.modified_count, w.untracked_count, w.staged_count, "
+        "w.current_branch, w.last_commit_hash, w.last_commit_message, w.last_commit_date "
+        "FROM repositories r LEFT JOIN working_state w ON w.repo_id = r.id"
+    )
+    results = []
+    for row in await cursor.fetchall():
+        repo_id, name, path, runtime, default_branch, dirty, modified, untracked, staged, branch, commit, message, date = row
+        exists = Path(path).is_dir()
+        results.append(dict(id=repo_id, name=name, path=path, runtime=runtime,
+                            default_branch=default_branch, path_exists=exists,
+                            has_uncommitted=bool(dirty) if exists else False,
+                            modified_count=(modified or 0) if exists else 0,
+                            untracked_count=(untracked or 0) if exists else 0,
+                            staged_count=(staged or 0) if exists else 0,
+                            current_branch=branch if exists else None,
+                            last_commit_hash=commit if exists else None,
+                            last_commit_message=message if exists else None,
+                            last_commit_date=date if exists else None))
 
     # Bulk-compute sparklines once for all repos (packet 09)
     sparklines = await compute_sparklines(db)
@@ -7020,6 +7132,13 @@ async def get_fleet(db=Depends(get_db)):
     }
 
 
+@app.post("/api/fleet/refresh")
+async def refresh_fleet(db=Depends(get_db)):
+    """Run quick scans only on a same-origin mutation request."""
+    await scan_fleet_quick(db)
+    return {"status": "ok"}
+
+
 # ── Signal handling ───────────────────────────────────────────────────────────
 
 def _shutdown_handler(sig, frame):
@@ -7036,13 +7155,16 @@ def register_signal_handlers() -> None:
 # ── Entry point ───────────────────────────────────────────────────────────────
 
 def main() -> None:
+    global TRUST_REPO_TOOLS
     args = parse_args()
+    TRUST_REPO_TOOLS = args.trust_repo_tools
 
     run_preflight()
 
     DB_PATH.parent.mkdir(parents=True, exist_ok=True)
     init_schema(DB_PATH)
     run_migrations(DB_PATH)
+    recover_interrupted_scans(DB_PATH)
 
     if args.scan:
         scan_path = Path(args.scan).expanduser().resolve()

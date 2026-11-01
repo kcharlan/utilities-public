@@ -1,5 +1,7 @@
 # Git Fleet
 
+Bundler and cargo health checks are skipped by default because repository tools may execute repository-controlled code. Start with `--trust-repo-tools` only for repositories you trust to enable those checks. Git operations disable hooks, fsmonitor, optional locks and external diff commands, but a supplied `.git` directory can still configure filter drivers; inspect untrusted repositories before scanning them.
+
 Git Fleet is a local browser dashboard for tracking many Git repositories. It combines live working-tree state with stored commit, branch, and dependency data so a collection of projects can be reviewed from one place.
 
 ## Quick start
@@ -24,7 +26,7 @@ To discover and register Git repositories below a directory before startup:
 ./git_dashboard.py --scan ~/source
 ```
 
-`--scan` registers repositories. The browser's initial fleet request then performs the live quick scan; use **Full Scan** to populate history, branches, and dependency health.
+`--scan` registers repositories. The browser requests a quick scan when the fleet overview loads; use **Full Scan** to populate history, branches, and dependency health.
 
 ## Requirements
 
@@ -58,11 +60,11 @@ The **Scan Dir** browser can navigate local directories and register repositorie
 
 A full scan processes registered repositories sequentially and stores three kinds of data:
 
-1. Commit history, aggregated by day. Later scans are incremental from `last_full_scan_at`.
+1. Commit history, recomputed from all refs and aggregated by day on each scan. The stored snapshot and scan timestamp change together only after a successful history scan.
 2. Local branches, including default/stale status. A non-default branch is stale after 30 days without a commit.
 3. Dependencies and health results for supported manifests.
 
-Progress is streamed to the browser with server-sent events. Only one fleet scan may run at a time. Missing paths and per-repository scan failures are retained as visible error state.
+Progress is streamed to the browser with server-sent events. Only one fleet scan may run at a time. Missing paths and per-repository scan failures are retained as visible error state. A scan interrupted by server shutdown is marked failed on the next startup.
 
 ### Repository detail
 
@@ -94,7 +96,7 @@ Git Fleet searches the repository root and subdirectories up to three levels dee
 - `Gemfile`
 - `composer.json`
 
-Python manifest kinds coexist in each directory. Requirements includes retain the physically declaring file, including arbitrary filenames and paths outside the repository. The manifest inventory preserves empty files and read/parse errors. Script metadata is read only from the leading comment/blank-line prelude, using [PEP 723 grammar](https://peps.python.org/pep-0723/#specification); unclosed blocks are ignored and malformed or duplicate script metadata reports an error. PEP 621 optional dependencies and string entries in `dependency-groups` are included; include-group tables are not expanded. Adjacent `uv.lock` supplies unique registry versions for pyproject declarations, with provenance; ambiguous versions block checks. It is not a separate declaration manifest. `requirements.lock` remains an independent declaration source. Each dependency declaration is identified by repository, package manager, manifest path, and identity name. The first repeated identity within one manifest wins; declarations from different manifests remain separate. Python package names are lowercased with runs of hyphens, underscores, and dots normalized to a hyphen. Other managers and fallback reference identifiers retain their spelling.
+Python manifest kinds coexist in each directory. Requirements includes retain the physically declaring file and may use arbitrary filenames, but must resolve to regular files within the repository and be no larger than 2 MiB. Discovered manifests are also limited to 2 MiB. The manifest inventory preserves empty files and read/parse errors. Script metadata is read only from the leading comment/blank-line prelude, using [PEP 723 grammar](https://peps.python.org/pep-0723/#specification); unclosed blocks are ignored and malformed or duplicate script metadata reports an error. PEP 621 optional dependencies and string entries in `dependency-groups` are included; include-group tables are not expanded. Adjacent `uv.lock` supplies unique registry versions for pyproject declarations, with provenance; ambiguous versions block checks. It is not a separate declaration manifest. `requirements.lock` remains an independent declaration source. Each dependency declaration is identified by repository, package manager, manifest path, and identity name. The first repeated identity within one manifest wins; declarations from different manifests remain separate. Python package names are lowercased with runs of hyphens, underscores, and dots normalized to a hyphen. Other managers and fallback reference identifiers retain their spelling.
 
 Version 0.2.0 migrates legacy dependency rows to this declaration key. Existing version values and check timestamps are preserved; legacy advisory and severity values move into a migration note, and coverage becomes unchecked. Rescan dependencies to establish fresh coverage and recover declarations that the former repository-wide key discarded.
 

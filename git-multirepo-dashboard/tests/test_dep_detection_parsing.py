@@ -709,7 +709,7 @@ def test_inventory_includes_empty_arbitrary_and_external_files(tmp_path):
     rows = parse_deps_for_repo(repo, manifests_out=manifests)
     by_path = {m['path']: m for m in manifests}
     assert by_path['empty-extra.txt']['dependencies'] == 0
-    assert by_path[str(outside.resolve())]['dependencies'] == 0
+    assert str(outside.resolve()) not in by_path
     assert by_path['requirements.txt']['dependencies'] == len(rows)
     assert {r['source_path'] for r in rows} == {'requirements.txt'}
 

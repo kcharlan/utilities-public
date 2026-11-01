@@ -66,7 +66,7 @@ Startup performs these steps:
 
 Missing individual ecosystem tools do not stop startup. Their paths or null values are exposed by `GET /api/status` for the UI's tool-status banner. The application does not prompt for confirmation.
 
-`--scan` performs discovery and registration only. A live quick scan occurs when the browser loads the fleet endpoint; history, branch, and dependency data are populated by a full or dependency scan.
+`--scan` performs discovery and registration only. The browser requests a quick scan when the fleet overview loads; history, branch, and dependency data are populated by a full or dependency scan.
 
 ## Data model
 
@@ -148,30 +148,30 @@ Registration is idempotent for an existing absolute path. The path-repair endpoi
 
 ### Quick scan
 
-`GET /api/fleet` executes live Git queries for every registered repository with a concurrency limit of eight:
+`POST /api/fleet/refresh` executes live Git queries for every registered repository with a concurrency limit of eight:
 
 - validate the work tree
 - parse porcelain status
 - read the latest commit
 - read the current branch
 
-Results update `working_state` without erasing error fields created by broader scans. The endpoint then joins stored branches, dependencies, 13-week sparklines, and fleet KPIs into the response.
+Results update `working_state` without erasing error fields created by broader scans. `GET /api/fleet` reads that stored state and joins branches, dependencies, 13-week sparklines, and fleet KPIs into the response without starting work.
 
 Repository `dep_summary.unchecked` and fleet `kpis.unchecked_deps` count rows unless `outdated_state` is `checked` or `floating` and `vuln_state` is `checked`. Findings do not override incomplete coverage. Outdated counts include `outdated` and `major` severities; vulnerable counts use `vulnerable` severity.
 
 ### Full history
 
-The history scanner parses `git log --all` with ISO dates and short statistics, aggregates commits and line changes by day, and upserts `daily_stats`. After the initial scan it passes `last_full_scan_at` as the incremental lower bound and updates that timestamp after the scan.
+The history scanner parses `git log --all` with ISO dates and short statistics and aggregates commits and line changes by day. Each successful scan atomically replaces the repository's `daily_stats` snapshot and updates `last_full_scan_at`; a failed command or write leaves the previous snapshot and timestamp intact.
 
 ### Branches
 
-The branch scanner replaces the stored local-branch snapshot. A branch with no commit date is stale; otherwise a non-default branch becomes stale after 30 days. The detail API computes commits-ahead and diff statistics live against the configured default branch.
+The branch scanner replaces the stored local-branch snapshot after a successful Git command. A branch with no commit date is stale; otherwise a non-default branch becomes stale after 30 days. The detail API computes commits-ahead and diff statistics live against the configured default branch.
 
 ### Fleet orchestration
 
 `POST /api/fleet/scan` accepts `{"type": "full"}` or `{"type": "deps"}` and returns a scan ID immediately. A module-level guard and a persisted `running` scan-log check reject overlap with HTTP 409.
 
-The background task processes repositories sequentially. A full scan runs history, branch, and dependency scans; a dependency scan runs only dependency work. Progress is buffered through an `asyncio.Queue` and streamed by `GET /api/fleet/scan/{scan_id}/progress`. The active scan marker is cleared in a `finally` block.
+The background task processes repositories sequentially. A full scan runs history, branch, and dependency scans; a dependency scan runs only dependency work. Progress is buffered through an `asyncio.Queue` and streamed by `GET /api/fleet/scan/{scan_id}/progress`. After 60 seconds without an event, an active scan sends a keepalive; a stream without a live scan closes. The active scan marker is cleared in a `finally` block; startup marks interrupted running scans as failed.
 
 Missing repository paths and per-repository failures are recorded and do not prevent remaining repositories from being attempted. The scan is `completed` when the fleet is empty or at least one repository succeeds; total failure is `failed`.
 
@@ -235,7 +235,8 @@ The local SPA consumes these JSON and streaming endpoints:
 | POST | `/api/repos` | Discover/register below a path |
 | DELETE | `/api/repos/{id}` | Remove a registry entry and cascaded data |
 | PATCH | `/api/repos/{id}` | Repair a repository path |
-| GET | `/api/fleet` | Quick-scan and return fleet state/KPIs |
+| GET | `/api/fleet` | Return stored fleet state/KPIs |
+| POST | `/api/fleet/refresh` | Quick-scan registered repositories |
 | POST | `/api/fleet/scan` | Start a `full` or `deps` fleet scan |
 | GET | `/api/fleet/scan/{scan_id}/progress` | SSE progress |
 | GET | `/api/repos/{id}` | Repository detail |
