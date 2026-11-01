@@ -651,12 +651,15 @@ class JSONManager:
                 f.write(content)
                 f.flush()
                 os.fsync(f.fileno())
+                written_mtime_ns = os.fstat(f.fileno()).st_mtime_ns
             if os.path.exists(target):
                 original = os.stat(target)
                 if original.st_nlink != 1:
                     raise ValueError('Cannot atomically replace a file with multiple hard links')
                 metadata = _metadata_snapshot(target)
                 _copy_metadata(target, temp_path)
+                # Metadata copying restores the old mtime; retain the write time.
+                os.utime(temp_path, ns=(os.stat(temp_path).st_atime_ns, written_mtime_ns))
                 current = os.stat(target)
                 if ((original.st_dev, original.st_ino, original.st_mtime_ns, original.st_size, original.st_nlink) !=
                         (current.st_dev, current.st_ino, current.st_mtime_ns, current.st_size, current.st_nlink) or

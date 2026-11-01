@@ -63,6 +63,24 @@ def test_save_preserves_darwin_metadata(loaded_client, sample_json_file):
     assert os.stat(sample_json_file).st_mode & 0o777 == 0o640
 
 
+def test_changed_save_advances_mtime_and_preserves_security_metadata(loaded_client, sample_json_file):
+    subprocess.run(['xattr', '-w', 'org.jtree.synthetic', 'synthetic', sample_json_file], check=True)
+    subprocess.run(['chmod', '+a', 'everyone allow read', sample_json_file], check=True)
+    os.chmod(sample_json_file, 0o640)
+    os.utime(sample_json_file, ns=(1_000_000_000, 1_000_000_000))
+    before = os.stat(sample_json_file)
+    before_acl = subprocess.check_output(['ls', '-le', sample_json_file], text=True).splitlines()[1:]
+    assert loaded_client.put('/api/node', params={'path': '["name"]'}, json={'value': 'changed'}).status_code == 200
+    response = loaded_client.post('/api/save')
+    assert response.status_code == 200, response.text
+    assert '"changed"' in open(sample_json_file).read()
+    after = os.stat(sample_json_file)
+    assert after.st_mtime_ns > before.st_mtime_ns
+    assert (after.st_uid, after.st_gid, after.st_mode & 0o777) == (before.st_uid, before.st_gid, before.st_mode & 0o777)
+    assert subprocess.check_output(['ls', '-le', sample_json_file], text=True).splitlines()[1:] == before_acl
+    assert subprocess.check_output(['xattr', '-p', 'org.jtree.synthetic', sample_json_file], text=True).strip() == 'synthetic'
+
+
 def test_metadata_copy_error_preserves_original(loaded_client, sample_json_file, monkeypatch):
     before = open(sample_json_file, 'rb').read()
     def fail(source, destination):
