@@ -1326,3 +1326,21 @@ def test_donut_panel_keeps_the_old_height_when_the_legend_wraps_further(syntheti
     panel = panel_for(page, 'Requests by Provider')
     expect(panel.locator('.svgc-sector').first).to_be_visible()
     assert panel.bounding_box()['height'] == 336
+
+
+def test_same_origin_page_can_update_settings(monkeypatch, tmp_path):
+    monkeypatch.setenv('ROUTERVIEW_HOME', str(tmp_path / 'home'))
+    module = load_launcher(PROJECT_ROOT / 'routerview')
+    module._db_path = str(tmp_path / 'test.db')
+    module.init_database(module._db_path)
+    with live_server(module.app) as url, sync_playwright() as playwright:
+        browser = playwright.chromium.launch()
+        page = browser.new_page()
+        page.goto(url)
+        result = page.evaluate("""async () => {
+            const r = await fetch('/api/settings', {method:'PUT', headers:{'Content-Type':'application/json'}, body:JSON.stringify({synthetic_setting:'ok'})});
+            return r.status;
+        }""")
+        assert result == 200
+        assert page.evaluate("async () => (await (await fetch('/api/settings')).json()).synthetic_setting") == 'ok'
+        browser.close()

@@ -86,7 +86,7 @@ Runtime state lives under `~/.routerview/` by default; `ROUTERVIEW_HOME` overrid
 
 - `routerview.db`, unless the CLI selects another database with `--db`
 - `last_port`, recording the port selected at startup
-- `backups/`, created on demand before timestamp rebuilds
+- `backups/`, created on demand before purges and timestamp rebuilds
 
 Python dependencies are managed by uv (PEP 723 header) and cached in uv's shared cache, not under the runtime home.
 
