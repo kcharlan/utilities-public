@@ -53,6 +53,8 @@ VERSION = "0.3.1"
 # Populated by build_tools_dict() during preflight; global so /api/status can
 # return it without re-running which() on every request.
 TOOLS: dict = {}
+TRUST_REPO_TOOLS = False
+MAX_DEP_FILE_SIZE = 2 * 1024 * 1024
 
 logger = logging.getLogger("git_dashboard")
 
@@ -113,6 +115,8 @@ def parse_args(argv=None):
         metavar="PATH",
         help="Register and scan a directory on startup",
     )
+    parser.add_argument("--trust-repo-tools", action="store_true",
+                        help="Allow Bundler and cargo checks to run repository-controlled tools")
     parser.add_argument(
         "-y",
         "--yes",
@@ -412,7 +416,8 @@ async def run_git(repo_path, *args: str, timeout: float = 30.0) -> tuple:
     On timeout, kills the process and returns ("", "timeout", -1).
     """
     proc = await asyncio.create_subprocess_exec(
-        "git", "-C", str(repo_path), *args,
+        "git", "--no-optional-locks", "-c", "core.fsmonitor=false",
+        "-c", "core.hooksPath=/dev/null", "-C", str(repo_path), *args,
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.PIPE,
     )
@@ -1324,11 +1329,18 @@ def detect_dep_files(repo_path: Path) -> list[dict]:
         except OSError:
             continue
         for entry in entries:
+            if entry.is_symlink():
+                continue
             if entry.is_dir():
                 if depth < _DEP_WALK_MAX_DEPTH and entry.name not in _DEP_WALK_SKIP and not entry.name.startswith('.'):
                     dirs_to_walk.append((entry, depth + 1))
                 continue
             if not entry.is_file():
+                continue
+            try:
+                if entry.stat().st_size > MAX_DEP_FILE_SIZE:
+                    continue
+            except OSError:
                 continue
             known = next(((filename, manager, runtime) for filename, manager, runtime
                           in _DEP_FILE_PRIORITY if runtime != 'python'
@@ -1472,7 +1484,7 @@ def parse_python_requirement(text: str) -> dict | None:
         return None
 
 
-def parse_requirements_txt(file_path: Path, _visited: set[str] | None = None, *, manifests_out: dict | None = None) -> list[dict]:
+def parse_requirements_txt(file_path: Path, _visited: set[str] | None = None, *, manifests_out: dict | None = None, repo_root: Path | None = None) -> list[dict]:
     """Parse PEP 508 declarations and direct URLs with circular-safe includes.
 
     Join continuations and remove comments/options while preserving extras and
@@ -1480,6 +1492,16 @@ def parse_requirements_txt(file_path: Path, _visited: set[str] | None = None, *,
     """
     if _visited is None:
         _visited = set()
+    if repo_root is None:
+        repo_root = file_path.parent.resolve()
+    try:
+        resolved_path = file_path.resolve()
+        resolved_path.relative_to(repo_root.resolve())
+        if not resolved_path.is_file() or resolved_path.stat().st_size > MAX_DEP_FILE_SIZE:
+            _manifest_record(manifests_out, file_path, 'requirements')['error'] = 'Not a regular file or exceeds size limit'
+            return []
+    except (OSError, ValueError):
+        return []
 
     resolved = str(file_path.resolve())
     if resolved in _visited:
@@ -1507,7 +1529,7 @@ def parse_requirements_txt(file_path: Path, _visited: set[str] | None = None, *,
             if len(parts) < 2:
                 continue
             include_path = file_path.parent / parts[1].strip()
-            deps.extend(parse_requirements_txt(include_path, _visited, manifests_out=manifests_out))
+            deps.extend(parse_requirements_txt(include_path, _visited, manifests_out=manifests_out, repo_root=repo_root))
             continue
         if line.startswith("-"):
             # Other flags: -i, --index-url, -f, --find-links, etc.
@@ -1769,7 +1791,7 @@ def parse_deps_for_repo(repo_path: Path, manifests_out: list[dict] | None = None
         kind = entry['kind']
         try:
             if kind == 'requirements':
-                parsed = parse_requirements_txt(file_path, visited, manifests_out=inventory)
+                parsed = parse_requirements_txt(file_path, visited, manifests_out=inventory, repo_root=repo_path)
             elif kind in ('pyproject', 'pep723'):
                 parsed = parsers[kind](file_path, manifests_out=inventory)
             else:
@@ -2212,7 +2234,9 @@ def _npm_installed_version(manifest_dir: Path, name: str) -> str | None:
 
 
 def _npm_latest_version(npm: str, manifest_dir: Path, name: str) -> str:
-    proc = subprocess.run([npm, 'view', name, 'version', '--json'], cwd=str(manifest_dir),
+    if name.startswith('-'):
+        raise ValueError('invalid npm package name')
+    proc = subprocess.run([npm, 'view', '--json', '--', name, 'version'], cwd=str(manifest_dir),
                           capture_output=True, text=True, timeout=30)
     _validate_tool_result(proc, 'npm view', (0,))
     version = _tool_version(json.loads(proc.stdout))
@@ -2729,6 +2753,11 @@ def check_rust_deps(repo_path: Path, deps: list[dict]) -> list[dict]:
     if not cargo_deps:
         return other_deps
 
+    if not TRUST_REPO_TOOLS:
+        for dep in cargo_deps:
+            mark_unchecked(dep, 'Skipped: enable --trust-repo-tools to run cargo checks')
+        return finalize_dep_health(cargo_deps) + other_deps
+
     cargo_deps = [d for directory, group in _group_by_manifest_dir(repo_path, cargo_deps).items()
                   for d in check_rust_vulns(directory, check_rust_outdated(directory, group))]
 
@@ -2863,6 +2892,11 @@ def check_ruby_deps(repo_path: Path, deps: list[dict]) -> list[dict]:
 
     if not ruby_deps:
         return other_deps
+
+    if not TRUST_REPO_TOOLS:
+        for dep in ruby_deps:
+            mark_unchecked(dep, 'Skipped: enable --trust-repo-tools to run Bundler checks')
+        return finalize_dep_health(ruby_deps) + other_deps
 
     ruby_deps = [d for directory, group in _group_by_manifest_dir(repo_path, ruby_deps).items()
                  for d in check_ruby_vulns(directory, check_ruby_outdated(directory, group))]
@@ -6283,7 +6317,39 @@ HTML_TEMPLATE = HTML_TEMPLATE.replace("<!-- frontend-vendor -->", FRONTEND_VENDO
 
 # ── FastAPI application ───────────────────────────────────────────────────────
 
+# local-server-guard:begin
+class LocalOriginGuard:
+    """Reject foreign Host on every request, and foreign Origin on state changes."""
+
+    def __init__(self, app):
+        self.app = app
+
+    async def __call__(self, scope, receive, send):
+        if scope["type"] not in ("http", "websocket"):
+            await self.app(scope, receive, send)
+            return
+        server = scope.get("server")
+        port = server[1] if server and len(server) > 1 else None
+        allowed = {f"127.0.0.1:{port}", f"localhost:{port}"}
+        headers = [(k.lower(), v.decode("latin-1")) for k, v in scope.get("headers", [])]
+        hosts = [v for k, v in headers if k == b"host"]
+        origins = [v for k, v in headers if k == b"origin"]
+        ok = type(port) is int and 1 <= port <= 65535 and len(hosts) == 1 and hosts[0] in allowed
+        if ok and (scope["type"] == "websocket" or scope["method"] not in ("GET", "HEAD")):
+            ok = len(origins) == 1 and origins[0] == f"http://{hosts[0]}"
+        if ok:
+            await self.app(scope, receive, send)
+        elif scope["type"] == "websocket":
+            await receive()
+            await send({"type": "websocket.close", "code": 1008})
+        else:
+            await send({"type": "http.response.start", "status": 403,
+                        "headers": [(b"content-type", b"text/plain")]})
+            await send({"type": "http.response.body", "body": b"Forbidden"})
+# local-server-guard:end
+
 app = FastAPI(title="Git Fleet")
+app.add_middleware(LocalOriginGuard)
 
 
 @app.get("/", response_class=HTMLResponse)
@@ -6622,7 +6688,11 @@ async def get_repo_commits(
         raise HTTPException(status_code=404, detail="Repo path not found on disk")
 
     # Determine ref target: specific branch or --all
-    ref_args = [branch] if branch else ["--all"]
+    if branch:
+        cursor = await db.execute("SELECT 1 FROM branches WHERE repo_id = ? AND name = ?", (repo_id, branch))
+        if not await cursor.fetchone():
+            raise HTTPException(status_code=400, detail="Unknown branch")
+    ref_args = ["--end-of-options", branch] if branch else ["--all"]
 
     # Total commit count
     stdout, _, rc = await run_git(repo_path, "rev-list", "--count", *ref_args)
@@ -6634,11 +6704,12 @@ async def get_repo_commits(
     skip = (page - 1) * per_page
     stdout, _, rc = await run_git(
         repo_path,
-        "log", *ref_args,
+        "log",
         "--format=%H%x00%aI%x00%an%x00%s",
         "--shortstat",
         f"--skip={skip}",
         f"--max-count={per_page}",
+        *ref_args,
     )
 
     parsed = parse_git_log(stdout) if rc == 0 else []
@@ -6713,7 +6784,7 @@ async def get_repo_branches(repo_id: str, db=Depends(get_db)):
                 # Aggregate insertions/deletions/files via shortstat
                 if entry["commits_ahead"] > 0:
                     stat_out, _, rc = await run_git(
-                        repo_path, "diff", "--shortstat",
+                        repo_path, "diff", "--no-ext-diff", "--shortstat",
                         f"{default_branch}...{name}",
                     )
                     if rc == 0 and stat_out.strip():
@@ -7036,7 +7107,9 @@ def register_signal_handlers() -> None:
 # ── Entry point ───────────────────────────────────────────────────────────────
 
 def main() -> None:
+    global TRUST_REPO_TOOLS
     args = parse_args()
+    TRUST_REPO_TOOLS = args.trust_repo_tools
 
     run_preflight()
 

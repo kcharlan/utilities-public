@@ -332,8 +332,9 @@ def test_check_rust_vulns_subprocess_failure(tmp_path):
 
 
 # Test 19
-def test_check_rust_deps_full_pipeline(tmp_path):
+def test_check_rust_deps_full_pipeline(tmp_path, monkeypatch):
     """Full pipeline: outdated dep gets overridden to vulnerable."""
+    monkeypatch.setattr(gd, 'TRUST_REPO_TOOLS', True)
     gd.TOOLS["cargo_outdated"] = FAKE_TOOL_PATH
     gd.TOOLS["cargo_audit"] = FAKE_TOOL_PATH
 
@@ -480,8 +481,9 @@ def test_check_ruby_vulns_subprocess_failure(tmp_path):
 
 
 # Test 28
-def test_check_ruby_deps_full_pipeline(tmp_path):
+def test_check_ruby_deps_full_pipeline(tmp_path, monkeypatch):
     """Full pipeline: outdated then vulns, vuln overrides."""
+    monkeypatch.setattr(gd, 'TRUST_REPO_TOOLS', True)
     gd.TOOLS["bundle"] = FAKE_TOOL_PATH
     gd.TOOLS["bundler_audit"] = FAKE_TOOL_PATH
 
@@ -880,6 +882,7 @@ NONPYTHON_CONTRACTS = [c for c in TOOL_CHECK_CONTRACTS if c[0] != 'python']
 @pytest.mark.parametrize('language,manager,kind,tool', NONPYTHON_CONTRACTS)
 @pytest.mark.parametrize('source', ['nested', 'absolute', 'legacy'])
 def test_nonpython_checks_use_manifest_directories(tmp_path, monkeypatch, language, manager, kind, tool, source):
+    monkeypatch.setattr(gd, 'TRUST_REPO_TOOLS', True)
     manifests = {'npm': 'package.json', 'gomod': 'go.mod', 'cargo': 'Cargo.toml',
                  'bundler': 'Gemfile', 'composer': 'composer.json'}
     nested = tmp_path / 'synthetic-project'

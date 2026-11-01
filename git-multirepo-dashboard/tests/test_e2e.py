@@ -187,6 +187,12 @@ def _create_git_repo(parent_dir, name="test_repo"):
     return repo
 
 
+@pytest.fixture(scope="session")
+def base_url():
+    """Supply Playwright's optional URL without its deprecated fixture."""
+    return None
+
+
 @pytest.fixture(scope="module")
 def server_context(tmp_path_factory):
     """Start git_dashboard server on a random port with an isolated temp DB.
@@ -1561,7 +1567,7 @@ def test_allocation_labels_never_collide_at_narrow_width(server, page):
     _open_app(page, server + "#/analytics")
     wrapper = _allocation_chart(page).locator(".svgc-wrapper")
     wrapper.wait_for()
-    labels = wrapper.locator("svg text").evaluate_all("""nodes => nodes
+    labels = wrapper.locator("svg text").evaluate_all(r"""nodes => nodes
         .filter(n => /^\d{4}-\d\d-\d\d$/.test(n.textContent)).map(n => n.getBoundingClientRect().toJSON())""")
     assert len(labels) >= 2
     assert all(first["right"] <= second["left"] for first, second in zip(labels, labels[1:]))

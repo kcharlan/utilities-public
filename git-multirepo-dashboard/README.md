@@ -1,5 +1,7 @@
 # Git Fleet
 
+Bundler and cargo health checks are skipped by default because repository tools may execute repository-controlled code. Start with `--trust-repo-tools` only for repositories you trust to enable those checks. Git operations disable hooks, fsmonitor, optional locks and external diff commands, but a supplied `.git` directory can still configure filter drivers; inspect untrusted repositories before scanning them.
+
 Git Fleet is a local browser dashboard for tracking many Git repositories. It combines live working-tree state with stored commit, branch, and dependency data so a collection of projects can be reviewed from one place.
 
 ## Quick start
