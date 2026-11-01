@@ -265,6 +265,51 @@ def test_local_import_graph_checks_package_initializers(tmp_path, monkeypatch):
     assert any('synthetic_missing_dependency' in p for p in guard.check_launcher('launcher'))
 
 
+def test_peer_import_checks_exact_module_and_transitive_dependencies(tmp_path, monkeypatch):
+    monkeypatch.setattr(guard, 'REPO_ROOT', tmp_path)
+    monkeypatch.setattr(guard, 'LAUNCHER_PEER_MODULES', {'app/launcher': ('peer', 'peer_pkg.helper')}, raising=False)
+    app = tmp_path / 'app'
+    app.mkdir()
+    launcher = app / 'launcher'
+    launcher.write_text(guard.CANONICAL_SHEBANG + '\n# /// script\n# requires-python = ">=3.12,<4"\n# dependencies = []\n# ///\nfrom peer_pkg.helper import value\n')
+    package = tmp_path / 'peer' / 'peer_pkg'
+    package.mkdir(parents=True)
+    (package / '__init__.py').write_text('')
+    helper = package / 'helper.py'
+    helper.write_text('value = 1\n')
+    monkeypatch.setitem(guard.DEPENDENCY_MANIFESTS, 'app/launcher', ('stdlib', '', frozenset()))
+    assert guard.check_launcher('app/launcher') == []
+    helper.write_text('import synthetic_missing_dependency\n')
+    assert 'synthetic_missing_dependency' in ' '.join(guard.check_launcher('app/launcher'))
+    helper.write_text('value = 1\n')
+    (package / '__init__.py').write_text('import synthetic_init_dependency\n')
+    assert 'synthetic_init_dependency' in ' '.join(guard.check_launcher('app/launcher'))
+    (package / '__init__.py').write_text('')
+    (tmp_path / 'peer' / 'synthetic_namespace').mkdir()
+    helper.write_text('from synthetic_namespace import missing_leaf\n')
+    assert 'synthetic_namespace' in ' '.join(guard.check_launcher('app/launcher'))
+    helper.write_text('value = 1\n')
+    launcher.write_text(launcher.read_text().replace('peer_pkg.helper', 'peer_pkg.unrelated'))
+    assert 'peer_pkg' in ' '.join(guard.check_launcher('app/launcher'))
+    launcher.write_text(launcher.read_text().replace('peer_pkg.unrelated', 'peer_pkg.helper'))
+    helper.unlink()
+    assert guard.check_launcher('app/launcher')
+
+
+def test_peer_initializer_cannot_escape_source_root(tmp_path, monkeypatch):
+    monkeypatch.setattr(guard, 'REPO_ROOT', tmp_path)
+    monkeypatch.setattr(guard, 'LAUNCHER_PEER_MODULES', {'launcher': ('peer', 'pkg.helper')}, raising=False)
+    launcher = tmp_path / 'launcher'
+    launcher.write_text('from pkg.helper import value\n')
+    package = tmp_path / 'peer' / 'pkg'
+    package.mkdir(parents=True)
+    (package / 'helper.py').write_text('value = 1\n')
+    outside = tmp_path / 'outside.py'
+    outside.write_text('')
+    (package / '__init__.py').symlink_to(outside)
+    assert guard.check_import_graph(launcher, [])
+
+
 @pytest.mark.parametrize(('source', 'expected'), [
     ('import synthetic_missing_dependency\n', 'synthetic_missing_dependency'),
     ('def broken(:\n', 'could not parse'),

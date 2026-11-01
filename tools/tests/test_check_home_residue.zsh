@@ -1,8 +1,9 @@
 #!/bin/zsh
 set -eu
 root=${0:A:h:h:h}
+source "$root/tools/tests/cleanup_fixture.sh"
 scratch=$(mktemp -d "${TMPDIR:-/tmp}/home-residue-test.XXXXXX")
-trap 'rm -rf -- "$scratch"' EXIT
+trap 'remove_fixture_paths "$scratch"' EXIT
 fixture_home="$scratch/home"
 mkdir "$fixture_home"
 fail() { print -u2 -- "FAIL: $1"; exit 1; }
@@ -10,7 +11,7 @@ run() {
   audit_status=0
   output=$(HOME="$fixture_home" zsh "$root/tools/check_home_residue.zsh" 2>&1) || audit_status=$?
 }
-reset_home() { rm -rf -- "$fixture_home"; mkdir "$fixture_home"; }
+reset_home() { remove_fixture_paths "$fixture_home"; mkdir "$fixture_home"; }
 check_old() {
   run
   [[ $audit_status == 1 ]] || fail "$1: expected exit 1, got $audit_status: $output"

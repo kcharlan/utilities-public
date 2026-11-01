@@ -6,6 +6,7 @@ readonly TEST_SCRIPT_DIR="${0:A:h}"
 readonly REPO_UNDER_TEST="${TEST_SCRIPT_DIR:h:h}"
 readonly FIXTURE_NODE="$(command -v node)"
 readonly AUDIT_SOURCE="$REPO_UNDER_TEST/tools/check_local_deployments.zsh"
+source "$TEST_SCRIPT_DIR/cleanup_fixture.sh"
 
 umask 077
 suite_parent="${TMPDIR:-/tmp}"
@@ -18,7 +19,7 @@ cleanup_suite() {
         "$SUITE_ROOT" == "${suite_parent:A}"/check-local-deployments-tests.* &&
         -d "$SUITE_ROOT" &&
         ! -L "$SUITE_ROOT" ]]; then
-    rm -rf -- "$SUITE_ROOT"
+    remove_fixture_paths "$SUITE_ROOT"
   fi
   return "$saved_status"
 }
@@ -137,7 +138,7 @@ build_model_zipapp() {
   local target="$FIXTURE_SCRIPTS/model-sentinel"
   local source_hash
 
-  rm -rf -- "$staging"
+  remove_fixture_paths "$staging"
   mkdir -p -- "$staging/model_sentinel"
   cp -p -- "$FIXTURE_REPO/model_sentinel/__main__.py" "$staging/__main__.py"
   cp -p -- "$FIXTURE_REPO"/model_sentinel/model_sentinel/*.py \
@@ -173,7 +174,7 @@ build_installer_style_model_zipapp() {
   local target="$FIXTURE_SCRIPTS/model-sentinel"
   local source_hash
 
-  rm -rf -- "$staging" "$archive"
+  remove_fixture_paths "$staging" "$archive"
   mkdir -p -- "$staging/model_sentinel"
   cp -p -- "$FIXTURE_REPO/model_sentinel/__main__.py" "$staging/__main__.py"
   cp -p -- "$FIXTURE_REPO"/model_sentinel/model_sentinel/*.py \
