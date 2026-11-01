@@ -82,7 +82,7 @@ An Airtable-style grid with sticky headers. Each column header shows:
 
 | Indicator | Icon | Meaning |
 |-----------|------|---------|
-| **Primary key** | Key (amber) | This column is the primary key. For a composite key, only its first component is marked |
+| **Primary key** | Key (amber) | This column is part of the primary key; every component of a composite key is marked |
 | **Foreign key** | Link (blue) | This column references another table |
 | **Type** | Text label | Column type: TEXT, INTEGER, REAL, or BLOB |
 
@@ -143,6 +143,8 @@ Click the **pencil icon** on the left side of a row to enter bulk edit mode. All
 Primary-key fields are disabled in bulk edit mode. Tables without a primary key can be browsed and appended to, but EditDB cannot update or delete their rows through the grid.
 
 The grid uses every component of a composite primary key to locate a row. If a key no longer identifies exactly one row, the update or deletion is rejected.
+
+The grid displays BLOB values as objects. Editing a BLOB cell replaces its value with text; use the SQL Console to write binary data. Unchanged BLOBs and other untouched values keep their SQLite storage types when saving a row. In API responses and JSON exports, integers outside JavaScript's safe range are strings and BLOBs are objects containing hexadecimal bytes, for example `{"$blob": "ff00"}`.
 
 ### Add a Row
 

@@ -21,6 +21,10 @@ from tools.testkit import (assert_classes_styled, assert_exact_text, assert_font
 LAUNCHER = REPO_ROOT / 'editdb' / 'editdb'
 MARKUP = '<b>x</b> & ${y} `value` {{X}} &nbsp;'
 
+@pytest.fixture(scope='session')
+def base_url(pytestconfig):
+    return pytestconfig.getoption('--base-url') or pytestconfig.getini('base_url') or None
+
 @pytest.fixture
 def server(tmp_path):
     database = tmp_path / 'synthetic.sqlite'
@@ -79,6 +83,8 @@ def test_page_loads_offline(server, browser):
 def test_composite_big_key_and_unchanged_types(server, page, tmp_path):
     page.goto(server)
     page.get_by_role('button', name='composite', exact=True).click()
+    expect(page.get_by_role('columnheader', name='a TEXT').locator('svg')).to_have_count(1)
+    expect(page.get_by_role('columnheader', name='b INTEGER').locator('svg')).to_have_count(1)
     row = page.get_by_role('row').filter(has=page.get_by_role('cell', name='target', exact=True))
     expect(row).to_be_visible()
     row.locator('button').first.click()

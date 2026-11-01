@@ -20,6 +20,9 @@ different port with:
 ./editdb data.sqlite --port 9000
 ```
 
+If the preferred port is busy, EditDB tries the next 19 ports. Pass `--port 0`
+to choose an available port automatically.
+
 To invoke EditDB from elsewhere, symlink `editdb/editdb` into a directory on
 your `PATH`.
 
@@ -82,7 +85,10 @@ committed batches remain in the database.
 
 The grid uses all components of a composite primary key to locate a row. An
 update or deletion is rejected if its key no longer identifies exactly one row.
-Large integers are returned as strings and BLOBs as hex objects in JSON.
+In API responses and JSON exports, integers outside JavaScript's safe integer
+range are strings; BLOBs are objects such as `{"$blob": "ff00"}` containing
+hexadecimal bytes. The grid displays a BLOB as an object. Editing its cell
+replaces the BLOB with text; use the SQL console to write binary values.
 
 ## Architecture
 
