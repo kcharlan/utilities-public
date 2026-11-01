@@ -6,7 +6,8 @@ import crypto from 'node:crypto';
 import {execFileSync, spawnSync} from 'node:child_process';
 import {fileURLToPath} from 'node:url';
 import {regular, inspectAncestors, externalDirectory, sha, exists, atomicFile, parseIndexSnapshot,
-  parseStagedListing, normalizeEntries, hashInventory, cleanupDirectories, finishCleanup, pruneBackups} from './deployment_files.mjs';
+  parseStagedListing, normalizeEntries, hashInventory, cleanupDirectories, finishCleanup, pruneBackups, requireMain} from './deployment_files.mjs';
+import {runTransaction} from './transaction.mjs';
 
 export const buildInput = name => ['brew_version/Package.swift','brew_version/Makefile'].includes(name) || /^brew_version\/(Resources|Sources|Tests)\//.test(name);
 export function sourceInventory(repo, snapshot, requireStaged = false) {
@@ -155,6 +156,26 @@ function stageApp(source,apps,cleanupErrors) {
 function displaceApp(app,staged) {
   if(exists(app)) fs.renameSync(app,path.join(staged.directory,'displaced-app'));
 }
+export function replaceAppFromBackup(source,target,apps,saved) {
+  const cleanupErrors=[]; let staged, primary, preserve=false;
+  try {
+    staged=stageApp(source,apps,cleanupErrors);
+    const expected=appTreeHash(source), displaced=path.join(staged.directory,'displaced-app');
+    try {displaceApp(target,staged);fs.renameSync(staged.candidate,target);if(appTreeHash(target)!==expected)throw Error('Restored app hash mismatch');}
+    catch(error) {
+      try {
+        if(exists(displaced)) {
+          if(exists(target))fs.renameSync(target,staged.candidate);
+          fs.renameSync(displaced,target);
+        } else if(exists(target)&&!exists(staged.candidate)) fs.renameSync(target,staged.candidate);
+      }
+      catch(restoreError) {preserve=true;throw new AggregateError([error,restoreError],error.message+'; displaced app restoration failed: '+restoreError.message+'; staging retained: '+staged.directory);}
+      throw error;
+    }
+  } catch(error) {primary=error;}
+  finally {if(staged&&!preserve)cleanupErrors.push(...cleanupDirectories([staged.directory]));}
+  finishCleanup(primary,cleanupErrors,'Restoration cleanup failed',saved);
+}
 function restore(saved,command,app,receipt,apps,cleanupErrors) {
   let staged;
   try {
@@ -183,7 +204,7 @@ function finishOperation(primary,cleanupErrors,completedMessage,backup) {
   try {finishCleanup(primary,cleanupErrors,completedMessage,backup);}
   catch(error) {if(!primary) error.deploymentCompleted=true;throw error;}
 }
-export function main(argv=process.argv.slice(2)) {
+export async function main(argv=process.argv.slice(2)) {
   let repo=path.resolve(path.dirname(fileURLToPath(import.meta.url)),'..'),scripts=path.resolve(process.env.UTILITIES_SCRIPTS_DIR || path.join(os.homedir(),'Library/Scripts')),apps=path.resolve(process.env.UTILITIES_APPS_DIR || path.join(os.homedir(),'Applications'));
   let audit=false,dry=false,rebuild=false,snapshot,rollback;
   for(let i=0;i<argv.length;i++) {
@@ -197,6 +218,7 @@ export function main(argv=process.argv.slice(2)) {
   if(Number(audit)+Number(dry)+Number(Boolean(rollback))>1 || (snapshot&&!audit) || (rebuild&&(audit||rollback))) throw new Error('Incompatible deployment options');
   repo=fs.realpathSync(repo);scripts=externalDirectory(scripts,repo);apps=externalDirectory(apps,repo);
   const command=path.join(scripts,'brew-version'),receipt=path.join(scripts,'.brew-version-native.json'),app=path.join(apps,'Brew Version.app');
+  if(!audit&&!dry&&!rollback) requireMain(repo);
   for(const file of [command,receipt]) if(exists(file)) regular(file);
   if(exists(app)) appTreeHash(app);
   if(rollback) {
@@ -217,9 +239,10 @@ export function main(argv=process.argv.slice(2)) {
   let current=false;
   if(!rebuild) try {verify(inputs,expected,command,app,receipt);diagnostic(command,expected);appDiagnostic(app,expected);current=true;} catch {}
   if(current) {console.log('Brew Version already current; nothing changed');return;}
-  const scratch=fs.mkdtempSync(path.join(os.tmpdir(),'brew-version-build-'));
-  const cleanupErrors=[];let staged,saved,primary;
+  const cleanupErrors=[];let scratch,staged,saved,primary;
   try {
+    await runTransaction({name:'Brew Version',admit:()=>{},isCurrent:()=>false,build:()=>{
+    scratch=fs.mkdtempSync(path.join(os.tmpdir(),'brew-version-build-'));
     // `swift --version` also leaves a TemporaryDirectory.* in TMPDIR.
     const env={...process.env,TMPDIR:scratchTmpdir(scratch)};
     try {
@@ -234,10 +257,12 @@ export function main(argv=process.argv.slice(2)) {
     regular(builtCommand);diagnostic(builtCommand,expected);appDiagnostic(builtApp,expected);
     const bytes=fs.readFileSync(builtCommand),treeHash=appTreeHash(builtApp);
     if(sourceInventory(repo,undefined,true).sourceHash!==inputs.sourceHash) throw new Error('Native inputs changed during build');
+    return {value:{bytes,treeHash,builtApp}};
+    },install:({bytes,treeHash,builtApp},registerRecovery)=>{
     fs.mkdirSync(scripts,{recursive:true,mode:0o755});fs.mkdirSync(apps,{recursive:true,mode:0o755});
     staged=stageApp(builtApp,apps,cleanupErrors);saved=backup(command,app,receipt,repo);
     console.log('Recovery backup: '+saved);
-    try {
+    registerRecovery(()=>restore(readBackup(saved),command,app,receipt,apps,cleanupErrors));
       atomicFile(command,bytes,0o755,'.brew-version-stage-');diagnostic(command,expected);
       // The existing app is moved, not overwritten; the verified copy protects recovery
       // even if moving or publishing the new bundle fails.
@@ -245,13 +270,13 @@ export function main(argv=process.argv.slice(2)) {
       fs.renameSync(staged.candidate,app);appDiagnostic(app,expected);
       atomicFile(receipt,Buffer.from(JSON.stringify({schema:1,sourceHash:inputs.sourceHash,version:expected.version,commandHash:sha(bytes),commandMode:0o755,appTreeHash:treeHash})+'\n'),0o600,'.brew-version-stage-');
       verify(inputs,expected,command,app,receipt);diagnostic(command,expected);
-    } catch(error) {recover(error,saved,command,app,receipt,apps,cleanupErrors);}
+    },verify:()=>{}});
     console.log('Brew Version deployed; rollback backup: '+saved);relaunchNotice(expected.version);
   } catch(error) {primary=error;}
-  finally {cleanupErrors.push(...cleanupDirectories([...(staged?[staged.directory]:[]),scratch]));}
+  finally {cleanupErrors.push(...cleanupDirectories([...(staged?[staged.directory]:[]),...(scratch?[scratch]:[])]));}
   finishOperation(primary,cleanupErrors,'Deployment completed, but cleanup failed',saved);
   if(saved) pruneBackups(path.dirname(saved));
 }
 if(process.argv[1] && path.resolve(process.argv[1])===fileURLToPath(import.meta.url)) {
-  try {main();} catch(error) {console.error((error.deploymentCompleted?'Brew Version operation completed with cleanup failures: ':'Brew Version deployment failed: ')+error.message);process.exitCode=1;}
+  main().catch(error=>{console.error((error.deploymentCompleted?'Brew Version operation completed with cleanup failures: ':'Brew Version deployment failed: ')+error.message);process.exitCode=1;});
 }

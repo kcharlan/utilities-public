@@ -241,6 +241,46 @@ def test_lazy_imports_are_checked(tmp_path: Path) -> None:
     ) == []
 
 
+def test_local_import_graph_reports_missing_dependencies_and_syntax(tmp_path, monkeypatch):
+    monkeypatch.setattr(guard, 'REPO_ROOT', tmp_path)
+    launcher = tmp_path / 'launcher'
+    launcher.write_text(guard.CANONICAL_SHEBANG + '\n# /// script\n# requires-python = ">=3.12,<4"\n# dependencies = []\n# ///\nimport sibling\n')
+    (tmp_path / 'sibling.py').write_text('import nested\n')
+    (tmp_path / 'nested.py').write_text('import missing_synthetic_dependency\n')
+    assert any('missing_synthetic_dependency' in p for p in guard.check_launcher('launcher'))
+    (tmp_path / 'nested.py').write_text('def broken(:\n')
+    assert any('parse' in p and 'nested.py' in p for p in guard.check_launcher('launcher'))
+    launcher.write_text(launcher.read_text() + 'def broken(:\n')
+    assert any('parse' in p and 'launcher' in p for p in guard.check_launcher('launcher'))
+
+
+def test_local_import_graph_checks_package_initializers(tmp_path, monkeypatch):
+    monkeypatch.setattr(guard, 'REPO_ROOT', tmp_path)
+    launcher = tmp_path / 'launcher'
+    launcher.write_text(guard.CANONICAL_SHEBANG + '\n# /// script\n# requires-python = ">=3.12,<4"\n# dependencies = []\n# ///\nimport package.module\n')
+    package = tmp_path / 'package'
+    package.mkdir()
+    (package / '__init__.py').write_text('import synthetic_missing_dependency\n')
+    (package / 'module.py').write_text('pass\n')
+    assert any('synthetic_missing_dependency' in p for p in guard.check_launcher('launcher'))
+
+
+@pytest.mark.parametrize(('source', 'expected'), [
+    ('import synthetic_missing_dependency\n', 'synthetic_missing_dependency'),
+    ('def broken(:\n', 'could not parse'),
+])
+def test_local_import_graph_checks_named_namespace_children(tmp_path, monkeypatch, source, expected):
+    monkeypatch.setattr(guard, 'REPO_ROOT', tmp_path)
+    launcher = tmp_path / 'launcher'
+    launcher.write_text(guard.CANONICAL_SHEBANG + '\n# /// script\n# requires-python = ">=3.12,<4"\n# dependencies = []\n# ///\nfrom package.namespace import child\n')
+    namespace = tmp_path / 'package' / 'namespace'
+    namespace.mkdir(parents=True)
+    (namespace.parent / '__init__.py').write_text('')
+    child = namespace / 'child.py'
+    child.write_text(source)
+    assert any(expected in p and 'child.py' in p for p in guard.check_launcher('launcher'))
+
+
 def test_reverse_manifest_check_rejects_unapproved_extras() -> None:
     missing, unexpected = compare_dependency_sets(
         ["fastapi", "uvicorn"],

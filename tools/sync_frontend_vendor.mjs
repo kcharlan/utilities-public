@@ -48,6 +48,22 @@ function generate(names) {
 }
 function sync(path, check) {
   const source = readFileSync(path,'utf8');
+  const markers = source.matchAll(/^[ \t]*(# |<!-- )frontend-vendor:(begin|end)\b[^\r\n]*\r?$/gm);
+  let open = null;
+  for (const [line, kind, action] of markers) {
+    const valid = kind === '# '
+      ? /^[ \t]*# frontend-vendor:(?:begin [^\r\n]+|end)[ \t]*\r?$/
+      : /^[ \t]*<!-- frontend-vendor:(?:begin [^\r\n]+|end) -->[ \t]*\r?$/;
+    if (!valid.test(line)) throw Error(`${path}: malformed frontend-vendor marker`);
+    if (action === 'begin') {
+      if (open !== null) throw Error(`${path}: nested frontend-vendor marker`);
+      open = kind;
+    } else {
+      if (open !== kind) throw Error(`${path}: unmatched frontend-vendor marker`);
+      open = null;
+    }
+  }
+  if (open !== null) throw Error(`${path}: unmatched frontend-vendor marker`);
   const pattern = /^([ \t]*)(# |<!-- )frontend-vendor:begin ([^\n]*?)(?: -->)?\r?\n[\s\S]*?^[ \t]*(?:# |<!-- )frontend-vendor:end(?: -->)?[ \t]*$/gm;
   let count=0, changed=false;
   const result = source.replace(pattern, (whole, indent, marker, raw) => {

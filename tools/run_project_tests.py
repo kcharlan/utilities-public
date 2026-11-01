@@ -77,6 +77,9 @@ def clean_environment() -> dict[str, str]:
     venv = env.pop("VIRTUAL_ENV", None)
     for key in ("PYTHONHOME", "PYTHONPATH", "PYTHONUSERBASE", "UV_SYSTEM_PYTHON", "UV_BREAK_SYSTEM_PACKAGES"):
         env.pop(key, None)
+    for key in list(env):
+        if key.startswith("PYTEST_"):
+            del env[key]
     paths = env.get("PATH", "").split(os.pathsep)
     def is_venv_bin(path: str) -> bool:
         resolved = Path(path).resolve()
