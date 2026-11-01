@@ -1,5 +1,7 @@
 import os
 import subprocess
+import sys
+from pathlib import Path
 
 import pytest
 
@@ -41,6 +43,80 @@ def test_failed_write_preserves_file(loaded_client, sample_json_file, monkeypatc
     monkeypatch.setattr(jtree_mod.os, 'fsync', fail)
     assert loaded_client.post('/api/save').status_code == 500
     assert open(sample_json_file, 'rb').read() == before
+
+
+def test_process_death_during_write_preserves_original_and_metadata(tmp_path):
+    target = tmp_path / 'original.json'
+    target.write_bytes(b'{"original": "unchanged"}\n')
+    subprocess.run(['xattr', '-w', 'org.jtree.synthetic', 'synthetic', str(target)], check=True)
+    subprocess.run(['chmod', '+a', 'everyone allow read', str(target)], check=True)
+    os.chmod(target, 0o640)
+    before = target.read_bytes()
+    before_stat = target.stat()
+    before_acl = subprocess.check_output(['ls', '-le', str(target)], text=True).splitlines()[1:]
+    repo = Path(__file__).resolve().parents[2]
+    child = r'''
+import builtins
+import os
+import sys
+
+sys.path.insert(0, sys.argv[1])
+from tools.testkit import load_launcher
+
+module = load_launcher(os.path.join(sys.argv[1], 'jtree', 'jtree'))
+target = sys.argv[2]
+manager = module.JSONManager(target)
+manager.data = {'replacement': 'a longer synthetic value'}
+real_open = builtins.open
+real_fdopen = os.fdopen
+
+class InterruptedWrite:
+    def __init__(self, stream):
+        self.stream = stream
+
+    def __enter__(self):
+        self.stream.__enter__()
+        return self
+
+    def __exit__(self, *args):
+        return self.stream.__exit__(*args)
+
+    def write(self, data):
+        self.stream.write(data[:max(1, len(data) // 2)])
+        self.stream.flush()
+        os.write(2, b'partial write reached\n')
+        os._exit(73)
+
+def open_target(path, mode='r', *args, **kwargs):
+    stream = real_open(path, mode, *args, **kwargs)
+    if os.fspath(path) == target and any(flag in mode for flag in 'wax'):
+        return InterruptedWrite(stream)
+    return stream
+
+def open_fd(fd, mode='r', *args, **kwargs):
+    stream = real_fdopen(fd, mode, *args, **kwargs)
+    return InterruptedWrite(stream) if 'w' in mode else stream
+
+builtins.open = open_target
+os.fdopen = open_fd
+manager.save()
+'''
+    result = subprocess.run(
+        [sys.executable, '-c', child, str(repo), str(target)],
+        capture_output=True, timeout=30,
+    )
+    assert result.returncode == 73, result.stderr.decode(errors='replace')
+    assert b'partial write reached\n' in result.stderr
+    assert target.read_bytes() == before
+    after_stat = target.stat()
+    assert (after_stat.st_mode, after_stat.st_uid, after_stat.st_gid) == (
+        before_stat.st_mode, before_stat.st_uid, before_stat.st_gid,
+    )
+    assert subprocess.check_output(['ls', '-le', str(target)], text=True).splitlines()[1:] == before_acl
+    assert subprocess.check_output(['xattr', '-p', 'org.jtree.synthetic', str(target)], text=True).strip() == 'synthetic'
+    staged = list(tmp_path.glob('.jtree-*'))
+    assert len(staged) == 1
+    assert 0 < len(staged[0].read_bytes()) < len(b'{"replacement": "a longer synthetic value"}')
 
 
 def test_missing_copied_metadata_rejects_replacement(loaded_client, sample_json_file, monkeypatch):
