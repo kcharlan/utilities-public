@@ -120,9 +120,8 @@
       const out = Object.create(null);
       const namedSensitive = Object.entries(value).some(([name, v]) =>
         /^(name|key)$/i.test(name) && typeof v === 'string' && isSensitiveName(v));
-      const hasValue = Object.keys(value).some(name => /^value$/i.test(name));
       for (const [name, v] of Object.entries(value)) {
-        out[name] = (isSensitiveName(name) && !(hasValue && /^key$/i.test(name) && typeof v === 'string' && isSensitiveName(v))) || (namedSensitive && /^value$/i.test(name)) ? REDACTED
+        out[name] = isSensitiveName(name) || (namedSensitive && /^value$/i.test(name)) ? REDACTED
           : name.toLowerCase() === '$httpheaders' && typeof v === 'string'
             ? redactHeaderBlock(v, s, depth + 1, layers)
             : walk(v, s, depth + 1, layers);

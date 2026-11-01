@@ -16,6 +16,15 @@ test('aggregate form, Unicode body and raw inspection are bounded before retenti
   assert.equal(r.redactHeaders([{ name: 'X-Synthetic', value: 'x'.repeat(9000) }])[0].value, '<omitted>');
 });
 
+for (const [input, expected] of [
+  ['{"key":"SYNTHETIC_SECRET","value":"visible"}', '{"key":"REDACTED","value":"REDACTED"}'],
+  ['{"name":"Authorization","key":"SYNTHETIC_TOKEN","value":"SYNTHETIC_VALUE"}', '{"name":"Authorization","key":"REDACTED","value":"REDACTED"}']
+]) {
+  test(`sensitive key payload remains redacted with a value sibling: ${input}`, () => {
+    assert.equal(redactBody({raw:[{bytes:new TextEncoder().encode(input).buffer}]}).text, expected);
+  });
+}
+
 test('restored body strings and debug paths obey byte budgets', () => {
   const r = context.LLMCaptureRedact;
   const safe = r.sanitizeDiagnosticRecord('capture', { body: { text: '界'.repeat(15000) } });
@@ -291,7 +300,7 @@ test("only live sanitized body prefixes retain truncated JSON prompt content", (
 test('redacts credential values in named records, tuples, headers and unstructured text', () => {
   const cases = [
     ['{"name":"Authorization","value":"SYNTHETIC_VALUE","other":"visible"}', '{"name":"Authorization","value":"REDACTED","other":"visible"}'],
-    ['{"key":"device_id","value":{"nested":"SYNTHETIC_VALUE"}}', '{"key":"device_id","value":"REDACTED"}'],
+    ['{"key":"device_id","value":{"nested":"SYNTHETIC_VALUE"}}', '{"key":"REDACTED","value":"REDACTED"}'],
     ['{"key":"SYNTHETIC_SECRET"}', '{"key":"REDACTED"}'],
     ['{"name":"Authorization","key":"SYNTHETIC_VALUE","value":"SYNTHETIC_VALUE"}', '{"name":"Authorization","key":"REDACTED","value":"REDACTED"}'],
     ['["user_id","SYNTHETIC_VALUE"]', '["user_id","REDACTED"]'],
