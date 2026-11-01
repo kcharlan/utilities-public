@@ -80,7 +80,7 @@ The generated workbook contains:
 
 Rates step at the configured cadence and floor at zero. CD rates update on rollover and scale rate changes by `CD Sensitivity`. All balance calculations remain Excel formulas so the workbook can be audited and adjusted.
 
-`Total Duration (months)` means the exact number of monthly compounding periods. Month 1 shows principal after Month 1 interest, each following row compounds once from the previous row, and the Output sheet points to the post-month-N balance.
+`Total Duration (months)` means the exact number of monthly compounding periods. Month 1 shows principal after Month 1 interest, each following row compounds once from the previous row, and the Output sheet points to the post-month-N balance. Formulas cover the supported 1–1200 months, so changing the duration on Inputs updates Output on recalculation. Input edits in Excel are not revalidated by the launcher; keep edited values within the bounds above.
 
 The workbook is first built as a temporary file in the output directory and then moved into place, so an existing output is not modified in place while formulas are being generated.
 

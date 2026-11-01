@@ -1,5 +1,93 @@
 const { expect, test } = require('@playwright/test');
 
+test('early payoff preserves value when vendor and discount rates match', async ({ page }) => {
+  await page.goto('/early_loan_termination_calculator.html');
+  await page.locator('#price').fill('10000');
+  await page.locator('#vendorRate').fill('12');
+  await page.locator('#disc').fill('12');
+  await page.locator('#timing').selectOption('end');
+  await page.locator('#calcBtn').click();
+  const savings = await page.evaluate(() => state.savingsRows.map(row => row[1]));
+  for (const value of savings) expect(value).toBeLessThan(1e-8);
+  const presentValues = await page.evaluate(() => {
+    const P = paymentPMT(0.01, 24, 10000);
+    return Array.from({length: 24}, (_, x) => scenarioPV({price: 10000, down: 0, term: 24, P, i_v: 0.01, i_d: 0.01, X: x + 1, timing: 'end'}));
+  });
+  for (const value of presentValues) expect(value).toBeCloseTo(10000, 8);
+  // Unequal rates: month-one cash flows are one payment at t=1 and the
+  // remaining balance with one month's interest at t=2.
+  const actual = await page.evaluate(() => scenarioPV({price: 0, down: 0, term: 2, P: 104, i_v: 0.04, i_d: 0.02, X: 1, timing: 'end'}));
+  expect(actual).toBeCloseTo(104 / 1.02 + 104 / (1.02 ** 2), 9);
+});
+
+test('immediate loan payments use annuity-due amounts and accrue after the first payment', async ({ page }) => {
+  await page.goto('/early_loan_termination_calculator.html');
+  await page.locator('#price').fill('110');
+  await page.locator('#down').fill('10');
+  await page.locator('#term').fill('2');
+  await page.locator('#vendorRate').fill('120');
+  await page.locator('#disc').fill('120');
+  await page.locator('#timing').selectOption('immediate');
+  await page.locator('#calcBtn').click();
+  await expect(page.locator('#amortTbl tbody tr').first().locator('td')).toHaveText(['1', '52.38', '52.38', '0.00', '47.62']);
+  await expect(page.locator('#amortTbl tbody tr').last().locator('td')).toHaveText(['2', '52.38', '47.62', '4.76', '0.00']);
+  const values = await page.evaluate(() => {
+    const cases = [{down: 10, term: 2, rate: 0.1}, {down: 10, term: 3, rate: 0}, {down: 10, term: 1, rate: 0.1}];
+    return cases.flatMap(({down, term, rate}) => {
+      const P = paymentPMT(rate, term, 110 - down);
+      return ['immediate', 'end'].flatMap(timing => Array.from({length: term}, (_, x) => scenarioPV({price: 110, down, term, P, i_v: rate, i_d: rate, X: x + 1, timing})));
+    });
+  });
+  for (const value of values) expect(value).toBeCloseTo(110, 8);
+});
+
+test('IRR refuses an unbracketed result and keeps beginning timing valid', async ({ page }) => {
+  await page.goto('/lump_sum_calculator.html');
+  expect(await page.evaluate(() => solveMonthlyIRR(1e12, 1, 1))).toBeNull();
+  expect(await page.evaluate(() => solveMonthlyIRR(1, 1e12, 1))).toBeNull();
+  await page.locator('#lump').fill('100');
+  await page.locator('#pay').fill('20');
+  await page.locator('#term').fill('5');
+  await page.locator('#timing').selectOption('begin');
+  await page.locator('#calcBtn').click();
+  await expect(page.locator('#mirr')).toHaveValue('0.0000');
+  await expect(page.locator('#amort1 tbody tr').last().locator('td').last()).toHaveText('0.00');
+});
+
+test('debt payoff at the safety limit succeeds, while an unpaid balance fails', async ({ page }) => {
+  await page.goto('/money_sense_calculators.html');
+  const maxMonths = await page.evaluate(async () => Number((await (await fetch(location.href)).text()).match(/const maxMonths = (\d+)/)[1]));
+  await page.locator('#debtAPR').fill('0');
+  await page.locator('#debtMode').selectOption('fixed');
+  await page.locator('#debtFixedPayment').fill('1');
+  await page.locator('#debtExtra').fill('0');
+  await page.locator('#debtPrincipal').fill(String(maxMonths));
+  const alerts = [];
+  page.on('dialog', async dialog => { alerts.push(dialog.message()); await dialog.dismiss(); });
+  await page.evaluate(() => calcDebt());
+  await expect(page.locator('#debtMonths')).toHaveText(`${maxMonths} months`);
+  expect(alerts).toEqual([]);
+  await page.locator('#debtPrincipal').fill(String(maxMonths + 1));
+  await page.evaluate(() => calcDebt());
+  expect(alerts).toEqual(['Exceeded iteration limit; check inputs.']);
+});
+
+test('calculator default scenarios offer their downloads', async ({ page }) => {
+  for (const [path, setup, selectors] of [
+    ['/early_loan_termination_calculator.html', null, ['#dlChartBtn', '#dlAmortCsvBtn', '#dlSavingsCsvBtn']],
+    ['/lump_sum_calculator.html', null, ['#export1', '#export2']],
+    ['/money_sense_calculators.html', () => { calcDebt(); calcSavings(); }, ['#exportDebtBtn', '#exportSaveBtn']],
+  ]) {
+    await page.goto(path);
+    if (setup) await page.evaluate(setup);
+    for (const selector of selectors) {
+      const download = page.waitForEvent('download');
+      await page.locator(selector).click();
+      expect((await download).suggestedFilename()).toMatch(/\.(csv|png)$/);
+    }
+  }
+});
+
 test('Chart.js initializes and renders the default financing calculation', async ({ page }) => {
   const browserErrors = [];
   page.on('pageerror', (error) => browserErrors.push(error.message));
@@ -27,6 +115,7 @@ test('Chart.js initializes and renders the default financing calculation', async
   ]);
 
   await page.locator('#vendorRate').fill('12');
+  await page.locator('#timing').selectOption('end');
   await page.locator('#calcBtn').click();
   await expect(page.locator('#amortTbl tbody tr').first().locator('td')).toHaveText([
     '1',
