@@ -13,7 +13,15 @@ fi
 
 WORKSPACE_PATH="$SESSION_ROOT/workers/$SLOT_NUMBER/worktree-$TASK_ID"
 BRANCH_NAME="switchyard-$TASK_ID-$SLOT_NUMBER"
-rm -rf "$WORKSPACE_PATH"
-git -C "$REPO_ROOT" worktree add --detach "$WORKSPACE_PATH" >/dev/null
-git -C "$WORKSPACE_PATH" checkout -b "$BRANCH_NAME" >/dev/null 2>&1 || true
+# A previous conflict may need manual resolution even if its worktree was
+# removed separately. Never reset an existing branch or workspace on retry.
+if [ -e "$WORKSPACE_PATH" ]; then
+  echo "Workspace already exists: $WORKSPACE_PATH" >&2
+  exit 1
+fi
+if git -C "$REPO_ROOT" show-ref --verify --quiet "refs/heads/$BRANCH_NAME"; then
+  echo "Task branch already exists: $BRANCH_NAME" >&2
+  exit 1
+fi
+git -C "$REPO_ROOT" worktree add -B "$BRANCH_NAME" "$WORKSPACE_PATH" >/dev/null
 printf '%s\n' "$WORKSPACE_PATH"
