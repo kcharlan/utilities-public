@@ -20,6 +20,9 @@ block is stored unchanged when its RLE payload would not be smaller.
 
 Both scripts read and write the same block format, so output from either script
 can be inverted by the other.
+Input and output must identify different files, including through links. Output
+is written beside the destination to a temporary file and replaces the destination
+only after the operation succeeds.
 
 ## Setup
 
@@ -74,6 +77,7 @@ the scripts and compare each recovered file with its original using `cmp`.
 Also decode a retained valid pre-change synthetic stream with the changed
 script and require byte equality. Keep fixtures and generated streams outside
 the checkout. These checks form the project's complete compatibility validation.
+Run `bash tests/test_input_safety.sh` as well to check input and output safety.
 
 ### Transform options
 

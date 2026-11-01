@@ -1,0 +1,50 @@
+#!/bin/bash
+set -euo pipefail
+script=$(cd "$(dirname "$0")/.." && pwd)/pdf-split-by-size.sh
+d=$(mktemp -d "${TMPDIR:-/tmp}/audit-XXXXXX")
+trap 'rm -r -- "${d:?}"' EXIT
+for cmd in qpdf shasum node; do command -v "$cmd" >/dev/null; done
+# Generate a valid synthetic two-page PDF with computed cross-reference offsets.
+node - "$d/chunk_1.pdf" <<'JS'
+const fs = require("fs");
+let pdf = "%PDF-1.4\n";
+const offsets = [0];
+for (const obj of ["<< /Type /Catalog /Pages 2 0 R >>", "<< /Type /Pages /Kids [3 0 R 4 0 R] /Count 2 >>", "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 10 10] /Resources << >> >>", "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 10 10] /Resources << >> >>"]) {
+  offsets.push(Buffer.byteLength(pdf));
+  pdf += `${offsets.length - 1} 0 obj\n${obj}\nendobj\n`;
+}
+const xref = Buffer.byteLength(pdf);
+pdf += "xref\n0 5\n0000000000 65535 f \n" + offsets.slice(1).map(n => String(n).padStart(10, "0") + " 00000 n \n").join("");
+pdf += `trailer\n<< /Size 5 /Root 1 0 R >>\nstartxref\n${xref}\n%%EOF\n`;
+fs.writeFileSync(process.argv[2], pdf);
+JS
+cd "$d"
+hash=$(shasum chunk_1.pdf | cut -d' ' -f1)
+if "$script" ./chunk_1.pdf 1M chunk; then echo 'same file accepted' >&2; exit 1; fi
+[[ $(shasum chunk_1.pdf | cut -d' ' -f1) == "$hash" ]]
+ln -s chunk_1.pdf linked_1.pdf
+if "$script" chunk_1.pdf 1M linked; then echo 'symlink accepted' >&2; exit 1; fi
+[[ $(shasum chunk_1.pdf | cut -d' ' -f1) == "$hash" ]]
+ln chunk_1.pdf hard_1.pdf
+if "$script" chunk_1.pdf 1M hard; then echo 'hard link accepted' >&2; exit 1; fi
+[[ $(shasum chunk_1.pdf | cut -d' ' -f1) == "$hash" ]]
+"$script" chunk_1.pdf 1M out
+qpdf --check out_1.pdf
+"$script" chunk_1.pdf 1 split
+[[ -s split_1.pdf && -s split_2.pdf ]]
+# Inject a late qpdf failure after the first chunk was prepared.
+mkdir bin
+qpdf_path=$(command -v qpdf)
+cat > bin/qpdf <<'SH'
+#!/bin/bash
+for arg in "$@"; do
+  case "$arg" in */chunk_2.pdf) exit 42;; esac
+done
+exec "$REAL_QPDF" "$@"
+SH
+chmod +x bin/qpdf
+printf 'existing output' > late_1.pdf
+if REAL_QPDF="$qpdf_path" PATH="$d/bin:$PATH" "$script" chunk_1.pdf 1 late; then echo 'late failure accepted' >&2; exit 1; fi
+[[ $(cat late_1.pdf) == 'existing output' && ! -e late_2.pdf ]]
+if "$script" missing.pdf 1M failed; then echo 'missing input accepted' >&2; exit 1; fi
+[[ ! -e failed_1.pdf ]]

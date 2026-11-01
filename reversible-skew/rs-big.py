@@ -4,6 +4,7 @@
 # dependencies = ["pydivsufsort==0.0.20", "numba==0.68.0"]
 # ///
 import argparse, struct, sys
+import contextlib, os, tempfile
 
 # --- Dependencies for high-performance routines ---
 try:
@@ -157,9 +158,22 @@ def read_rle(f, length):
 # --- Transform & inverse ---
 SENTINEL = 0xFFFFFFFF
 
+@contextlib.contextmanager
+def atomic_output(infile, outfile):
+    if os.path.exists(outfile) and os.path.samefile(infile, outfile):
+        raise ValueError("input and output refer to the same file")
+    fd, temp = tempfile.mkstemp(dir=os.path.dirname(os.path.abspath(outfile)))
+    try:
+        with os.fdopen(fd, 'wb') as fout:
+            yield fout
+        os.replace(temp, outfile)
+    finally:
+        if os.path.exists(temp):
+            os.unlink(temp)
+
 def transform(infile, outfile, block_size, max_run, verbose=False, whole_file=False):
     total = passed = 0
-    with open(infile, 'rb') as fin, open(outfile, 'wb') as fout:
+    with open(infile, 'rb') as fin, atomic_output(infile, outfile) as fout:
         blocks = [fin.read()] if whole_file else []
         if not whole_file:
             while True:
@@ -195,7 +209,7 @@ def transform(infile, outfile, block_size, max_run, verbose=False, whole_file=Fa
 
 def inverse(infile, outfile, verbose=False, whole_file=False):
     idx = 0
-    with open(infile, 'rb') as fin, open(outfile, 'wb') as fout:
+    with open(infile, 'rb') as fin, atomic_output(infile, outfile) as fout:
         while True:
             hdr = fin.read(8)
             if not hdr: break

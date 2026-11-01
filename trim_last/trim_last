@@ -72,12 +72,14 @@ shift
 command -v ffmpeg >/dev/null 2>&1 || die "ffmpeg was not found in PATH"
 command -v ffprobe >/dev/null 2>&1 || die "ffprobe was not found in PATH"
 
-ffmpeg_overwrite="-n"
-(( force )) && ffmpeg_overwrite="-y"
+result_code=0
+tmpdir=""
+trap '[[ -z "$tmpdir" ]] || rm -r -- "${tmpdir:?}"' EXIT
 
 for input in "$@"; do
   if [[ ! -f "$input" ]]; then
     print -u2 "Skipping missing file: $input"
+    result_code=1
     continue
   fi
 
@@ -92,13 +94,22 @@ for input in "$@"; do
     output="${dir}/${base}${suffix}"
   fi
 
-  if [[ "$input" == "$output" ]]; then
-    print -u2 "Skipping $input: output would overwrite the input"
+  collision=0
+  for source_input in "$@"; do
+    if [[ "$source_input" -ef "$output" ]]; then
+      collision=1
+      break
+    fi
+  done
+  if (( collision )); then
+    print -u2 "Skipping $input: output would overwrite an input"
+    result_code=1
     continue
   fi
 
   if [[ -e "$output" && "$force" -eq 0 ]]; then
     print -u2 "Skipping $input: output already exists: $output"
+    result_code=1
     continue
   fi
 
@@ -111,6 +122,7 @@ for input in "$@"; do
 
   if [[ -z "$duration" || "$duration" == "N/A" ]]; then
     print -u2 "Skipping $input: could not read duration"
+    result_code=1
     continue
   fi
 
@@ -124,18 +136,25 @@ for input in "$@"; do
   fi
 
   print "Trimming: $input -> $output"
-  ffmpeg "$ffmpeg_overwrite" -hide_banner -loglevel error \
+  if ! tmpdir=$(mktemp -d "${dir}/.trim-last.XXXXXX"); then
+    print -u2 "Failed to create temporary directory for: $output"
+    result_code=1
+    continue
+  fi
+  if ffmpeg -n -hide_banner -loglevel error \
     -ss "$start_arg" \
     -i "$input" \
     -map 0 \
     -t "$keep_seconds" \
     -map_metadata 0 \
     "${codec_args[@]}" \
-    "$output"
-
-  if (( $? == 0 )); then
+    "$tmpdir/${output:t}" && mv -f -- "$tmpdir/${output:t}" "$output"; then
     print "Created: $output"
   else
     print -u2 "Failed: $input"
+    result_code=1
   fi
+  rm -r -- "${tmpdir:?}"
+  tmpdir=""
 done
+exit "$result_code"
