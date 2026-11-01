@@ -31,7 +31,6 @@ from typing import Literal, Optional, List, Tuple
 import uvicorn
 from fastapi import FastAPI, HTTPException, UploadFile, File, Query
 from fastapi.responses import HTMLResponse, StreamingResponse
-from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
 
@@ -990,10 +989,6 @@ class SecurityScanner:
 # --- SequenceBuilder ---
 
 class SequenceBuilder:
-    def __init__(self):
-        self._cached_flows = None
-        self._cached_flows_key = None
-
     def build(self, entries: list, summaries: list, filters: dict = None) -> dict:
         indices = list(range(len(entries)))
 
@@ -1049,10 +1044,6 @@ class SequenceBuilder:
         }
 
     def _detect_flows(self, entries: list, summaries: list) -> List[dict]:
-        # Cache flow detection results keyed by entry count (invalidated on new file load)
-        cache_key = len(entries)
-        if self._cached_flows is not None and self._cached_flows_key == cache_key:
-            return self._cached_flows
         flows = []
 
         # Detect redirect chains
@@ -1107,12 +1098,10 @@ class SequenceBuilder:
                     'indices': indices,
                 })
 
-        self._cached_flows = flows
-        self._cached_flows_key = cache_key
         return flows
 
     def _get_flow_indices(self, entries, summaries, flow_id) -> set:
-        flows = self._detect_flows(entries, summaries)  # uses cache if available
+        flows = self._detect_flows(entries, summaries)
         for f in flows:
             if f['id'] == flow_id:
                 return set(f['indices'])
@@ -2287,13 +2276,39 @@ def _safe_filename(name: str) -> str:
     return re.sub(r'[^\w.\- ]', '_', name)
 
 
+# local-server-guard:begin
+class LocalOriginGuard:
+    """Reject foreign Host on every request, and foreign Origin on state changes."""
+
+    def __init__(self, app):
+        self.app = app
+
+    async def __call__(self, scope, receive, send):
+        if scope["type"] not in ("http", "websocket"):
+            await self.app(scope, receive, send)
+            return
+        server = scope.get("server")
+        port = server[1] if server and len(server) > 1 else None
+        allowed = {f"127.0.0.1:{port}", f"localhost:{port}"}
+        headers = [(k.lower(), v.decode("latin-1")) for k, v in scope.get("headers", [])]
+        hosts = [v for k, v in headers if k == b"host"]
+        origins = [v for k, v in headers if k == b"origin"]
+        ok = type(port) is int and 1 <= port <= 65535 and len(hosts) == 1 and hosts[0] in allowed
+        if ok and (scope["type"] == "websocket" or scope["method"] not in ("GET", "HEAD")):
+            ok = len(origins) == 1 and origins[0] == f"http://{hosts[0]}"
+        if ok:
+            await self.app(scope, receive, send)
+        elif scope["type"] == "websocket":
+            await receive()
+            await send({"type": "websocket.close", "code": 1008})
+        else:
+            await send({"type": "http.response.start", "status": 403,
+                        "headers": [(b"content-type", b"text/plain")]})
+            await send({"type": "http.response.body", "body": b"Forbidden"})
+# local-server-guard:end
+
 app = FastAPI(title="harscope")
-app.add_middleware(
-    CORSMiddleware,
-    allow_origin_regex=r"^https?://(127\.0\.0\.1|localhost)(:\d+)?$",
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
+app.add_middleware(LocalOriginGuard)
 
 # Single-tenant global state: harscope is designed as a personal local tool.
 # These globals are shared across all requests — no session isolation.
@@ -2309,7 +2324,9 @@ def _require_file():
 
 @app.get("/", response_class=HTMLResponse)
 async def index():
-    return HTML_TEMPLATE
+    return HTMLResponse(HTML_TEMPLATE, headers={
+        "Content-Security-Policy": "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; font-src 'self' data:; img-src 'self' data:; object-src 'none'; base-uri 'none'; frame-ancestors 'none'",
+    })
 
 
 @app.get("/api/status")
@@ -5052,7 +5069,7 @@ const ParamTable = ({ params, findings, entryIndex, redactionMap, onToggleRedact
 
 // Build inline checkbox + badge HTML for a given redaction state
 const redactPrefixHtml = (state, location, keyRaw, inherited) => {
-  const loc = location.replace(/"/g, '&quot;');
+  const loc = _htmlEscapeJson(location);
   if (inherited) {
     let cbColor = state === 'auto-on' ? 'cb-red' : state === 'manual' ? 'cb-amber' : 'cb-none';
     return `<span class="inline-flex items-center gap-1 mr-1 align-middle opacity-60"><input type="checkbox" readonly class="redact-cb ${cbColor} pointer-events-none" tabindex="-1"/></span>`;
@@ -5150,9 +5167,8 @@ const highlightJsonWithRedaction = (str, redactionInfo, onToggleRedaction, entry
   let pathStack = [];
   let lastPath = '';
   let prevEnd = 0;
-  return str.replace(
-    /("(\\u[a-zA-Z0-9]{4}|\\[^u]|[^\\"])*"(\x5cs*:)?|\x5cb(true|false|null)\x5cb|-?\x5cd+(?:\x5c.\x5cd*)?(?:[eE][+-]?\x5cd+)?)/g,
-    (match, _g1, _g2, _g3, _g4, offset) => {
+  const tokenPattern = /("(\\\\u[a-zA-Z0-9]{4}|\\\\[^u]|[^\\\\"])*"(\x5cs*:)?|\x5cb(true|false|null)\x5cb|-?\x5cd+(?:\x5c.\x5cd*)?(?:[eE][+-]?\x5cd+)?)/g;
+  const renderToken = (match, _g1, _g2, _g3, _g4, offset) => {
       for (let gi = prevEnd; gi < offset; gi++) {
         const gc = str[gi];
         if (gc === '{' || gc === '[') pathStack.push(null);
@@ -5181,7 +5197,7 @@ const highlightJsonWithRedaction = (str, redactionInfo, onToggleRedaction, entry
           if (inherited) {
             return `${prefix}<span class="${cls}">${esc}</span>`;
           }
-          return `${prefix}<span class="${cls}" data-redact-location="${location.replace(/"/g, '&quot;')}">${esc}</span>`;
+          return `${prefix}<span class="${cls}" data-redact-location="${_htmlEscapeJson(location)}">${esc}</span>`;
         } else {
           const info = redactionInfo[lastPath];
           const state = info?.state;
@@ -5209,8 +5225,13 @@ const highlightJsonWithRedaction = (str, redactionInfo, onToggleRedaction, entry
       if (/true|false/.test(match)) return `<span class="text-purple-600 dark:text-purple-400">${escM}</span>`;
       if (/null/.test(match)) return `<span class="text-gray-400">${escM}</span>`;
       return `<span class="text-amber-600 dark:text-amber-400">${escM}</span>`;
-    }
-  );
+    };
+  let html = '';
+  for (const token of str.matchAll(tokenPattern)) {
+    html += _htmlEscapeJson(str.slice(prevEnd, token.index));
+    html += renderToken(...token, token.index);
+  }
+  return html + _htmlEscapeJson(str.slice(prevEnd));
 };
 
 const BodyViewer = ({ body, findings, section, entryIndex, redactionMap, onToggleRedaction }) => {

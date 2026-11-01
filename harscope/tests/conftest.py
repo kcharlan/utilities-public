@@ -186,7 +186,7 @@ def _isolate_state():
 def client():
     """Synchronous-style test client using httpx."""
     transport = ASGITransport(app=app)
-    return AsyncClient(transport=transport, base_url="http://test")
+    return AsyncClient(transport=transport, base_url="http://127.0.0.1:8000", headers={"Origin": "http://127.0.0.1:8000"})
 
 
 @pytest.fixture
