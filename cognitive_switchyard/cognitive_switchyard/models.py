@@ -427,6 +427,7 @@ class WorkerRecoveryMetadata:
     task_id: str
     workspace_path: Path
     pid: int | None = None
+    process_identity: str | None = None
 
 
 @dataclass(frozen=True)

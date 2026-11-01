@@ -31,17 +31,15 @@ the interface in the default browser. If port `8200` is occupied, it tries the
 next 19 ports in sequence.
 
 ```text
-usage: launchmaster [-h] [-p PORT] [--host HOST] [--no-browser] [--debug]
+usage: launchmaster [-h] [-p PORT] [--no-browser] [--debug]
 ```
 
 - `-p`, `--port`: preferred starting port
-- `--host`: address to bind (default: `127.0.0.1`)
 - `--no-browser`: do not open a browser automatically
 - `--debug`: enable debug logging
 
-The server has no authentication. Keep the default loopback binding unless
-every device that can reach the chosen address should be allowed to inspect
-and operate this Mac's launchd jobs.
+The server binds to loopback and checks Host and Origin on requests and
+WebSocket connections. It has no separate user authentication.
 
 ## Features
 
@@ -58,7 +56,8 @@ and operate this Mac's launchd jobs.
 - Creates or imports jobs, exports plist files, and validates plist XML before
   saving edits
 - Reads configured stdout/stderr files and recent macOS unified-log entries
-- Creates a timestamped backup before deleting a plist or saving plist edits;
+- Creates a timestamped backup before deleting a plist, saving plist edits, or
+  overwriting a plist through import or restore;
   backups are listed and restored through the API (`/api/backups`), and a
   restore copies the plist into `~/Library/LaunchAgents` and loads it there
 - Keeps interface settings (poll interval, Apple-job visibility, dark mode, and
@@ -90,6 +89,11 @@ not sandbox `launchctl` or change which system plist directories are scanned.
 The application creates backups before plist edits and deletes, but a backup
 does not make launchd operations risk-free. Review the target domain and plist
 path before modifying or deleting a job.
+
+Job labels used for create, import, and restore must start with an ASCII letter
+or digit and contain only ASCII letters, digits, dots, underscores, or hyphens.
+Log file views read at most the last 1 MiB and return at most 1,000 lines.
+The poll interval must be a positive finite number of seconds.
 
 ## Development
 
