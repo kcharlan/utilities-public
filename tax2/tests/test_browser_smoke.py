@@ -2,7 +2,9 @@
 import csv
 import io
 import json
+import os
 import re
+import subprocess
 from pathlib import Path
 
 import pytest
@@ -82,6 +84,51 @@ def download_text(page, label):
         page.get_by_role('button', name=label).click()
     download = event.value
     return download.suggested_filename, Path(download.path()).read_text()
+
+
+def test_offline_launcher_page_inputs_allocations_and_downloads(tmp_path):
+    home = tmp_path / 'runtime'
+    env = {**os.environ, 'TAX2_HOME': str(home), 'UV_PYTHON_DOWNLOADS': 'never',
+           'UTILITIES_TESTING': '1'}
+    command = [str(PROJECT / 'tax2'), '--no-browser']
+    subprocess.run(command, env=env, check=True, capture_output=True, text=True)
+    result = subprocess.run(command, env={**env, 'UV_OFFLINE': '1'}, check=True,
+                            capture_output=True, text=True)
+    path = home / 'tax2.html'
+    assert Path(result.stdout.strip()).resolve() == path.resolve()
+    assert path.is_file()
+    assert home.stat().st_mode & 0o777 == 0o700
+    assert (home / 'config.yaml').stat().st_mode & 0o777 == 0o600
+    assert path.stat().st_mode & 0o777 == 0o600
+
+    with sync_playwright() as playwright:
+        browser = playwright.chromium.launch(headless=True)
+        context = browser.new_context(service_workers='block')
+        context.set_offline(True)
+        requests = []
+        context.on('request', lambda request: requests.append(request.url)
+                   if not request.url.startswith('file:') else None)
+        context.route('**/*', lambda route: route.continue_()
+                      if route.request.url.startswith('file:') else route.abort())
+        page = context.new_page()
+        with guard_browser_errors(page):
+            page.goto(path.as_uri())
+            expect(page.get_by_role('heading', name='Tax2', exact=True)).to_be_visible()
+            page.get_by_label('Pennsylvania', exact=True).check()
+            page.get_by_label('Georgia', exact=True).uncheck()
+            income(page, '4000', earned='1000')
+            page.get_by_label('Pennsylvania allocation', exact=True).fill('50')
+            expect(page.get_by_label('Pennsylvania allocation', exact=True)).to_have_value('50')
+            expect(page.locator('.state .result-amount')).to_have_text('$81.75')
+            qif_name, qif = download_text(page, 'Download QIF')
+            schedule_name, schedule = download_text(page, 'Download rate schedule')
+            csv_name, lookup = download_text(page, 'Download lookup table')
+            assert qif_name.endswith('.qif') and '\nT-81.75\n' in qif
+            assert schedule_name.endswith('.md') and '## PA' in schedule
+            assert csv_name.endswith('.csv') and 'PA monthly tax' in lookup
+        assert requests == []
+        context.close()
+        browser.close()
 
 
 def test_bundled_pa_eit_reaches_display_and_all_downloads(built_browser):
