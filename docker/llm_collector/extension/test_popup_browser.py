@@ -156,6 +156,7 @@ def screenshot(page, tmp_path, case):
 
 @pytest.mark.parametrize("color_scheme", ["light", "dark"])
 def test_connected(popup, tmp_path):
+    assert popup.evaluate("chrome.runtime.getManifest().version") == "0.6.1"
     expect(popup.locator("#registerHeading")).to_have_text("Requests since last reset")
     expect(popup.locator("#register > .row")).to_have_count(2)
     expect(popup.locator("#registerTotal")).to_have_text("59")
@@ -198,6 +199,30 @@ def test_poll_preserves_fold(popup, tmp_path):
     popup.evaluate("refresh({showChecking:false})")
     assert popup.locator("#deliveryFold").evaluate("node => node.open")
     screenshot(popup, tmp_path, "preserved-fold")
+
+
+@pytest.mark.parametrize("color_scheme", ["light"])
+def test_sequence_recovery_requires_confirmation(popup):
+    popup.evaluate("""() => {
+        window.syntheticMessages = [];
+        chrome.runtime.sendMessage = (message, callback) => {
+            window.syntheticMessages.push(message.cmd);
+            callback(message.cmd === 'recover_sequence' ? {ok:true} :
+                {pending:{'synthetic.invalid':1}, recoveryAvailable:true,
+                 deliveryError:'Collector HTTP 409', collectorStatus:{state:'connected'}});
+        };
+        renderStatus({pending:{'synthetic.invalid':1}, recoveryAvailable:true,
+                      deliveryError:'Collector HTTP 409'});
+    }""")
+    button = popup.locator("#recoverSequence")
+    expect(button).to_be_enabled()
+    popup.once("dialog", lambda dialog: dialog.dismiss())
+    button.click()
+    assert "recover_sequence" not in popup.evaluate("window.syntheticMessages")
+    popup.once("dialog", lambda dialog: dialog.accept())
+    button.click()
+    expect(popup.locator("#notice")).to_contain_text("Delivery identity recovered")
+    assert "recover_sequence" in popup.evaluate("window.syntheticMessages")
 
 
 @pytest.mark.parametrize("color_scheme", ["light", "dark"])

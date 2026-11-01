@@ -5,7 +5,8 @@ collector.log
 state.json
 reset_launchd.err
 reset_launchd.log
-snapshots/
+snapshots/*
+!snapshots/rollup_snapshots.py
 __pycache__/
 collector/__pycache__/
 collector/.pytest_cache/

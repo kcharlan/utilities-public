@@ -340,6 +340,9 @@ chrome.runtime.onMessage.addListener((m, s, send) => {
   } else if (m && m.cmd === "clear_pending") {
     delivery.clearQueued().then(result => send({ok:true,...result}), error => send({ok:false,error:error.message}));
     return true;
+  } else if (m && m.cmd === "recover_sequence") {
+    delivery.recoverSequence().then(() => send({ok:true}), error => send({ok:false,error:error.message}));
+    return true;
   } else if (m && m.cmd === "get_capture") {
     globalThis.LLMCapture.settled().then(() => send({
       ...persistence(),

@@ -10,6 +10,8 @@
 import os
 import json
 import tempfile
+import uuid
+import sys
 import threading
 import signal
 import atexit
@@ -22,6 +24,9 @@ from flask import Flask, request, jsonify, abort
 import csv
 from datetime import timedelta
 from pathlib import Path
+
+if __package__ in (None, ""):
+    sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 
 # -----------------------
@@ -170,28 +175,47 @@ def _atomic_write(path: str, data_dict: Dict[str, Any]) -> None:
             pass
 
 def load_state() -> Dict[str, Any]:
-    if not os.path.exists(STATE_PATH):
-        return _empty_state()
     try:
         with open(STATE_PATH, "r") as f:
-            data = json.load(f) or {}
+            data = json.load(f)
+        if not isinstance(data, dict):
+            raise ValueError("state must be an object")
         data.setdefault("totals", {})
         data.setdefault("daily_totals", {})
         data.setdefault("clients", {})
+        if not all(isinstance(data[key], dict) for key in ("totals", "daily_totals", "clients")):
+            raise ValueError("invalid state sections")
+        if any(not isinstance(meta, dict) or "last_seq" not in meta for meta in data["clients"].values()):
+            raise ValueError("invalid client state")
+        if any(not isinstance(totals, dict) for totals in data["daily_totals"].values()):
+            raise ValueError("invalid daily totals")
+        for day in data["daily_totals"]:
+            if datetime.strptime(day, "%Y-%m-%d").date().isoformat() != day:
+                raise ValueError("invalid daily date")
+        for totals in [data["totals"], *data["daily_totals"].values()]:
+            for value in totals.values():
+                if isinstance(value, bool) or int(value) < 0 or str(int(value)) != str(value):
+                    raise ValueError("invalid count")
         # normalize ints
         data["totals"] = _normalize_totals(data["totals"])
         data["daily_totals"] = _normalize_daily_totals(data["daily_totals"])
         if data["totals"] and not data["daily_totals"]:
             data["daily_totals"][_timestamp_ms_to_bucket_date(None)] = dict(data["totals"])
-        for cid, meta in list(data["clients"].items()):
-            if not isinstance(meta, dict):
-                data["clients"][cid] = {"last_seq": 0}
-            else:
-                meta["last_seq"] = int(meta.get("last_seq", 0))
+        for meta in data["clients"].values():
+            seq = meta["last_seq"]
+            if isinstance(seq, bool) or int(seq) < 0 or str(int(seq)) != str(seq):
+                raise ValueError("invalid sequence")
+            meta["last_seq"] = int(seq)
         return data
-    except Exception as e:
-        log(f"[WARN] failed to load {STATE_PATH}: {e}")
+    except FileNotFoundError:
+        if list(Path(STATE_PATH).parent.glob(Path(STATE_PATH).name + ".invalid-*")):
+            raise RuntimeError("Quarantined collector state requires recovery before startup")
         return _empty_state()
+    except (ValueError, TypeError, OverflowError, UnicodeError) as e:
+        quarantine = f"{STATE_PATH}.invalid-{uuid.uuid4().hex}"
+        os.replace(STATE_PATH, quarantine)
+        log(f"[ERROR] invalid state preserved at {quarantine}: {e}")
+        raise RuntimeError(f"Invalid collector state preserved at {quarantine}; restore it before restarting") from e
 
 def save_state() -> None:
     with _state_lock:
@@ -358,9 +382,11 @@ def _graceful_flush(signame: str):
         log(f"[SHUTDOWN] {signame}: flush failed: {e}")
 
 def _install_signal_handlers():
-    for sig in ("SIGTERM", "SIGINT"):
-        if hasattr(signal, sig):
-            signal.signal(getattr(signal, sig), lambda *_: _graceful_flush(sig))
+    def handle_signal(signum, _frame):
+        _graceful_flush(signal.Signals(signum).name)
+        raise SystemExit(128 + signum)
+    for sig in (signal.SIGTERM, signal.SIGINT):
+        signal.signal(sig, handle_signal)
 
 def _atexit_flush():
     _graceful_flush("atexit")
@@ -444,18 +470,8 @@ def _rollup_single_snapshot(path: Path, cutoff_hour: int) -> dict[str, dict[str,
     return {day: _normalize_totals(totals)}
 
 def _write_csv_file(csv_path: Path, data: dict[str, dict[str, int]], columns: list[str]) -> None:
-    csv_path.parent.mkdir(parents=True, exist_ok=True)
-    fieldnames = ["date"] + columns
-
-    with csv_path.open("w", newline="") as fp:
-        writer = csv.DictWriter(fp, fieldnames=fieldnames)
-        writer.writeheader()
-        for day in sorted(data.keys()):
-            row = {"date": day}
-            daily_totals = data.get(day, {})
-            for col in columns:
-                row[col] = daily_totals.get(col, 0)
-            writer.writerow(row)
+    from snapshots.rollup_snapshots import _write_csv
+    _write_csv(csv_path, data, columns)
 
 def perform_rollup(cutoff_hour: int = 8) -> int:
     """Scans SNAP_DIR for snapshots, rolls them up into snapshots.csv, and renames processed files."""
@@ -503,8 +519,8 @@ def perform_rollup(cutoff_hour: int = 8) -> int:
 
 _init()
 
-_install_signal_handlers()
 atexit.register(_atexit_flush)
 
 if __name__ == "__main__":
+    _install_signal_handlers()
     app.run(host="0.0.0.0", port=9000, threaded=True)

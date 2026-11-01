@@ -10,6 +10,7 @@ BACKUP_ROOT="$DEFAULT_BACKUP_ROOT"
 DRY_RUN=0
 TIMESTAMP="$(date +%Y%m%d_%H%M%S)"
 BACKUP_DIR=""
+COMPLETED_BACKUPS_TO_KEEP=5
 
 usage() {
   cat <<EOF
@@ -130,6 +131,9 @@ make_backups() {
   BACKUP_DIR="$BACKUP_ROOT/$TIMESTAMP"
   log "Backing up deployed files and external runtime data to $BACKUP_DIR."
 
+  [ ! -L "$BACKUP_ROOT" ] || die "Backup root must not be a symlink."
+  [ ! -e "$BACKUP_DIR" ] && [ ! -L "$BACKUP_DIR" ] || die "Backup destination already exists: $BACKUP_DIR"
+
   run mkdir -p "$BACKUP_DIR"
   backup_path "$DEPLOY_DIR/" "$BACKUP_DIR/deploy/"
 
@@ -141,6 +145,34 @@ make_backups() {
   fi
   backup_path "$secret_env" "$BACKUP_DIR/config/secret.env"
   backup_path "$data_dir/" "$BACKUP_DIR/state/"
+}
+
+mark_and_prune_backups() {
+  if [ "$DRY_RUN" = "1" ]; then
+    log "DRY RUN: would mark this backup complete and retain the newest $COMPLETED_BACKUPS_TO_KEEP completed backups including this one."
+    return
+  fi
+  : > "$BACKUP_DIR/.migration-complete"
+  local LC_ALL=C
+  local candidate name index kept=0
+  local -a candidates=()
+  for candidate in "$BACKUP_ROOT"/*; do
+    name="${candidate##*/}"
+    [[ "$name" =~ ^[0-9]{8}_[0-9]{6}$ ]] || continue
+    [ -d "$candidate" ] && [ ! -L "$candidate" ] || continue
+    [ -f "$candidate/.migration-complete" ] && [ ! -L "$candidate/.migration-complete" ] || continue
+    [ "$candidate" != "$BACKUP_DIR" ] || continue
+    candidates+=("$candidate")
+  done
+  for ((index=${#candidates[@]}-1; index>=0; index--)); do
+    candidate="${candidates[index]}"
+    if ((kept < COMPLETED_BACKUPS_TO_KEEP - 1)); then
+      kept=$((kept + 1))
+    else
+      log "Pruning completed migration backup $candidate"
+      rm -r -- "${candidate:?}"
+    fi
+  done
 }
 
 curl_with_api_key() {
@@ -353,6 +385,8 @@ main() {
   if [ "$DRY_RUN" != "1" ] && [ "$before_api_key_hash" != "missing" ] && [ "$before_api_key_hash" != "$after_api_key_hash" ]; then  # pragma: allowlist secret
     die "API key changed during migration. Backup is at $BACKUP_DIR."
   fi
+
+  mark_and_prune_backups
 
   log "Migration complete."
   if [ -n "$BACKUP_DIR" ]; then

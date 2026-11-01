@@ -30,6 +30,12 @@ sent.
 
 The popup also shows the current collector connection state. A green indicator means the extension received a valid response from the authenticated `/counters` endpoint. A red indicator distinguishes an unreachable collector, timeout, API-key rejection, server error, invalid response, or missing extension configuration.
 
+If delivery reports a sequence conflict, restore the collector's state when
+possible. Otherwise **Recover sequence** starts a new client identity while
+retaining the outstanding batch and queued counts. The popup asks for
+confirmation because the outstanding batch can be counted twice if its
+previous receipt was lost. Use **Send now** after recovery.
+
 ## Appearance
 
 The footer's **Appearance** button offers **Automatic**, **Meter** (tally bars

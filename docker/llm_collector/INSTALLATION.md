@@ -49,9 +49,10 @@ cd llm_collector_container
 
 `up.sh`, `down.sh`, and `update.sh` can be run from any directory; each changes
 to `llm_collector_container/` before invoking `docker compose`. The script loads the external secret env, builds the image, and starts
-`llm-collector`. Compose publishes the service at `127.0.0.1:9000`, mounts the
-source tree for collector code, and mounts the configured external data
-directory at `/var/lib/llm_collector`.
+`llm-collector`. Compose publishes the service at `127.0.0.1:9000`, copies the
+collector code into the image, and mounts the configured external data
+directory at `/var/lib/llm_collector`. The service runs with the invoking
+user's numeric UID and GID; that user must be able to write the data directory.
 
 Verify container health:
 
@@ -130,6 +131,11 @@ counters, copies source while preserving local-only files, regenerates
 extension config, rebuilds the container, and validates health, authentication,
 mounts, and API-key preservation.
 
+After successful validation and API-key verification, migration marks its
+backup complete and retains it plus the four newest other completed backups. Older
+marked backups are pruned. Unmarked legacy and failed backups are preserved
+for manual review.
+
 Use `--deploy-dir` and `--backup-root` to override the external locations.
 Reload the unpacked extension after a successful migration.
 
@@ -142,4 +148,6 @@ Reload the unpacked extension after a successful migration.
 | Collector is unreachable | Check `docker compose ps` and container logs from `llm_collector_container/`; verify `COLLECTOR_URL`. |
 | A send is not counted | Inspect the popup debug records and service-worker console; the provider endpoint may not match the current allowlist. |
 | Duplicate-looking counts | Check whether the application makes distinct allowlisted requests outside the 1.5-second per-tab/host/path debounce window. |
+| Collector refuses to start after invalid state | The invalid state is preserved with a `.invalid-` suffix. Inspect it and restore a valid `state.json`, or deliberately move the quarantined file aside to start empty. |
+| Delivery reports HTTP 409 | Restore the collector state if possible. Otherwise use **Recover sequence** in the popup and then **Send now**; the outstanding batch may already have been counted if its receipt was lost. |
 | Daily reset did not run | Run `reset_collector.sh` manually, inspect its ignored reset logs, and verify the private launch-agent paths. |

@@ -11,6 +11,7 @@ if ! load_llm_collector_env || [ -z "${API_KEY:-}" ]; then
 fi
 
 mkdir -p "$LLM_COLLECTOR_DATA_DIR"
+export LLM_COLLECTOR_UID="$(id -u)" LLM_COLLECTOR_GID="$(id -g)"
 cd "$SCRIPT_DIR"
 
 # Force a clean dependency refresh while retaining the moving Python 3.14

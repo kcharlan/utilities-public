@@ -7,11 +7,11 @@ const tick = () => new Promise(r => setImmediate(r));
 function fixture(store = {}) {
   const timers = new Map(), requests = [], observedIds = new Set(), acceptedIds = new Set(), clearedIds = new Set();
   const idsByBatch = new Map(), submittedIds = new Set(), applications = new Map();
-  let next = 0, failWrite = false, failRead = false, last = 0;
+  let next = 0, failWrite = false, failRead = false, holdWrite = false, releaseWrite, last = 0;
   const runtime = {};
   const storage = {
     get(keys, cb) { if (failRead) runtime.lastError = {message:'synthetic read failure'}; cb(clone(store)); delete runtime.lastError; },
-    set(obj, cb) { if (failWrite) { failWrite = false; runtime.lastError = {message:'synthetic write failure'}; } else Object.assign(store, clone(obj)); cb(); delete runtime.lastError; }
+    set(obj, cb) { if (holdWrite) { holdWrite=false; releaseWrite=()=>{Object.assign(store, clone(obj)); cb();}; return; } if (failWrite) { failWrite = false; runtime.lastError = {message:'synthetic write failure'}; } else Object.assign(store, clone(obj)); cb(); delete runtime.lastError; }
   };
   const context = vm.createContext({ crypto, URL, TextEncoder, AbortController, chrome: {runtime}, setTimeout, clearTimeout });
   vm.runInContext(readFileSync(require.resolve('./delivery.js'), 'utf8'), context);
@@ -63,7 +63,7 @@ function fixture(store = {}) {
     last = seq;
     req.resolve({ok:true,status:200,json:async()=>({client_id:'SYNTHETIC_CLIENT',last_seq:seq})});
   }
-  return {worker,store,state,requests,timers,observe,oracle,accept,baseline,clearedIds,observedIds,failWrite(){failWrite=true;},failRead(){failRead=true;}};
+  return {worker,store,state,requests,timers,observe,oracle,accept,baseline,clearedIds,observedIds,failWrite(){failWrite=true;},failRead(){failRead=true;},holdWrite(){holdWrite=true;},releaseWrite(){releaseWrite();}};
 }
 
 test('uncertain submission survives new observations and worker restart', async () => {
@@ -213,6 +213,35 @@ test('invalid replies preserve delivery state', async () => {
     else f.requests[0].resolve({ok:typeof reply!=='number',status:typeof reply==='number'?reply:200,json:async()=>{if(reply==='malformed') throw new Error('bad json'); return reply;}});
     assert.equal((await p).ok,false); assert.ok((await d.status()).deliveryError); f.oracle(); assert.equal(f.state().lastAckSeq,0);
   }
+});
+test('explicit sequence recovery keeps the outstanding and queued counts', async () => {
+  const f=fixture(), d=f.worker(); await d.ready;
+  await f.observe(d,'synthetic-a.invalid'); const p=d.push(); await tick();
+  await f.observe(d,'synthetic-b.invalid');
+  f.requests[0].resolve({ok:false,status:409,json:async()=>({error:'out_of_order',expected_next:1})});
+  assert.equal((await p).ok,false);
+  assert.equal((await d.status()).recoveryAvailable,true);
+  const oldId=f.state().clientId;
+  f.failWrite();
+  await assert.rejects(d.recoverSequence());
+  assert.equal(f.state().clientId,oldId);
+  assert.equal((await d.status()).recoveryAvailable,true);
+  await d.recoverSequence();
+  assert.notEqual(f.state().clientId,oldId);
+  assert.equal(f.state().inFlight.seq,1);
+  assert.deepEqual(f.state().inFlight.deltas,{'synthetic-a.invalid':1});
+  assert.deepEqual(f.state().queued,{'synthetic-b.invalid':1});
+  await assert.rejects(d.recoverSequence());
+});
+test('sequence recovery excludes concurrent sends while persistence is pending', async () => {
+  const f=fixture(), d=f.worker(); await d.ready; await f.observe(d,'synthetic.invalid');
+  const first=d.push(); await tick();
+  f.requests[0].resolve({ok:false,status:409}); await first;
+  f.holdWrite(); const recovery=d.recoverSequence(); await tick();
+  const concurrent=d.push(); await tick();
+  assert.equal(f.requests.length,1);
+  f.releaseWrite(); await recovery;
+  assert.equal((await concurrent).ok,false);
 });
 test('failed reads leave unavailable counts and reject mutations',async()=>{
   const f=fixture(); f.failRead(); const d=f.worker(); assert.equal((await d.ready).ok,false);

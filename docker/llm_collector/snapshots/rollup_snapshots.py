@@ -14,7 +14,9 @@ from __future__ import annotations
 import argparse
 import csv
 import json
+import os
 import sys
+import tempfile
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Dict, List
@@ -123,15 +125,21 @@ def _write_csv(csv_path: Path, data: Dict[str, Dict[str, int]], columns: List[st
     csv_path.parent.mkdir(parents=True, exist_ok=True)
     fieldnames = ["date"] + columns
 
-    with csv_path.open("w", newline="") as fp:
-        writer = csv.DictWriter(fp, fieldnames=fieldnames)
-        writer.writeheader()
-        for day in sorted(data.keys()):
-            row = {"date": day}
-            totals = data.get(day, {})
-            for col in columns:
-                row[col] = totals.get(col, 0)
-            writer.writerow(row)
+    fd, temporary = tempfile.mkstemp(prefix=".tmp_csv_", dir=csv_path.parent)
+    try:
+        with os.fdopen(fd, "w", newline="") as fp:
+            writer = csv.DictWriter(fp, fieldnames=fieldnames)
+            writer.writeheader()
+            for day in sorted(data.keys()):
+                row = {"date": day}
+                totals = data.get(day, {})
+                for col in columns:
+                    row[col] = totals.get(col, 0)
+                writer.writerow(row)
+        os.replace(temporary, csv_path)
+    finally:
+        if os.path.exists(temporary):
+            os.unlink(temporary)
 
 
 def main() -> int:
