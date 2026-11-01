@@ -326,6 +326,25 @@ private let recovered = "Telltale's collector is running again."
         }
     }
 
+    @Test func unreadableChecksAcrossSleepsDoNotConfirmAnEpisode() async throws {
+        try await withMonitor { h in
+            try h.recordRun(at: h.now, .succeeded)
+            h.setLoaded(true)
+            let monitor = h.monitor()
+            await h.tick(monitor) // Initialize the sleep clock with a readable database.
+            try DashboardWorld.exec(h.paths.database, "INSERT INTO source_state (source, state_json, updated_at) VALUES ('synthetic', 'not json', 0)")
+            await h.tick(monitor)
+            h.sleep(hours: 1)
+            await monitor.check()
+            #expect(h.service.posted.isEmpty)
+            h.sleep(hours: 1)
+            await monitor.check()
+            #expect(h.service.posted.isEmpty)
+            await h.tick(monitor)
+            #expect(h.service.posted.count == 1)
+        }
+    }
+
     /// The two clocks are read a moment apart, so the total wobbles by that moment while awake. The
     /// wobble must stay far under `minimumSleep`, or ordinary checks would read as a sleep.
     @Test func asleepSinceBootHoldsStillWhileAwake() {

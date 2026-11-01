@@ -48,9 +48,9 @@ import UserNotifications
     private var awakeSince: Date?
     /// The previous check found the notify condition: one more makes an episode.
     private var unconfirmed = false
-    /// A notice change made while the database doesn't exist yet (ruling R27: the app never creates
-    /// it): held here, read in place of the stored notice, and written once the collector has
-    /// created the database. `.some(nil)` holds a cleared notice.
+    /// A notice change made while the database is missing or unreadable is held here, read in place
+    /// of the stored notice, and written once storage is available. The app never creates the
+    /// database (ruling R27). `.some(nil)` holds a cleared notice.
     private var heldNotice: HealthNoticeState??
     private var lastInputs: Inputs?
     private var databaseUnreadable = false
@@ -92,8 +92,8 @@ import UserNotifications
         loop = nil
     }
 
-    /// One health check: evaluates, posts what the episode calls for, and returns the report (nil
-    /// when the database couldn't be read).
+    /// One health check: evaluates, posts what the episode calls for, and returns the report,
+    /// including a fallback report when the database couldn't be read.
     @discardableResult func check() async -> CollectorHealthReport? {
         guard let (report, inputs, at) = await assess() else { return nil }
         do {
@@ -122,6 +122,8 @@ import UserNotifications
         do {
             inputs = try readInputs()
         } catch {
+            let at = now()
+            noteSleep(at: at)
             lastError = error.localizedDescription
             databaseUnreadable = true
             var fallback = lastInputs ?? Inputs(
@@ -132,7 +134,7 @@ import UserNotifications
             let report = CollectorHealthReport(installed: .red, loaded: .unlit, lastRun: .unlit, onSchedule: .unlit,
                 problems: [message], needsRepair: false, footer: "", notice: message, problemKeys: ["databaseUnreadable"])
             lastReport = report
-            return (report, fallback, now())
+            return (report, fallback, at)
         }
         databaseUnreadable = false
         lastInputs = inputs
@@ -242,7 +244,7 @@ import UserNotifications
     }
 
     /// Writes the notice through a short-lived connection to the existing database, as the app does
-    /// for settings; before the collector has created it, holds the notice in memory instead.
+    /// for settings; while storage is missing or unreadable, holds the notice in memory instead.
     private func save(_ notice: HealthNoticeState?) throws {
         if databaseUnreadable {
             heldNotice = .some(notice)
