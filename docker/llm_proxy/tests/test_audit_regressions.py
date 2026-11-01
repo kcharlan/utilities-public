@@ -38,7 +38,7 @@ async def test_stream_invalid_credentials_returns_401():
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("payload", [b'{', b'[]', b'{"model":"fake","messages":[],"tools":[null]}'])
+@pytest.mark.parametrize("payload", [b'{', b'[]', b'{"model":"fake","messages":[],"tools":[null]}', b'{"model":"fake","messages":[],"tool_choice":{"function":null}}'])
 async def test_malformed_request_returns_validation_error(payload):
     local = FastAPI()
     local.include_router(T3ChatAdapter().create_router())

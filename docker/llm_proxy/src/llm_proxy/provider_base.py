@@ -103,6 +103,14 @@ class ProviderAdapter(ABC):
                        for t in tools)
             ):
                 raise HTTPException(status_code=422, detail="Invalid tools")
+            choice = body.get("tool_choice")
+            if isinstance(choice, dict):
+                function = choice.get("function")
+                if (choice.get("type") != "function" or not isinstance(function, dict)
+                        or not isinstance(function.get("name"), str)):
+                    raise HTTPException(status_code=422, detail="Invalid tool choice")
+            elif choice is not None and choice not in ("none", "auto", "required"):
+                raise HTTPException(status_code=422, detail="Invalid tool choice")
 
             # Debug: log tool names from the request
             if "tools" in body:
