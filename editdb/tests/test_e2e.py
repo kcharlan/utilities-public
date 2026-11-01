@@ -25,6 +25,10 @@ MARKUP = '<b>x</b> & ${y} `value` {{X}} &nbsp;'
 def base_url(pytestconfig):
     return pytestconfig.getoption('--base-url') or pytestconfig.getini('base_url') or None
 
+@pytest.fixture(scope='session')
+def browser_type_launch_args():
+    return {'headless': True}
+
 @pytest.fixture
 def server(tmp_path):
     database = tmp_path / 'synthetic.sqlite'
@@ -90,7 +94,10 @@ def test_composite_big_key_and_unchanged_types(server, page, tmp_path):
     row.locator('button').first.click()
     editing = page.locator('tbody tr').nth(1)
     editing.locator('input').nth(2).fill('edited')
-    editing.locator('button').first.click()
+    with page.expect_response(lambda response: response.url == f'{server}/api/data/composite' and response.request.method == 'PUT') as saved:
+        editing.locator('button').first.click()
+    assert saved.value.ok
+    expect(editing.locator('input')).to_have_count(0)
     expect(page.get_by_role('cell', name='edited', exact=True)).to_be_visible()
     with sqlite3.connect(tmp_path / 'synthetic.sqlite') as db:
         assert db.execute("SELECT b, label, typeof(big), quote(big), typeof(real_value), quote(real_value), typeof(raw), quote(raw) FROM composite ORDER BY b").fetchall() == [
