@@ -1071,6 +1071,13 @@ log_message "INFO" "Inspecting the configured backup directory."
 
 typeset -a backup_files=()
 typeset -a backup_file_days=()
+typeset -a backup_file_sizes=()
+# A kept export smaller than one tenth of the median older export is suspect.
+readonly MINIMUM_SIZE_PERCENT=10
+if ! scan_epoch="$("${DATE_BIN}" +%s 2>/dev/null)" || [[ "${scan_epoch}" != <-> ]]; then
+  exit_with_error "Unable to determine the current time; no files were removed."
+fi
+integer suspicious_files=0
 find_output_tmp=""
 find_error_tmp=""
 
@@ -1082,7 +1089,9 @@ cleanup_temp_files() {
 if ! find_output_tmp="$("${MKTEMP_BIN}" -t "${SCRIPT_NAME}.find.XXXXXX")"; then
   exit_with_error "Unable to initialize the private scan workspace; no cleanup was attempted."
 fi
-trap cleanup_temp_files EXIT INT TERM
+trap cleanup_temp_files EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
 if ! find_error_tmp="$("${MKTEMP_BIN}" -t "${SCRIPT_NAME}.find.err.XXXXXX")"; then
   exit_with_error "Unable to initialize the private scan workspace; no cleanup was attempted."
 fi
@@ -1096,12 +1105,21 @@ if "${FIND_BIN}" -x "${backup_dir}" -type f -print0 > "${find_output_tmp}" 2> "$
       (( classification_failures += 1 ))
       continue
     fi
+    if ! file_size="$("${STAT_BIN}" -f "%z" "${file_path}" 2>/dev/null)" || [[ "${file_size}" != <-> || "${mtime_epoch}" != <-> ]]; then
+      (( classification_failures += 1 ))
+      continue
+    fi
+    if (( file_size == 0 || mtime_epoch > scan_epoch )); then
+      (( suspicious_files += 1 ))
+      continue
+    fi
     if ! file_day="$("${DATE_BIN}" -r "${mtime_epoch}" "+%Y-%m-%d" 2>/dev/null)"; then
       (( classification_failures += 1 ))
       continue
     fi
     backup_files+=("${file_path}")
     backup_file_days+=("${file_day}")
+    backup_file_sizes+=("${file_size}")
   done < "${find_output_tmp}"
 else
   if /usr/bin/grep -q "Operation not permitted" "${find_error_tmp}" 2>/dev/null; then
@@ -1114,6 +1132,9 @@ trap - EXIT INT TERM
 
 if (( classification_failures > 0 )); then
   exit_with_error "Unable to classify ${classification_failures} eligible backup file(s); no files were removed."
+fi
+if (( suspicious_files > 0 )); then
+  exit_with_error "Found ${suspicious_files} empty or future-dated backup file(s); no files were removed."
 fi
 
 typeset -a unique_days=("${(@u)backup_file_days}")
@@ -1141,15 +1162,35 @@ for day in "${days_desc[@]}"; do
 done
 
 typeset -a purge_candidates=()
+typeset -a older_sizes=()
 integer idx=1
 while (( idx <= ${#backup_files[@]} )); do
   file="${backup_files[idx]}"
   day="${backup_file_days[idx]}"
   if (( ${+purge_days[$day]} )); then
     purge_candidates+=("${file}")
+    older_sizes+=("${backup_file_sizes[idx]}")
   fi
   (( idx += 1 ))
 done
+
+if (( ${#older_sizes[@]} > 0 )); then
+  older_sizes=("${(@n)older_sizes}")
+  integer median_index=$(( (${#older_sizes[@]} + 1) / 2 ))
+  integer median_size=${older_sizes[median_index]}
+  if (( ${#older_sizes[@]} % 2 == 0 )); then
+    (( median_size += (older_sizes[median_index + 1] - median_size) / 2 ))
+  fi
+  integer size_divisor=$(( 100 / MINIMUM_SIZE_PERCENT ))
+  idx=1
+  while (( idx <= ${#backup_files[@]} )); do
+    day="${backup_file_days[idx]}"
+    if (( ${+keep_days[$day]} && backup_file_sizes[idx] < median_size / size_divisor + (median_size % size_divisor != 0) )); then
+      exit_with_error "A retained backup is below ${MINIMUM_SIZE_PERCENT}% of the median older backup size; no files were removed."
+    fi
+    (( idx += 1 ))
+  done
+fi
 
 if (( ${#purge_candidates[@]} == 0 )); then
   log_message "INFO" "No files were identified for purging."
