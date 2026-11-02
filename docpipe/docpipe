@@ -36,7 +36,7 @@ from markdownify import markdownify as md_convert
 from pptx import Presentation
 from readability import Document as ReadabilityDocument
 
-VERSION = "0.1.2"
+VERSION = "0.1.3"
 MAX_OFFICE_EXPANDED_BYTES = 200_000_000
 
 logging.basicConfig(level=logging.INFO, format="%(message)s")
@@ -291,7 +291,15 @@ def _docx_extract_single_segment(doc_obj) -> Segment:
     tables_found: list[Table] = []
     table_counter = 0
 
-    for child in doc_obj.element.body:
+    def body_children(parent):
+        for child in parent:
+            if child.tag == qn("w:sdt"):
+                for content in child.findall(qn("w:sdtContent")):
+                    yield from body_children(content)
+            else:
+                yield child
+
+    for child in body_children(doc_obj.element.body):
         if child.tag == qn("w:p"):
             para = Paragraph(child, doc_obj)
             style_name = para.style.name if para.style else ""
@@ -383,6 +391,15 @@ def convert_docx(input_path: str, base_name: str, out_dir: str, extract_images: 
 
 
 def convert_pptx(input_path: str, base_name: str, out_dir: str, extract_images: bool = False) -> ConversionResult:
+    from pptx.enum.shapes import MSO_SHAPE_TYPE
+
+    def leaf_shapes(shapes):
+        for shape in shapes:
+            if shape.shape_type == MSO_SHAPE_TYPE.GROUP:
+                yield from leaf_shapes(shape.shapes)
+            else:
+                yield shape
+
     warnings: list[str] = []
     result = _new_result(input_path, "pptx", warnings)
 
@@ -400,7 +417,7 @@ def convert_pptx(input_path: str, base_name: str, out_dir: str, extract_images: 
         if title_shape and title_shape.text:
             text_parts.append(title_shape.text.strip())
 
-        for shape in slide.shapes:
+        for shape in leaf_shapes(slide.shapes):
             if title_shape and shape.shape_id == getattr(title_shape, "shape_id", None):
                 continue
 

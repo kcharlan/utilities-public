@@ -2196,3 +2196,10 @@ using synthetic plists and a mocked unload operation.
 A short read can look like a successful RAW block and cause atomic output to
 replace a valid destination with truncated data. Check header and payload lengths
 before writing, and test both absent and existing destinations on failure.
+
+### 2026-11-02 — Traverse document containers when extracting text
+
+Office documents can nest paragraphs and slide shapes inside content controls
+and groups. Walk those containers in order and reuse the normal paragraph,
+table, and shape processing; strict-mode synthetic conversions catch silent
+text loss that a successful return code alone misses.
