@@ -594,7 +594,8 @@ exception in a session thread marks the session `paused`.
 
 `recovery.py` `recover_execution_session()`:
 
-1. Reconcile the database to the filesystem before processing worker slots.
+1. Reconcile existing plans to the database before processing worker slots;
+   defer blocking missing plans until after orphan cleanup.
 2. For each `workers/<N>/` holding a plan, read `recovery.json`
    (`{"task_id", "workspace_path", "pid"}`) to locate the workspace.
 3. Classify by sidecar. `STATUS: done` means completed but uncollected: run

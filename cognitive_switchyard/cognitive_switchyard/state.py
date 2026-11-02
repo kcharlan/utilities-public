@@ -1126,6 +1126,7 @@ class StateStore:
         session_id: str,
         *,
         session_status: str | None = None,
+        block_missing: bool = True,
     ) -> dict[str, Any]:
         session_paths = self.runtime_paths.session_paths(session_id)
         filesystem_state: dict[str, tuple[str, Path, int | None]] = {}
@@ -1169,7 +1170,7 @@ class StateStore:
                 if task_id not in filesystem_state:
                     # Task exists in DB but plan file is missing from filesystem.
                     # Mark it blocked so the orchestrator doesn't try to operate on it.
-                    if row["status"] not in ("done", "blocked"):
+                    if block_missing and row["status"] not in ("done", "blocked"):
                         orphaned.append(task_id)
                         connection.execute(
                             """

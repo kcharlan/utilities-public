@@ -959,6 +959,32 @@ def test_cleanup_orphaned_workspaces_falls_back_to_rmtree_when_isolate_end_fails
     assert any("orphaned workspace" in w and "forcibly removed" in w for w in result.warnings)
 
 
+def test_recovery_retries_orphan_cleanup_after_interrupted_reconciliation(tmp_path: Path) -> None:
+    from cognitive_switchyard import recovery
+
+    store, paths = _build_store(tmp_path)
+    session = store.create_session(session_id="synthetic-retry", name="Synthetic retry", pack="retry-pack", created_at="2026-03-09T10:00:00Z")
+    _register_task(store, session_id=session.id, task_id="101")
+    task = store.project_task(session.id, "101", status="active", worker_slot=0)
+    task.plan_path.unlink()
+    workspace = paths.session_paths(session.id).worker_dir(0) / "workspace"
+    workspace.mkdir(parents=True)
+    marker = tmp_path / "teardown-called"
+    store.write_worker_recovery_metadata(session.id, slot_number=0, task_id="101", workspace_path=workspace, pid=None)
+    pack = load_pack_manifest(_write_pack(tmp_path, name="retry-pack", isolate_end=f"#!/bin/sh\ntouch '{marker}'\n"))
+
+    with unittest.mock.patch.object(recovery, "cleanup_orphaned_workspaces", side_effect=RuntimeError("synthetic interruption")):
+        with pytest.raises(RuntimeError, match="synthetic interruption"):
+            recovery.recover_execution_session(store=store, session_id=session.id, pack_manifest=pack)
+
+    assert workspace.exists()
+    assert store.read_worker_recovery_metadata(session.id, slot_number=0) is not None
+    recovery.recover_execution_session(store=store, session_id=session.id, pack_manifest=pack)
+    assert marker.exists()
+    assert store.read_worker_recovery_metadata(session.id, slot_number=0) is None
+    assert store.get_task(session.id, "101").status == "blocked"
+
+
 def test_recovery_preserves_previously_blocked_orphan_workspace(tmp_path: Path) -> None:
     from cognitive_switchyard.recovery import recover_execution_session
 
@@ -1244,6 +1270,27 @@ def test_failed_orphan_cleanup_preserves_workspace_outside_workers(tmp_path: Pat
     result = recover_execution_session(store=store, session_id=session.id, pack_manifest=load_pack_manifest(pack))
     assert (workspace / 'keep').read_text() == 'safe'
     assert any('left non-session workspace' in warning for warning in result.warnings)
+
+
+def test_recovery_preserves_autofix_workspace_with_missing_plan(tmp_path: Path) -> None:
+    from cognitive_switchyard.recovery import recover_execution_session
+
+    store, paths = _build_store(tmp_path)
+    session = store.create_session(session_id="synthetic-autofix", name="Synthetic autofix", pack="autofix-pack", created_at="2026-03-09T10:00:00Z")
+    _register_task(store, session_id=session.id, task_id="101")
+    task = store.project_task(session.id, "101", status="active", worker_slot=0)
+    task.plan_path.unlink()
+    workspace = paths.session_paths(session.id).worker_dir(0) / "workspace"
+    workspace.mkdir(parents=True)
+    store.write_worker_recovery_metadata(session.id, slot_number=0, task_id="101", workspace_path=workspace, pid=None)
+    store.write_session_runtime_state(session.id, auto_fix_context="task_failure", auto_fix_task_id="101")
+    pack = load_pack_manifest(_write_pack(tmp_path, name="autofix-pack", isolate_end="#!/bin/sh\nexit 0\n"))
+
+    recover_execution_session(store=store, session_id=session.id, pack_manifest=pack)
+
+    assert workspace.exists()
+    assert store.read_worker_recovery_metadata(session.id, slot_number=0) is not None
+    assert store.get_task(session.id, "101").status == "blocked"
 
 
 def test_recovery_protects_autofix_workspace_checkpoint(tmp_path: Path) -> None:

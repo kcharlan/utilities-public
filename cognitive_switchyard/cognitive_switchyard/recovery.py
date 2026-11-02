@@ -32,7 +32,9 @@ def recover_execution_session(
     warnings: list[str] = []
     protected_slots: set[int] = set()
 
-    newly_orphaned = set(store.reconcile_filesystem_projection(session_id)["orphaned"])
+    # Leave missing-plan statuses intact until orphan cleanup has run, so a
+    # crash here does not turn an orphan into an intentionally blocked task.
+    store.reconcile_filesystem_projection(session_id, block_missing=False)
 
     for worker_dir in sorted(path for path in session_paths.workers.iterdir() if path.is_dir()):
         if not worker_dir.name.isdigit():
@@ -47,7 +49,7 @@ def recover_execution_session(
             protected_slots.add(slot_number)
             if metadata.pid is None:
                 task = store.get_task(session_id, metadata.task_id)
-                if task.status == "active":
+                if task.status == "active" and task.plan_path.exists():
                     store.project_task(session_id, task.task_id, status="ready")
             continue
         for plan_path in sorted(worker_dir.glob("*.plan.md")):
@@ -164,7 +166,6 @@ def recover_execution_session(
         store=store,
         session_id=session_id,
         protected_slots=protected_slots,
-        newly_orphaned=newly_orphaned,
     )
     warnings.extend(orphan_warnings)
 
@@ -189,7 +190,6 @@ def cleanup_orphaned_workspaces(
     store: StateStore,
     session_id: str,
     protected_slots: set[int] | None = None,
-    newly_orphaned: set[str] | None = None,
 ) -> list[str]:
     """Clean up workspaces whose recovery metadata survived but had no plan file.
 
@@ -227,13 +227,12 @@ def cleanup_orphaned_workspaces(
         task_id = metadata.task_id
 
         # A blocked task can deliberately retain its workspace and metadata for
-        # manual recovery. A task blocked by the initial reconciliation is
-        # newly orphaned instead, and still needs the usual cleanup.
+        # manual recovery. Do not reclassify it as an orphan on the next run.
         try:
             task = store.get_task(session_id, task_id)
         except KeyError:
             task = None
-        if task is not None and task.status == "blocked" and task_id not in (newly_orphaned or set()):
+        if task is not None and task.status == "blocked":
             warning = f"Recovery left blocked task {task_id}'s workspace and metadata for manual handling."
             warnings.append(warning)
             store.append_event(session_id, timestamp=_timestamp(), event_type="session.recovery_warning", task_id=task_id, message=warning)
