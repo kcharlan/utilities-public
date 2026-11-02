@@ -90,9 +90,10 @@ be registered in the script's `STACKS` table before deploy will copy it.
 
 Run these from the repository root. The Compose contract needs the
 `docker-compose` CLI and `jq`; it renders synthetic configuration without
-starting containers. The other scripts use zsh or Node as indicated and
-standard system tools; the propagation and Actual tests also use Git. They
-use stubs instead of real deployments or network access.
+starting containers. The propagation, trusted-updater and n8n tests also
+require `jq`, and the propagation and Actual tests use Git. The other scripts
+use zsh or Node as indicated and standard system tools; they use stubs instead
+of real deployments or network access.
 
 - `zsh docker/tests/test_compose_contract.zsh` — rendered Compose contracts.
 - `zsh docker/tests/test_propagate_updates.zsh` — update propagation.
