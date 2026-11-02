@@ -71,7 +71,10 @@ def find_free_port(start_port: int, max_attempts: int = 20) -> int:
 
 
 class _BrowseHTTPServer(ThreadingHTTPServer):
-    daemon_threads = True
+    # server_close must join request handlers before their database is closed.
+    daemon_threads = False
+    # A client that stops sending a request must not prevent shutdown forever.
+    request_timeout = 5.0
     # Each API request is its own HTTP/1.0 connection and the page sends
     # several at once. With socketserver's default backlog of 5, macOS resets
     # the connections beyond it whenever the accept loop falls behind, and the
@@ -81,6 +84,15 @@ class _BrowseHTTPServer(ThreadingHTTPServer):
     def __init__(self, server_address: tuple[str, int], ctx: ApiContext) -> None:
         self.ctx = ctx
         super().__init__(server_address, _BrowseHandler)
+
+    def get_request(self) -> tuple[socket.socket, Any]:
+        request, address = super().get_request()
+        try:
+            request.settimeout(self.request_timeout)
+        except Exception:
+            request.close()
+            raise
+        return request, address
 
     def handle_error(self, request: Any, client_address: Any) -> None:
         # The page aborts superseded requests, so a client closing its socket
