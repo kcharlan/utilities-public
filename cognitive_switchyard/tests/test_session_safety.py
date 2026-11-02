@@ -1,6 +1,9 @@
 """Safety regressions for session worktree admission."""
 import hashlib
 import subprocess
+import threading
+from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 from fastapi import HTTPException
@@ -166,6 +169,82 @@ def test_session_collision_routes_preserve_trees(repo, tmp_path):
             })
             assert response.status_code == 409
             assert tree_hashes(target) == before
+
+
+@pytest.fixture
+def isolated_session(repo, tmp_path):
+    from tests.test_server import TestClient, _build_store, _write_runtime_pack
+    from cognitive_switchyard.server import create_app
+
+    store, paths = _build_store(tmp_path / 'runtime')
+    _write_runtime_pack(paths)
+    app = create_app(store=store, runtime_paths=paths)
+    with TestClient(app) as client:
+        response = client.post('/api/sessions', json={
+            'id': 'synthetic', 'pack': 'claude-code', 'config': {'environment': {
+                'COGNITIVE_SWITCHYARD_REPO_ROOT': str(repo),
+                'COGNITIVE_SWITCHYARD_BRANCH': 'session',
+            }},
+        })
+        assert response.status_code == 201
+        worktree = Path(response.json()['session']['config']['environment']['COGNITIVE_SWITCHYARD_REPO_ROOT'])
+        assert worktree.is_dir()
+        yield store, app, client, worktree
+
+
+@pytest.mark.parametrize('status', ['paused', 'created'])
+def test_abort_without_session_thread_removes_worktree(repo, isolated_session, status):
+    store, app, client, worktree = isolated_session
+    store.update_session_status('synthetic', status=status)
+    assert client.post('/api/sessions/synthetic/abort').status_code == 202
+    assert not worktree.exists()
+    assert f'worktree {worktree}' not in git(repo, 'worktree', 'list', '--porcelain').stdout.splitlines()
+
+
+def test_abort_with_live_session_thread_leaves_worktree_to_the_thread(isolated_session):
+    store, app, client, worktree = isolated_session
+    release = threading.Event()
+    thread = threading.Thread(target=release.wait)
+    thread.start()
+    app.state.controller._threads['synthetic'] = thread
+    try:
+        assert client.post('/api/sessions/synthetic/abort').status_code == 202
+        assert worktree.is_dir()
+        assert store.get_session('synthetic').status == 'aborted'
+    finally:
+        release.set()
+        thread.join(timeout=10)
+    assert not thread.is_alive()
+
+
+@pytest.mark.parametrize('route', ['end', 'cleanup-worktree'])
+def test_end_and_cleanup_routes_remove_worktree(repo, isolated_session, route):
+    store, app, client, worktree = isolated_session
+    if route == 'end':
+        store.update_session_status('synthetic', status='idle')
+    else:
+        store.update_session_status('synthetic', status='completed')
+    response = client.post(f'/api/sessions/synthetic/{route}')
+    assert response.status_code == (202 if route == 'end' else 200)
+    if route == 'cleanup-worktree':
+        assert response.json() == {'ok': True}
+    assert not worktree.exists()
+    assert f'worktree {worktree}' not in git(repo, 'worktree', 'list', '--porcelain').stdout.splitlines()
+
+
+@pytest.mark.parametrize('status', ['idle', 'completed', 'aborted'])
+def test_session_thread_removes_worktree_only_when_run_ends_aborted(isolated_session, monkeypatch, status):
+    from cognitive_switchyard import server
+
+    store, app, client, worktree = isolated_session
+    monkeypatch.setattr(server, 'load_pack_manifest', lambda _: object())
+    def finish_session(**kwargs):
+        store.update_session_status('synthetic', status=status)
+        return SimpleNamespace(started=True)
+    monkeypatch.setattr(server, 'start_session', finish_session)
+    monkeypatch.setattr(app.state.controller, '_publish_snapshot', lambda _: None)
+    app.state.controller._run_session('synthetic')
+    assert worktree.is_dir() == (status != 'aborted')
 
 
 def test_serve_backend_binds_loopback(tmp_path, monkeypatch):

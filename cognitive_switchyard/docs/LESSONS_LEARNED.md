@@ -1,5 +1,10 @@
 # Lessons Learned
 
+## Cleanup Without a Session Thread
+
+- What went wrong: Aborting a session with no live thread marked it aborted but left its worktree behind because cleanup was tied to the thread's exit.
+- Pattern to follow instead: Run cleanup on the no-thread path too; when a thread is live, let it drain workers before removing their workspace.
+
 ## Planner Fallbacks Must Retain Inputs
 
 - What went wrong: A matching plan file was treated as proof that a failed planner invocation had handled its input, although another invocation could have created it.
