@@ -14,6 +14,76 @@ from browser_errors import guard_browser_errors
 
 UUID = "00000000-0000-4000-8000-00000000c0de"
 
+def codex_turn(turn_id, start, last, total):
+    return [
+        row("turn_context", {"model": "gpt-5", "turn_id": turn_id}, start),
+        row("event_msg", {"type": "task_started", "turn_id": turn_id}, start),
+        row("event_msg", {"type": "token_count", "turn_id": turn_id,
+                          "info": {"model": "gpt-5", "last_token_usage": last,
+                                   "total_token_usage": total}}, start + 2),
+        row("event_msg", {"type": "task_complete", "turn_id": turn_id}, start + 3),
+    ]
+
+@pytest.mark.parametrize("newest", ["parent", "grandchild"])
+def test_codex_fork_chain_counts_only_own_usage_in_either_order(native, newest):
+    parent_id, child_id, grandchild_id = ("synthetic-fork-parent", "synthetic-fork-child",
+                                          "synthetic-fork-grandchild")
+    paths = {}
+    for label, session_id, parent, start, last, total in [
+        ("parent", parent_id, None, 0, usage(1000, 0, 100), usage(1000, 0, 100)),
+        ("child", child_id, parent_id, 10, usage(300, 0, 30), usage(1300, 0, 130)),
+        ("grandchild", grandchild_id, child_id, 20, usage(200, 0, 20), usage(1500, 0, 150)),
+    ]:
+        meta = {"id": session_id, "cwd": "/synthetic/kite", "source": "cli"}
+        if parent:
+            meta["forked_from_id"] = parent
+        rows = [row("session_meta", meta, start)] + codex_turn(f"synthetic-{label}-turn", start + 1, last, total)
+        paths[label] = native.write_session(rows, name=f"rollout-synthetic-{label}.jsonl")
+    for label, session_path in paths.items():
+        stamp = 1700000001 if label == newest else 1700000000
+        os.utime(session_path, (stamp, stamp))
+    result = native.build()
+    assert result.returncode == 0, result.stderr
+    payload = native.payload()
+    sessions = {session["id"]: session for session in payload["sessions"]}
+    for session_id, expected in [(parent_id, (1000, 100)), (child_id, (300, 30)),
+                                 (grandchild_id, (200, 20))]:
+        own = sessions[session_id]["own_usage"]
+        assert (own["input"], own["output"]) == expected
+    assert sum(session["own_usage"]["input"] for session in payload["sessions"]) == 1500
+    assert sessions[child_id]["forked_from"] == parent_id
+    assert sessions[grandchild_id]["forked_from"] == child_id
+
+def test_codex_subagent_counts_only_owned_suffix_and_links_to_spawn_turn(native):
+    parent_id, agent_id = "synthetic-fork-parent", "synthetic-subagent"
+    parent_turn = codex_turn("synthetic-parent-turn", 1, usage(1000, 0, 100), usage(1000, 0, 100))
+    parent_turn.insert(2, row("event_msg", {"type": "item_completed", "turn_id": "synthetic-parent-turn",
+        "item": {"type": "SubAgentActivity", "kind": "started", "agent_thread_id": agent_id,
+                 "agent_path": "/root/synthetic_agent"}}, 2))
+    native.write_session([row("session_meta", {"id": parent_id, "cwd": "/synthetic/kite", "source": "cli"}, 0)] + parent_turn,
+                         name="rollout-synthetic-parent.jsonl")
+    meta = row("session_meta", {"id": agent_id, "cwd": "/synthetic/kite", "forked_from_id": parent_id,
+        "parent_thread_id": parent_id, "source": {"subagent": {"thread_spawn": {
+            "parent_thread_id": parent_id, "depth": 1, "agent_path": "/root/synthetic_agent",
+            "agent_nickname": "Synthetic"}}}, "subagent_history_start_ordinal": 4}, 10)
+    copied = [parent_turn[0], parent_turn[1], parent_turn[3]]
+    own = codex_turn("synthetic-subagent-turn", 31, usage(200, 0, 20), usage(1200, 0, 120))
+    rows = [meta] + copied + own
+    for ordinal, value in enumerate(rows):
+        value["ordinal"] = ordinal
+    native.write_session(rows, name="rollout-synthetic-subagent.jsonl")
+    result = native.build()
+    assert result.returncode == 0, result.stderr
+    payload = native.payload()
+    agent = payload["subagents"][agent_id]
+    parent, = [session for session in payload["sessions"] if session["id"] == parent_id]
+    assert (agent["parent_id"], agent["spawn_turn"], agent["link_method"]) == (parent_id, "synthetic-parent-turn", "activity")
+    assert (agent["own_usage"]["input"], agent["own_usage"]["output"]) == (200, 20)
+    assert [turn["id"] for turn in agent["turns"]] == ["synthetic-subagent-turn"]
+    assert (parent["own_usage"]["input"], parent["own_usage"]["output"]) == (1000, 100)
+    assert agent_id in parent["turns"][0]["spawned"]
+    assert payload["meta"]["counts"]["subagents"] == 1
+
 def test_claude_subagent_links_and_desktop_metadata(native):
     parent = native.claude_session()
     with parent.open("a") as stream:
