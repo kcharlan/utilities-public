@@ -44,6 +44,29 @@ def test_schedule_structure(engine_page):
     assert "before dividing" not in text.casefold()
 
 
+def test_bundled_federal_schedule_bracket_bases_match_hand_calculation(engine_page):
+    text = engine_page.evaluate("r => Tax2Engine.buildRateSchedule(2026, r)", payload())
+    federal = text.split("\n## Federal\n", 1)[1].split("\n## GA\n", 1)[0]
+    single, married = federal.split("### Married Filing Jointly", 1)
+    single = single.split("### Single", 1)[1]
+
+    # 12,400×0.10 = 1,240; 1,240 + 38,000×0.12 = 5,800.
+    # 24,800×0.10 = 2,480; 2,480 + 76,000×0.12 = 11,600.
+    for line in [
+        "Standard deduction: 16,100",
+        "| 0 | 12,400 | 0.00 + 10% × excess over 0 |",
+        "| 12,400 | 50,400 | 1,240.00 + 12% × excess over 12,400 |",
+        "| 50,400 | 105,700 | 5,800.00 + 22% × excess over 50,400 |",
+    ]:
+        assert line in single.splitlines()
+    for line in [
+        "Standard deduction: 32,200",
+        "| 24,800 | 100,800 | 2,480.00 + 12% × excess over 24,800 |",
+        "| 100,800 | 211,400 | 11,600.00 + 22% × excess over 100,800 |",
+    ]:
+        assert line in married.splitlines()
+
+
 def test_schedule_manual_procedure_applies_credits_before_monthly_rounding(engine_page):
     text = engine_page.evaluate("r=>Tax2Engine.buildRateSchedule(2026,r)", payload("synthetic"))
     procedure = text.split("## Manual procedure\n\n", 1)[1].split(
