@@ -40,9 +40,10 @@ before running; the converter does not create it.
 
 The output file is replaced if it already exists. An invalid split account or
 amount exits nonzero before opening the output, preserving any existing file.
-A missing or invalid input
-file, or an unwritable output path, is reported on standard output; the script
-still exits with status 0, so check its message rather than the exit code.
+A missing or invalid input file, or an unwritable output path, is reported on
+standard error and exits nonzero. Input errors and failure to open an output
+file leave an existing output unchanged. A failure after writing begins can leave
+the output incomplete.
 
 ## How It Works
 
