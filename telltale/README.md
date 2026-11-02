@@ -82,8 +82,7 @@ script in `Tests/ReleaseChecks/`. Nothing is left in `$TMPDIR` or the Darwin use
   replacement and installer recovery. It is
   structural only and proves nothing about real certificate trust.
 - `check_harnesses.sh` runs `make snapshots` and `make acceptance` and checks that the
-  snapshot executable and the acceptance app carry the supported runtime (minos and SDK
-  27.0), that fourteen panel PNGs and eighteen dashboard PNGs were written, that the acceptance service tests passed, and
+  acceptance service tests passed, and
   that the acceptance bundle is signed with identifier `com.example.telltale.acceptance`.
   Both build inside its own scratch (`TELLTALE_HARNESS_ROOT`) in the Darwin user temp dir,
   where the snapshot executable requires its home even though the suite points TMPDIR into
