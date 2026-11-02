@@ -23,7 +23,7 @@ from typing import Any, Iterable, Optional
 
 STATE_DIR = Path.home() / ".worktree-helper"
 STATE_FILE = STATE_DIR / "state.json"
-VERSION = "0.1.4"
+VERSION = "0.1.5"
 BACK = object()
 
 
@@ -398,18 +398,19 @@ def validate_create_request(request: ActionRequest, repo: Path) -> None:
         bool(request.new_branch),
         bool(request.reset_branch),
         request.detach,
-        request.orphan,
     ]
     if sum(1 for mode in modes if mode) == 0:
         raise WorktreeError(
-            "Create mode is ambiguous. Use --branch, --new-branch, --reset-branch, --detach, or --orphan."
+            "Create mode is ambiguous. Use --branch, --new-branch, --reset-branch, or --detach."
         )
     if sum(1 for mode in modes if mode) > 1:
         raise WorktreeError(
-            "Choose only one create mode: existing branch, new branch, reset branch, detached, or orphan."
+            "Choose only one create mode: existing branch, new branch, reset branch, or detached."
         )
     if request.path is None:
         raise WorktreeError("Missing target path for create. Pass --path or use the picker.")
+    if request.orphan and (request.branch or request.detach or request.from_ref):
+        raise WorktreeError("--orphan cannot be combined with --branch, --detach or --from.")
     if request.orphan and not (request.new_branch or request.reset_branch):
         raise WorktreeError("Orphan creation needs --new-branch or --reset-branch.")
     if request.reset_branch and not request.force:
@@ -1670,7 +1671,7 @@ def execute_create(request: ActionRequest) -> ActionResult:
     if request.branch:
         cmd.append(request.branch)
     elif request.new_branch or request.reset_branch or request.detach or request.orphan:
-        if request.from_ref:
+        if request.from_ref and not request.orphan:
             cmd.append(request.from_ref)
     completed = git(repo, cmd)
     status = git_status_summary(request.path)

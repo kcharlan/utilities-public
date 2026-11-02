@@ -59,6 +59,13 @@ In Zsh, returning a failure from an EXIT trap does not replace the original succ
 
 Zsh's `path` array is tied to `PATH`; using `local path` for a cleanup loop can make external commands unavailable. Use a non-special variable name and exercise the real command lookup in a synthetic regression, including both successful and failed primary operations.
 
+## 2026-11-02: Compute imported cache rates from imported prompt tokens
+
+RouterView CSV imports populate `tokens_prompt` but not `native_tokens_prompt`.
+Aggregating the latter made the cache hit rate zero even when imported rows had
+cached tokens. Exercise summary totals and filtered rates through a real CSV
+import so the aggregate uses the data actually stored by the active path.
+
 ## 2026-10-31: Compare old and new in a browser when moving React code to Preact
 
 The offline port merged with every suite green; side-by-side browser comparison
@@ -2211,6 +2218,31 @@ Office documents can nest paragraphs and slide shapes inside content controls
 and groups. Walk those containers in order and reuse the normal paragraph,
 table, and shape processing; strict-mode synthetic conversions catch silent
 text loss that a successful return code alone misses.
+
+### 2026-11-02 — Treat orphan creation as a branch modifier
+
+Git's worktree orphan option modifies a new or reset branch mode rather than
+replacing it. Validate incompatible start points separately and test the actual
+symbolic HEAD and missing commit in a synthetic repository.
+
+### 2026-11-02 — Keep SQLite lock waits off the event loop
+
+Blocking SQLite operations inside async routes can stall unrelated requests for
+the full busy timeout. Run database work in worker threads and exercise a locked
+write through a real server with an independently timed status request. A SQLite
+connection context manager commits or rolls back but does not close the handle;
+close test fixture and readback connections explicitly.
+
+## Generated Markdown tables through HTML converters
+
+When an HTML-to-Markdown pipeline constructs table Markdown before calling the
+converter, preserve those blocks across conversion. HTML whitespace collapsing
+and `<br>` hard breaks can change empty-cell padding and table line endings;
+restore the surrounding block prefix on every line, and escape source
+backslashes before pipe delimiters. Check rendered cell values and quoted
+table structure as well as exact top-level lines. List markers belong only on
+the first line; indent continuation lines and ensure every placeholder is
+resolved even when the converter emits an unexpected prefix.
 
 ### 2026-11-02 — Validate direction before normalizing amounts
 

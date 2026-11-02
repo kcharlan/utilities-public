@@ -206,9 +206,21 @@ def test_api_key_is_enforced_when_configured(tmp_path, monkeypatch):
     assert client.get("/counters").status_code == 403
     assert client.post("/add", json={"client_id": "client-1", "seq": 1, "deltas": {}}).status_code == 403
 
-    response = client.get("/counters", headers={"X-API-KEY": "secret-key"})
+    headers = {"X-API-KEY": "secret-key"}
+    response = client.post(
+        "/add",
+        json={"client_id": "client-1", "seq": 1, "deltas": {"example.invalid": 2}},
+        headers=headers,
+    )
     assert response.status_code == 200
-    assert response.get_json() == {"counters": {}}
+    assert client.post("/reset").status_code == 403
+    assert client.post("/flush").status_code == 403
+    assert client.get("/client_status?client_id=client-1").status_code == 403
+
+    response = client.get("/counters", headers=headers)
+    assert response.status_code == 200
+    assert response.get_json() == {"counters": {"example.invalid": 2}}
+    assert not list(Path(module.SNAP_DIR).iterdir())
 
 
 def test_reset_excludes_concurrent_add_from_snapshot_clear_gap(tmp_path, monkeypatch):

@@ -4,7 +4,23 @@ sys.path.insert(0, str(Path(__file__).parent))
 
 from datetime import datetime, timezone
 
+import pytest
+
 from test_csv_import import build_client, load_module
+
+
+@pytest.mark.parametrize(
+    "from_utc,to_utc,mode,tz,preset,expected",
+    [
+        pytest.param("2024-03-31T00:00:00+00:00", "2024-03-31T12:00:00+00:00", "mom_date", "UTC", "", ("2024-02-29T00:00:00+00:00", "2024-02-29T12:00:00+00:00"), id="mom_date_leap_clamp"),
+        pytest.param("2026-01-01T00:00:00+00:00", "2026-02-15T00:00:00+00:00", "prior_period", "UTC", "this_quarter", ("2025-10-01T00:00:00+00:00", "2025-12-31T23:59:59+00:00"), id="prior_quarter_wraps_year"),
+        pytest.param("2026-03-09T04:00:00+00:00", "2026-03-10T16:00:00+00:00", "wow", "America/New_York", "", ("2026-03-02T05:00:00+00:00", "2026-03-03T17:00:00+00:00"), id="wow_across_dst"),
+        pytest.param("2026-11-10T00:00:00+00:00", "2026-11-10T12:00:00+00:00", "yoy_relative", "UTC", "", ("2025-11-11T00:00:00+00:00", "2025-11-11T12:00:00+00:00"), id="yoy_relative_second_tuesday"),
+    ],
+)
+def test_comparison_range_keeps_calendar_alignment(monkeypatch, tmp_path, from_utc, to_utc, mode, tz, preset, expected):
+    module = load_module(monkeypatch, tmp_path / "home")
+    assert module.compute_comparison_range(from_utc, to_utc, mode, tz, range_preset=preset) == expected
 
 
 def test_previous_month_clamps_day(monkeypatch, tmp_path):

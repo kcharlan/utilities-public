@@ -316,24 +316,3 @@ def api_jobs_no_apple(server_url) -> list:
     import urllib.request
     resp = urllib.request.urlopen(f"{server_url}/api/jobs?include_apple=false")
     return json.loads(resp.read().decode())
-
-
-@pytest.fixture(scope="session")
-def launchctl_state() -> Dict[str, Dict[str, Any]]:
-    """Expected launchctl state supplied to the synthetic server."""
-    return {
-        "com.example.synthetic-idle": {"pid": None, "last_exit": 0},
-        "com.example.synthetic-failed": {"pid": None, "last_exit": 78},
-        "com.example.synthetic-disabled": {"pid": None, "last_exit": 0},
-        "com.example.synthetic-calendar": {"pid": None, "last_exit": 0},
-        "com.example.synthetic-interval": {"pid": None, "last_exit": 0},
-        "com.example.synthetic-running": {"pid": 424242, "last_exit": 0},
-        "com.example.synthetic-watch": {"pid": None, "last_exit": 0},
-        "com.apple.example-synthetic": {"pid": None, "last_exit": 0},
-    }
-
-
-@pytest.fixture(scope="session")
-def disabled_labels() -> set:
-    """Expected disabled labels supplied to the synthetic server."""
-    return {"com.example.synthetic-disabled"}

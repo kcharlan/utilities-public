@@ -25,6 +25,7 @@ from typing import Any, Dict, List, Optional
 
 import uvicorn
 from fastapi import FastAPI, File, HTTPException, UploadFile
+from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import HTMLResponse, StreamingResponse
 from pydantic import BaseModel
 
@@ -187,10 +188,10 @@ class DBManager:
 
     def get_connection(self):
         # Finding 5: Add timeout
-        conn = sqlite3.connect(self.db_path, timeout=30.0)
+        conn = sqlite3.connect(self.db_path, timeout=SQLITE_BUSY_TIMEOUT_SECONDS)
         conn.row_factory = sqlite3.Row
         conn.execute("PRAGMA foreign_keys = ON;")
-        conn.execute("PRAGMA busy_timeout = 30000;")
+        conn.execute(f"PRAGMA busy_timeout = {int(SQLITE_BUSY_TIMEOUT_SECONDS * 1000)};")
         return conn
 
     def get_tables(self):
@@ -343,6 +344,7 @@ MAX_PAGE_SIZE = 1000
 MAX_QUERY_SIZE = 100_000 # 100KB
 MAX_IMPORT_SIZE = 50 * 1024 * 1024 # 50MB
 MAX_QUERY_RESULTS = 10000
+SQLITE_BUSY_TIMEOUT_SECONDS = 30.0
 
 # --- FastAPI App ---
 
@@ -366,7 +368,7 @@ async def status():
     return {"db_path": db_manager.db_path, "db_name": os.path.basename(db_manager.db_path)}
 
 @app.post("/api/query")
-async def execute_query(sql: SQLQuery):
+def execute_query(sql: SQLQuery):
     # Finding 9: Basic validation
     if not sql.query or not sql.query.strip():
         raise HTTPException(status_code=400, detail="Query cannot be empty")
@@ -400,11 +402,11 @@ async def execute_query(sql: SQLQuery):
             raise HTTPException(status_code=400, detail=str(e))
 
 @app.get("/api/tables")
-async def list_tables():
+def list_tables():
     return db_manager.get_tables()
 
 @app.post("/api/tables")
-async def create_table(table: NewTable):
+def create_table(table: NewTable):
     validate_identifier(table.name)
     with db_manager.get_connection() as conn:
         try:
@@ -415,7 +417,7 @@ async def create_table(table: NewTable):
             raise HTTPException(status_code=400, detail=str(e))
 
 @app.post("/api/tables/{table_name}/rename")
-async def rename_table(table_name: str, payload: RenameTable):
+def rename_table(table_name: str, payload: RenameTable):
     validate_identifier(table_name)
     validate_identifier(payload.new_name)
     with db_manager.get_connection() as conn:
@@ -427,7 +429,7 @@ async def rename_table(table_name: str, payload: RenameTable):
             raise HTTPException(status_code=400, detail=str(e))
 
 @app.delete("/api/tables/{table_name}")
-async def delete_table(table_name: str):
+def delete_table(table_name: str):
     validate_identifier(table_name)
     with db_manager.get_connection() as conn:
         try:
@@ -438,11 +440,11 @@ async def delete_table(table_name: str):
             raise HTTPException(status_code=400, detail=str(e))
 
 @app.get("/api/indexes")
-async def list_indexes():
+def list_indexes():
     return db_manager.get_indexes()
 
 @app.post("/api/indexes")
-async def create_index(payload: NewIndex):
+def create_index(payload: NewIndex):
     validate_identifier(payload.name)
     validate_identifier(payload.table)
     for col in payload.columns:
@@ -460,7 +462,7 @@ async def create_index(payload: NewIndex):
             raise HTTPException(status_code=400, detail=str(e))
 
 @app.delete("/api/indexes/{index_name}")
-async def delete_index(index_name: str):
+def delete_index(index_name: str):
     validate_identifier(index_name)
     with db_manager.get_connection() as conn:
         try:
@@ -471,15 +473,15 @@ async def delete_index(index_name: str):
             raise HTTPException(status_code=400, detail=str(e))
 
 @app.get("/api/schema/{table_name}")
-async def get_schema(table_name: str):
+def get_schema(table_name: str):
     return db_manager.get_schema(table_name)
 
 @app.get("/api/fks/{table_name}")
-async def get_fks(table_name: str):
+def get_fks(table_name: str):
     return db_manager.get_fks(table_name)
 
 @app.get("/api/row/{table_name}/{pk_value}")
-async def get_row_preview(table_name: str, pk_value: str):
+def get_row_preview(table_name: str, pk_value: str):
     validate_identifier(table_name)
     with db_manager.get_connection() as conn:
         cursor = conn.cursor()
@@ -498,7 +500,7 @@ async def get_row_preview(table_name: str, pk_value: str):
         return {"row": json_row(row), "schema": schema}
 
 @app.get("/api/table/{table_name}/full")
-async def get_table_full(table_name: str, limit: int = DEFAULT_PAGE_SIZE, offset: int = 0):
+def get_table_full(table_name: str, limit: int = DEFAULT_PAGE_SIZE, offset: int = 0):
     validate_identifier(table_name)
     limit = min(limit, MAX_PAGE_SIZE)
     with db_manager.get_connection() as conn:
@@ -522,7 +524,7 @@ async def get_table_full(table_name: str, limit: int = DEFAULT_PAGE_SIZE, offset
         }
 
 @app.get("/api/export/{table_name}/{fmt}")
-async def export_data(table_name: str, fmt: str):
+def export_data(table_name: str, fmt: str):
     validate_identifier(table_name)
     with db_manager.get_connection() as conn:
         cursor = conn.cursor()
@@ -570,29 +572,32 @@ async def import_data(table_name: str, file: UploadFile = File(...)):
         raise HTTPException(status_code=400, detail='CSV must be UTF-8 encoded')
     reader = csv.DictReader(io.StringIO(decoded))
     
-    with db_manager.get_connection() as conn:
-        try:
-            batch_size = 1000
-            count = 0
-            for row in reader:
-                cols = list(row.keys())
-                for c in cols: validate_identifier(c)
-                placeholders = ", ".join([":" + c for c in cols])
-                quoted_cols = ", ".join([quote_identifier(c) for c in cols])
-                sql = f"INSERT INTO {quote_identifier(table_name)} ({quoted_cols}) VALUES ({placeholders})"
-                conn.execute(sql, row)
-                count += 1
-                if count % batch_size == 0:
-                    conn.commit()
-            conn.commit()
-            return {"status": "success", "rows_imported": count}
-        except Exception as e:
-            conn.rollback()
-            logger.error(f"Import failed: {e}")
-            raise HTTPException(status_code=400, detail=str(e))
+    def import_rows():
+        with db_manager.get_connection() as conn:
+            try:
+                batch_size = 1000
+                count = 0
+                for row in reader:
+                    cols = list(row.keys())
+                    for c in cols: validate_identifier(c)
+                    placeholders = ", ".join([":" + c for c in cols])
+                    quoted_cols = ", ".join([quote_identifier(c) for c in cols])
+                    sql = f"INSERT INTO {quote_identifier(table_name)} ({quoted_cols}) VALUES ({placeholders})"
+                    conn.execute(sql, row)
+                    count += 1
+                    if count % batch_size == 0:
+                        conn.commit()
+                conn.commit()
+                return {"status": "success", "rows_imported": count}
+            except Exception as e:
+                conn.rollback()
+                logger.error(f"Import failed: {e}")
+                raise HTTPException(status_code=400, detail=str(e))
+
+    return await run_in_threadpool(import_rows)
 
 @app.get("/api/export-schema/{table_name}")
-async def export_schema(table_name: str):
+def export_schema(table_name: str):
     validate_identifier(table_name)
     with db_manager.get_connection() as conn:
         cursor = conn.cursor()
@@ -613,7 +618,7 @@ async def export_schema(table_name: str):
         )
 
 @app.get("/api/data/{table_name}")
-async def get_data(table_name: str, limit: int = DEFAULT_PAGE_SIZE, offset: int = 0):
+def get_data(table_name: str, limit: int = DEFAULT_PAGE_SIZE, offset: int = 0):
     validate_identifier(table_name)
     limit = min(limit, MAX_PAGE_SIZE)
     with db_manager.get_connection() as conn:
@@ -622,7 +627,7 @@ async def get_data(table_name: str, limit: int = DEFAULT_PAGE_SIZE, offset: int 
         return [json_row(row) for row in cursor.fetchall()]
 
 @app.get("/api/count/{table_name}")
-async def get_count(table_name: str):
+def get_count(table_name: str):
     validate_identifier(table_name)
     with db_manager.get_connection() as conn:
         cursor = conn.cursor()
@@ -630,7 +635,7 @@ async def get_count(table_name: str):
         return dict(cursor.fetchone())
 
 @app.post("/api/migrate/{table_name}")
-async def migrate_table(table_name: str, migration: TableMigration):
+def migrate_table(table_name: str, migration: TableMigration):
     validate_identifier(table_name)
     success, err = db_manager.execute_migration(table_name, migration.columns)
     if not success:
@@ -638,7 +643,7 @@ async def migrate_table(table_name: str, migration: TableMigration):
     return {"status": "success"}
 
 @app.post("/api/data/{table_name}")
-async def add_row(table_name: str, row: RowData):
+def add_row(table_name: str, row: RowData):
     validate_identifier(table_name)
     with db_manager.get_connection() as conn:
         try:
@@ -654,7 +659,7 @@ async def add_row(table_name: str, row: RowData):
             raise HTTPException(status_code=400, detail=str(e))
 
 @app.put("/api/data/{table_name}")
-async def update_row(table_name: str, payload: Dict[str, Any]):
+def update_row(table_name: str, payload: Dict[str, Any]):
     # Expects 'where' and 'values' in payload
     validate_identifier(table_name)
     with db_manager.get_connection() as conn:
@@ -680,7 +685,7 @@ async def update_row(table_name: str, payload: Dict[str, Any]):
             raise HTTPException(status_code=400, detail=str(e))
 
 @app.post("/api/data/{table_name}/delete")
-async def delete_row(table_name: str, where: Dict[str, Any]):
+def delete_row(table_name: str, where: Dict[str, Any]):
     validate_identifier(table_name)
     with db_manager.get_connection() as conn:
         try:

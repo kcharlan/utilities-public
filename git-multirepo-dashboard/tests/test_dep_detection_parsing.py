@@ -14,6 +14,7 @@ import pytest
 # ── Ensure project root is on sys.path ────────────────────────────────────────
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
+import git_dashboard
 from git_dashboard import (
     detect_dep_files,
     parse_requirements_txt,
@@ -41,6 +42,35 @@ def make_tmpdir(files: dict) -> Path:
 
 
 # ── detect_dep_files tests ────────────────────────────────────────────────────
+
+def test_detect_dep_files_walk_limits(tmp_path, monkeypatch):
+    """Discovery respects depth, excluded directories, symlinks, and size."""
+    root = tmp_path / "repo"
+    for relative in (
+        "a/b/c/package.json",
+        "a/b/c/d/package.json",
+        "node_modules/package.json",
+        ".venv/package.json",
+        ".hidden/package.json",
+        "at-limit/package.json",
+        "oversize/package.json",
+    ):
+        manifest = root / relative
+        manifest.parent.mkdir(parents=True, exist_ok=True)
+        contents = {"at-limit/package.json": "x" * 16,
+                    "oversize/package.json": "x" * 17}.get(relative, "{}")
+        manifest.write_text(contents, encoding="utf-8")
+
+    external = tmp_path / "external"
+    external.mkdir()
+    (external / "package.json").write_text("{}", encoding="utf-8")
+    (root / "linked").symlink_to(external, target_is_directory=True)
+    monkeypatch.setattr(git_dashboard, "MAX_DEP_FILE_SIZE", 16)
+
+    found = {(item["dir"] / item["file"]).relative_to(root).as_posix()
+             for item in detect_dep_files(root)}
+    assert found == {"a/b/c/package.json", "at-limit/package.json"}
+
 
 def test_detect_dep_files_requirements_txt():
     """Test 1: single Python (requirements.txt)"""
