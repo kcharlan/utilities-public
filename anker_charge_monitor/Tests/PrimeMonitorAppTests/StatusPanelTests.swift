@@ -843,16 +843,15 @@ private final class SyntheticActivatedApplication: NSRunningApplication, @unchec
     }
 }
 @MainActor struct StatusPanelIntegrationTests {
-    @Test func nativeCyclesAcknowledgeUpdatesAndNeverActivateApplication() throws {
+    @Test func nativeCyclesHideEachTimeAndNeverActivateApplication() throws {
         let home = FileManager.default.temporaryDirectory.appending(path: "prime-synthetic-panel-" + UUID().uuidString, directoryHint: .isDirectory)
         defer { try? FileManager.default.removeItem(at: home) }
         let fixture = try PanelFixture(home: home)
         for _ in 0..<6 { fixture.begin(); fixture.end() }
         #expect(fixture.activations == 0 && fixture.panel.hides == 6)
-        // BV release acknowledgment persistence has no charger equivalent.
         fixture.end(); #expect(fixture.panel.hides == 6)
     }
-    @Test func settingsAndCustomIntervalCancelBeforePresentingOwnedSettings() throws {
+    @Test func settingsCancelsThePanelBeforePresentingOwnedSettings() throws {
         let home = FileManager.default.temporaryDirectory.appending(path: "prime-synthetic-panel-" + UUID().uuidString, directoryHint: .isDirectory)
         defer { try? FileManager.default.removeItem(at: home) }
         let fixture = try PanelFixture(home: home)
@@ -861,7 +860,6 @@ private final class SyntheticActivatedApplication: NSRunningApplication, @unchec
         host.rootView.showSettings()
         #expect(fixture.cancelCount == 1 && fixture.settingsPresentations == 1)
         #expect(!fixture.visibleAtSettingsPresentation)
-        // Custom update interval is outside Prime Monitor v1; Settings route above is retained.
     }
     @Test func applicationResignAndPendingNativeEndLeaveNoDelayedReopen() throws {
         let home = FileManager.default.temporaryDirectory.appending(path: "prime-synthetic-panel-" + UUID().uuidString, directoryHint: .isDirectory)
