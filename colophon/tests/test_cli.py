@@ -14,6 +14,50 @@ from browser_errors import guard_browser_errors
 
 UUID = "00000000-0000-4000-8000-00000000c0de"
 
+def test_codex_realistic_rollout_tools_statuses_and_dual_messages(native):
+    t1, t2, t3, t4 = (f"synthetic-t{i}" for i in range(1, 5))
+    native.write_session([
+        row("session_meta", {"id": SESSION, "cwd": "/synthetic/kite", "source": "cli"}, 0),
+        row("turn_context", {"model": "gpt-5", "turn_id": t1}, 1),
+        row("event_msg", {"type": "task_started", "turn_id": t1}, 1),
+        row("event_msg", {"type": "user_message", "turn_id": t1, "message": "Synthetic first request"}, 2),
+        row("response_item", {"type": "message", "role": "user", "content": [{"type": "input_text", "text": "Synthetic first request"}]}, 2),
+        row("response_item", {"type": "function_call", "name": "exec_command", "call_id": "synthetic-c1", "arguments": "{}"}, 3),
+        row("response_item", {"type": "function_call_output", "call_id": "synthetic-c1", "output": "synthetic output"}, 4),
+        row("response_item", {"type": "custom_tool_call", "name": "apply_patch", "call_id": "synthetic-c2", "input": "synthetic patch"}, 5),
+        row("response_item", {"type": "web_search_call"}, 6),
+        row("response_item", {"type": "function_call", "name": "synthetic_lookup", "call_id": "synthetic-c3", "arguments": "{}"}, 7),
+        row("response_item", {"type": "message", "role": "assistant", "phase": "final_answer", "content": [{"type": "output_text", "text": "Synthetic first answer"}]}, 8),
+        row("event_msg", {"type": "agent_message", "turn_id": t1, "phase": "final_answer", "message": "Synthetic first answer"}, 8),
+        row("event_msg", {"type": "task_complete", "turn_id": t1}, 9),
+        row("event_msg", {"type": "task_started", "turn_id": t2}, 10),
+        row("event_msg", {"type": "user_message", "turn_id": t2, "message": "Synthetic second request"}, 11),
+        row("event_msg", {"type": "item_completed", "turn_id": t2, "item": {"type": "CommandExecution", "exit_code": 1}}, 12),
+        row("response_item", {"type": "function_call", "name": "exec_command", "call_id": "synthetic-c4", "arguments": "{}"}, 13),
+        row("event_msg", {"type": "turn_aborted", "turn_id": t2}, 14),
+        row("event_msg", {"type": "task_started", "turn_id": t3}, 15),
+        row("event_msg", {"type": "user_message", "turn_id": t3, "message": "Synthetic third request"}, 16),
+        row("event_msg", {"type": "task_started", "turn_id": t4}, 17),
+        row("event_msg", {"type": "user_message", "turn_id": t4, "message": "Synthetic fourth request"}, 18),
+        row("event_msg", {"type": "task_complete", "turn_id": t4}, 19),
+    ])
+    result = native.build()
+    assert result.returncode == 0, result.stderr
+    payload = native.payload()
+    session, = payload["sessions"]
+    turns = session["turns"]
+    assert [turn["id"] for turn in turns] == [t1, t2, t3, t4]
+    assert [turn["status"] for turn in turns] == ["completed", "aborted", "interrupted", "completed"]
+    request, = turns[0]["requests"]
+    assert request["text"] == "Synthetic first request"
+    assert turns[0]["final_answer"]["text"] == "Synthetic first answer"
+    tools = turns[0]["tools"]
+    assert (tools["shell"], tools["file_edits"], tools["web"]) == (1, 1, 1)
+    assert tools["other"] == {"synthetic_lookup": 1}
+    assert tools["mcp"] == {}
+    assert (turns[1]["tools"]["shell"], turns[1]["tools"]["shell_failed"]) == (1, 1)
+    assert payload["diagnostics"]["unknown_record_types"] == {}
+
 def codex_turn(turn_id, start, last, total):
     return [
         row("turn_context", {"model": "gpt-5", "turn_id": turn_id}, start),
