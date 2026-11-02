@@ -818,15 +818,16 @@ class TestExportHar:
         assert auth_header["value"] == "[REDACTED]"
 
     async def test_export_preserves_non_redacted(self, client):
-        """Non-sensitive values should remain intact."""
+        """A finding kept by bulk deselect retains its original value."""
         await load_har(client)
-        # Deselect all findings first
+        sec = await client.get("/api/security")
+        target = next(f for f in sec.json()["findings"] if f["location"] == "entries[0].request.headers[1].Authorization")
+        assert target["redact"] is True
+        original = MINIMAL_HAR["log"]["entries"][0]["request"]["headers"][1]["value"]
         await client.post("/api/security/bulk", json={"action": "deselect"})
         resp = await client.post("/api/export/har")
-        har = resp.json()
-        # With nothing redacted, Host header should be preserved
-        host_header = har["log"]["entries"][0]["request"]["headers"][0]
-        assert host_header["value"] == "example.com"
+        assert resp.json()["log"]["entries"][0]["request"]["headers"][1]["value"] == original
+        assert resp.json()["log"]["entries"][0]["request"]["headers"][0]["value"] == "example.com"
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -1230,11 +1231,16 @@ class TestRedactionWorkflow:
 
     async def test_toggle_keep_then_export(self, client):
         """Toggle a finding to keep, export, verify it's not redacted."""
-        await load_har(client)
+        har = copy.deepcopy(MINIMAL_HAR)
+        har["log"]["entries"] = [har["log"]["entries"][0]]
+        entry = har["log"]["entries"][0]
+        entry["request"]["queryString"] = []
+        entry["response"]["content"]["text"] = ""
+        await load_har(client, har)
         sec = await client.get("/api/security")
         # Find a critical finding that would normally be redacted
         findings = sec.json()["findings"]
-        critical = [f for f in findings if f["severity"] == "critical" and f["redact"]]
+        critical = [f for f in findings if f["location"] == "entries[0].request.headers[1].Authorization" and f["severity"] == "critical" and f["redact"]]
         assert len(critical) > 0
         target = critical[0]
 
@@ -1247,6 +1253,9 @@ class TestRedactionWorkflow:
         target_decisions = [d for d in edl["decisions"] if d["location"] == target["location"]]
         assert len(target_decisions) == 1
         assert target_decisions[0]["action"] == "keep"
+        exported = await client.post("/api/export/har")
+        original = MINIMAL_HAR["log"]["entries"][0]["request"]["headers"][1]["value"]
+        assert exported.json()["log"]["entries"][0]["request"]["headers"][1]["value"] == original
 
     async def test_manual_redaction_appears_in_export(self, client):
         """Manual redactions should appear in EDL export."""
@@ -1531,9 +1540,10 @@ class TestFmtNegative:
 
 
 class TestScannerDepthGuard:
-    async def test_nested_json_in_json_no_crash(self, client):
-        """JSON-in-JSON-in-JSON should scan without error using correct depth tracking."""
-        inner = json.dumps({"secret": "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.abc123def456"})
+    async def test_nested_json_in_json_finds_inner_jwt(self, client):
+        """A JWT in nested JSON strings is detected and removed from export."""
+        jwt = _fixture_value("eyJhbGci", "OiJIUzI1NiJ9.", "eyJzdWIiOiIxMjM0NTY3ODkwIn0.", "abc123def456")
+        inner = json.dumps({"secret": jwt})
         middle = json.dumps({"data": inner})
         outer = json.dumps({"payload": middle})
         har = copy.deepcopy(MINIMAL_HAR)
@@ -1545,6 +1555,11 @@ class TestScannerDepthGuard:
         # Should complete without error and detect the JWT inside
         sec = await client.get("/api/security")
         assert sec.status_code == 200
+        assert any("JWT" in f["category"] and f["location"].endswith("(parsed).payload(parsed).data(parsed).secret") for f in sec.json()["findings"])
+        exported = await client.post("/api/export/har")
+        assert exported.status_code == 200
+        exported_body = exported.json()["log"]["entries"][0]["response"]["content"]["text"]
+        assert jwt not in exported_body
 
 
 class TestNavigateJsonNull:
@@ -1703,65 +1718,30 @@ class TestResetClearsManual:
 
 
 class TestInfoSeverityHandling:
-    async def test_info_findings_not_redacted_by_default(self, client):
+    async def test_info_findings_are_kept_on_export_and_reapply(self, client):
         har = copy.deepcopy(MINIMAL_HAR)
-        har["log"]["entries"] = [{
-            "startedDateTime": "2024-01-01T00:00:00.000Z",
-            "time": 50,
-            "request": {
-                "method": "GET",
-                "url": "http://192.0.2.1/api",
-                "httpVersion": "HTTP/1.1",
-                "headers": [],
-                "queryString": [],
-                "cookies": [],
-                "headersSize": -1,
-                "bodySize": -1,
-            },
-            "response": {
-                "status": 200, "statusText": "OK", "httpVersion": "HTTP/1.1",
-                "headers": [], "cookies": [],
-                "content": {"size": 0, "mimeType": "text/html", "text": ""},
-                "redirectURL": "", "headersSize": -1, "bodySize": 0,
-            },
-            "cache": {},
-            "timings": {"blocked": 0, "dns": 0, "connect": 0, "ssl": 0, "send": 0, "wait": 0, "receive": 0},
-        }]
+        har["log"]["entries"] = [har["log"]["entries"][0]]
+        entry = har["log"]["entries"][0]
+        entry["request"]["headers"] = []
+        entry["request"]["queryString"] = []
+        entry["response"]["cookies"] = []
+        entry["response"]["headers"] = []
+        entry["response"]["content"]["text"] = json.dumps({"server": "192.168.0.1"})
         await load_har(client, har)
         sec = await client.get("/api/security")
         info_findings = [f for f in sec.json()["findings"] if f["severity"] == "info"]
-        for f in info_findings:
-            assert f["redact"] is False
+        assert info_findings
+        assert all(not f["redact"] for f in info_findings)
+        info_locations = {f["location"] for f in info_findings}
 
-    async def test_reapply_does_not_redact_info(self, client):
-        har = copy.deepcopy(MINIMAL_HAR)
-        har["log"]["entries"] = [{
-            "startedDateTime": "2024-01-01T00:00:00.000Z",
-            "time": 50,
-            "request": {
-                "method": "GET",
-                "url": "http://192.0.2.1/api",
-                "httpVersion": "HTTP/1.1",
-                "headers": [],
-                "queryString": [],
-                "cookies": [],
-                "headersSize": -1,
-                "bodySize": -1,
-            },
-            "response": {
-                "status": 200, "statusText": "OK", "httpVersion": "HTTP/1.1",
-                "headers": [], "cookies": [],
-                "content": {"size": 0, "mimeType": "text/html", "text": ""},
-                "redirectURL": "", "headersSize": -1, "bodySize": 0,
-            },
-            "cache": {},
-            "timings": {"blocked": 0, "dns": 0, "connect": 0, "ssl": 0, "send": 0, "wait": 0, "receive": 0},
-        }]
-        await load_har(client, har)
-        # Deselect all, then reapply auto
+        exported = await client.post("/api/export/har")
+        assert "192.168.0.1" in exported.text
         await client.post("/api/security/bulk", json={"action": "deselect"})
         await client.post("/api/redaction/reapply-auto")
         sec = await client.get("/api/security")
-        info_findings = [f for f in sec.json()["findings"] if f["severity"] == "info"]
-        for f in info_findings:
-            assert f["redact"] is False
+        reapplied_info = [f for f in sec.json()["findings"] if f["severity"] == "info"]
+        assert reapplied_info
+        assert info_locations <= {f["location"] for f in reapplied_info}
+        assert all(not f["redact"] for f in reapplied_info)
+        exported = await client.post("/api/export/har")
+        assert "192.168.0.1" in exported.text
