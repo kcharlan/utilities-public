@@ -5,7 +5,6 @@ set -euo pipefail
 # Fake signing commands exist ONLY in this private test PATH;
 # these are structural tests, never evidence of a trusted real signature.
 root=$(cd "$(dirname "$0")/../.." && pwd)
-bash "$root/Tests/ReleaseChecks/check_rename.sh"
 scratch=$(mktemp -d "${TMPDIR:-/tmp}/prime-bundle.XXXXXX")
 chmod 700 "$scratch"
 # The snapshot renderer requires its home in Foundation's temporary directory, the Darwin user

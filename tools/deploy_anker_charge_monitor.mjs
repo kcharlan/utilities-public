@@ -9,7 +9,7 @@ import {regular, inspectAncestors, externalDirectory, sha, exists, atomicFile, p
 import {appTreeHash,makeRelease,replaceAppFromBackup} from './deploy_brew_version.mjs';
 import {runTransaction} from './transaction.mjs';
 
-const project='anker_charge_monitor', appName='Anker Charge Monitor.app', legacyName='Prime Monitor.app';
+const project='anker_charge_monitor', appName='Anker Charge Monitor.app';
 const helpers=['tools/deploy_anker_charge_monitor.mjs','tools/deployment_files.mjs','tools/deploy_brew_version.mjs','tools/transaction.mjs'];
 export const buildInput=name=>helpers.includes(name) || ['Package.swift','Makefile'].some(n=>name===project+'/'+n) || /^anker_charge_monitor\/(Sources|Resources|Tests|tools)\//.test(name);
 export function sourceInventory(repo,snapshot) {
@@ -77,7 +77,7 @@ function backup(app,receipt,repo) {
 function readBackup(directory) {
   inspectAncestors(directory);if((regular(path.join(directory,'state.json')).mode&0o7777)!==0o600)throw Error('Backup metadata must be private');
   const state=JSON.parse(fs.readFileSync(path.join(directory,'state.json')));
-  if(Object.keys(state).sort().join()!==['schema','name','appTreeHash','receipt'].sort().join() || state.schema!==1 || ![null,appName,legacyName].includes(state.name) || (state.name===null)!==(state.appTreeHash===null)) throw Error('Invalid app backup');
+  if(Object.keys(state).sort().join()!==['schema','name','appTreeHash','receipt'].sort().join() || state.schema!==1 || ![null,appName].includes(state.name) || (state.name===null)!==(state.appTreeHash===null)) throw Error('Invalid app backup');
   const app=state.name?path.join(directory,state.name):null;
   if(app && appTreeHash(app)!==state.appTreeHash) throw Error('Backup app hash mismatch');
   let receipt=null;
@@ -88,9 +88,8 @@ function readBackup(directory) {
   return {app,receipt,state};
 }
 function installed(apps) {
-  const current=path.join(apps,appName),legacy=path.join(apps,legacyName);
-  if(exists(current)&&exists(legacy)) throw Error('Both app names exist; resolve ambiguous installation');
-  return exists(current)?current:exists(legacy)?legacy:null;
+  const current=path.join(apps,appName);
+  return exists(current)?current:null;
 }
 function installer(repo,source,apps,saved,identity,restore=false) {
   execFileSync('bash',[path.join(repo,project,'tools/install.sh'),source],{env:{...process.env,PRIME_MONITOR_APPS_DIR:apps,PRIME_MONITOR_TRANSACTION_BACKUP:saved,SIGN_IDENTITY:identity,...(restore?{PRIME_MONITOR_EXPECTED_PLIST:path.join(source,'Contents/Info.plist')}:{PRIME_MONITOR_EXPECTED_PLIST:''})},stdio:'pipe',timeout:900000});

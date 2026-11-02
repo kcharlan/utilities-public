@@ -7,7 +7,6 @@ source_app=${1:?Usage: tools/install.sh BUNDLE}
 expected_plist=${PRIME_MONITOR_EXPECTED_PLIST:-"$(cd "$(dirname "$0")/.." && pwd)/Resources/Info.plist"}
 apps=${PRIME_MONITOR_APPS_DIR:-/Applications}
 target="$apps/Anker Charge Monitor.app"
-legacy="$apps/Prime Monitor.app"
 validate() {
     local bundle=$1
     [ -d "$bundle" ] && [ ! -L "$bundle" ] || return 1
@@ -30,12 +29,8 @@ validate_release() {
 identity=$("$(dirname "$0")/resolve_signing_identity.sh" "${SIGN_IDENTITY-CodexBar Local}")
 validate_release "$source_app"
 mkdir -p "$apps"
-[ ! -L "$apps" ] && [ ! -L "$target" ] && [ ! -L "$legacy" ] || { echo 'Refusing linked installation paths' >&2; exit 1; }
-if [ -e "$target" ] && [ -e "$legacy" ]; then
-    echo 'Both Anker Charge Monitor.app and Prime Monitor.app exist; resolve the ambiguous installation before retrying.' >&2; exit 1
-fi
+[ ! -L "$apps" ] && [ ! -L "$target" ] || { echo 'Refusing linked installation paths' >&2; exit 1; }
 previous="$target"
-if [ -e "$legacy" ]; then previous="$legacy"; fi
 # Validate ownership/signature before displacement; an older release may upgrade.
 if [ -e "$previous" ]; then validate "$previous"; fi
 backup_root=${PRIME_MONITOR_BACKUP_DIR:-"$HOME/.utilities-deploy-backups/anker-charge-monitor"}
