@@ -2134,3 +2134,10 @@ An empty repository can have a named current branch even though `rev-parse`
 cannot resolve HEAD to a commit. Read the symbolic HEAD for quick scans, as for
 default-branch fallback, and retain detached HEAD as unknown. Exercise empty
 repositories with real Git and an isolated database through both scan paths.
+
+## 2026-11-02: Restrict retention to owned files
+
+Model Sentinel's configurable report directory can contain unrelated files. A
+suffix and age alone do not establish ownership: cleanup must also match the
+report names the application creates, while preserving protected paths. Test
+both owned and unrelated aged files in a synthetic shared directory.

@@ -1457,6 +1457,8 @@ def _cleanup_old_reports(report_dir: Path, retention_days: int, logger: logging.
             continue
         if not path.is_file():
             continue
+        if not path.name.startswith(("scan_", "changes_", "error_")):
+            continue
         if path.suffix not in {".txt", ".html", ".json", ".md"}:
             continue
         try:
