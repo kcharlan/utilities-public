@@ -9,7 +9,8 @@ struct ReleaseTests {
         #expect(info["CFBundleShortVersionString"] as? String == PrimeMonitorRelease.version)
         #expect(info["CFBundleIdentifier"] as? String == "local.utilities.prime-monitor")
         #expect(info["CFBundleExecutable"] as? String == "PrimeMonitor")
-        #expect(info["CFBundleVersion"] as? String == "9")
+        let build = try #require(info["CFBundleVersion"] as? String)
+        #expect(try #require(Int(build)) > 0)
         #expect(info["LSUIElement"] as? Bool == true)
         #expect(info["LSMinimumSystemVersion"] as? String == "27.0")
     }

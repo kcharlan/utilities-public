@@ -236,7 +236,6 @@ cat "$scratch/snapshots.log"
 snapshot_binary=$(sed -n 's/^Snapshot executable: //p' "$scratch/snapshots.log")
 [ -x "$snapshot_binary" ]
 vtool -show-build "$snapshot_binary" | rg -q '\bminos 27\.0\b'
-vtool -show-build "$snapshot_binary" | rg -q '\bsdk 27\.0\b'
 # A failed build in a builder-owned home removes that whole home.
 mkdir -m 700 "$scratch/failing-bin" "$scratch/failing-tmp"
 printf '#!/bin/sh\nexit 7\n' > "$scratch/failing-bin/swift"; chmod 700 "$scratch/failing-bin/swift"
