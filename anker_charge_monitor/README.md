@@ -36,7 +36,7 @@ Anker entry (a `prime-` name, or a lock file named after an
 directory whatever `TMPDIR` says; the check removes the run's new ones and
 names any other new one it leaves. Every test and harness temporary name uses
 the `prime-` prefix. The suite also runs the check's own self-test,
-`tools/tests/test_check_no_temp_leaks.sh`. Run one suite at a time: a
+`tools/tests/test_check_no_temp_leaks.sh anker_charge_monitor`, against this project's Makefile. Run one suite at a time: a
 concurrent run of this project's suite can trip the check.
 `make build` and `make release` run SwiftPM with `TMPDIR` in the ignored
 `.build/tmp/`, so its package lock files and `TemporaryDirectory.*` folders

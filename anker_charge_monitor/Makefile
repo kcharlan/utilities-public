@@ -24,7 +24,7 @@ test-suite:
 	swift test -Xswiftc -warnings-as-errors
 	Tests/ReleaseChecks/check_secrets_tests.sh
 	Tests/ReleaseChecks/check_bundle.sh
-	../tools/tests/test_check_no_temp_leaks.sh
+	../tools/tests/test_check_no_temp_leaks.sh anker_charge_monitor
 clean:
 	rm -rf .build build
 snapshots:
