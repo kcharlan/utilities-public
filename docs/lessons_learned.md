@@ -2050,3 +2050,10 @@ recovery, and browser-card regressions cover these paths.
 Preserve the leading status columns of real porcelain output across subprocess
 helpers: stripping whitespace can turn a worktree change into a staged one.
 Exercise both deletion and type change through an actual quick scan.
+
+### 2026-11-02 — Resolve default branches from local refs
+
+A checkout's current branch is not necessarily its default, and a previously
+stored default can become stale. Prefer the local origin HEAD reference, then
+local main or master, and refresh the stored value during branch scans. Real
+synthetic repositories cover feature and detached checkouts and remote HEAD.
