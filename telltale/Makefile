@@ -8,15 +8,17 @@ export SIGN_IDENTITY
 # Ruling R28: SwiftPM writes package lock files and TemporaryDirectory.* folders to TMPDIR, and one
 # TemporaryDirectory.* per compile to the Darwin user temp dir whatever TMPDIR says. build, release
 # and the whole suite run with TMPDIR in the project's ignored .build/tmp/, inside
-# tools/check_no_temp_leaks.sh, which nests a private run directory there (removed afterwards,
+# ../tools/check_no_temp_leaks.sh, which nests a private run directory there (removed afterwards,
 # toolchain leftovers included), fails if the run leaves a Telltale entry in either temp dir, and
 # removes the run's empty Darwin markers. The snapshot and acceptance builders keep their homes in
-# the OS TMPDIR on purpose, so they get only the marker sweep.
+# the OS TMPDIR on purpose, so the checker sweeps markers and checks for stray files.
+LEAK_CHECK := $(CURDIR)/../tools/check_no_temp_leaks.sh
+TEMP_NAMES := (^|_)telltale[-_]
 PROJECT_TMPDIR := $(CURDIR)/.build/tmp/
 build:
-	@mkdir -p "$(PROJECT_TMPDIR)"; TMPDIR="$(PROJECT_TMPDIR)" tools/check_no_temp_leaks.sh swift build -Xswiftc -warnings-as-errors
+	@mkdir -p "$(PROJECT_TMPDIR)"; TMPDIR="$(PROJECT_TMPDIR)" "$(LEAK_CHECK)" --names '$(TEMP_NAMES)' swift build -Xswiftc -warnings-as-errors
 test:
-	@mkdir -p "$(PROJECT_TMPDIR)"; TMPDIR="$(PROJECT_TMPDIR)" tools/check_no_temp_leaks.sh $(MAKE) --no-print-directory test-suite
+	@mkdir -p "$(PROJECT_TMPDIR)"; TMPDIR="$(PROJECT_TMPDIR)" "$(LEAK_CHECK)" --names '$(TEMP_NAMES)' $(MAKE) --no-print-directory test-suite
 test-suite:
 	swift test -Xswiftc -warnings-as-errors
 	@set -e; for script in Tests/ReleaseChecks/*.sh; do echo "== $$script"; "$$script"; done
@@ -27,7 +29,7 @@ signing-preflight:
 # The identity is resolved before anything is created, so a missing one leaves no .build behind.
 release:
 	@set -e; identity=$$(tools/resolve_signing_identity.sh "$$SIGN_IDENTITY"); mkdir -p "$(PROJECT_TMPDIR)"; \
-		TMPDIR="$(PROJECT_TMPDIR)" tools/check_no_temp_leaks.sh $(MAKE) --no-print-directory release-bundle SIGN_IDENTITY="$$identity"
+		TMPDIR="$(PROJECT_TMPDIR)" "$(LEAK_CHECK)" --names '$(TEMP_NAMES)' $(MAKE) --no-print-directory release-bundle SIGN_IDENTITY="$$identity"
 release-bundle:
 	@set -e; identity=$$(tools/resolve_signing_identity.sh "$$SIGN_IDENTITY"); \
 		swift build -c release --product Telltale -Xswiftc -warnings-as-errors; \
@@ -46,6 +48,6 @@ install deploy:
 # Private OS temporary builds only: maintained panel PNGs, and the synthetic acceptance bundle
 # (com.example.telltale.acceptance, its service tests run first). Neither launches a GUI.
 snapshots:
-	@tools/check_no_temp_leaks.sh --sweep-only Tests/Snapshots/build.sh
+	@"$(LEAK_CHECK)" --sweep-only --names '$(TEMP_NAMES)' Tests/Snapshots/build.sh
 acceptance:
-	@tools/check_no_temp_leaks.sh --sweep-only Tests/Acceptance/build.sh
+	@"$(LEAK_CHECK)" --sweep-only --names '$(TEMP_NAMES)' Tests/Acceptance/build.sh

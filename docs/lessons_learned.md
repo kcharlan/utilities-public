@@ -2100,3 +2100,11 @@ exercise both missing selections with real saved snapshots.
 Valid JSON can still be the wrong type for downstream credential handling.
 Reject non-object values at the decoding boundary so both streaming and
 non-streaming requests return an authentication error before contacting an upstream.
+
+### 2026-11-02 — Include shared build helpers in fleet inventories
+
+When a native release moves a build helper outside its project tree, include that
+helper in both the deployer's required inputs and the fleet audit's indexed scope
+and child inventory. Synthetic deployment and fleet fixtures must carry it too.
+Test an indexed helper's removal so the fleet audit reports an unverified source
+instead of silently omitting a release input.

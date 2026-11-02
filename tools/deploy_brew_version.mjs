@@ -40,7 +40,7 @@ export function appTreeHash(bundleDirectory) {
 // folders to TMPDIR, so the toolchain gets a TMPDIR inside the scratch, removed with it. Each
 // compile also leaves a TemporaryDirectory.* holding only an empty .keep-directory in the Darwin
 // user temp dir whatever TMPDIR says; after `make release`, even a failed one, new ones holding
-// nothing else are removed, as telltale/tools/check_no_temp_leaks.sh does.
+// nothing else are removed, as tools/check_no_temp_leaks.sh does.
 export function scratchTmpdir(scratch) {
   const tmp=path.join(scratch,'tmp');
   if(!exists(tmp)) fs.mkdirSync(tmp,{mode:0o700});

@@ -1,7 +1,6 @@
 #!/bin/bash
 # A build or test run leaves nothing in TMPDIR or the Darwin user temp dir. Shared by the
-# brew_version and anker_charge_monitor Makefiles; generalized from
-# telltale/tools/check_no_temp_leaks.sh, which Telltale's release path still needs in its own tree.
+# brew_version, anker_charge_monitor and telltale Makefiles.
 #
 # check_no_temp_leaks.sh --names ERE command [argument ...]
 #   Runs the command with TMPDIR pointing at a private run directory under the given one, so the
@@ -29,7 +28,7 @@
 # user temp dir (the self-test uses a fake one).
 #
 # Entries that existed before the run are not reported, and the command's own failure is passed
-# through. tools/tests/test_check_no_temp_leaks.sh proves it and both Makefiles' wiring.
+# through. tools/tests/test_check_no_temp_leaks.sh proves it and Brew Version and Anker Makefile wiring.
 set -uo pipefail
 usage() { echo "usage: check_no_temp_leaks.sh [--sweep-only] --names ERE command [argument ...]" >&2; exit 2; }
 sweep_only=0 names=""

@@ -46,7 +46,7 @@ script in `Tests/ReleaseChecks/`. Nothing is left in `$TMPDIR` or the Darwin use
 (`getconf DARWIN_USER_TEMP_DIR`):
 
 - `make build`, `make release` and `make test` run with `TMPDIR` in the project's ignored
-  `.build/tmp/`, inside `tools/check_no_temp_leaks.sh`. The checker nests a private run directory
+  `.build/tmp/`, inside the shared `../tools/check_no_temp_leaks.sh`. The checker nests a private run directory
   there and removes it afterwards, so the Swift toolchain's own leftovers (honored
   `TemporaryDirectory.*` folders and package lock files) go with it.
 - It fails the run if it left a Telltale entry inside that directory, in the given `TMPDIR` or in
@@ -57,7 +57,7 @@ script in `Tests/ReleaseChecks/`. Nothing is left in `$TMPDIR` or the Darwin use
   says. The checker lists those before the run, then removes only new ones whose sole content is
   an empty `.keep-directory` (that file, then `rmdir`), and reports the count. Anything from
   before the run, or with other content, is left alone. `make snapshots` and `make acceptance`,
-  whose homes stay in `TMPDIR` on purpose, get only this sweep (`--sweep-only`).
+  whose homes stay in `TMPDIR` on purpose, get this sweep and a check for stray Telltale files (`--sweep-only`).
 - Every test and script cleans up its own scratch, and scripts that build packages point
   `TMPDIR` into that scratch. The deploy tool gives `make release` a `TMPDIR` inside its own build
   scratch, which it removes, and then sweeps the build's new marker-only `TemporaryDirectory.*`
@@ -67,11 +67,9 @@ script in `Tests/ReleaseChecks/`. Nothing is left in `$TMPDIR` or the Darwin use
   `~/.codex`, the real login item (`SMAppService`, or `LoginItem()` with its default service) or
   the app's real preferences (`UserDefaults.standard`); `test_check_test_isolation.sh` proves the
   scanner catches each pattern. Tests inject every path and these services.
-- `test_check_no_temp_leaks.sh` proves the leak check names a leaked directory or lock file
-  (in either temp dir), ignores entries from before the run, other tools' entries and the built
-  package's own locks, passes a failing command's status through, sweeps only new marker-only
-  `TemporaryDirectory.*`, and that `make build` and `make test` run SwiftPM under `.build/tmp/`.
-  It uses a fake Darwin user temp dir and a fake `swift`.
+- `../tools/tests/test_check_no_temp_leaks.sh` tests the shared checker with synthetic temp directories.
+  `test_make_temp_wiring.sh` verifies that `make build` and `make test` use it under `.build/tmp/`,
+  with a fake Darwin user temp dir and a fake `swift`.
 - `test_notification_check.sh` runs `tools/notification_check.sh` against a fake app
   and a fake `launchctl` on a private `PATH`; the system `launchctl` is never invoked.
 - `check_vendor.sh` recomputes the sha256 of every file listed in `Sources/CZstd/VERSION`
