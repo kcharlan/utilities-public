@@ -330,7 +330,7 @@ private enum Panel {
             #expect(snapshot.alerts.isEmpty)
             #expect(snapshot.checkedAt == h.sep4(9, 30).addingTimeInterval(4))
             #expect(snapshot.collector == .green)
-            #expect(snapshot.footer == Copy.collectorRunning(minutes: 5))
+            #expect(snapshot.footer == "Collector running, every 5 min")
             #expect(snapshot.labels[.provider] == "Example Status" && snapshot.labels[.speed] == "Speed")
         }
     }

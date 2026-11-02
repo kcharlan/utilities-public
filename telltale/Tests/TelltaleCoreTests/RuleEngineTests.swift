@@ -175,7 +175,7 @@ extension RuleOutcome {
             let engine = RuleEngine(store: h.store, baseline: h.base.engine, calendar: h.calendar, providers: [.codex: info])
             try h.store.upsert(failedTurns: [h.failure(1, started: h.sep4(9, 1), completed: h.sep4(9, 2))])
             let outcomes = try engine.evaluate(points: [h.sep4(9, 5)], unit: .provider(.codex), settings: h.settings, watchedComponents: [])
-            #expect(outcomes.first?.message == Copy.failedTurns(source: "Synthetic Provider", noun: "request", count: 1, reasons: ["model at capacity"]))
+            #expect(outcomes.first?.message == "Synthetic Provider: 1 request failed: model at capacity")
             #expect(try h.events().first?[4] == Copy.failedTurns(source: "Synthetic Provider", noun: "request", count: 1, reasons: ["model at capacity"]))
         }
     }

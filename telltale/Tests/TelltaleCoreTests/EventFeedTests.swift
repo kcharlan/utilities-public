@@ -98,8 +98,8 @@ private enum Feed {
                 count: 2, from: h.at(9, 4, 10, 5).addingTimeInterval(2), to: h.at(9, 4, 10, 15).addingTimeInterval(2),
                 reason: "synthetic history locked", calendar: h.calendar))
             #expect(feed[0].color == .red)
-            #expect(feed[1].title == RuleID.disconnects.title && feed[1].body == "Codex: " + Copy.episodeEndedRuleOff)
-            #expect(feed[2].title == RuleID.slower.title && feed[2].body == "Codex: " + Copy.episodeEndedIdle)
+            #expect(feed[1].title == RuleID.disconnects.title && feed[1].body == "Codex: Ended because the rule was turned off.")
+            #expect(feed[2].title == RuleID.slower.title && feed[2].body == "Codex: Ended with no recent responses to judge.")
             #expect(feed[4].color == .amber)
             #expect(feed[6].endsAt == h.at(9, 4, 7))
             #expect(Set(feed.map(\.id)).count == feed.count)
