@@ -131,7 +131,7 @@ private func alert(_ number: Int, title: String, body: String) -> PendingNotific
         await notifier.post(alert(4, title: "Synthetic other alert", body: "Synthetic other body."))
         #expect(notifier.lastError?.contains("Synthetic test failure") == true)
         await notifier.retry()
-        #expect(service.requests.filter { $0.content.title == "Telltale notification check" }.count == 2)
+        #expect(service.requests.filter { $0.content.title == Copy.testNotificationTitle }.count == 2)
         #expect(notifier.lastError == nil)
     }
     @Test func olderAlertCompletionCannotEraseNewerAlertFailure() async {
@@ -161,8 +161,8 @@ private func alert(_ number: Int, title: String, body: String) -> PendingNotific
         service.postingFailure = "Synthetic test posting failed"
         await notifier.retry()
         let failed = try #require(service.requests.first)
-        #expect(failed.content.title == "Telltale notification check")
-        #expect(failed.content.body == "This is a test notification from Telltale. Click to open the panel.")
+        #expect(failed.content.title == Copy.testNotificationTitle)
+        #expect(failed.content.body == Copy.testNotificationBody)
         #expect(failed.trigger == nil)
         #expect(notifier.lastError?.contains("Synthetic test posting failed") == true)
         service.postingFailure = nil
@@ -201,7 +201,7 @@ private func alert(_ number: Int, title: String, body: String) -> PendingNotific
         withObservationTracking { _ = notifier.lastError } onChange: { Task { @MainActor in observed.changed = true } }
         await notifier.requestAuthorization()
         await Task.yield()
-        #expect(notifier.lastError == "Notifications are off. Allow Telltale in System Settings, then retry notifications.")
+        #expect(notifier.lastError == Copy.notificationsDenied)
         #expect(observed.changed)
         service.status = .authorized
         await notifier.requestAuthorization()
