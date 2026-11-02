@@ -114,4 +114,5 @@ a magic number, version, checksum, or original filename; only invert files
 produced by these scripts and use the output filename you want explicitly.
 
 The inverse commands assume a well-formed input stream and are not hardened
-parsers for untrusted or corrupted files.
+parsers for untrusted or corrupted files. They reject partial block headers and
+truncated RAW and RLE payloads without replacing the destination.
