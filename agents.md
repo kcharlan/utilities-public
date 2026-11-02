@@ -71,6 +71,7 @@ Project-specific validation commands, applied with the Testing Scope above. A co
   - `uv run --no-project --no-python-downloads --with pytest pytest tools/tests/test_local_server_guard.py tools/tests/test_local_server_guards.py -q -p no:cacheprovider`.
 - Migrated CLI tools (run launchers with `UV_PYTHON_DOWNLOADS=never`):
   - `"abacus usage/de-abacus.py" --help`, `anduril_steps/anduril_steps.py --help`, `worktree-helper/worktree --version` and `--list`; exercise `dloc/dloc` in a synthetic Git repository and `md-json/md_converter.py` against a synthetic input in temporary space.
+  - `bash worktree-helper/tests/test_delete_safety.sh` and `bash worktree-helper/tests/test_reset_branch_safety.sh`.
   - For `Claude_plugin_converter/to_gemini_cli`, run `UV_PYTHON_DOWNLOADS=never tools/run_project_tests.py to_gemini_cli` and smoke the launcher against a synthetic category in a temporary workspace.
   - `doc_linearizer`: `bash tests/test_launcher.sh` from its project directory.
   - `reversible-skew`: `uv python find --no-python-downloads --script reversible-skew/rs.py` and the same for `reversible-skew/rs-big.py` (both must resolve Python 3.12), then the complete compatibility validation in its README.
