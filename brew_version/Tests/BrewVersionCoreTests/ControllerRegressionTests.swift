@@ -79,9 +79,11 @@ import Testing
         #expect(c.nextAutomaticCheck == .waitingForNetwork(notBefore: Date(timeIntervalSince1970: 1_001_800)))
         failures.operation = nil; clock.date.addTimeInterval(60); await c.setNetworkAvailable(true)
         #expect(await transport.requests.count == 1)
+        #expect(c.state.lastCheck == (previousSuccess ? Date(timeIntervalSince1970: 998_200) : nil))
         #expect(c.nextAutomaticCheck == .scheduled(Date(timeIntervalSince1970: 1_001_800)))
         clock.date.addTimeInterval(1740); await c.checkIfDue()
         #expect(await transport.requests.count == 2)
+        #expect(c.state.lastCheck == clock.date)
         #expect(c.nextAutomaticCheck == .scheduled(Date(timeIntervalSince1970: 1_003_600)))
     }
     @Test func unreachableDoesNotBecomeSuccessfulCheck() async throws {
@@ -184,20 +186,6 @@ import Testing
         clock.date.addTimeInterval(60); await c.setNetworkAvailable(true)
         #expect(await transport.requests.count == 2)
         #expect(c.state.lastCheck == clock.date)
-    }
-    @Test func reconnectDoesNotBypassFailedSaveBackoff() async throws {
-        let f = WatchFixture(); defer { f.clean() }
-        var state = AppState.initial; state.watched = [baseline()]; try f.store.save(state)
-        let failures = IOFailures(); failures.operation = "replace"
-        let clock = RetryClock()
-        let transport = StubTransport([watchURL(): [watchResponse("2"), watchResponse("2")]])
-        let c = WatchController(transport: transport, installed: nil,
-                                store: WatchStore(fileURL: f.file, io: failures.io), notifier: RecordingNotifier(), now: { clock.date })
-        await c.checkIfDue(); await c.setNetworkAvailable(false)
-        failures.operation = nil; clock.date.addTimeInterval(60); await c.setNetworkAvailable(true)
-        #expect(await transport.requests.count == 1 && c.state.lastCheck == nil)
-        clock.date.addTimeInterval(1740); await c.checkIfDue()
-        #expect(await transport.requests.count == 2 && c.state.lastCheck == clock.date)
     }
     @Test func rejectedCatalogTimestampSaveBacksOffIncludingReconnect() async throws {
         let f = WatchFixture(); defer { f.clean() }

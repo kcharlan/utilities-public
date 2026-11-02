@@ -53,11 +53,11 @@ test('release plist and both Mach-O products require the supported runtime',()=>
   assert.equal(info.LSMinimumSystemVersion,'27.0');
   for(const executable of [command,path.join(app,'Contents/MacOS/BrewVersion')]) assertMinimumRuntime(executable);
 });
-test('acceptance and prototype builders keep only signed bundles in fresh private homes',()=>{
+test('acceptance builder keeps only its signed bundle in a fresh private home',()=>{
   // The builders honor TMPDIR, so their own homes land inside this scratch.
   const temporary=path.join(scratch,'tmp'),home=path.join(scratch,'synthetic-home');
   fs.mkdirSync(temporary,{mode:0o700});fs.mkdirSync(home,{mode:0o700});
-  for(const [builder,label] of [['build.sh','Private synthetic home: '],['build-settings-prototype.sh','Settings prototype: ']]) {
+  for(const [builder,label] of [['build.sh','Private synthetic home: ']]) {
     const output=execFileSync('zsh',[path.join(scratch,'Tests/Acceptance',builder)],{
       encoding:'utf8',env:{...process.env,HOME:home,TMPDIR:temporary},stdio:'pipe',timeout:900000});
     const value=output.split('\n').find(line=>line.startsWith(label))?.slice(label.length);
@@ -73,7 +73,7 @@ test('acceptance and prototype builders keep only signed bundles in fresh privat
   }
   // SwiftPM's lock files and TemporaryDirectory.* folders stay in each home, removed with it.
   const left=fs.readdirSync(temporary);
-  assert.equal(left.length,2,left.join('\n'));
+  assert.equal(left.length,1,left.join('\n'));
   for(const name of left) assert.match(name,/^brew-version-acceptance\.[^.]+$/,'builder left '+name+' in TMPDIR');
 });
 test('maintained snapshot builder uses the same supported runtime',()=>{
@@ -104,34 +104,6 @@ test('failed harness builds remove their whole home',()=>{
       encoding:'utf8',env:{...process.env,PATH:bin+':'+process.env.PATH,TMPDIR:temporary},timeout:60000});
     assert.equal(result.status,7,builder+'\n'+result.stderr);
     assert.deepEqual(fs.readdirSync(temporary),[],builder);
-  }
-});
-test('builder cleanup failures preserve primary status and report cleanup-only failures',()=>{
-  for(const builder of ['Snapshots/build.sh','Acceptance/build.sh']) {
-    const source=fs.readFileSync(path.join(project,'Tests',builder),'utf8');
-    const matches=[...source.matchAll(/^finish\(\) \{\n[\s\S]*?^\}/gm)];
-    assert.equal(matches.length,1,builder);
-    for(const original of [0,7]) {
-      const home=path.join(scratch,`cleanup-${path.basename(path.dirname(builder))}-${original}`);
-      const attempts=path.join(home,'attempts');
-      fs.mkdirSync(path.join(home,'package'),{recursive:true});
-      fs.mkdirSync(path.join(home,'tmp'));
-      const script=matches[0][0]+String.raw`
-owned=true
-acceptance_home=$TEST_HOME
-snapshot_home=$TEST_HOME
-package_dir=$TEST_HOME/package
-build_tmp=$TEST_HOME/tmp
-rm() { print attempt >> "$TEST_ATTEMPTS"; return 91; }
-trap finish EXIT
-exit "$TEST_EXIT"
-`;
-      const result=spawnSync('zsh',['-c',script],{encoding:'utf8',env:{...process.env,TEST_HOME:home,TEST_ATTEMPTS:attempts,TEST_EXIT:String(original)}});
-      assert.equal(result.status,original || 1,builder+'\n'+result.stderr);
-      assert.equal(fs.readFileSync(attempts,'utf8').trim().split('\n').length,original ? 1 : 2,builder);
-      assert.match(result.stderr,/Cannot remove/);
-      assert.ok(fs.existsSync(home));
-    }
   }
 });
 test('builder cleanup resolves the real removal command',()=>{

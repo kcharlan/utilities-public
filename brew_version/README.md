@@ -43,10 +43,10 @@ executable file descriptors to verify their inodes and bytes survive a rebuild.
 They invoke release directly rather than recursively invoking the test target.
 They also check that the release plist, both Mach-O products and the snapshot
 builder require the supported macOS 27 runtime.
-The integration category also runs the acceptance and Settings prototype
-builders with an invented HOME, requiring their printed private homes to be
-mode-0700 children of their `TMPDIR` that keep only the signed bundle, and
-checks that a failed builder removes its whole home.
+The integration category also runs the acceptance builder with an invented
+HOME, requiring its printed private home to be a mode-0700 child of its
+`TMPDIR` that keeps only the signed bundle, and checks that a failed builder
+removes its whole home.
 `make test` runs the suite under the repository's shared
 [`tools/check_no_temp_leaks.sh`](../tools/check_no_temp_leaks.sh), with `TMPDIR`
 in a private run directory inside the ignored `.build/tmp/` that the check
