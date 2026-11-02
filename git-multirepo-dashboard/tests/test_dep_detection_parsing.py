@@ -67,7 +67,7 @@ def test_detect_dep_files_walk_limits(tmp_path, monkeypatch):
     (root / "linked").symlink_to(external, target_is_directory=True)
     monkeypatch.setattr(git_dashboard, "MAX_DEP_FILE_SIZE", 16)
 
-    found = {str((item["dir"] / item["file"]).relative_to(root))
+    found = {(item["dir"] / item["file"]).relative_to(root).as_posix()
              for item in detect_dep_files(root)}
     assert found == {"a/b/c/package.json", "at-limit/package.json"}
 
