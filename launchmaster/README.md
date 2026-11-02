@@ -19,6 +19,10 @@ changing jobs under `/Library` or `/System/Library` may fail unless that user
 already has the required permissions; the application does not elevate
 privileges.
 
+Loaded status comes from `launchctl list` running as the current user. System
+daemons may therefore appear unloaded even when they are loaded in the system
+domain.
+
 ## Run
 
 ```zsh
