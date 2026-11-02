@@ -49,6 +49,10 @@ Provenance uses schema-controlled relative object names. Each generation
 retains allowlisted recipe source bytes under `recipe/`, allowing independent
 verification after source changes; callers can additionally require equality
 with the current source recipe. Selector claims alone are never trusted.
+Tests accept a verified stale recipe to compare edited code against selected
+history, but normal build and deploy require a current recipe. Full unittest
+discovery recompiles the retained inputs and fails if the current compiler no
+longer reproduces the selected history; the owner reruns setup if intended.
 Downloaded JavaScript is parsed only as a JSON assignment, never evaluated.
 Compiler, lock installation and the historical checker use the captured private
 recipe source bytes. If the working source recipe changes during setup, selection
@@ -134,12 +138,12 @@ prerequisites fail; a Node-only result cannot satisfy the synthetic command.
 See [test commands and browser prerequisites](../tests/README.md).
 
 Full `unittest discover` additionally includes `test_retained_reproduction.py`:
-with bytecode disabled, it checks the current-recipe selected/pinned bundle and
+with bytecode disabled, it checks the verified selected/pinned bundle and
 all three retained input hashes through the Node contract, compiles in the same
 compatible venv using two explicit workbooks and FRED CSV, the recorded generated date and
 end year 2025, then compares exact JS/CSV bytes/hashes in private external output.
-Inputs, selector and generation must remain unchanged. This is selected-current
-bundle reproduction; the original August 20 snapshot evidence below remains a
+Inputs, selector and generation must remain unchanged. This is selected-history
+reproduction; the original August 20 snapshot evidence below remains a
 separate check. Full discovery fails when real prerequisites are absent, without
 skips or downloads. Use `PYTHONDONTWRITEBYTECODE=1` and `-B` on compiler/test
 commands to keep bytecode outside the public source tree.

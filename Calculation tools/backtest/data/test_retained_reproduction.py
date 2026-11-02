@@ -1,7 +1,8 @@
 """Real retained-input integration. Missing prerequisites are fatal, never skips.
 
 The two explicit invented modules form the synthetic subset; full discovery
-also runs this selected-current-bundle reproduction. No observations are fixtures.
+also checks whether the current compiler reproduces selected history. If an
+intended compiler change alters it, the owner reruns setup. No observations are fixtures.
 """
 import hashlib
 import json
@@ -78,7 +79,7 @@ class RetainedReproductionTests(unittest.TestCase):
                 emitted = output / name
                 self.assertEqual(emitted.stat().st_mode & 0o777, 0o600)
                 # assertTrue avoids embedding historical observations in unittest failures.
-                self.assertTrue(emitted.read_bytes() == content, "Reproduced pair bytes differ")
+                self.assertTrue(emitted.read_bytes() == content, "Current compiler no longer reproduces selected history; the owner reruns setup if the change is intended")
                 self.assertEqual(hashlib.sha256(emitted.read_bytes()).hexdigest(),
                                  admitted["pairHashes"][name], "Reproduced pair hash differs")
         self.assertEqual(snapshot(), before, "Inputs, selector or selected generation mutated")

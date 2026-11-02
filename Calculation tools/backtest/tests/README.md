@@ -47,6 +47,9 @@ cases in two targets: flat `file://` build and isolated loopback HTTP at
 ordered scripts, source notice and CSV bytes are captured independently from
 current source and selected history before assembly. Missing data or managed
 Chromium fails clearly; skips and invented substitutes are prohibited.
+Verified history with a stale recipe is accepted by the test reader and test
+build, with one notice per process. Normal builds and deployment require the
+current recipe. The owner reruns `npm run setup:data` when a refresh is intended.
 
 The original cases retain financial controls, Window/Sweep/Lifestyle,
 frontier performance, cancellation, reload/theme, narrow/keyboard behavior,
@@ -61,7 +64,8 @@ both complete invented compiler modules. It does not certify real historical
 or browser acceptance and does not implicitly invoke the root audit suites.
 Full compiler discovery also reproduces the selected pair exactly from all three
 retained inputs (two workbooks and the FRED CSV) and the recorded compile date, without acquisition or
-selector changes. Missing retained prerequisites fail.
+selector changes. A compiler change that alters the selected history fails this
+reproduction; the owner reruns setup if the change is intended. Missing retained prerequisites fail.
 
 Flat-build and copy-deploy tests cover inventory/bytes, runtime modes,
 external boundaries, cold/warm/offline setup compatibility, private whole-tree
