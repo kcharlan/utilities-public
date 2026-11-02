@@ -1979,3 +1979,10 @@ as `oops>=3.12,<3.16` becomes part of the package name and can pass validation.
 Reject requirement markers as well: they are valid on dependencies but not in
 `requires-python`. The shared uv guard covers names, extras, markers, valid caps
 and explicit deferrals.
+
+### 2026-11-01 — Guard optional image cleanup without masking failures
+
+Image build cleanup must handle an unmatched glob or missing optional path without
+forcing removal. Guard each fixed path or glob entry, including dangling symlinks,
+and propagate removal errors. Exercise the actual shell fragment against synthetic
+present, absent, linked and failing inputs so cleanup does not silently regress.

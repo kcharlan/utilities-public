@@ -8,12 +8,16 @@ ENV PYTHONUNBUFFERED=1 \
 # Runtime system deps only; tzdata powers daily buckets.
 RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates tzdata && \
-    rm -rf /var/lib/apt/lists/*
+    for entry in /var/lib/apt/lists/*; do \
+      if [ -e "$entry" ] || [ -L "$entry" ]; then rm -r -- "${entry:?}" || exit 1; fi; \
+    done
 
 # Install collector dependencies at image build time so startup stays deterministic.
 COPY collector/requirements.txt /tmp/collector-requirements.txt
 RUN python -m pip install --no-cache-dir -r /tmp/collector-requirements.txt && \
-    rm -f /tmp/collector-requirements.txt
+    if [ -e /tmp/collector-requirements.txt ] || [ -L /tmp/collector-requirements.txt ]; then \
+      rm -- /tmp/collector-requirements.txt; \
+    fi
 
 WORKDIR /workspace/llm_collector
 COPY collector/ ./collector/
