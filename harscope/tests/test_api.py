@@ -1557,7 +1557,9 @@ class TestScannerDepthGuard:
         assert sec.status_code == 200
         assert any("JWT" in f["category"] and f["location"].endswith("(parsed).payload(parsed).data(parsed).secret") for f in sec.json()["findings"])
         exported = await client.post("/api/export/har")
-        assert jwt not in exported.text
+        assert exported.status_code == 200
+        exported_body = exported.json()["log"]["entries"][0]["response"]["content"]["text"]
+        assert jwt not in exported_body
 
 
 class TestNavigateJsonNull:
@@ -1730,12 +1732,16 @@ class TestInfoSeverityHandling:
         info_findings = [f for f in sec.json()["findings"] if f["severity"] == "info"]
         assert info_findings
         assert all(not f["redact"] for f in info_findings)
+        info_locations = {f["location"] for f in info_findings}
 
         exported = await client.post("/api/export/har")
         assert "192.168.0.1" in exported.text
         await client.post("/api/security/bulk", json={"action": "deselect"})
         await client.post("/api/redaction/reapply-auto")
         sec = await client.get("/api/security")
-        assert all(not f["redact"] for f in sec.json()["findings"] if f["severity"] == "info")
+        reapplied_info = [f for f in sec.json()["findings"] if f["severity"] == "info"]
+        assert reapplied_info
+        assert info_locations <= {f["location"] for f in reapplied_info}
+        assert all(not f["redact"] for f in reapplied_info)
         exported = await client.post("/api/export/har")
         assert "192.168.0.1" in exported.text
