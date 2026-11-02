@@ -313,6 +313,8 @@ class SessionController:
             status="aborted",
             completed_at=_timestamp(),
         )
+        if not self.has_active_thread(session_id):
+            self._cleanup_worktree(self.store.get_session(session_id))
         self._publish_snapshot(session_id)
 
     def end_session(self, session_id: str) -> None:
