@@ -2164,6 +2164,12 @@ checkout even when a linked worktree is encountered first. If the main checkout
 is outside the scan root, retain the first discovered linked worktree. Exercise
 both cases with real synthetic repositories.
 
+### 2026-11-02 — Handle decoding errors at the import boundary
+
+Decoding a CSV upload outside the error-handling block let invalid UTF-8 turn
+bad input into a server error. Catch decoding errors at that boundary and test
+the HTTP response alongside the unchanged database state.
+
 ## 2026-11-02: Restrict retention to owned files
 
 Model Sentinel's configurable report directory can contain unrelated files. A

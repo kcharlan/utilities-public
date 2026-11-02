@@ -353,7 +353,7 @@ editdb <path_to_db> [--port PORT]
 
 | Limit | Value |
 |-------|-------|
-| CSV import size | 50 MB |
+| CSV import size | 50 MB; UTF-8 BOM accepted, other encodings rejected |
 | SQL query size | 100 KB |
 | Query result rows | 10,000 |
 | UI page size | 100 rows |

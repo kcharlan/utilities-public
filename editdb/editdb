@@ -564,7 +564,10 @@ async def import_data(table_name: str, file: UploadFile = File(...)):
     if len(content) > MAX_IMPORT_SIZE:
         raise HTTPException(status_code=413, detail=f"File too large (max {MAX_IMPORT_SIZE/1024/1024}MB)")
 
-    decoded = content.decode('utf-8')
+    try:
+        decoded = content.decode('utf-8-sig')
+    except UnicodeDecodeError:
+        raise HTTPException(status_code=400, detail='CSV must be UTF-8 encoded')
     reader = csv.DictReader(io.StringIO(decoded))
     
     with db_manager.get_connection() as conn:
