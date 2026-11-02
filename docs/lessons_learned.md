@@ -1999,3 +1999,10 @@ formats that omit a field cannot independently prove that field was redacted.
 A 200 response carrying `ok: false` is not a successful operation. Check the
 response body before closing a dialog or reporting success, and test both the
 rejected and confirmed paths.
+
+### 2026-11-02 — Scan encoded structured content before export decisions
+
+Pattern matching decoded content alone misses sensitive field names and opaque
+values inside encoded JSON. Reuse the structured scanner within existing depth
+and length limits, then target the encoded container so severity-based bulk
+decisions cannot leave its detected contents in an export.
