@@ -5,6 +5,13 @@ const test=require('node:test'),assert=require('node:assert/strict');
 const fs=require('node:fs/promises'),path=require('node:path');
 const {staticFixture}=require('./helpers/static-fixture.cjs');
 const load=()=>import('../tools/build_static.mjs');
+test('test build accepts a stale recipe only when asked',async t=>{
+ const f=await staticFixture(t),api=await load(),outputDir=path.join(f.base,'site');
+ await fs.appendFile(path.join(f.sourceRoot,'engine.js'),'\n// invented stale recipe\n');
+ await assert.rejects(api.buildStatic({...f,outputDir}),/stale/i);
+ await api.buildStatic({...f,outputDir,requireCurrentRecipe:false});
+ assert.deepEqual((await fs.readdir(outputDir)).sort(),[...api.RUNTIME_FILES].sort());
+});
 test('flat build copies exactly twelve unchanged source and selected data files',async t=>{
  const f=await staticFixture(t),api=await load(),out=path.join(f.base,'site');
  assert.equal(typeof api.buildStatic,'function');await api.buildStatic({...f,outputDir:out});

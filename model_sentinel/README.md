@@ -1044,7 +1044,7 @@ Report files are automatically cleaned up based on file age. The retention perio
 MODEL_SENTINEL_REPORT_RETENTION_DAYS=30
 ```
 
-Files older than the configured number of days are deleted during each scan run. Set to `0` to disable automatic cleanup.
+Only Model Sentinel's `scan_*`, `changes_*`, and `error_*` reports older than the configured number of days are deleted during each scan run. Set to `0` to disable automatic cleanup.
 
 ## launchd Automation
 

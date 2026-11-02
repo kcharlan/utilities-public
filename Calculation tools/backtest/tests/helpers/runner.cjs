@@ -60,7 +60,7 @@ async function prepareLayouts(captured,options={}) {
   const artifactRoot=path.join(root,'flat layout'),artifactExpectedRoot=path.join(root,'independent expectations');
   await saveExpected(artifactExpectedRoot,captured.artifactExpected);
   const {buildStatic}=await import('../../tools/build_static.mjs');
-  await buildStatic({sourceRoot:captured.sourceRoot,dataRoot:captured.dataRoot,outputDir:artifactRoot});
+  await buildStatic({sourceRoot:captured.sourceRoot,dataRoot:captured.dataRoot,outputDir:artifactRoot,requireCurrentRecipe:false});
   return {root,sourceRoot:artifactRoot,artifactRoot,sourceExpectedRoot:artifactExpectedRoot,artifactExpectedRoot,sourceExpected:captured.sourceExpected,artifactExpected:captured.artifactExpected,cleanup};
  }catch(error){await cleanup();throw error;}
 }

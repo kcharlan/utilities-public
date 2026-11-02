@@ -119,37 +119,23 @@ def test_case_variant_missing_target_parent_rejected(tmp_path, capsys):
     assert not (tmp_path / 'OTHER').exists()
 
 
-def test_prepublish_recheck_rejects_conflict(tmp_path, monkeypatch, capsys):
-    """Blind only the early conflict step; the real pre-publish recheck must reject.
-
-    A counting wrapper replaces the ``taxkit.config.config_conflict`` module
-    global, which ``ensure_no_config_conflict`` looks up for both the early gate
-    and the pre-publish recheck (the launcher never references the name; see
-    ``test_config_conflict_raise_has_one_home``). Its first call (the early gate)
-    returns False; every later call delegates to the real function. The rest of
-    ``validate_output_destination``, including its Git checks, still runs.
-    """
-    import taxkit.config
-    config = existing_config(tmp_path / 'runtime')
-    before = (config.read_bytes(), config.stat().st_mtime_ns)
+def test_prepublish_recheck_rejects_config_link_created_during_build(tmp_path, monkeypatch, capsys):
+    output = tmp_path / 'out.html'
+    config = tmp_path / 'runtime/config.yaml'
     launcher = load_launcher(PROJECT / 'tax2')
-    real = taxkit.config.config_conflict
-    calls = []
+    original = launcher.build_payload
 
-    def first_call_blind(*args, **kwargs):
-        if not calls:
-            calls.append(('blinded', False))
-            return False
-        result = real(*args, **kwargs)
-        calls.append(('delegated', result))
-        return result
+    def build_then_link(*args, **kwargs):
+        payload = original(*args, **kwargs)
+        config.unlink()
+        config.symlink_to(output)
+        return payload
 
-    monkeypatch.setattr(taxkit.config, 'config_conflict', first_call_blind)
-    assert launcher.main(['--no-browser', '--output', str(config.with_name('CONFIG.yaml'))]) == 1
-    assert calls == [('blinded', False), ('delegated', True)]
+    monkeypatch.setattr(launcher, 'build_payload', build_then_link)
+    assert launcher.main(['--no-browser', '--output', str(output)]) == 1
     assert capsys.readouterr().err.strip() == 'Tax2: Output destination would replace config.yaml'
-    assert (config.read_bytes(), config.stat().st_mtime_ns) == before
-    assert list(config.parent.iterdir()) == [config]
+    assert not output.exists()
+    assert os.readlink(config) == str(output)
 
 
 def test_dangling_config_symlink_target_rejected(tmp_path, capsys):

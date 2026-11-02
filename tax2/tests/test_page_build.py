@@ -78,7 +78,7 @@ def test_non_ascii_digit_year_ignored(tmp_path):
     assert build_payload(root, rules_source="custom", built_at="synthetic fixed time") == expected
 
 
-def test_bundled_payload_unchanged_by_discovery_refactor(monkeypatch, tmp_path):
+def test_bundled_payload_matches_snapshot_except_app_metadata(monkeypatch, tmp_path):
     from taxkit.page import build_payload
     home = tmp_path / "runtime"
     home.mkdir(mode=0o700)
@@ -89,7 +89,8 @@ def test_bundled_payload_unchanged_by_discovery_refactor(monkeypatch, tmp_path):
     expected = json.loads((PROJECT_ROOT / "tests/fixtures/payload_bundled_baseline.json").read_text())
     actual = build_payload(PROJECT_ROOT / "tests/fixtures/parity/bundled/rules",
                            rules_source="custom", built_at="2026-01-01T00:00:00+00:00")
-    assert actual == expected
+    assert {key: value for key, value in actual.items() if key != "app"} == {
+        key: value for key, value in expected.items() if key != "app"}
 
 
 def test_fifo_year_entry_rejected_before_read(monkeypatch, tmp_path):
@@ -150,7 +151,9 @@ def test_payload_schema_sorting_projection_and_unchanged_config(monkeypatch, tmp
     payload = build_payload(synthetic_root(tmp_path), rules_source="custom", built_at="2026-01-01T00:00:00+00:00")
     assert set(payload) == {"schema", "app", "built_at", "rules_source", "federal", "states", "config"}
     assert payload["schema"] == 1
-    assert payload["app"] == {"name": "Tax2", "version": "3.0.3"}
+    version = re.search(r"^Tax2 (\S+) builds", (PROJECT_ROOT / "README.md").read_text(), re.M)
+    assert version is not None
+    assert payload["app"] == {"name": "Tax2", "version": version.group(1)}
     assert list(payload["federal"]) == ["2025", "2026"]
     assert [state["code"] for state in payload["states"]] == ["XE", "XF"]
     assert payload["states"][0] == {"code": "XE", "display_name": "XE", "years": [], "qif": None, "rules": {}}
