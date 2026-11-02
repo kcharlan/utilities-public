@@ -237,7 +237,7 @@ new_fixture() {
   cp -p -- "$REPO_UNDER_TEST/tools/deployment_copies.json" "$REPO_UNDER_TEST/tools/deploy_copies.mjs" "$FIXTURE_REPO/tools/"
   cp -p -- "$REPO_UNDER_TEST/tools/deploy_colophon.mjs" "$REPO_UNDER_TEST/tools/deploy_storage_monitor.mjs" "$REPO_UNDER_TEST/tools/deploy_brew_version.mjs" "$REPO_UNDER_TEST/tools/deployment_files.mjs" "$FIXTURE_REPO/tools/"
   cp -p -- "$REPO_UNDER_TEST/tools/deploy_anker_charge_monitor.mjs" "$FIXTURE_REPO/tools/"
-  cp -p -- "$REPO_UNDER_TEST/tools/deploy_telltale.mjs" "$FIXTURE_REPO/tools/"
+  cp -p -- "$REPO_UNDER_TEST/tools/deploy_telltale.mjs" "$REPO_UNDER_TEST/tools/check_no_temp_leaks.sh" "$FIXTURE_REPO/tools/"
   cp -p -- "$REPO_UNDER_TEST/tools/transaction.mjs" "$FIXTURE_REPO/tools/"
   local native_input
   for native_input in Makefile src/main.c assets/MANIFEST tools/embed.pl vendor/yyjson/yyjson.c vendor/yyjson/yyjson.h vendor/zstd/zstd.h vendor/zstd/decompress/zstd_decompress.c; do
@@ -1822,6 +1822,16 @@ test_native_required_installers() {
   done
 }
 test_native_required_installers
+
+test_telltale_leak_checker_required() {
+  new_fixture
+  git -C "$FIXTURE_REPO" rm -q --cached tools/check_no_temp_leaks.sh
+  run_audit
+  assert_status 1 "$AUDIT_STATUS" 'Telltale checker removed from index'
+  assert_contains "$AUDIT_STDERR" 'telltale native source inventory unverified'
+  assert_not_contains "$AUDIT_STDOUT" 'OK: telltale native deployment'
+}
+test_telltale_leak_checker_required
 
 test_native_transaction_helper_required() {
   local label

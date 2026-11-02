@@ -11,6 +11,7 @@ import {fakeDarwinTemp,releaseTempMakefile,assertReleaseTempHygiene} from './rel
 const script=fileURLToPath(new URL('../deploy_anker_charge_monitor.mjs',import.meta.url));
 const repoRoot=fileURLToPath(new URL('../../',import.meta.url));
 const plist=fs.readFileSync(path.join(repoRoot,'anker_charge_monitor/Resources/Info.plist'));
+const releaseVersion=execFileSync('/usr/bin/plutil',['-extract','CFBundleShortVersionString','raw','-o','-','--','-'],{input:plist,encoding:'utf8'}).trim();
 const fingerprint='A'.repeat(40);
 function fixture(t) {
   const base=fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(),'synthetic-anker-deploy-')));
@@ -65,7 +66,7 @@ test('app source inventory includes maintained installer/signing and root depend
 
 test('first install, update, current, rebuild and independent rollback preserve receipts and held readers',t=>{
   const f=fixture(t);const empty=backup(ok(f.run()));const first=state(f);
-  const r=JSON.parse(first[1]);assert.equal(r.sourceHash,sourceInventory(f.repo).sourceHash);assert.equal(r.appTreeHash,first[0]);assert.equal(r.signingIdentity,fingerprint);assert.equal(r.version,'0.4.2');assert.equal(fs.statSync(f.receipt).mode&0o7777,0o600);
+  const r=JSON.parse(first[1]);assert.equal(r.sourceHash,sourceInventory(f.repo).sourceHash);assert.equal(r.appTreeHash,first[0]);assert.equal(r.signingIdentity,fingerprint);assert.equal(r.version,releaseVersion);assert.equal(fs.statSync(f.receipt).mode&0o7777,0o600);
   ok(f.run('--audit'));const before=tree(f.home);assert.match(ok(f.run()).stdout,/already current/);assert.deepEqual(tree(f.home),before);
   const exe=path.join(f.app,'Contents/MacOS/PrimeMonitor'),reader=fs.openSync(exe,'r'),old=fs.readFileSync(reader);fs.closeSync(reader);
   const held=fs.openSync(exe,'r');f.release('second');const saved=backup(ok(f.run()));assert.notDeepEqual(state(f),first);assert.deepEqual(fs.readFileSync(held),old);fs.closeSync(held);

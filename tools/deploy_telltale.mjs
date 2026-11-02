@@ -17,7 +17,7 @@ const project='telltale', appName='Telltale.app', executable='Telltale';
 // Separately maintained statement of spec section 3; deploy_telltale.test.mjs compares it to
 // TelltaleRelease and Resources/Info.plist.
 export const contract=Object.freeze({CFBundleName:'Telltale',CFBundleDisplayName:'Telltale',CFBundleIdentifier:'local.utilities.telltale',CFBundleExecutable:executable,LSMinimumSystemVersion:'27.0',LSUIElement:true,CFBundlePackageType:'APPL'});
-const helpers=['tools/deploy_telltale.mjs','tools/deployment_files.mjs','tools/deploy_brew_version.mjs','tools/transaction.mjs'];
+const helpers=['tools/check_no_temp_leaks.sh','tools/deploy_telltale.mjs','tools/deployment_files.mjs','tools/deploy_brew_version.mjs','tools/transaction.mjs'];
 // The Makefile's release recipe copies Resources/Info.plist, the two fonts and OFL.txt into the
 // bundle; install.sh and resolve_signing_identity.sh sign and activate it.
 export const requiredInputs=Object.freeze(['Package.swift','Makefile','Resources/Info.plist',
