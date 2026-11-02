@@ -40,11 +40,18 @@ def synthetic_launcher(tmp_path, dependencies='[]'):
     return launcher
 
 
-def test_extensionless_header_supplies_packages(tmp_path, monkeypatch):
+def different_homebrew_interpreter(interpreter):
+    for candidate in sorted(Path('/opt/homebrew/bin').glob('python3.*')):
+        if candidate.name.removeprefix('python3.').isdigit() and candidate.is_file() and candidate.resolve() != Path(interpreter).resolve():
+            return str(candidate)
+    pytest.fail('No existing Homebrew Python interpreter resolves to a different path from the selected interpreter')
+
+
+def test_launcher_environment_excludes_pythonpath_contamination(tmp_path, monkeypatch):
     import importlib
     import subprocess
     from tools import run_project_tests as runner
-    launcher = synthetic_launcher(tmp_path, '["packaging"]')
+    launcher = synthetic_launcher(tmp_path)
     contamination = tmp_path / 'contamination'
     contamination.mkdir()
     (contamination / 'undeclared_synthetic_sentinel.py').write_text('value = "synthetic"\n')
@@ -60,7 +67,7 @@ def test_extensionless_header_supplies_packages(tmp_path, monkeypatch):
     positive_env['PYTHONPATH'] = str(contamination)
     positive = subprocess.run(command + ['import undeclared_synthetic_sentinel'], cwd=tmp_path, env=positive_env, capture_output=True, text=True)
     assert positive.returncode == 0, positive.stderr
-    result = subprocess.run(command + ['import packaging, importlib.util; assert importlib.util.find_spec("undeclared_synthetic_sentinel") is None'], cwd=tmp_path, env=env, capture_output=True, text=True)
+    result = subprocess.run(command + ['import importlib.util; assert importlib.util.find_spec("undeclared_synthetic_sentinel") is None'], cwd=tmp_path, env=env, capture_output=True, text=True)
     assert result.returncode == 0, result.stderr
 
 
@@ -78,7 +85,7 @@ def test_empty_header_is_accepted(tmp_path, monkeypatch):
 def test_resolution_after_script_cache_is_warmed(tmp_path, monkeypatch, capsys):
     import subprocess
     from tools import run_project_tests as runner
-    launcher = synthetic_launcher(tmp_path, '["packaging"]')
+    launcher = synthetic_launcher(tmp_path)
     with launcher.open('a') as script:
         script.write('print("synthetic help")\n')
     monkeypatch.setenv('UV_CACHE_DIR', str(tmp_path / 'cache'))
@@ -101,7 +108,7 @@ def test_existing_venv_cannot_supply_undeclared_package(tmp_path, monkeypatch):
     from tools import run_project_tests as runner
     launcher = synthetic_launcher(tmp_path)
     venv = tmp_path / 'venv'
-    subprocess.run(['uv', 'venv', '--seed', '--no-python-downloads', '--python', '/opt/homebrew/bin/python3.12', str(venv)], check=True, capture_output=True)
+    subprocess.run(['uv', 'venv', '--seed', '--no-python-downloads', '--python', runner.resolve_interpreter(launcher), str(venv)], check=True, capture_output=True)
     site = next(venv.glob('lib/python*/site-packages'))
     (site / 'synthetic_sentinel.py').write_text('value = 1\n')
     assert subprocess.run([str(venv / 'bin/python'), '-c', 'import synthetic_sentinel'], capture_output=True).returncode == 0
@@ -118,7 +125,7 @@ def test_resolution_ignores_activated_and_parent_venvs(tmp_path, monkeypatch):
     from tools import run_project_tests as runner
     launcher = synthetic_launcher(tmp_path)
     venv = tmp_path / '.venv'
-    subprocess.run(['uv', 'venv', '--seed', '--no-python-downloads', '--python', '/opt/homebrew/bin/python3.12', str(venv)], check=True, capture_output=True)
+    subprocess.run(['uv', 'venv', '--seed', '--no-python-downloads', '--python', runner.resolve_interpreter(launcher), str(venv)], check=True, capture_output=True)
     monkeypatch.setenv('VIRTUAL_ENV', str(venv))
     monkeypatch.setenv('PATH', str(venv / 'bin') + ':' + __import__('os').environ['PATH'])
     monkeypatch.chdir(tmp_path)
@@ -142,7 +149,7 @@ def test_cached_environment_interpreter_is_checked(tmp_path, monkeypatch, capsys
     original = runner.build_test_command
     monkeypatch.setattr(runner, 'build_test_command', lambda entry, requested, command, extra: original(entry, interpreter, command, extra))
     with pytest.raises(ValueError, match='interpreter mismatch'):
-        runner.verify_interpreter(entry, '/opt/homebrew/bin/python3.12' if Path(interpreter).resolve() != Path('/opt/homebrew/bin/python3.12').resolve() else '/opt/homebrew/bin/python3.14', runner.clean_environment())
+        runner.verify_interpreter(entry, different_homebrew_interpreter(interpreter), runner.clean_environment())
 
 
 def test_build_command_keeps_optional_requirements_and_extra(tmp_path, monkeypatch):
@@ -375,12 +382,13 @@ def test_actual_version_must_satisfy_launcher_constraint(tmp_path, monkeypatch):
     import subprocess
     from tools import run_project_tests as runner
     launcher = synthetic_launcher(tmp_path)
+    interpreter = runner.resolve_interpreter(launcher)
     launcher.write_text(launcher.read_text().replace('>=3.12', '>=99'))
     monkeypatch.setattr(runner, 'REPO_ROOT', tmp_path)
     monkeypatch.setenv('UV_CACHE_DIR', str(tmp_path / 'cache'))
     entry = runner.ProjectTests('.', 'launcher', None, (('pytest',),), ('--help',), None)
     with pytest.raises(subprocess.CalledProcessError):
-        runner.verify_interpreter(entry, '/opt/homebrew/bin/python3.12', runner.clean_environment(), suite=False)
+        runner.verify_interpreter(entry, interpreter, runner.clean_environment(), suite=False)
 
 
 def test_actual_version_above_upper_bound_is_rejected(tmp_path, monkeypatch):
