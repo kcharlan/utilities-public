@@ -31,6 +31,47 @@ def _write_synthetic_plist(path: Path) -> None:
     path.write_bytes(plistlib.dumps({"Label": LABEL, "Program": "/usr/bin/true"}))
 
 
+def test_delete_job_keeps_plist_when_loaded_job_fails_to_unload(
+    lm_module, tmp_path, monkeypatch
+):
+    plist_path = tmp_path / f"{LABEL}.plist"
+    _write_synthetic_plist(plist_path)
+
+    async def fake_unload(label, domain, path):
+        return {"success": False, "message": "boot-out failed"}
+
+    monkeypatch.setattr(lm_module, "unload_job", fake_unload)
+    result = asyncio.run(lm_module.delete_job(LABEL, DOMAIN, str(plist_path), loaded=True))
+
+    assert result["success"] is False
+    assert plist_path.exists()
+    backups = list(Path(lm_module.BACKUP_DIR).glob(f"{LABEL}.*.plist"))
+    assert len(backups) == 1
+    assert backups[0].read_bytes() == plist_path.read_bytes()
+    assert "boot-out failed" in result["message"]
+    assert str(backups[0]) in result["message"]
+
+
+def test_delete_job_removes_unloaded_job_even_if_bootout_fails(
+    lm_module, tmp_path, monkeypatch
+):
+    plist_path = tmp_path / f"{LABEL}.plist"
+    _write_synthetic_plist(plist_path)
+    original = plist_path.read_bytes()
+
+    async def fake_unload(label, domain, path):
+        return {"success": False, "message": "boot-out failed"}
+
+    monkeypatch.setattr(lm_module, "unload_job", fake_unload)
+    result = asyncio.run(lm_module.delete_job(LABEL, DOMAIN, str(plist_path), loaded=False))
+
+    assert result["success"] is True
+    assert not plist_path.exists()
+    backups = list(Path(lm_module.BACKUP_DIR).glob(f"{LABEL}.*.plist"))
+    assert len(backups) == 1
+    assert backups[0].read_bytes() == original
+
+
 def test_delete_job_backs_up_unloads_and_removes_plist(
     lm_module, tmp_path, monkeypatch
 ):
@@ -128,8 +169,8 @@ def test_api_delete_job_delegates_when_plist_path_is_missing(
     expected = {"success": True, "message": "ok"}
     job = {"label": LABEL, "plist_path": None, "domain": "unknown"}
 
-    async def fake_delete(label, domain, plist_path):
-        delete_calls.append((label, domain, plist_path))
+    async def fake_delete(label, domain, plist_path, loaded):
+        delete_calls.append((label, domain, plist_path, loaded))
         return expected
 
     async def fake_refresh():
@@ -142,4 +183,25 @@ def test_api_delete_job_delegates_when_plist_path_is_missing(
     result = asyncio.run(lm_module.api_delete_job(LABEL))
 
     assert result == expected
-    assert delete_calls == [(LABEL, "unknown", None)]
+    assert delete_calls == [(LABEL, "unknown", None, True)]
+
+
+def test_api_delete_job_passes_unloaded_state(lm_module, monkeypatch, tmp_path):
+    plist_path = tmp_path / f"{LABEL}.plist"
+    _write_synthetic_plist(plist_path)
+    job = {"label": LABEL, "plist_path": str(plist_path), "domain": DOMAIN, "loaded": False}
+
+    async def fake_unload(label, domain, path):
+        return {"success": False, "message": "boot-out failed"}
+
+    async def fake_refresh():
+        return None
+
+    monkeypatch.setattr(lm_module, "_find_job", lambda label: job)
+    monkeypatch.setattr(lm_module, "unload_job", fake_unload)
+    monkeypatch.setattr(lm_module, "_refresh_jobs", fake_refresh)
+
+    result = asyncio.run(lm_module.api_delete_job(LABEL))
+
+    assert result["success"] is True
+    assert not plist_path.exists()
