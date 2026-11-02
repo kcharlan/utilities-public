@@ -518,7 +518,8 @@ def test_cli_missing_symbol_fallback_and_withdrawal(tmp_path: Path, action: str,
     source = tmp_path / "synthetic.csv"
     values = dict.fromkeys(APP["VANGUARD_HEADERS"], "")
     values.update({"Account Number": "SYNTHETIC ACCOUNT", "Trade Date": "2030-01-01", "Transaction Type": action,
-                   "Investment Name": "SYNTHETIC INVESTMENT", "Symbol": symbol, "Net Amount": "1.00"})
+                   "Investment Name": "SYNTHETIC INVESTMENT", "Symbol": symbol,
+                   "Net Amount": "1.00" if action == "Dividend" else "-1.00"})
     write_csv(source, APP["VANGUARD_HEADERS"], [[values[key] for key in APP["VANGUARD_HEADERS"]]])
     result = run_cli(home, str(source))
     assert result.returncode == 0, result.stderr
@@ -1646,6 +1647,32 @@ def test_vanguard_composite_export_does_not_hide_malformed_row_after_blank(
     assert not (tmp_path / "synthetic-malformed-vanguard-composite.qif").exists()
 
 
+def test_vanguard_positive_withdrawal_stops_batch_before_outputs(tmp_path: Path) -> None:
+    home = tmp_path / "runtime"
+    write_config(home, {"vanguard": configured_section(
+        "SYNTHETIC ACCOUNT", "SYNTH1", brokerage="vanguard"
+    )})
+    first = tmp_path / "synthetic-first.csv"
+    second = tmp_path / "synthetic-second.csv"
+    def row(action: str, amount: str, description: str) -> list[str]:
+        values = dict.fromkeys(APP["VANGUARD_HEADERS"], "")
+        values.update({"Account Number": "SYNTHETIC ACCOUNT", "Trade Date": "2030-01-01",
+                       "Transaction Type": action, "Transaction Description": description,
+                       "Symbol": "SYNTH1", "Net Amount": amount})
+        return [values[key] for key in APP["VANGUARD_HEADERS"]]
+
+    write_csv(first, APP["VANGUARD_HEADERS"], [row("Dividend", "40.00", "SYNTHETIC DIVIDEND")])
+    write_csv(second, APP["VANGUARD_HEADERS"], [row("Dividend", "40.00", "SYNTHETIC DIVIDEND"),
+              row("Withdrawal", "5.00", "SYNTHETIC REVERSAL")])
+    result = run_cli(home, str(first), str(second))
+
+    assert result.returncode == 2
+    assert "synthetic-second.csv: row 3" in result.stderr
+    assert "positive Withdrawal amount" in result.stderr
+    assert not list(tmp_path.glob("*.qif"))
+    assert not list(tmp_path.glob("*.cooked.csv"))
+
+
 def test_vanguard_processes_dividend_and_withdrawal_and_visibly_skips_legacy_rows(
     tmp_path: Path,
 ) -> None:
@@ -1681,6 +1708,7 @@ def test_vanguard_processes_dividend_and_withdrawal_and_visibly_skips_legacy_row
                 ("Dividend", "40.00", "SYNTHETIC DIVIDEND DESCRIPTION"),
                 ("Withdrawal", "-15.00", "SYNTHETIC WITHDRAWAL MEMO"),
                 ("Withdrawal", "-5.00", ""),
+                ("Withdrawal", "0.00", "SYNTHETIC ZERO"),
                 ("Reinvestment", "-40.00", "SYNTHETIC REINVESTMENT DESCRIPTION"),
                 ("Sweep out", "15.00", "SYNTHETIC SWEEP DESCRIPTION"),
             )
@@ -1695,17 +1723,18 @@ def test_vanguard_processes_dividend_and_withdrawal_and_visibly_skips_legacy_row
             (tmp_path / "synthetic-vanguard.cooked.csv").open(encoding="utf-8")
         )
     )
-    assert len(cooked) == 3
+    assert len(cooked) == 4
     assert list(cooked[0]) == APP["VANGUARD_HEADERS"]
     assert [row["Transaction Type"] for row in cooked] == [
         "Dividend",
+        "Withdrawal",
         "Withdrawal",
         "Withdrawal",
     ]
     qif = (tmp_path / "synthetic-vanguard.qif").read_text(encoding="utf-8")
     assert qif.startswith("!Type:Invst\n")
     assert "!Account" not in qif
-    assert qif.count("^\n") == 3
+    assert qif.count("^\n") == 4
     assert "NMiscInc\n" in qif
     assert "NXOut\n" in qif
     assert "NMiscInc\nYSYNTHETIC INCOME FUND\n" in qif
@@ -1715,13 +1744,15 @@ def test_vanguard_processes_dividend_and_withdrawal_and_visibly_skips_legacy_row
     assert "MWithdrawal\n" in qif
     assert "D1/3'30\n" in qif
     assert "T15.00\n" in qif
+    assert "MSYNTHETIC ZERO\nL[SYNTHETIC CASH]\n" in qif
+    assert "T0.00\n" in qif
     assert "Skipped action 'Reinvestment'" in result.stderr
     assert "Skipped action 'Sweep out'" in result.stderr
-    assert "3 transaction(s)" in result.stdout
+    assert "4 transaction(s)" in result.stdout
     assert "synthetic-vanguard.csv\nDividends, oldest first\n" in result.stdout
     assert "2030-01-03       40.00  SYNTH2\nTotal            40.00\nCopy/paste sum:\n40.00\n" in result.stdout
     assert "Withdrawals, oldest first\n" in result.stdout
-    assert "2030-01-03       15.00  SYNTH2\n2030-01-03        5.00  SYNTH2\nTotal            20.00\nCopy/paste sum:\n15.00+5.00\n" in result.stdout
+    assert "2030-01-03       15.00  SYNTH2\n2030-01-03        5.00  SYNTH2\n2030-01-03        0.00  SYNTH2\nTotal            20.00\nCopy/paste sum:\n15.00+5.00+0.00\n" in result.stdout
 
 
 def test_vanguard_withdrawal_memo_rejects_qif_record_injection(

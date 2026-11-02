@@ -2243,3 +2243,9 @@ backslashes before pipe delimiters. Check rendered cell values and quoted
 table structure as well as exact top-level lines. List markers belong only on
 the first line; indent continuation lines and ensure every placeholder is
 resolved even when the converter emits an unexpected prefix.
+
+### 2026-11-02 — Validate direction before normalizing amounts
+
+Taking an absolute value can turn an unsupported positive withdrawal into an
+outgoing transfer. Reject the unexpected sign before normalization and test a
+later invalid row across a batch so no earlier outputs are committed.
