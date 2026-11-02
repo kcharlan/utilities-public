@@ -2100,6 +2100,7 @@ exercise both missing selections with real saved snapshots.
 Valid JSON can still be the wrong type for downstream credential handling.
 Reject non-object values at the decoding boundary so both streaming and
 non-streaming requests return an authentication error before contacting an upstream.
+
 ### 2026-11-02 — Include shared build helpers in fleet inventories
 
 When a native release moves a build helper outside its project tree, include that
