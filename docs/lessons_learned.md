@@ -2057,3 +2057,13 @@ A checkout's current branch is not necessarily its default, and a previously
 stored default can become stale. Prefer the local origin HEAD reference, then
 local main or master, and refresh the stored value during branch scans. Real
 synthetic repositories cover feature and detached checkouts and remote HEAD.
+
+## 2026-11-02: Preserve alerts when report rendering fails
+
+Model Sentinel saves scan results before rendering reports, so a renderer exception
+could lose the change alert after the baseline had already advanced. Catch failures
+at the report boundary, redact credential values from the fallback, and apply both
+change and error notification policies to the recorded result summary.
+Fallback artifact writes can fail too: emit outside the original exception
+handler, keep the redacted console diagnostic, and attempt notification and
+retention cleanup even if the artifact cannot be written.

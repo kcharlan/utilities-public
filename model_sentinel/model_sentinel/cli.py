@@ -403,13 +403,32 @@ def run_browse_command(*, args: argparse.Namespace, loaded) -> int:
 def _emit_credential_error(*, message: str, args: argparse.Namespace,
                            loaded: LoadedConfig, logger: logging.Logger) -> int:
     logger.error(message)
-    report_path = _determine_error_report_path(args=args, loaded=loaded, generated_at=_now().isoformat())
-    _emit_output(message, output_path=report_path if args.output else None)
-    if report_path and not args.output:
-        report_path.write_text(message, encoding="utf-8")
-    if _should_notify_for_errors(args=args, loaded=loaded):
+    _emit_error(message=message, title="Model Sentinel: credential error",
+                notify=_should_notify_for_errors(args=args, loaded=loaded), args=args, loaded=loaded)
+    return 2
+
+
+def _emit_error(*, message: str, title: str, notify: bool,
+                args: argparse.Namespace, loaded: LoadedConfig,
+                tolerate_artifact_error: bool = False) -> None:
+    printed = False
+    try:
+        report_path = _determine_error_report_path(
+            args=args, loaded=loaded, generated_at=_now().isoformat(), notify=notify,
+        )
+        _emit_output(message, output_path=report_path if args.output else None)
+        printed = not args.output
+        if report_path and not args.output:
+            report_path.write_text(message, encoding="utf-8")
+    except Exception:
+        if not tolerate_artifact_error:
+            raise
+        report_path = None
+        if not printed:
+            _emit_output(message, output_path=None)
+    if notify:
         send_notification(
-            title="Model Sentinel: credential error",
+            title=title,
             message=f"Report: {report_path or 'stdout only'}",
             report_path=report_path,
             open_target=loaded.settings.notify_open_target,
@@ -417,7 +436,6 @@ def _emit_credential_error(*, message: str, args: argparse.Namespace,
             sound_name=loaded.settings.notify_sound,
             runtime_home=loaded.settings.runtime_home,
         )
-    return 2
 
 
 def run_scan(*, args: argparse.Namespace, loaded, store: Store, logger: logging.Logger) -> int:
@@ -629,6 +647,48 @@ def run_scan(*, args: argparse.Namespace, loaded, store: Store, logger: logging.
             provider_results.append(result)
             logger.error("%s failed: %s", provider.provider_id, message)
 
+    report_failed = False
+    try:
+        notify_path = _render_scan_reports(
+            args=args, loaded=loaded, provider_results=provider_results,
+            generated_at=generated_at, pending_live_semantics=pending_live_semantics,
+            credential_values=snapshot.values, logger=logger,
+        )
+    except Exception as exc:
+        report_failed = True
+        lines = ["Model Sentinel could not render the scan report after recording results."]
+        lines.extend(
+            f"{result.provider_id}: status={result.status}, changes={result.change_count}, "
+            f"snapshot saved={'yes' if result.saved else 'no'}"
+            for result in provider_results
+        )
+        lines.append(f"Error: {type(exc).__name__}: {exc}")
+        message = redact_credential_values("\n".join(lines), snapshot.values)
+        logger.error(message)
+    else:
+        _maybe_notify(args=args, loaded=loaded, provider_results=provider_results, report_path=notify_path)
+
+    if report_failed:
+        try:
+            _emit_error(
+                message=message, title="Model Sentinel: report error",
+                notify=(_should_notify(args=args, loaded=loaded, provider_results=provider_results)
+                        or _should_notify_for_errors(args=args, loaded=loaded)),
+                args=args, loaded=loaded, tolerate_artifact_error=True,
+            )
+        except Exception:
+            logger.error("Model Sentinel could not emit the report-error notification or diagnostic.")
+
+    _cleanup_old_reports(loaded.runtime_paths.report_dir, loaded.settings.report_retention_days, logger,
+                         protected_paths=((loaded.settings.credential_file,) if loaded.settings.credential_file else ()))
+
+    return 1 if report_failed or any(result.status == "error" for result in provider_results) else 0
+
+
+def _render_scan_reports(*, args: argparse.Namespace, loaded: LoadedConfig,
+                         provider_results: list[ProviderScanResult], generated_at: str,
+                         pending_live_semantics: list[_PendingLiveSemanticInput],
+                         credential_values: Mapping[str, str], logger: logging.Logger) -> Path | None:
     report_path = _determine_report_path(args=args, loaded=loaded, provider_results=provider_results, generated_at=generated_at)
     detail_policy = _report_detail_policy(args=args, loaded=loaded)
     has_changes = any(r.change_count > 0 for r in provider_results)
@@ -645,7 +705,7 @@ def run_scan(*, args: argparse.Namespace, loaded, store: Store, logger: logging.
         provider_results=provider_results,
         detail_policy=detail_policy,
         semantic_cores=live_semantic_cores,
-        credential_values=snapshot.values,
+        credential_values=credential_values,
     )
     _emit_output(report_text, output_path=report_path if args.output else None)
     if report_path and not args.output:
@@ -668,7 +728,7 @@ def run_scan(*, args: argparse.Namespace, loaded, store: Store, logger: logging.
             provider_results=provider_results,
             detail_policy=detail_policy,
             semantic_cores=live_semantic_cores,
-            credential_values=snapshot.values,
+            credential_values=credential_values,
             companion_link=(full_html_report_path.name, "Full-detail report \u2192"),
         )
         html_report_path.write_text(html_text, encoding="utf-8")
@@ -685,18 +745,13 @@ def run_scan(*, args: argparse.Namespace, loaded, store: Store, logger: logging.
                 unclassified_limit=detail_policy.unclassified_limit,
             ),
             semantic_cores=live_semantic_cores,
-            credential_values=snapshot.values,
+            credential_values=credential_values,
             companion_link=(html_report_path.name, "\u2190 Concise report"),
         )
         full_html_report_path.write_text(full_html_text, encoding="utf-8")
         logger.info("Full HTML report written to %s", full_html_report_path)
 
-    _maybe_notify(args=args, loaded=loaded, provider_results=provider_results, report_path=html_report_path or report_path)
-
-    _cleanup_old_reports(loaded.runtime_paths.report_dir, loaded.settings.report_retention_days, logger,
-                         protected_paths=((loaded.settings.credential_file,) if loaded.settings.credential_file else ()))
-
-    return 1 if any(result.status == "error" for result in provider_results) else 0
+    return html_report_path or report_path
 
 
 def _build_pending_live_semantic_cores(
@@ -1320,10 +1375,10 @@ def _determine_report_path(*, args: argparse.Namespace, loaded, provider_results
     return loaded.runtime_paths.report_dir / f"scan_{safe_stamp}{extension}"
 
 
-def _determine_error_report_path(*, args: argparse.Namespace, loaded, generated_at: str) -> Path | None:
+def _determine_error_report_path(*, args: argparse.Namespace, loaded, generated_at: str, notify: bool) -> Path | None:
     if args.output:
         return args.output
-    if not _should_notify_for_errors(args=args, loaded=loaded):
+    if not notify:
         return None
     loaded.runtime_paths.report_dir.mkdir(parents=True, exist_ok=True)
     safe_stamp = generated_at.replace(":", "").replace("+", "_")

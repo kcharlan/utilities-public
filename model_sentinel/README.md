@@ -1109,6 +1109,7 @@ the sound. `scan --notify` or `scan --no-notify` overrides
 `MODEL_SENTINEL_NOTIFY_ON=never`.
 
 When notifications fire and you did not explicitly supply `--output`, Model Sentinel writes a report into the configured report directory so the alert has a concrete artifact to point at.
+If a scan report cannot be rendered, the scan exits 1 and sends a report-error notification naming the recorded change counts when the notification policy permits it.
 
 ## Testing
 
