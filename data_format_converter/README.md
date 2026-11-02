@@ -70,7 +70,7 @@ tokenization contract. The page never reads an API key or uploads pasted data.
   (`yaml_dump_accepts_whitespace_quote_change`). These byte-level exceptions
   preserve the parsed values.
 - The browser Playwright suite covers dependency initialization, one JSON
-  conversion, local token-source labels, the no-OpenAI-request privacy
+  conversion, local token-source labels, the no-external-request privacy
   contract, and the YAML compatibility cases above. The Python tests do not
   validate the HTML/JavaScript implementation, and the browser suite is not a
   full interaction matrix.
@@ -176,7 +176,9 @@ are intentionally excluded because TOML has no null value.
 The Playwright suite serves this directory with a local `http-server` on
 `127.0.0.1:4175`, loads the static page in Chromium, verifies that the embedded
 YAML and TOML browser dependencies initialize and perform a structured
-conversion, and checks the YAML compatibility cases named above:
+conversion, checks token estimates, typed XML and null errors, verifies no
+requests leave the local test server, and checks the YAML compatibility cases
+named above:
 
 ```sh
 npm ci
