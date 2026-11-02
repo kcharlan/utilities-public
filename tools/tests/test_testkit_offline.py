@@ -290,6 +290,31 @@ def test_asgi_probes_and_guard_assertion():
     assert all(s.get('method') != 'POST' for s in seen)
 
 
+@pytest.mark.parametrize('protection', ['none', 'host-only', 'http-only'])
+def test_guard_assertion_fails_on_unguarded_apps(protection):
+    from tools.local_server_guard import LocalOriginGuard
+
+    async def raw_app(scope, receive, send):
+        if scope['type'] == 'websocket':
+            await send({'type': 'websocket.accept'})
+        else:
+            host = dict(scope['headers']).get(b'host')
+            status = 403 if protection == 'host-only' and host == b'evil.example' else 200
+            await send({'type': 'http.response.start', 'status': status, 'headers': []})
+            await send({'type': 'http.response.body', 'body': b''})
+
+    guarded_http = LocalOriginGuard(raw_app)
+
+    async def app(scope, receive, send):
+        if protection == 'http-only' and scope['type'] == 'http':
+            await guarded_http(scope, receive, send)
+        else:
+            await raw_app(scope, receive, send)
+
+    with pytest.raises(AssertionError):
+        testkit.assert_local_server_guard(app, get_path='/x', post_path='/write', ws_path='/ws')
+
+
 def test_asgi_sync_client_defaults_and_websocket_url():
     client = testkit.ASGISyncClient(None)
     assert client.base_url == 'http://127.0.0.1:8000'
