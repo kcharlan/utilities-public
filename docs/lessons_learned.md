@@ -2053,3 +2053,6 @@ Model Sentinel saves scan results before rendering reports, so a renderer except
 could lose the change alert after the baseline had already advanced. Catch failures
 at the report boundary, redact credential values from the fallback, and apply both
 change and error notification policies to the recorded result summary.
+Fallback artifact writes can fail too: emit outside the original exception
+handler, keep the redacted console diagnostic, and attempt notification and
+retention cleanup even if the artifact cannot be written.

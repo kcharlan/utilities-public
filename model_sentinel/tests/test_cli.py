@@ -390,6 +390,60 @@ def test_saved_scan_report_failure_still_alerts_and_exits_nonzero(
         assert provider_line in report.read_text(encoding="utf-8")
 
 
+@pytest.mark.parametrize("destination", ["explicit_directory", "managed_write_failure"])
+def test_report_failure_survives_unwritable_fallback(
+    tmp_path: Path, monkeypatch, capsys, destination: str
+) -> None:
+    runtime_home = _write_config_files(tmp_path)
+    settings = runtime_home / "settings.env"
+    settings.write_text(settings.read_text().replace(
+        "MODEL_SENTINEL_NOTIFY_ON=never", "MODEL_SENTINEL_NOTIFY_ON=both"
+    ))
+    secret = "SYNTHETIC_NOT_A_REAL_SECRET_fallback"
+    monkeypatch.setenv("MODEL_SENTINEL_HOME", str(runtime_home))
+    monkeypatch.setenv("OPENROUTER_AI_CREDS", secret)
+    monkeypatch.setattr(cli, "fetch_raw_models", lambda *args: [{"id": "synthetic/model-a"}])
+    assert cli.main(["scan", "--save"]) == 0
+    capsys.readouterr()
+    reports = runtime_home / "reports"
+    old_report = reports / "scan_synthetic_old.txt"
+    old_report.write_text("synthetic old report")
+    os.utime(old_report, (1, 1))
+    monkeypatch.setattr(cli, "fetch_raw_models", lambda *args: [
+        {"id": "synthetic/model-a"}, {"id": "synthetic/model-b"},
+    ])
+
+    def fail_render(*args, **kwargs):
+        raise RuntimeError(f"synthetic renderer failure {secret}")
+
+    monkeypatch.setattr(cli, "render_scan_report", fail_render)
+    notifications = []
+    monkeypatch.setattr(cli, "send_notification", lambda **kwargs: notifications.append(kwargs))
+    arguments = ["scan", "--save", "--notify"]
+    if destination == "explicit_directory":
+        arguments += ["--output", str(reports)]
+    else:
+        write_text = Path.write_text
+
+        def fail_error_write(path, *args, **kwargs):
+            if path.name.startswith("error_"):
+                raise OSError("synthetic write failure")
+            return write_text(path, *args, **kwargs)
+
+        monkeypatch.setattr(Path, "write_text", fail_error_write)
+
+    assert cli.main(arguments) == 1
+    output = capsys.readouterr()
+    assert "openrouter: status=success, changes=1, snapshot saved=yes" in output.out
+    assert "Error: RuntimeError:" in output.out
+    assert secret not in output.out + output.err
+    assert secret not in (runtime_home / "logs/model_sentinel.log").read_text()
+    assert not old_report.exists()
+    assert len(notifications) == 1
+    assert notifications[0]["title"] == "Model Sentinel: report error"
+    assert notifications[0]["report_path"] is None
+
+
 def test_browse_help_lists_browser_options(capsys) -> None:
     with pytest.raises(SystemExit) as exc_info:
         cli.main(["browse", "--help"])

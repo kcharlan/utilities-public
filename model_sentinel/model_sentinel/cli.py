@@ -409,13 +409,23 @@ def _emit_credential_error(*, message: str, args: argparse.Namespace,
 
 
 def _emit_error(*, message: str, title: str, notify: bool,
-                args: argparse.Namespace, loaded: LoadedConfig) -> None:
-    report_path = _determine_error_report_path(
-        args=args, loaded=loaded, generated_at=_now().isoformat(), notify=notify,
-    )
-    _emit_output(message, output_path=report_path if args.output else None)
-    if report_path and not args.output:
-        report_path.write_text(message, encoding="utf-8")
+                args: argparse.Namespace, loaded: LoadedConfig,
+                tolerate_artifact_error: bool = False) -> None:
+    printed = False
+    try:
+        report_path = _determine_error_report_path(
+            args=args, loaded=loaded, generated_at=_now().isoformat(), notify=notify,
+        )
+        _emit_output(message, output_path=report_path if args.output else None)
+        printed = not args.output
+        if report_path and not args.output:
+            report_path.write_text(message, encoding="utf-8")
+    except Exception:
+        if not tolerate_artifact_error:
+            raise
+        report_path = None
+        if not printed:
+            _emit_output(message, output_path=None)
     if notify:
         send_notification(
             title=title,
@@ -655,14 +665,19 @@ def run_scan(*, args: argparse.Namespace, loaded, store: Store, logger: logging.
         lines.append(f"Error: {type(exc).__name__}: {exc}")
         message = redact_credential_values("\n".join(lines), snapshot.values)
         logger.error(message)
-        _emit_error(
-            message=message, title="Model Sentinel: report error",
-            notify=(_should_notify(args=args, loaded=loaded, provider_results=provider_results)
-                    or _should_notify_for_errors(args=args, loaded=loaded)),
-            args=args, loaded=loaded,
-        )
     else:
         _maybe_notify(args=args, loaded=loaded, provider_results=provider_results, report_path=notify_path)
+
+    if report_failed:
+        try:
+            _emit_error(
+                message=message, title="Model Sentinel: report error",
+                notify=(_should_notify(args=args, loaded=loaded, provider_results=provider_results)
+                        or _should_notify_for_errors(args=args, loaded=loaded)),
+                args=args, loaded=loaded, tolerate_artifact_error=True,
+            )
+        except Exception:
+            logger.error("Model Sentinel could not emit the report-error notification or diagnostic.")
 
     _cleanup_old_reports(loaded.runtime_paths.report_dir, loaded.settings.report_retention_days, logger,
                          protected_paths=((loaded.settings.credential_file,) if loaded.settings.credential_file else ()))
