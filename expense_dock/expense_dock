@@ -42,6 +42,7 @@ import uvicorn
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.responses import HTMLResponse, JSONResponse, StreamingResponse
 from openpyxl import load_workbook
+from openpyxl.utils.cell import get_column_letter, range_boundaries
 
 
 @dataclass(frozen=True)
@@ -69,7 +70,7 @@ def parse_args():
 
 RUNTIME_PATHS = build_runtime_paths()
 DATA_DIR = str(RUNTIME_PATHS.home)
-VERSION = "0.2.2"
+VERSION = "0.2.3"
 GRAPH_ROOT = "https://graph.microsoft.com/v1.0"
 AUTHORITY = "https://login.microsoftonline.com/consumers"
 GRAPH_SCOPES = ["Files.ReadWrite.All"]
@@ -743,6 +744,12 @@ def append_expense_row(
             raise DuplicateExpenseError(row, ws.cell(row=row, column=id_col).value)
 
     target_row = last_row + 1
+    for table in ws.tables.values():
+        min_col, min_row, max_col, max_row = range_boundaries(table.ref)
+        if min_row == header_row and max_row < target_row:
+            table.ref = f"{get_column_letter(min_col)}{min_row}:{get_column_letter(max_col)}{target_row}"
+            if table.autoFilter is not None:
+                table.autoFilter.ref = table.ref
     source_row = max(header_row + 1, last_row)
     if target_row != source_row:
         copy_row_format(ws, source_row, target_row, max(header_map.values()))

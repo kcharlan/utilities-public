@@ -66,6 +66,12 @@ Aggregating the latter made the cache hit rate zero even when imported rows had
 cached tokens. Exercise summary totals and filtered rates through a real CSV
 import so the aggregate uses the data actually stored by the active path.
 
+## 2026-11-02: Extend Excel tables when appending workbook rows
+
+Writing cells below an Excel table does not extend its range or filter. Exercise
+the shipped template through consecutive appends, and extend matching tables
+and their filters while preserving the workbook's formulas and lookup cells.
+
 ## 2026-10-31: Compare old and new in a browser when moving React code to Preact
 
 The offline port merged with every suite green; side-by-side browser comparison
