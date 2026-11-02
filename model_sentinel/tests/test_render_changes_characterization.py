@@ -96,8 +96,8 @@ constant.
 from __future__ import annotations
 
 import json
-import os
-import time
+
+import pytest
 
 from tests.html_probe import absent_side_cells
 
@@ -105,13 +105,8 @@ from model_sentinel.reporting import render_changes_report
 from model_sentinel import reporting
 from model_sentinel.provider_profiles import OPENROUTER_PROFILE
 
-# Pin the process timezone to UTC before any golden constant below is defined,
-# for the same reason as the other two characterization modules -- and with one
-# extra consequence here: `render_changes_report` GROUPS by the local date of
-# `detected_at`, so an unpinned timezone could move a change into a different
-# date section, not merely reformat a timestamp.
-os.environ["TZ"] = "UTC"
-time.tzset()
+# Literal golden timestamps require UTC only while each test renders.
+pytestmark = pytest.mark.usefixtures("utc_timezone")
 
 DETECTED_AT = "2026-07-25T09:00:00+00:00"
 SINCE = "2026-07-01"

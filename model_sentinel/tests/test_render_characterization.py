@@ -268,11 +268,11 @@ The JSON goldens have never changed and must not: JSON is the audit path.
 
 from __future__ import annotations
 
-import os
 import json
 import re
-import time
 from dataclasses import replace
+
+import pytest
 
 from model_sentinel.models import FieldChange, ModelDelta, ProviderScanResult
 from model_sentinel.provider_profiles import (
@@ -287,18 +287,8 @@ from model_sentinel.reporting import (
     render_scan_report,
 )
 
-# Pin the process timezone to UTC before any golden constant below is defined.
-# render_scan_report() formats timestamps through to_local_human()/to_local_iso()
-# (model_sentinel/time_utils.py), both of which convert via datetime.astimezone()
-# to whatever the OS considers "local". Without this pin, the golden constants
-# would have to be computed through those same helper functions to stay portable
-# across machines/CI runners in different timezones -- which would make the goldens
-# self-fulfilling and unable to catch a future regression in those helpers'
-# formatting. Pinning TZ here means "local" resolves to UTC for the whole test
-# run (this also overrides any ambient `TZ=...` set by whoever invokes pytest),
-# so the golden constants below can be hardcoded literal strings instead.
-os.environ["TZ"] = "UTC"
-time.tzset()
+# Literal golden timestamps require UTC only while each test renders.
+pytestmark = pytest.mark.usefixtures("utc_timezone")
 
 # Fixed instant used for every golden render in this module.
 GENERATED_AT = "2026-07-25T09:00:00+00:00"
@@ -321,8 +311,8 @@ def _legacy_inherited_price_profile(multiplier: int):
         primary_price_comparison_group=USD_PER_MILLION_TOKENS_GROUP,
     )
 
-# Literal expected renderings of GENERATED_AT, valid because TZ is pinned to UTC
-# above. Do NOT replace these with calls to to_local_human()/to_local_iso() --
+# Literal expected renderings of GENERATED_AT, valid under the UTC fixture.
+# Do NOT replace these with calls to to_local_human()/to_local_iso() --
 # that would make the timestamp assertions below tautological.
 _GENERATED_AT_HUMAN = "2026-07-25 09:00:00"
 _GENERATED_AT_ISO = "2026-07-25T09:00:00+00:00"

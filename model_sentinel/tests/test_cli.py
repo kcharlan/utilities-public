@@ -830,6 +830,7 @@ def test_save_mode_allows_initial_baseline_without_prior_snapshot(
 
 
 @pytest.mark.parametrize("selection", ["date", "previous-day"])
+@pytest.mark.usefixtures("utc_timezone")
 def test_saved_scan_with_missing_requested_baseline_saves_nothing(
     tmp_path: Path, monkeypatch, capsys, selection: str
 ) -> None:

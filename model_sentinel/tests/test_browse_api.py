@@ -59,6 +59,7 @@ RENDERED_KEYS = {
 }
 
 
+@pytest.mark.usefixtures("utc_timezone")
 def test_parameter_member_evidence_and_noop_records(tmp_path):
     path = tmp_path / "parameter-evidence.db"
     facts = build_fixture_db(path, with_endpoints=True)
@@ -91,6 +92,7 @@ def test_parameter_member_evidence_and_noop_records(tmp_path):
     assert hashlib.sha256(path.read_bytes()).hexdigest() == before
 
 
+@pytest.mark.usefixtures("utc_timezone")
 def test_activity_bulk_grouping_respects_custom_membership_policy(tmp_path):
     path = tmp_path / "custom-parameter-policy.db"
     facts = build_fixture_db(path)
@@ -209,6 +211,7 @@ def test_api_context_uses_explicit_prebuilt_dependencies(browse_context) -> None
     assert isinstance(context.aspects, tuple)
 
 
+@pytest.mark.usefixtures("utc_timezone")
 def test_activity_and_heatmap_use_fixture_facts(browse_context) -> None:
     context, facts = browse_context
     result = api.activity(context, {"providers": EXAMPLE_PROVIDER.provider_id})
@@ -358,6 +361,7 @@ def test_activity_folds_squelched_only_entries_and_summarizes_signal(
     assert default["rollups_by_date"][day]["summary"] == default["summary"]
 
 
+@pytest.mark.usefixtures("utc_timezone")
 def test_activity_associates_expanded_children_with_raw_origin_ids(tmp_path) -> None:
     path = tmp_path / "fixture.db"
     facts = build_fixture_db(path)
@@ -476,6 +480,7 @@ def test_activity_associates_expanded_children_with_raw_origin_ids(tmp_path) -> 
     assert set(entry["change_ids"]) == source_ids
 
 
+@pytest.mark.usefixtures("utc_timezone")
 def test_activity_associates_same_day_exact_transitions_by_value(tmp_path) -> None:
     path = tmp_path / "fixture.db"
     facts = build_fixture_db(path)
@@ -542,6 +547,7 @@ def test_activity_associates_same_day_exact_transitions_by_value(tmp_path) -> No
     assert len({associated[0] for _, associated in price_rows}) == 2
 
 
+@pytest.mark.usefixtures("utc_timezone")
 def test_activity_pages_more_than_five_hundred_stable_entries(tmp_path) -> None:
     path = tmp_path / "fixture.db"
     facts = build_fixture_db(path)
@@ -906,6 +912,7 @@ def test_browse_absent_sides_render_as_em_dash_without_changing_machine_values(
     assert rendered["old_display"] == "—"
 
 
+@pytest.mark.usefixtures("utc_timezone")
 def test_model_dossier_returns_current_facts_and_exact_edge_changelog(
     browse_context,
 ) -> None:
@@ -2363,6 +2370,7 @@ def test_host_empty_results(hosts_context):
     assert [row["scrape_id"] for row in result["captures"]] == [facts.scrapes[k] for k in ("empty", "absent", "partial", "second", "first")]
 
 
+@pytest.mark.usefixtures("utc_timezone")
 def test_host_history_attribution(hosts_context):
     context, facts = hosts_context
     case = facts.host_history_attribution
@@ -2418,6 +2426,7 @@ def test_host_history_rejects_invalid_selection(hosts_context, params):
         api.host_history(context, params)
 
 
+@pytest.mark.usefixtures("utc_timezone")
 def test_dossier_shared_serializer_preserves_bytes(tmp_path):
     path = tmp_path / "synthetic.db"
     facts = build_fixture_db(path, with_endpoints=True).endpoint
@@ -2439,6 +2448,7 @@ def test_dossier_shared_serializer_preserves_bytes(tmp_path):
         db.close_all()
 
 
+@pytest.mark.usefixtures("utc_timezone")
 def test_host_history_attribution_uses_target_list_metadata_after_move(hosts_context):
     context, facts = hosts_context
     case = facts.host_history_attribution
@@ -2513,6 +2523,7 @@ def test_meta_host_provider_order_follows_configured_provider_order(tmp_path):
         db.close_all()
 
 
+@pytest.mark.usefixtures("utc_timezone")
 def test_host_history_attributes_host_name_change_to_target_observation(hosts_context):
     context, facts = hosts_context
     case = facts.host_history_attribution
@@ -2524,6 +2535,7 @@ def test_host_history_attributes_host_name_change_to_target_observation(hosts_co
     assert previous["changes"] == []
 
 
+@pytest.mark.usefixtures("utc_timezone")
 def test_host_missing_values_are_independent_across_ranking_dimensions(hosts_context):
     context, facts = hosts_context
     result = _hosts_first(context, facts)

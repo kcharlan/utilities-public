@@ -66,6 +66,7 @@ def parameter_server(tmp_path_factory):
         yield served, evidence
 
 
+@pytest.mark.usefixtures("utc_timezone")
 def test_parameter_change_browser_surfaces_show_members(browser, parameter_server):
     served, evidence = parameter_server
     _, facts = served
@@ -131,6 +132,14 @@ def smoke_server(tmp_path_factory: pytest.TempPathFactory):
     database_path = tmp_path_factory.mktemp("browse-smoke") / "fixture.db"
     facts = build_fixture_db(database_path)
     with _serve(database_path, facts) as served:
+        yield served
+
+
+@pytest.fixture
+def utc_smoke_server(tmp_path: Path, utc_timezone):
+    # The literal dates in its consumers describe this fixed UTC history.
+    facts = build_fixture_db(tmp_path / "fixture.db")
+    with _serve(tmp_path / "fixture.db", facts) as served:
         yield served
 
 
@@ -571,6 +580,7 @@ def test_hosts_history_owns_date_range_and_clear_all_retains_comparison_settings
     expect(hosts_page.locator(".host-condition-counts")).to_contain_text("No filters. Every endpoint counts.")
 
 
+@pytest.mark.usefixtures("utc_timezone")
 def test_hosts_explicit_unavailable_capture_remains_selected(hosts_page, hosts_server):
     _, facts = hosts_server
     goto(hosts_page, hosts_server, _hosts_fragment(facts, hasof=facts.scrapes["uncaptured"]))
@@ -598,6 +608,7 @@ def test_hosts_history_remains_available_when_one_host_has_no_qualifying_rows(ho
 
 
 @pytest.mark.parametrize("hosts_server", ["capture_order"], indirect=True)
+@pytest.mark.usefixtures("utc_timezone")
 def test_hosts_capture_options_follow_capture_time_instead_of_import_id(hosts_page, hosts_server):
     _, facts = hosts_server
     goto(hosts_page, hosts_server, _hosts_fragment(facts))
@@ -1249,6 +1260,7 @@ def test_hosts_exact_price_winner_difference_unranked_counts_and_order(hosts_pag
     expect(shared.locator("td").nth(3)).to_contain_text("−3.00pt")
 
 
+@pytest.mark.usefixtures("utc_timezone")
 def test_hosts_single_capture_pending_uptime_and_requested_unavailable_capture(hosts_page, hosts_server):
     _, facts = hosts_server
     goto(hosts_page, hosts_server, _hosts_fragment(facts, providers=facts.single_provider_id, hasof=facts.scrapes["no_prices"], hosts="Synthetic Missing", rank="price:pricing.prompt"))
@@ -1556,13 +1568,14 @@ def test_activity_folds_churn_summarizes_and_orders_signal(
     expect(page.locator("article").first).to_contain_text(facts.added_model)
 
 
-def test_activity_range_presets_are_navigable(page: Page, smoke_server) -> None:
-    _, facts = smoke_server
+@pytest.mark.usefixtures("utc_timezone")
+def test_activity_range_presets_are_navigable(page: Page, utc_smoke_server) -> None:
+    _, facts = utc_smoke_server
     custom_from = facts.scrape_dates[2].isoformat()
     custom_to = facts.scrape_dates[4].isoformat()
     goto(
         page,
-        smoke_server,
+        utc_smoke_server,
         f"#view=activity&providers=example-provider&from={custom_from}&to={custom_to}",
     )
     presets = page.get_by_role("group", name="Range presets")
@@ -1651,22 +1664,23 @@ def test_model_dossier_deep_link_timeline_unknown_and_back(page: Page, smoke_ser
     expect(page.get_by_role("searchbox", name="Find model")).to_be_focused()
 
 
-def test_every_model_surface_and_global_find_open_dossier(page: Page, smoke_server) -> None:
-    _, facts = smoke_server
+@pytest.mark.usefixtures("utc_timezone")
+def test_every_model_surface_and_global_find_open_dossier(page: Page, utc_smoke_server) -> None:
+    _, facts = utc_smoke_server
     day = facts.scrape_dates[2].isoformat()
-    goto(page, smoke_server, f"#view=activity&providers=example-provider&from={day}&to={day}")
+    goto(page, utc_smoke_server, f"#view=activity&providers=example-provider&from={day}&to={day}")
     page.get_by_role("button", name=re.compile("Synthetic Test Model A")).click()
     expect(page).to_have_url(re.compile(r"view=model.*at=2026-08-12"))
 
-    goto(page, smoke_server, "#view=catalog&providers=example-provider")
+    goto(page, utc_smoke_server, "#view=catalog&providers=example-provider")
     page.get_by_role("table").get_by_role("button", name=re.compile("Synthetic Test Model A")).click()
     expect(page.locator(".app-shell")).to_have_attribute("data-view", "model")
 
-    goto(page, smoke_server, "#view=models&providers=example-provider&pins=example-provider%2Ffake-org%2Ftest-model-a")
+    goto(page, utc_smoke_server, "#view=models&providers=example-provider&pins=example-provider%2Ffake-org%2Ftest-model-a")
     page.locator(".pins .model-link").click()
     expect(page.locator(".app-shell")).to_have_attribute("data-view", "model")
 
-    goto(page, smoke_server, "#view=catalog&providers=example-provider")
+    goto(page, utc_smoke_server, "#view=catalog&providers=example-provider")
     page.keyboard.press("/")
     finder = page.get_by_role("searchbox", name="Find model")
     expect(finder).to_be_focused()
@@ -1677,9 +1691,10 @@ def test_every_model_surface_and_global_find_open_dossier(page: Page, smoke_serv
     expect(page.locator(".model-breadcrumb")).to_contain_text("Synthetic Test Model B")
 
 
-def test_catalog_snapshot_compare_changed_only_presets_and_sticky_column(page: Page, smoke_server) -> None:
-    _, facts = smoke_server
-    goto(page, smoke_server, "#view=catalog&providers=example-provider")
+@pytest.mark.usefixtures("utc_timezone")
+def test_catalog_snapshot_compare_changed_only_presets_and_sticky_column(page: Page, utc_smoke_server) -> None:
+    _, facts = utc_smoke_server
+    goto(page, utc_smoke_server, "#view=catalog&providers=example-provider")
     as_of = page.get_by_role("textbox", name="As of")
     as_of.fill("2026-08-16")
     expect(as_of).to_have_value("2026-08-15")
@@ -1993,6 +2008,7 @@ def _css_rgb(page: Page, value: str) -> str:
     )
 
 
+@pytest.mark.usefixtures("utc_timezone")
 def test_endpoint_dossier_reason_states_are_distinct(endpoint_page: Page, endpoint_server) -> None:
     _, facts = endpoint_server
     endpoint = facts.endpoint
