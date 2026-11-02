@@ -224,7 +224,7 @@ Detection is **value-first, not key-first**. Any sufficiently long, opaque strin
 | 3 | Any key + 80+ chars + 10+ unique characters | Warning |
 
 **What gets flagged:**
-- **Critical** — Authorization headers, session cookies, JWT tokens, Bearer/Basic auth, API keys (GitHub, GitLab, npm, Stripe, Slack, Supabase patterns), sensitive URL parameters, CSRF tokens, passwords, opaque tokens
+- **Critical** — Authorization headers, session cookies, JWT tokens, Bearer/Basic auth, API keys (GitHub, GitLab, npm, Stripe, Slack, Supabase patterns), sensitive URL query and `#` fragment parameters, CSRF tokens, passwords, opaque tokens
 - **Warning** — HTTP (non-HTTPS) requests, missing cookie security flags (httpOnly, secure), email addresses, and long opaque tokens without key hints
 - **Info** — RFC 1918 private IPv4 addresses
 

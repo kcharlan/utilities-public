@@ -17,6 +17,7 @@ def threaded(test):
     return run
 
 SECRET = 'SyntheticSecret' + '7319'
+LONG_SECRET = 'SyntheticOpaque' + 'Q7319' * 5
 
 
 def capture(shape):
@@ -37,10 +38,15 @@ def capture(shape):
     elif shape == 'initiator': entry['_initiator'] = {'url': 'https://example.test/?password=' + SECRET}
     elif shape == 'new_password': request['postData'] = {'text': json.dumps({'new_password': SECRET})}
     elif shape == 'page_title': log['pages'] = [{'id': 'page_1', 'title': 'password=' + SECRET}]
+    elif shape in ('fragment_location', 'fragment_redirect', 'refresh_location', 'refresh_redirect', 'client_secret_location', 'client_secret_redirect'):
+        param = 'access_token' if shape.startswith('fragment') else 'refresh_token' if shape.startswith('refresh') else 'client_secret'
+        url = 'https://example.test/cb' + ('#' if shape.startswith('fragment') else '?') + param + '=' + LONG_SECRET
+        if shape.endswith('location'): response['headers'] = [{'name': 'Location', 'value': url}]
+        else: response['redirectURL'] = url
     return {'log': log}
 
 
-@pytest.mark.parametrize('shape', ['cookie', 'array', 'double', 'url', 'location', 'redirect', 'path', 'initiator', 'new_password', 'page_title'])
+@pytest.mark.parametrize('shape', ['cookie', 'array', 'double', 'url', 'location', 'redirect', 'path', 'initiator', 'new_password', 'page_title', 'fragment_location', 'fragment_redirect', 'refresh_location', 'refresh_redirect', 'client_secret_location', 'client_secret_redirect'])
 @pytest.mark.parametrize('endpoint,payload', [('/api/export/har', None), ('/api/export/edl', None), ('/api/export/csv', None), ('/api/export/csv-findings', None), ('/api/export/report', {'format': 'md'}), ('/api/export/report', {'format': 'html'})])
 
 @threaded
@@ -50,11 +56,23 @@ async def test_exports_do_not_contain_secret(client, shape, endpoint, payload):
     response = await client.post(endpoint, json=payload) if payload else await client.post(endpoint)
     assert response.status_code == 200, response.text
     assert SECRET.encode() not in response.content
+    assert LONG_SECRET.encode() not in response.content
     if endpoint == '/api/export/har':
         exported = response.json()
         assert len(exported['log']['entries']) == 1
         assert exported['log']['version'] == '1.2'
         assert exported['log']['entries'][0]['response']['status'] == 200
+
+
+@pytest.mark.parametrize('name', ['password', 'token', 'secret', 'api_key', 'access_token', 'new_password', 'new_token', 'new_secret', 'new_api_key', 'new_access_token'])
+@threaded
+async def test_existing_sensitive_parameter_names_are_redacted(client, name):
+    source = capture('redirect')
+    source['log']['entries'][0]['response']['redirectURL'] = 'https://example.test/?' + name + '=' + SECRET
+    await load_har(client, source)
+    response = await client.post('/api/export/har')
+    assert response.status_code == 200
+    assert SECRET.encode() not in response.content
 
 
 def test_failed_index_build_does_not_mark_manager_loaded():
