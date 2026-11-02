@@ -51,4 +51,21 @@ set -e
 [[ ! -e "$d/wt3" ]]
 "$tool" --create --repo "$d/repo" --reset-branch tagged --from main --path "$d/wt3" --force
 [[ $(git -C "$d/repo" rev-parse refs/heads/tagged) == "$(git -C "$d/repo" rev-parse refs/heads/main)" ]]
+"$tool" --create --repo "$d/repo" --orphan --new-branch synthetic-orphan --path "$d/orphan"
+[[ $(git -C "$d/orphan" symbolic-ref HEAD) == refs/heads/synthetic-orphan ]]
+if git -C "$d/orphan" rev-parse --verify HEAD >/dev/null 2>&1; then
+    echo 'expected orphan HEAD to be unborn' >&2
+    exit 1
+fi
+for invalid_mode in from branch detach; do
+    case "$invalid_mode" in
+        from) invalid_args=(--new-branch another-orphan --from main) ;;
+        branch) invalid_args=(--branch main) ;;
+        detach) invalid_args=(--detach) ;;
+    esac
+    result=0
+    "$tool" --create --repo "$d/repo" --orphan "${invalid_args[@]}" --path "$d/invalid-$invalid_mode" >"$d/invalid.out" 2>&1 || result=$?
+    [[ $result -eq 2 ]] || { echo "expected orphan $invalid_mode refusal with exit 2, got $result" >&2; exit 1; }
+    [[ ! -e "$d/invalid-$invalid_mode" ]]
+done
 echo 'reset branch safety passed'
