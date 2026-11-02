@@ -9,7 +9,14 @@ public func updateStatus(listing: Listing, installed: InstalledVersion?) -> Upda
     if listing.kind == .cask && listing.version == "latest" { return .unversioned }
     let comparison: ComparisonResult
     if listing.kind == .formula {
-        comparison = FormulaVersion(keg: installed.version).compare(FormulaVersion(version: listing.version, revision: listing.revision))
+        let keg = FormulaVersion(keg: installed.version)
+        let latest = FormulaVersion(version: listing.version, revision: listing.revision)
+        let kegScheme = installed.versionScheme ?? 0, latestScheme = listing.versionScheme ?? 0
+        if latestScheme < kegScheme { return .ahead }
+        if latestScheme > kegScheme {
+            return latest.compare(keg) == .orderedSame ? .upToDate : .updateAvailable(installed: installed.version)
+        }
+        comparison = keg.compare(latest)
     } else {
         let available = installed.source == .appBundle ? String(listing.version.prefix { $0 != "," }) : listing.version
         comparison = VersionOrder.compare(installed.version, available)

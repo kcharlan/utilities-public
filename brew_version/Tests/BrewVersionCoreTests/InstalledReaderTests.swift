@@ -12,10 +12,12 @@ final class InstallationFixture {
         try fm.createDirectory(at: url, withIntermediateDirectories: true)
         return url
     }
-    @discardableResult func install(_ path: String, kind: PackageKind, tap: String? = nil) throws -> URL {
+    @discardableResult func install(_ path: String, kind: PackageKind, tap: String? = nil, versionScheme: Int? = nil) throws -> URL {
         let url = try directory(path)
         let receiptDirectory = kind == .formula ? url : try directory((path as NSString).deletingLastPathComponent + "/.metadata")
-        let receipt = ["source": ["tap": tap ?? (kind == .formula ? "homebrew/core" : "homebrew/cask")]]
+        var source: [String: Any] = ["tap": tap ?? (kind == .formula ? "homebrew/core" : "homebrew/cask")]
+        if let versionScheme { source["versions"] = ["version_scheme": versionScheme] }
+        let receipt = ["source": source]
         try JSONSerialization.data(withJSONObject: receipt).write(to: receiptDirectory.appendingPathComponent("INSTALL_RECEIPT.json"))
         return url
     }
@@ -34,6 +36,18 @@ struct InstalledReaderTests {
     let formula = PackageName("synthetic-formula")!
     let cask = PackageName("synthetic-cask")!
     var selfUpdating: Listing { .init(name: cask, kind: .cask, version: "2.0.0", autoUpdates: true, appNames: ["Synthetic.app"]) }
+
+    @Test func formulaReceiptVersionScheme() throws {
+        for scheme: Int? in [1, nil] {
+            let f = try InstallationFixture()
+            try f.install("prefix/Cellar/synthetic-formula/1.0", kind: .formula, versionScheme: scheme)
+            let reader = f.reader()
+            let installed = try #require(reader.installed(formula, kind: .formula, listing: nil))
+            let snapshot = try #require(reader.snapshot(listings: []).installed(formula, kind: .formula))
+            #expect(installed.versionScheme == scheme)
+            #expect(snapshot.versionScheme == scheme)
+        }
+    }
 
     @Test func provenance() throws {
         for kind in [PackageKind.formula, .cask] {

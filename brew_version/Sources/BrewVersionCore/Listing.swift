@@ -5,18 +5,20 @@ public struct Listing: Codable, Equatable, Sendable {
     public let kind: PackageKind
     public let version: String
     public let revision: Int
+    public let versionScheme: Int?
     public let autoUpdates: Bool
     public let summary: String?
     public let homepage: URL?
     public let appNames: [String]
 
-    public init(name: PackageName, kind: PackageKind, version: String, revision: Int = 0,
+    public init(name: PackageName, kind: PackageKind, version: String, revision: Int = 0, versionScheme: Int? = nil,
                 autoUpdates: Bool = false, summary: String? = nil, homepage: URL? = nil,
                 appNames: [String] = []) {
         self.name = name
         self.kind = kind
         self.version = version
         self.revision = revision
+        self.versionScheme = versionScheme
         self.autoUpdates = autoUpdates
         self.summary = summary
         self.homepage = homepage
@@ -69,9 +71,10 @@ private struct ListingList: Decodable {
 private struct ListingFields: Decodable {
     let name: String?, token: String?, version: String?, stable: String?
     let revision: Int, autoUpdates: Bool
+    let versionScheme: Int?
     let summary: String?, homepage: String?
     let appNames: [String]
-    enum Keys: String, CodingKey { case name, token, version, versions, stable, revision, auto_updates, desc, homepage, artifacts }
+    enum Keys: String, CodingKey { case name, token, version, versions, stable, revision, version_scheme, auto_updates, desc, homepage, artifacts }
     init(from decoder: any Decoder) throws {
         let c = try decoder.container(keyedBy: Keys.self)
         name = try? c.decode(String.self, forKey: .name)
@@ -79,6 +82,7 @@ private struct ListingFields: Decodable {
         version = try? c.decode(String.self, forKey: .version)
         stable = (try? c.nestedContainer(keyedBy: Keys.self, forKey: .versions)).flatMap { try? $0.decode(String.self, forKey: .stable) }
         revision = (try? c.decode(Int.self, forKey: .revision)) ?? 0
+        versionScheme = try? c.decode(Int.self, forKey: .version_scheme)
         autoUpdates = (try? c.decode(Bool.self, forKey: .auto_updates)) ?? false
         summary = try? c.decode(String.self, forKey: .desc)
         homepage = try? c.decode(String.self, forKey: .homepage)
@@ -96,7 +100,7 @@ private struct ListingFields: Decodable {
               let version = kind == .formula ? stable : version,
               !version.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
               kind == .cask || revision >= 0 else { return nil }
-        return Listing(name: name, kind: kind, version: version, revision: revision,
+        return Listing(name: name, kind: kind, version: version, revision: revision, versionScheme: kind == .formula ? versionScheme : nil,
                        autoUpdates: autoUpdates, summary: summary, homepage: homepage.flatMap(URL.init(string:)),
                        appNames: kind == .cask ? appNames : [])
     }

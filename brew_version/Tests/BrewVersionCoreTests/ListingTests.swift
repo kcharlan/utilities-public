@@ -5,6 +5,15 @@ import Testing
 struct ListingTests {
     let name = PackageName("synthetic-formula")!
 
+    @Test func formulaVersionScheme() throws {
+        let withScheme = try Listing.decode(Data(#"{"versions":{"stable":"1"},"version_scheme":1}"#.utf8), kind: .formula, name: name)
+        let absent = try Listing.decode(Data(#"{"versions":{"stable":"1"}}"#.utf8), kind: .formula, name: name)
+        let cask = try Listing.decode(Data(#"{"version":"1","version_scheme":1}"#.utf8), kind: .cask, name: name)
+        #expect(withScheme.versionScheme == 1)
+        #expect(absent.versionScheme == nil)
+        #expect(cask.versionScheme == nil)
+    }
+
     @Test func formulaFields() throws {
         let listing = try Listing.decode(Data(#"{"name":"synthetic-formula","versions":{"stable":"1.2.3"},"revision":2,"desc":"Synthetic","homepage":"https://example.invalid/"}"#.utf8), kind: .formula, name: name)
         #expect(listing.name == name)

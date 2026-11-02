@@ -1,8 +1,33 @@
+import Foundation
 import Testing
 @testable import BrewVersionCore
 
 struct UpdateStatusTests {
     let name = PackageName("synthetic-package")!
+    @Test func formulaVersionSchemeFollowsHomebrewOutdated() throws {
+        let cases: [(String, Int?, String, Int?, Int, UpdateStatus)] = [
+            ("2023.1", 0, "1.0", 1, 0, .updateAvailable(installed: "2023.1")),
+            ("1.0", 0, "1.0", 1, 0, .upToDate),
+            ("1.0_1", 1, "1.0", 1, 2, .updateAvailable(installed: "1.0_1")),
+            ("1.1", 1, "1.0", 0, 0, .ahead),
+            ("1.0", nil, "2.0", nil, 0, .updateAvailable(installed: "1.0"))
+        ]
+        for (keg, kegScheme, version, scheme, revision, expected) in cases {
+            var listing = Listing(name: name, kind: .formula, version: version, revision: revision)
+            var installed = InstalledVersion(version: keg, source: .cellar)
+            if let scheme {
+                var object = try #require(JSONSerialization.jsonObject(with: JSONEncoder().encode(listing)) as? [String: Any])
+                object["versionScheme"] = scheme
+                listing = try JSONDecoder().decode(Listing.self, from: JSONSerialization.data(withJSONObject: object))
+            }
+            if let kegScheme {
+                var object = try #require(JSONSerialization.jsonObject(with: JSONEncoder().encode(installed)) as? [String: Any])
+                object["versionScheme"] = kegScheme
+                installed = try JSONDecoder().decode(InstalledVersion.self, from: JSONSerialization.data(withJSONObject: object))
+            }
+            #expect(updateStatus(listing: listing, installed: installed) == expected, "\(keg) scheme \(String(describing: kegScheme)) vs \(version) scheme \(String(describing: scheme))")
+        }
+    }
     @Test func formulaRevisionFollowsUpstreamVersion() {
         let cases: [(String, String, Int, UpdateStatus)] = [
             ("1.0_1", "1.0.1", 0, .updateAvailable(installed: "1.0_1")),

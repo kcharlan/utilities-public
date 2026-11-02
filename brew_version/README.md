@@ -271,7 +271,9 @@ itself. Settings **Include self-updating apps** (off by default, like
 A self-updating cask whose app version can be read still appears when behind.
 
 Formula versions compare the upstream version first and the numeric keg revision
-second, matching Homebrew's package version semantics. Legacy Caskroom version
+second, matching Homebrew's package version semantics. A higher Homebrew
+`version_scheme` marks any different installed version outdated; a lower
+scheme never does. Legacy Caskroom version
 folders without an install receipt count as installed. An existing unreadable,
 malformed or untapped-source receipt still excludes the cask, and version
 folder symlinks are excluded. Formula kegs require a core or currently tapped

@@ -13,7 +13,8 @@ public enum InstalledSource: String, Codable, Sendable { case cellar, caskroom, 
 public struct InstalledVersion: Equatable, Codable, Sendable {
     public var version: String
     public var source: InstalledSource
-    public init(version: String, source: InstalledSource) { self.version = version; self.source = source }
+    public var versionScheme: Int?
+    public init(version: String, source: InstalledSource, versionScheme: Int? = nil) { self.version = version; self.source = source; self.versionScheme = versionScheme }
 }
 
 public struct InstalledSnapshot: Sendable {
@@ -47,13 +48,13 @@ public struct InstalledReader: InstalledReading {
         for prefix in prefixes {
             guard let installation = admittedVersion(name, kind: kind, prefix: prefix, taps: taps),
                   installation.name == name else { continue }
-            return resolvedVersion(installation.version, kind: kind, listing: listing)
+            return resolvedVersion(installation.version, versionScheme: installation.versionScheme, kind: kind, listing: listing)
         }
         return nil
     }
 
-    private func resolvedVersion(_ version: String, kind: PackageKind, listing: Listing?) -> InstalledVersion {
-        if kind == .formula { return .init(version: version, source: .cellar) }
+    private func resolvedVersion(_ version: String, versionScheme: Int?, kind: PackageKind, listing: Listing?) -> InstalledVersion {
+        if kind == .formula { return .init(version: version, source: .cellar, versionScheme: versionScheme) }
         if let listing, listing.autoUpdates {
             for directory in applicationDirectories {
                 for app in listing.appNames where app == (app as NSString).lastPathComponent && app.hasSuffix(".app") {
@@ -89,7 +90,7 @@ public struct InstalledReader: InstalledReading {
                           let installation = admittedVersion(shortName, kind: kind, prefix: prefix, taps: taps),
                           result.versions[kind]?[installation.name] == nil else { continue }
                     let name = installation.name
-                    result.versions[kind, default: [:]][name] = resolvedVersion(installation.version, kind: kind, listing: byKind[kind]?[name])
+                    result.versions[kind, default: [:]][name] = resolvedVersion(installation.version, versionScheme: installation.versionScheme, kind: kind, listing: byKind[kind]?[name])
                 }
             }
         }
@@ -105,7 +106,7 @@ public struct InstalledReader: InstalledReading {
     // typed/directory prefix aliases cannot establish receipt provenance.
     // Formulas always require a receipt. Both read paths use the receipt's
     // admitted identity, so a tap rack can never satisfy an official watch.
-    private func admittedVersion(_ name: PackageName, kind: PackageKind, prefix: HomebrewPrefix, taps: Set<TapName>) -> (name: PackageName, version: String)? {
+    private func admittedVersion(_ name: PackageName, kind: PackageKind, prefix: HomebrewPrefix, taps: Set<TapName>) -> (name: PackageName, version: String, versionScheme: Int?)? {
         let shortName = name.shortName
         let rack = prefix.root.appendingPathComponent(kind == .formula ? "Cellar" : "Caskroom").appendingPathComponent(shortName)
         guard isDirectory(rack) else { return nil }
@@ -127,7 +128,7 @@ public struct InstalledReader: InstalledReading {
         catch {
             if kind == .cask, (error as? CocoaError)?.code == .fileReadNoSuchFile,
                !isSymbolicLink(receipt), let officialName = PackageName(shortName) {
-                return (officialName, selected.lastPathComponent)
+                return (officialName, selected.lastPathComponent, nil)
             }
             return nil
         }
@@ -146,7 +147,7 @@ public struct InstalledReader: InstalledReading {
             admittedName = PackageName(tap: tap, shortName: shortName)
         }
         guard let admittedName else { return nil }
-        return (admittedName, selected.lastPathComponent)
+        return (admittedName, selected.lastPathComponent, (source["versions"] as? [String: Any])?["version_scheme"] as? Int)
     }
     private func highest(_ versions: [URL], kind: PackageKind) -> URL? {
         // Stable filename order makes equal or asymmetric upstream comparisons deterministic.

@@ -2022,3 +2022,12 @@ clock correction. Treat it as absent when computing the next check or catalog
 refresh; otherwise an automatic check or manual refresh can stall until the
 clock catches up. Exercise the actual controller requests and displayed deadline
 with an injected clock as well as the scheduling helper.
+
+## 2026-11-02: Compare Homebrew formula version schemes before versions
+
+Homebrew can reset a formula's version numbering by increasing its
+`version_scheme`. Comparing version strings alone then reports an old keg as
+ahead. Retain the optional scheme from both the listing and the selected keg's
+receipt, default missing values to zero, and compare schemes before package
+versions. A higher listing scheme marks differing versions outdated; equal
+versions remain current. Preserve optional decoding for existing saved data.
