@@ -1,3 +1,6 @@
+import csv
+import io
+import json
 import sqlite3
 import socket
 import sys
@@ -33,6 +36,36 @@ def rows(client):
     _, path = client
     with closing(sqlite3.connect(path)) as db:
         return db.execute('SELECT id, label FROM items ORDER BY id').fetchall()
+
+
+@pytest.fixture
+def export_client(client):
+    http, path = client
+    with closing(sqlite3.connect(path)) as db, db:
+        db.execute('CREATE TABLE kinds (id INTEGER PRIMARY KEY, big INTEGER, raw BLOB, note TEXT)')
+        db.execute('INSERT INTO kinds VALUES (?, ?, ?, ?)', (1, 9007199254740993, b'\x00\xff', '漢字'))
+        db.execute('INSERT INTO kinds VALUES (2, NULL, NULL, NULL)')
+    return http
+
+
+def test_json_export_uses_documented_encodings(export_client):
+    response = export_client.get('/api/export/kinds/json')
+    assert response.status_code == 200
+    assert response.headers['content-disposition'] == 'attachment; filename=kinds.json'
+    assert json.loads(response.content) == [
+        {'id': 1, 'big': '9007199254740993', 'raw': {'$blob': '00ff'}, 'note': '漢字'},
+        {'id': 2, 'big': None, 'raw': None, 'note': None},
+    ]
+
+
+def test_csv_export_writes_blobs_as_blob_objects(export_client):
+    response = export_client.get('/api/export/kinds/csv')
+    assert response.status_code == 200
+    exported = list(csv.DictReader(io.StringIO(response.text)))
+    assert exported == [
+        {'id': '1', 'big': '9007199254740993', 'raw': '{"$blob": "00ff"}', 'note': '漢字'},
+        {'id': '2', 'big': '', 'raw': '', 'note': ''},
+    ]
 
 
 def test_import_rejects_non_utf8_csv(client):
