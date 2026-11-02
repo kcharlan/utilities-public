@@ -1,5 +1,9 @@
 # Lessons learned
 
+- Validator output must satisfy the runtime's score contract on both successful
+  evaluation and import failure. Exercise the example through a complete synthetic
+  bench run as well as checking each score path. Regression: `tests/test_cron_eval_example.py`.
+
 - A subprocess group leader can exit on SIGTERM while a descendant ignores it.
   Reap the leader and also terminate surviving members of its owned group on
   timeout or interruption. Regression: `tests/test_process_cleanup.py`.
