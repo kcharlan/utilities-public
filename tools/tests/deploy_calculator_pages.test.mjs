@@ -62,33 +62,22 @@ test('backup retention admits custom names and supported system aliases', t => {
   }
 });
 
-test('backup retention warns and preserves payloads on injected stat and removal errors', t => {
-  const {root, add} = retentionFixture(t); const old = add('copy-old');
-  const warnings = []; const warn = console.warn; console.warn = msg => warnings.push(msg);
-  const stat = fs.lstatSync, rm = fs.rmSync;
-  try {
-    fs.lstatSync = file => { if (file === old) throw new Error('invented stat error'); return stat(file); };
-    assert.deepEqual(pruneBackups(root, {keep: 0}), []); fs.lstatSync = stat;
-    fs.rmSync = file => { if (file === old) throw new Error('invented removal error'); return rm(file); };
-    assert.deepEqual(pruneBackups(root, {keep: 0}), []);
-  } finally { fs.lstatSync = stat; fs.rmSync = rm; console.warn = warn; }
-  assert.equal(fs.readFileSync(path.join(old, 'payload'), 'utf8'), 'copy-old'); assert.equal(warnings.length, 2);
-});
-
-test('backup retention reports the affected nested path on chmod and enumeration errors', t => {
+test('backup retention warns, preserves payloads and names the path on injected filesystem errors', t => {
   const {root, add} = retentionFixture(t); const old = add('copy-old');
   const nested = path.join(old, 'nested'); fs.mkdirSync(nested);
   fs.writeFileSync(path.join(nested, 'payload'), 'invented protected contents');
-  const warnings = []; const warn = console.warn; console.warn = msg => warnings.push(msg);
-  const chmod = fs.chmodSync, read = fs.readdirSync;
-  try {
-    fs.chmodSync = (file, mode) => { if (file === nested) throw new Error('invented chmod error'); return chmod(file, mode); };
-    assert.deepEqual(pruneBackups(root, {keep: 0}), []); fs.chmodSync = chmod;
-    fs.readdirSync = file => { if (file === nested) throw new Error('invented enumeration error'); return read(file); };
-    assert.deepEqual(pruneBackups(root, {keep: 0}), []);
-  } finally { fs.chmodSync = chmod; fs.readdirSync = read; console.warn = warn; }
-  assert.equal(fs.readFileSync(path.join(nested, 'payload'), 'utf8'), 'invented protected contents');
-  assert.equal(warnings.length, 2); for (const warning of warnings) assert.ok(warning.includes(nested));
+  for (const [method, target] of [['lstatSync', old], ['rmSync', old], ['chmodSync', nested], ['readdirSync', nested]]) {
+    const warnings = []; const warn = console.warn; const original = fs[method];
+    console.warn = msg => warnings.push(msg);
+    try {
+      fs[method] = (file, ...args) => { if (file === target) throw new Error('invented filesystem error'); return original(file, ...args); };
+      assert.deepEqual(pruneBackups(root, {keep: 0}), [], method);
+    } finally { fs[method] = original; console.warn = warn; }
+    assert.equal(fs.readFileSync(path.join(old, 'payload'), 'utf8'), 'copy-old', method);
+    assert.equal(fs.readFileSync(path.join(nested, 'payload'), 'utf8'), 'invented protected contents', method);
+    assert.equal(warnings.length, 1, method);
+    assert.ok(warnings[0].includes(target), method);
+  }
 });
 
 // Each single-page calculator installer shares one lifecycle; run it against every page.
