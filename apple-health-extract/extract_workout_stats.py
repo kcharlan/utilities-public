@@ -9,7 +9,7 @@
 import xml.etree.ElementTree as ET
 import pandas as pd
 from tqdm import tqdm
-from record_utils import deduplicate_sources
+from record_utils import deduplicate_sources, distance_km
 
 XML_PATH = "export.xml"
 
@@ -45,6 +45,8 @@ for event, elem in tqdm(ET.iterparse(XML_PATH, events=("start",)), total=5_000_0
     ]:
         start = pd.to_datetime(elem.attrib.get("startDate"), utc=True)
         value = float(elem.attrib.get("value", "0"))
+        if elem.attrib.get("type") == DISTANCE_TYPE:
+            value = distance_km(value, elem.attrib.get("unit"))
         records.append({
             "type": elem.attrib.get("type"),
             "start": start,
@@ -109,7 +111,7 @@ for idx, workout in tqdm(workouts_df.iterrows(), total=workouts_df.shape[0]):
         "hr_min": hr["value"].min() if not hr.empty else None,
         "hr_max": hr["value"].max() if not hr.empty else None,
         "steps_total": steps["value"].sum() if not steps.empty else None,
-        "distance_km": dist["value"].sum() / 1000 if not dist.empty else None,
+        "distance_km": dist["value"].sum() if not dist.empty else None,
         "calories_kcal": cal["value"].sum() if not cal.empty else None,
     })
 

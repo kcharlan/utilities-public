@@ -20,7 +20,7 @@ test('verified test reader pins a bundle and returns fresh payload, pair and row
   assert.deepEqual((await reader.getDataset()).files.get('market-data.js'),f.pair.js);
 });
 
-test('missing, corrupt and stale test data fails actionably without setup or writes', async t => {
+test('missing or corrupt test data fails actionably; a stale recipe is accepted unless required', async t => {
   const { createDatasetReader } = require('./helpers/dataset.cjs');
   const f = await staticFixture(t);
   const options = {dataRoot:f.dataRoot,sourceRoot:f.sourceRoot};
@@ -32,7 +32,13 @@ test('missing, corrupt and stale test data fails actionably without setup or wri
   assert.deepEqual(await fs.readdir(f.base),before);
   await fs.writeFile(path.join(f.dataRoot,'market-data.js'),f.pair.js);
   await fs.appendFile(path.join(f.sourceRoot,'engine.js'),'\n// invented stale recipe\n');
-  await assert.rejects(createDatasetReader(options).getDataset(),/stale.*npm run setup:data/);
+  const writes = t.mock.method(process.stderr, 'write', () => true);
+  assert.equal((await createDatasetReader(options).getDataset()).bundleId, f.provenance.bundleId);
+  assert.equal((await createDatasetReader(options).getDataset()).bundleId, f.provenance.bundleId);
+  assert.deepEqual(writes.mock.calls.map(call => call.arguments[0]), [
+    'Market Atlas test data predates the current recipe; tests check the edited code against the selected history. The owner refreshes the selection with npm run setup:data.\n',
+  ]);
+  await assert.rejects(createDatasetReader({...options,requireCurrentRecipe:true}).getDataset(),/stale.*npm run setup:data/);
 });
 
 test('one-process selection cache cannot be changed by later selector edits', async t => {

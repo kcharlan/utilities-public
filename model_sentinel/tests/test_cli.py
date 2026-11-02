@@ -47,6 +47,31 @@ from model_sentinel.time_utils import to_local_human
 from tests.browse_fixtures import build_fixture_db
 
 
+def test_retention_removes_only_old_model_sentinel_reports(tmp_path: Path) -> None:
+    report_dir = tmp_path / "reports"
+    report_dir.mkdir()
+    old_names = (
+        "scan_synthetic.txt", "scan_synthetic.html", "scan_synthetic_full.html",
+        "changes_synthetic.txt", "changes_synthetic.html", "error_synthetic.txt",
+        "notes.md", "export.json",
+    )
+    old_time = (datetime.now() - timedelta(days=40)).timestamp()
+    for name in old_names:
+        path = report_dir / name
+        path.write_text("synthetic")
+        os.utime(path, (old_time, old_time))
+    (report_dir / "scan_recent.txt").write_text("synthetic")
+    directory = report_dir / "scan_dir"
+    directory.mkdir()
+    os.utime(directory, (old_time, old_time))
+
+    cli._cleanup_old_reports(report_dir, 30, logging.getLogger("synthetic-retention"))
+
+    assert {path.name for path in report_dir.iterdir()} == {
+        "notes.md", "export.json", "scan_recent.txt", "scan_dir"
+    }
+
+
 def _synthetic_normalized_model(*, prompt: str, overrides=None) -> NormalizedModel:
     metadata = {
         "id": "synthetic/model",

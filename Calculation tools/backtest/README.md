@@ -135,6 +135,10 @@ PYTHONDONTWRITEBYTECODE=1 "<READY_COMPILER_VENV>/bin/python" -B -m unittest disc
 on the flat build as a file and at an isolated loopback explicit-index route.
 Expected response bytes come from source and selected history independently.
 Missing history/Chromium fails; history is never replaced by invented data.
+Tests accept a verified selection from an older recipe and report it once per
+process, so edited code can be checked against selected history. Normal builds
+and deployment still require the current recipe; the owner refreshes the
+selection with `npm run setup:data` when an intended change requires it.
 The synthetic subset is offline invented coverage, not historical acceptance.
 See the [test guide](tests/README.md) for prerequisites and installed acceptance.
 

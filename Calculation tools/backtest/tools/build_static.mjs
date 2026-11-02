@@ -22,10 +22,10 @@ export const defaultDataHome = () => path.resolve(
 );
 
 export async function readRuntime({
-  sourceRoot = DEFAULT_SOURCE, dataRoot, dataHome = defaultDataHome(),
+  sourceRoot = DEFAULT_SOURCE, dataRoot, dataHome = defaultDataHome(), requireCurrentRecipe = true,
 } = {}) {
   const bundle = await verifyBundle({
-    sourceRoot, repoRoot: REPO_ROOT, dataRoot, dataHome, requireCurrentRecipe: true,
+    sourceRoot, repoRoot: REPO_ROOT, dataRoot, dataHome, requireCurrentRecipe,
   });
   const files = new Map();
   for (const name of RUNTIME_FILES) {
@@ -68,14 +68,14 @@ export async function copyRuntime(files, directory, { copyFile, sourceDir } = {}
 
 export async function buildStatic({
   sourceRoot = DEFAULT_SOURCE, dataRoot, dataHome = defaultDataHome(),
-  outputDir = path.join(dataHome, 'site'), hooks = {},
+  outputDir = path.join(dataHome, 'site'), hooks = {}, requireCurrentRecipe = true,
 } = {}) {
   sourceRoot = path.resolve(sourceRoot);
   outputDir = path.resolve(outputDir);
   await safeRoot(outputDir, {
     sourceRoot, repoRoot: REPO_ROOT, webroots: dataRoot ? [dataRoot] : [],
   });
-  const files = await readRuntime({ sourceRoot, dataRoot, dataHome });
+  const files = await readRuntime({ sourceRoot, dataRoot, dataHome, requireCurrentRecipe });
   let exists = false;
   try {
     await validateFlat(outputDir);

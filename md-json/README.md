@@ -92,7 +92,7 @@ The root prefix and account-type map are constants inside
 
 ## Validation
 
-For the synthetic split regression, create a project environment if absent with
+For the synthetic regressions, create a project environment if absent with
 `/opt/homebrew/bin/python3 -m venv .venv`, then run
-`bash tests/test_split_failure.sh`. Set `PYTHON` to another interpreter from
-this project's environment if needed.
+`bash tests/test_split_failure.sh` and `bash tests/test_golden_csv.sh`. Set
+`PYTHON` to another interpreter from this project's environment if needed.
