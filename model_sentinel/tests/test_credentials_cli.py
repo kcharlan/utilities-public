@@ -156,8 +156,11 @@ def test_retention_preserves_cache_after_report_directory_change(tmp_path, monke
     cache.chmod(0o600)
     expired = home / "expired.md"
     expired.write_text("synthetic expired report")
+    expired_report = home / "scan_synthetic_expired.txt"
+    expired_report.write_text("synthetic expired report")
     os.utime(cache, (1, 1))
     os.utime(expired, (1, 1))
+    os.utime(expired_report, (1, 1))
     before = cache.read_bytes(), cache.stat().st_mtime_ns
     settings = home / "settings.env"
     settings.write_text(settings.read_text() + f"\nMODEL_SENTINEL_CREDENTIAL_FILE={cache}\nMODEL_SENTINEL_REPORT_DIR={home}\n")
@@ -168,8 +171,9 @@ def test_retention_preserves_cache_after_report_directory_change(tmp_path, monke
     assert cli.main(["scan", "--save", "--no-notify"]) == (2 if source == "file" else 0)
     assert (cache.read_bytes(), cache.stat().st_mtime_ns) == before
     assert bool(calls) == (source == "environment")
+    assert expired.exists()
     if source == "environment":
-        assert not expired.exists()
+        assert not expired_report.exists()
 
 
 @pytest.mark.parametrize("source", ["environment", "file"])
