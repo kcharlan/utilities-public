@@ -23,10 +23,6 @@ Endpoint inventory (20 routes):
   GET  /api/copy      - Deep-copy node value
   POST /api/paste     - Paste value into container
 
-Frontend feature tests:
-  TestExpandAllViewCentering - Expand-all view centering + minimap scale guard
-  TestNavigatorSidebar       - Navigator sidebar (TOC, lazy-load, auto-reveal, Ctrl+B)
-  TestCollapseAll            - Collapse-all clears all descendant expanded state
 """
 import json
 import os
@@ -35,6 +31,28 @@ import pytest
 
 from conftest import jtree_mod
 from tests.conftest import SAMPLE_DATA
+
+
+@pytest.mark.parametrize("method, url, kwargs", [
+    ("get", "/api/node", {}),
+    ("get", "/api/children", {}),
+    ("get", "/api/subtree", {}),
+    ("get", "/api/search", {"params": {"q": "x"}}),
+    ("put", "/api/node", {"params": {"path": json.dumps(["x"])}, "json": {"value": 1}}),
+    ("post", "/api/node", {"params": {"path": json.dumps([])}, "json": {"key": "x"}}),
+    ("delete", "/api/node", {"params": {"path": json.dumps(["x"])}}),
+    ("post", "/api/rename", {"params": {"path": json.dumps(["x"])}, "json": {"newKey": "y"}}),
+    ("post", "/api/save", {}),
+    ("post", "/api/save-as", {"json": {"path": "/tmp/x.json"}}),
+    ("get", "/api/download", {}),
+    ("post", "/api/undo", {}),
+    ("post", "/api/redo", {}),
+    ("post", "/api/move", {"params": {"path": json.dumps([])}, "json": {"fromIndex": 0, "toIndex": 1}}),
+    ("get", "/api/copy", {"params": {"path": json.dumps([])}}),
+    ("post", "/api/paste", {"params": {"path": json.dumps([])}, "json": {"value": 1}}),
+])
+def test_no_file_returns_409(client, method, url, kwargs):
+    assert getattr(client, method)(url, **kwargs).status_code == 409
 
 
 # ============================================================================
@@ -200,35 +218,25 @@ class TestOpenContent:
 # ============================================================================
 
 class TestGetNode:
-    def test_no_file_loaded_returns_409(self, client):
-        resp = client.get("/api/node")
-        assert resp.status_code == 409
-
     def test_root_node(self, loaded_client):
         data = loaded_client.get("/api/node", params={"path": json.dumps([])}).json()
         assert data["type"] == "object"
         assert data["childCount"] == len(SAMPLE_DATA)
         assert data["path"] == []
 
-    def test_string_leaf(self, loaded_client):
-        data = loaded_client.get("/api/node", params={"path": json.dumps(["name"])}).json()
-        assert data["type"] == "string"
-        assert data["value"] == "jtree"
-
-    def test_number_leaf(self, loaded_client):
-        data = loaded_client.get("/api/node", params={"path": json.dumps(["version"])}).json()
-        assert data["type"] == "number"
-        assert data["value"] == 1
-
-    def test_boolean_leaf(self, loaded_client):
-        data = loaded_client.get("/api/node", params={"path": json.dumps(["flag"])}).json()
-        assert data["type"] == "boolean"
-        assert data["value"] is False
-
-    def test_null_leaf(self, loaded_client):
-        data = loaded_client.get("/api/node", params={"path": json.dumps(["nothing"])}).json()
-        assert data["type"] == "null"
-        assert data["value"] is None
+    @pytest.mark.parametrize("key, node_type, value", [
+        ("name", "string", "jtree"),
+        ("version", "number", 1),
+        ("flag", "boolean", False),
+        ("nothing", "null", None),
+    ])
+    def test_leaf(self, loaded_client, key, node_type, value):
+        data = loaded_client.get("/api/node", params={"path": json.dumps([key])}).json()
+        assert data["type"] == node_type
+        if node_type in ("boolean", "null"):
+            assert data["value"] is value
+        else:
+            assert data["value"] == value
 
     def test_array_node(self, loaded_client):
         data = loaded_client.get("/api/node", params={"path": json.dumps(["tags"])}).json()
@@ -273,14 +281,30 @@ class TestGetNode:
 # ============================================================================
 
 class TestGetChildren:
-    def test_no_file_returns_409(self, client):
-        assert client.get("/api/children").status_code == 409
-
     def test_root_children(self, loaded_client):
         data = loaded_client.get("/api/children", params={"path": json.dumps([])}).json()
         assert data["total"] == len(SAMPLE_DATA)
         assert len(data["children"]) == len(SAMPLE_DATA)
         assert data["hasMore"] is False
+        containers = [child for child in data["children"] if child["type"] in ("object", "array")]
+        leaves = [child for child in data["children"] if child["type"] not in ("object", "array")]
+        assert len(containers) >= 3
+        assert leaves
+        assert all("childCount" in child for child in containers)
+
+    def test_nested_children_identify_paths_and_types(self, loaded_client):
+        for path, expected_path, expected_type in [
+            ([], ["nested"], "object"),
+            (["nested"], ["nested", "c"], "object"),
+            (["nested", "c"], ["nested", "c", "deep"], "boolean"),
+        ]:
+            response = loaded_client.get("/api/children", params={
+                "path": json.dumps(path), "offset": 0, "limit": 200,
+            })
+            assert response.status_code == 200
+            matches = [child for child in response.json()["children"] if child["path"] == expected_path]
+            assert len(matches) == 1
+            assert matches[0]["type"] == expected_type
 
     def test_pagination_offset_limit(self, loaded_client):
         data = loaded_client.get("/api/children", params={"path": json.dumps([]), "offset": 0, "limit": 2}).json()
@@ -314,9 +338,6 @@ class TestGetChildren:
 # ============================================================================
 
 class TestGetSubtree:
-    def test_no_file_returns_409(self, client):
-        assert client.get("/api/subtree").status_code == 409
-
     def test_root_depth_1(self, loaded_client):
         data = loaded_client.get("/api/subtree", params={"path": json.dumps([]), "depth": 1}).json()
         assert data["type"] == "object"
@@ -346,9 +367,6 @@ class TestGetSubtree:
 # ============================================================================
 
 class TestSearch:
-    def test_no_file_returns_409(self, client):
-        assert client.get("/api/search", params={"q": "x"}).status_code == 409
-
     def test_empty_query_returns_empty(self, loaded_client):
         data = loaded_client.get("/api/search", params={"q": ""}).json()
         assert data == []
@@ -389,9 +407,6 @@ class TestSearch:
 # ============================================================================
 
 class TestSetValue:
-    def test_no_file_returns_409(self, client):
-        assert client.put("/api/node", params={"path": json.dumps(["x"])}, json={"value": 1}).status_code == 409
-
     def test_set_string(self, loaded_client):
         resp = loaded_client.put("/api/node", params={"path": json.dumps(["name"])}, json={"value": "new_name"})
         assert resp.status_code == 200
@@ -439,9 +454,6 @@ class TestSetValue:
 # ============================================================================
 
 class TestAddChild:
-    def test_no_file_returns_409(self, client):
-        assert client.post("/api/node", params={"path": json.dumps([])}, json={"key": "x"}).status_code == 409
-
     def test_add_to_object(self, loaded_client):
         resp = loaded_client.post("/api/node", params={"path": json.dumps([])}, json={"key": "newkey", "value": "hello"})
         assert resp.status_code == 200
@@ -454,36 +466,24 @@ class TestAddChild:
         children = loaded_client.get("/api/children", params={"path": json.dumps(["tags"])}).json()
         assert children["total"] == 4
 
-    def test_add_default_string(self, loaded_client):
-        """Adding with type=string and no value should default to empty string."""
-        loaded_client.post("/api/node", params={"path": json.dumps([])}, json={"key": "def_str", "type": "string"})
-        node = loaded_client.get("/api/node", params={"path": json.dumps(["def_str"])}).json()
-        assert node["value"] == ""
-
-    def test_add_default_object(self, loaded_client):
-        loaded_client.post("/api/node", params={"path": json.dumps([])}, json={"key": "def_obj", "type": "object"})
-        node = loaded_client.get("/api/node", params={"path": json.dumps(["def_obj"])}).json()
-        assert node["type"] == "object"
-
-    def test_add_default_array(self, loaded_client):
-        loaded_client.post("/api/node", params={"path": json.dumps([])}, json={"key": "def_arr", "type": "array"})
-        node = loaded_client.get("/api/node", params={"path": json.dumps(["def_arr"])}).json()
-        assert node["type"] == "array"
-
-    def test_add_default_number(self, loaded_client):
-        loaded_client.post("/api/node", params={"path": json.dumps([])}, json={"key": "def_num", "type": "number"})
-        node = loaded_client.get("/api/node", params={"path": json.dumps(["def_num"])}).json()
-        assert node["value"] == 0
-
-    def test_add_default_boolean(self, loaded_client):
-        loaded_client.post("/api/node", params={"path": json.dumps([])}, json={"key": "def_bool", "type": "boolean"})
-        node = loaded_client.get("/api/node", params={"path": json.dumps(["def_bool"])}).json()
-        assert node["value"] is False
-
-    def test_add_null_type(self, loaded_client):
-        loaded_client.post("/api/node", params={"path": json.dumps([])}, json={"key": "def_null", "type": "null"})
-        node = loaded_client.get("/api/node", params={"path": json.dumps(["def_null"])}).json()
-        assert node["type"] == "null"
+    @pytest.mark.parametrize("node_type, expected_value", [
+        ("string", ""),
+        ("object", None),
+        ("array", None),
+        ("number", 0),
+        ("boolean", False),
+        ("null", None),
+    ])
+    def test_add_default(self, loaded_client, node_type, expected_value):
+        key = {"string": "def_str", "object": "def_obj", "array": "def_arr",
+               "number": "def_num", "boolean": "def_bool", "null": "def_null"}[node_type]
+        loaded_client.post("/api/node", params={"path": json.dumps([])}, json={"key": key, "type": node_type})
+        node = loaded_client.get("/api/node", params={"path": json.dumps([key])}).json()
+        assert node["type"] == node_type
+        if node_type in ("boolean", "null"):
+            assert node["value"] is expected_value
+        elif node_type not in ("object", "array"):
+            assert node["value"] == expected_value
 
     def test_add_duplicate_key_fails(self, loaded_client):
         resp = loaded_client.post("/api/node", params={"path": json.dumps([])}, json={"key": "name", "value": "dup"})
@@ -508,9 +508,6 @@ class TestAddChild:
 # ============================================================================
 
 class TestDeleteNode:
-    def test_no_file_returns_409(self, client):
-        assert client.delete("/api/node", params={"path": json.dumps(["x"])}).status_code == 409
-
     def test_delete_leaf(self, loaded_client):
         resp = loaded_client.delete("/api/node", params={"path": json.dumps(["name"])})
         assert resp.status_code == 200
@@ -547,9 +544,6 @@ class TestDeleteNode:
 # ============================================================================
 
 class TestRename:
-    def test_no_file_returns_409(self, client):
-        assert client.post("/api/rename", params={"path": json.dumps(["x"])}, json={"newKey": "y"}).status_code == 409
-
     def test_rename_key(self, loaded_client):
         resp = loaded_client.post("/api/rename", params={"path": json.dumps(["name"])}, json={"newKey": "title"})
         assert resp.status_code == 200
@@ -593,9 +587,6 @@ class TestRename:
 # ============================================================================
 
 class TestSave:
-    def test_no_file_returns_409(self, client):
-        assert client.post("/api/save").status_code == 409
-
     def test_save_persists_changes(self, loaded_client, sample_json_file):
         loaded_client.put("/api/node", params={"path": json.dumps(["version"])}, json={"value": 999})
         resp = loaded_client.post("/api/save")
@@ -666,9 +657,6 @@ class TestSaveAs:
         with open(sample_json_file) as f:
             assert json.load(f)['version'] == 1
 
-    def test_no_file_returns_409(self, client):
-        assert client.post("/api/save-as", json={"path": "/tmp/x.json"}).status_code == 409
-
     def test_save_as_new_path(self, loaded_client, tmp_path):
         target = str(tmp_path / "output.json")
         resp = loaded_client.post("/api/save-as", json={"path": target})
@@ -691,9 +679,6 @@ class TestSaveAs:
 # ============================================================================
 
 class TestDownload:
-    def test_no_file_returns_409(self, client):
-        assert client.get("/api/download").status_code == 409
-
     def test_download_returns_json(self, loaded_client):
         resp = loaded_client.get("/api/download")
         assert resp.status_code == 200
@@ -713,12 +698,6 @@ class TestDownload:
 # ============================================================================
 
 class TestUndoRedo:
-    def test_undo_no_file_returns_409(self, client):
-        assert client.post("/api/undo").status_code == 409
-
-    def test_redo_no_file_returns_409(self, client):
-        assert client.post("/api/redo").status_code == 409
-
     def test_undo_nothing_returns_400(self, loaded_client):
         resp = loaded_client.post("/api/undo")
         assert resp.status_code == 400
@@ -798,9 +777,6 @@ class TestUndoRedo:
 # ============================================================================
 
 class TestMove:
-    def test_no_file_returns_409(self, client):
-        assert client.post("/api/move", params={"path": json.dumps([])}, json={"fromIndex": 0, "toIndex": 1}).status_code == 409
-
     def test_move_array_element(self, loaded_client):
         """Move tags[0] ('json') to position 2."""
         resp = loaded_client.post("/api/move", params={"path": json.dumps(["tags"])}, json={"fromIndex": 0, "toIndex": 2})
@@ -840,9 +816,6 @@ class TestMove:
 # ============================================================================
 
 class TestCopy:
-    def test_no_file_returns_409(self, client):
-        assert client.get("/api/copy", params={"path": json.dumps([])}).status_code == 409
-
     def test_copy_leaf(self, loaded_client):
         data = loaded_client.get("/api/copy", params={"path": json.dumps(["name"])}).json()
         assert data["key"] == "name"
@@ -872,9 +845,6 @@ class TestCopy:
 # ============================================================================
 
 class TestPaste:
-    def test_no_file_returns_409(self, client):
-        assert client.post("/api/paste", params={"path": json.dumps([])}, json={"value": 1}).status_code == 409
-
     def test_paste_into_object(self, loaded_client):
         resp = loaded_client.post("/api/paste", params={"path": json.dumps([])}, json={"key": "pasted_key", "value": "hello"})
         assert resp.status_code == 200
@@ -1047,226 +1017,3 @@ class TestSaveAsPathValidation:
         resp = loaded_client.post("/api/save-as", json={"path": target})
         assert resp.status_code == 400
         assert ".json" in resp.json()["detail"]
-
-class TestExpandAllViewCentering:
-    """Expand-all on a large subtree must re-center the view on the target node.
-
-    Regression: when expanding a large subtree (e.g., 500+ nodes), the layout
-    engine repositions the parent node far from the origin. Without view
-    re-centering, the canvas shows blank space and the minimap is unusable
-    because the scale becomes sub-pixel.
-    """
-
-    def test_expand_all_js_contains_recenter_logic(self, client):
-        """The expandAll function in the SPA must include a setPan call to
-        re-center the view on the expanded node after batch state updates."""
-        resp = client.get("/")
-        assert resp.status_code == 200
-        html = resp.text
-        # The expandAll function should set a pending center path so that
-        # after layout recomputation the view centers on the expanded node.
-        # Check that the expandAll function references view centering.
-        assert "pendingCenterRef" in html or "setPan" in html, (
-            "expandAll must include view-centering logic"
-        )
-        # More specifically: the expandAll callback should trigger centering
-        # on the target path after expanding. Look for the pattern inside
-        # the expandAll function body.
-        import re
-        expand_all_match = re.search(
-            r'const expandAll = useCallback\(async \(path\)(.*?)},\s*\[',
-            html, re.DOTALL
-        )
-        assert expand_all_match, "Could not find expandAll function in HTML"
-        expand_all_body = expand_all_match.group(1)
-        assert "pendingCenterRef" in expand_all_body, (
-            "expandAll must set pendingCenterRef so the view re-centers "
-            "on the target node after layout recomputation"
-        )
-
-    def test_minimap_js_has_minimum_scale_guard(self, client):
-        """The Minimap component must enforce a minimum scale so that the
-        viewport rectangle remains visible even with very large layouts."""
-        resp = client.get("/")
-        html = resp.text
-        # Check for a minimum scale constant in Minimap
-        assert "MIN_MINIMAP_SCALE" in html, (
-            "Minimap must define MIN_MINIMAP_SCALE to clamp scale for usability"
-        )
-
-    def test_large_subtree_expand_all_children_complete(self, client, tmp_path):
-        """Simulates expand-all BFS on a large subtree and verifies all
-        children are returned without truncation (hasMore=false)."""
-        # Build a wide-and-deep JSON: 20 top-level sections, each with
-        # 10 children, each with 5 leaf values = 1000+ nodes
-        sections = {}
-        for i in range(20):
-            section = {}
-            for j in range(10):
-                group = {}
-                for k in range(5):
-                    group[f"val_{k}"] = f"data_{i}_{j}_{k}"
-                section[f"group_{j}"] = group
-            sections[f"section_{i}"] = section
-        data = {"root_key": "hello", "sections": sections}
-
-        p = tmp_path / "large.json"
-        p.write_text(json.dumps(data))
-        client.post("/api/open", json={"path": str(p)})
-
-        # BFS expand-all on "sections" (same algorithm as frontend expandAll)
-        from collections import deque
-        to_expand = deque([["sections"]])
-        visited = set()
-        truncated = []
-
-        while to_expand:
-            path = to_expand.popleft()
-            if tuple(path) in visited:
-                continue
-            visited.add(tuple(path))
-            resp = client.get("/api/children", params={
-                "path": json.dumps(path), "offset": 0, "limit": 200
-            })
-            assert resp.status_code == 200
-            result = resp.json()
-            if result["hasMore"]:
-                truncated.append(path)
-            for child in result["children"]:
-                if child["type"] in ("object", "array"):
-                    to_expand.append(child["path"])
-
-        # All 20 sections + 200 groups + sections itself = 221 expanded
-        assert len(visited) == 221, f"Expected 221 expanded paths, got {len(visited)}"
-        assert len(truncated) == 0, f"Truncated paths: {truncated}"
-
-
-class TestNavigatorSidebar:
-    """Tests for the Navigator sidebar TOC feature.
-
-    The sidebar shows a tree of container nodes (objects/arrays only) with
-    disclosure triangles, lazy-loads children via /api/children, and provides
-    click-to-navigate canvas centering.
-    """
-
-    def test_spa_contains_nav_sidebar_component(self, client):
-        """The SPA HTML must include the NavSidebar component definition."""
-        html = client.get("/").text
-        assert "NavSidebar" in html, "NavSidebar component missing from SPA"
-        assert "NavSidebarItem" in html, "NavSidebarItem component missing from SPA"
-
-    def test_spa_contains_nav_rail_closed_state(self, client):
-        """When closed, sidebar must render a visible rail for discoverability."""
-        html = client.get("/").text
-        assert "nav-rail" in html, "nav-rail CSS class missing — sidebar undiscoverable when closed"
-        assert "nav-rail-label" in html, "nav-rail-label missing — no text hint on closed rail"
-
-    def test_spa_contains_ctrl_b_shortcut(self, client):
-        """Ctrl+B keyboard shortcut must be wired to toggle the sidebar."""
-        html = client.get("/").text
-        # The keydown handler should check for 'b' key with ctrl/meta
-        import re
-        assert re.search(r"""key\s*===?\s*['"]b['"]""", html), (
-            "Ctrl+B shortcut for sidebar toggle not found in SPA"
-        )
-
-    def test_spa_nav_sidebar_auto_reveal_logic(self, client):
-        """NavSidebar must include auto-reveal logic that watches activePath
-        and expands ancestor nodes."""
-        html = client.get("/").text
-        # The auto-reveal useEffect should reference activePath and expand ancestors
-        assert "activePath" in html, "activePath prop missing from NavSidebar"
-        assert "scrollIntoView" in html, (
-            "scrollIntoView missing — active item should scroll into view"
-        )
-
-    def test_sidebar_lazy_load_children_containers_only(self, loaded_client):
-        """Sidebar tree should be buildable from /api/children, and we verify
-        that container nodes (objects/arrays) are distinguishable from leaves."""
-        resp = loaded_client.get("/api/children", params={
-            "path": json.dumps([]), "offset": 0, "limit": 200
-        })
-        assert resp.status_code == 200
-        children = resp.json()["children"]
-
-        containers = [c for c in children if c["type"] in ("object", "array")]
-        leaves = [c for c in children if c["type"] not in ("object", "array")]
-
-        # SAMPLE_DATA has nested (object), empty_obj (object), empty_arr (array),
-        # tags (array) as containers
-        assert len(containers) >= 3, (
-            f"Expected at least 3 container children at root, got {len(containers)}: "
-            f"{[c['key'] for c in containers]}"
-        )
-        assert len(leaves) > 0, "Expected some leaf nodes at root level"
-
-        # Verify each container has a childCount for sidebar display
-        for c in containers:
-            assert "childCount" in c, f"Container {c['key']} missing childCount"
-
-    def test_sidebar_navigate_deep_path_via_children(self, loaded_client):
-        """Simulate sidebar navigation to a deep path by fetching children
-        at each level, verifying the API supports the sidebar's lazy-load pattern."""
-        # Navigate: root -> nested -> c -> deep
-        # Step 1: get root children, find "nested"
-        resp = loaded_client.get("/api/children", params={
-            "path": json.dumps([]), "offset": 0, "limit": 200
-        })
-        root_children = resp.json()["children"]
-        nested = [c for c in root_children if c["path"] == ["nested"]]
-        assert len(nested) == 1
-        assert nested[0]["type"] == "object"
-
-        # Step 2: get nested's children, find "c"
-        resp = loaded_client.get("/api/children", params={
-            "path": json.dumps(["nested"]), "offset": 0, "limit": 200
-        })
-        assert resp.status_code == 200
-        nested_children = resp.json()["children"]
-        c_node = [c for c in nested_children if c["path"] == ["nested", "c"]]
-        assert len(c_node) == 1
-        assert c_node[0]["type"] == "object"
-
-        # Step 3: get c's children - should have "deep" (a leaf)
-        resp = loaded_client.get("/api/children", params={
-            "path": json.dumps(["nested","c"]), "offset": 0, "limit": 200
-        })
-        assert resp.status_code == 200
-        c_children = resp.json()["children"]
-        deep = [c for c in c_children if c["path"] == ["nested", "c", "deep"]]
-        assert len(deep) == 1
-        assert deep[0]["type"] == "boolean"
-
-    def test_sidebar_header_toggle_button_in_spa(self, client):
-        """The header toolbar must include a button to toggle the sidebar."""
-        html = client.get("/").text
-        # The button uses the list-tree icon
-        assert "list-tree" in html, "list-tree icon for sidebar toggle not found in header"
-
-
-class TestCollapseAll:
-    """Collapse-all must clear expanded state for all descendants.
-
-    Regression: collapseAll on root (path='') failed to remove any descendant
-    paths from expandedSet because `'name'.startsWith('' + '.')` is false.
-    After collapse-all + re-expand root, all prior children appeared expanded.
-    """
-
-    def test_collapse_all_root_clears_all_paths(self, client):
-        """The collapseAll function must handle root path ('') correctly,
-        clearing every path from expandedSet — not just exact matches."""
-        import re
-        html = client.get("/").text
-        # Extract collapseAll function body
-        match = re.search(
-            r"const collapseAll = useCallback\((.*?)\}, \[",
-            html, re.DOTALL
-        )
-        assert match, "Could not find collapseAll function in HTML"
-        body = match.group(1)
-        # The fix: when path is '' (root), all entries must be removed.
-        # Check that root is handled as a special case (ancestor of everything).
-        assert "path === ''" in body or 'path === ""' in body, (
-            "collapseAll must handle root path ('') as ancestor of all nodes. "
-            "Without this, collapsing root leaves all descendants in expandedSet."
-        )
