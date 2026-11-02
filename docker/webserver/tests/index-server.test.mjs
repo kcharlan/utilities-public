@@ -65,10 +65,36 @@ test('configure rejects reserved, root and invalid endpoints without writing', a
 
 test('file browser never lists outside the webroot through encoded dot segments', async () => {
   await fs.writeFile(path.join(scratch, 'synthetic-outside-marker'), 'synthetic');
-  for (const url of ['/files/%2e%2e/', '/files/..%2f', '/%2e%2e/']) {
-    const response = await get(url);
-    assert.ok(response.statusCode === 404 || response.statusCode === 200, `${url}: ${response.statusCode}`);
-    if (response.statusCode === 200) assert.doesNotMatch(response.body, /synthetic-outside-marker/, url);
+  await app.ready();
+  const observed = [];
+  const record = req => observed.push(req.url);
+  app.server.prependListener('request', record);
+  await new Promise((resolve, reject) => {
+    app.server.once('error', reject);
+    app.server.listen(0, '127.0.0.1', () => {
+      app.server.removeListener('error', reject);
+      resolve();
+    });
+  });
+  try {
+    for (const url of ['/files/%2e%2e/', '/files/..%2f', '/%2e%2e/']) {
+      const response = await new Promise((resolve, reject) => {
+        const request = http.request({ host: '127.0.0.1', port: app.server.address().port, path: url, headers: { host } }, res => {
+          const chunks = [];
+          res.on('data', chunk => chunks.push(chunk));
+          res.on('end', () => resolve({ statusCode: res.statusCode, body: Buffer.concat(chunks).toString() }));
+          res.on('error', reject);
+        });
+        request.on('error', reject);
+        request.end();
+      });
+      assert.equal(observed.shift(), url);
+      assert.ok(response.statusCode === 404 || response.statusCode === 200, `${url}: ${response.statusCode}`);
+      if (response.statusCode === 200) assert.doesNotMatch(response.body, /synthetic-outside-marker/, url);
+    }
+  } finally {
+    app.server.removeListener('request', record);
+    await new Promise((resolve, reject) => app.server.close(err => err ? reject(err) : resolve()));
   }
 });
 
