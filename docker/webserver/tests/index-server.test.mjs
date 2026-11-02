@@ -34,14 +34,42 @@ async function importWithWarning(url, expected) {
   } finally { console.warn = original; }
 }
 
-test('exports an injectable application', () => assert.ok(app));
-
 test('rejects foreign Host and foreign or missing Origin on mutations', async () => {
   assert.equal((await get('/configure', { host: 'evil.example:17711' })).statusCode, 403);
   const payload = { name: 'Synthetic', path: '/synthetic', target: 'http://example.invalid' };
   assert.equal((await post(payload, { origin: 'http://evil.example' })).statusCode, 403);
   assert.equal((await app.inject({ method: 'POST', url: '/configure/api/endpoints', headers: { host }, payload })).statusCode, 403);
   assert.equal((await post(payload)).statusCode, 201);
+});
+
+test('configure rejects reserved, root and invalid endpoints without writing', async () => {
+  const valid = { name: 'Synthetic', path: '/synthetic-invalid-test', target: 'http://example.invalid' };
+  const payloads = [
+    ...['/files', '/files/x', '//files', '/configure', '/api/py/x', '/api/node', '/'].map(path => ({ ...valid, path })),
+    { ...valid, name: '' },
+    { ...valid, target: 'ftp://example.invalid' },
+    { ...valid, target: 'not a url' },
+  ];
+  const before = await fs.readFile(process.env.CONFIG_FILE);
+  for (const payload of payloads) {
+    const response = await post(payload);
+    assert.equal(response.statusCode, 400, JSON.stringify(payload));
+    assert.equal(typeof response.json().message, 'string');
+    assert.ok(response.json().message);
+    assert.deepEqual(await fs.readFile(process.env.CONFIG_FILE), before);
+    const browser = await get('/files');
+    assert.equal(browser.statusCode, 200);
+    assert.match(browser.body, /All Files/);
+  }
+});
+
+test('file browser never lists outside the webroot through encoded dot segments', async () => {
+  await fs.writeFile(path.join(scratch, 'synthetic-outside-marker'), 'synthetic');
+  for (const url of ['/files/%2e%2e/', '/files/..%2f', '/%2e%2e/']) {
+    const response = await get(url);
+    assert.ok(response.statusCode === 404 || response.statusCode === 200, `${url}: ${response.statusCode}`);
+    if (response.statusCode === 200) assert.doesNotMatch(response.body, /synthetic-outside-marker/, url);
+  }
 });
 
 test('browser hides dotfiles, outside symlinks and tolerates dangling links', async () => {
