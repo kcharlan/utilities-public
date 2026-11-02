@@ -39,7 +39,7 @@ Projects are grouped by purpose rather than source-directory layout. Each linked
 | [Git Fleet](../git-multirepo-dashboard/README.md) | Local web app | Reviews repository activity, working-tree state, branches, and dependency health, including nested manifest discovery and explicit check-coverage reporting. |
 | [harscope](../harscope/README.md) | Local web app + validation CLI | Analyzes HAR timing and request details, detects potential secrets, records redaction decisions, and exports sanitized captures and reports. |
 | [jtree](../jtree/README.md) | Local web app | Views and edits JSON as a node graph with search, undo/redo, copy/paste, array reordering, and image exports. |
-| [worktree-helper](../worktree-helper/README.md) | Terminal UI + CLI | Manages Git worktrees through interactive and command-line workflows. Orphan creation is currently unavailable because of a validation conflict. |
+| [worktree-helper](../worktree-helper/README.md) | Terminal UI + CLI | Manages Git worktrees through interactive and command-line workflows, including orphan branches. |
 
 ## macOS and system utilities
 
