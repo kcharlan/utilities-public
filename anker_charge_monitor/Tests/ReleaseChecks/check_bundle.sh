@@ -202,6 +202,28 @@ for original in 0 7; do
   rg -q 'Cannot remove' "$scratch/cleanup.log"
   [ -d "$test_home" ]
 done
+# Exercise the same extracted EXIT function with the real rm on owned paths.
+awk '/^finish\(\) \{$/{copy=1; count++} copy {print} copy && /^}$/{copy=0} END {if (count != 1) exit 1}' Tests/Snapshots/build.sh > "$scratch/finish-real.zsh"
+cat >> "$scratch/finish-real.zsh" <<'SH'
+owned=true
+snapshot_home=$TEST_HOME
+package_dir=$TEST_HOME/package
+trap finish EXIT
+exit "$TEST_EXIT"
+SH
+for original in 0 7; do
+  test_home="$scratch/real-cleanup-home-$original"
+  mkdir -p "$test_home/package" "$test_home/tmp"
+  printf synthetic > "$test_home/retained.png"
+  code=0
+  TEST_HOME="$test_home" TEST_EXIT="$original" zsh "$scratch/finish-real.zsh" > "$scratch/real-cleanup.log" 2>&1 || code=$?
+  [ "$code" -eq "$original" ] || { echo "FAIL: real cleanup exited $code, expected $original"; cat "$scratch/real-cleanup.log"; exit 1; }
+  if [ "$original" -eq 0 ]; then
+    [ ! -e "$test_home/package" ] && [ ! -e "$test_home/tmp" ] && [ "$(cat "$test_home/retained.png")" = synthetic ]
+  else
+    [ ! -e "$test_home" ]
+  fi
+done
 # Port: BV release.test.mjs, "maintained snapshot builder uses the same supported
 # runtime", 579ebb7. This invokes the public target once as part of the full gate,
 # in a caller-owned home inside the snapshot scratch so the trap removes it with the rest.

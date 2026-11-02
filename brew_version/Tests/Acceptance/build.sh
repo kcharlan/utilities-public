@@ -22,12 +22,12 @@ finish() {
   local code=$?
   trap - EXIT
   if $owned; then
-    local path
+    local cleanup_target
     local -a cleanup_paths
     if (( code )); then cleanup_paths=("$acceptance_home"); else cleanup_paths=("$package_dir" "$build_tmp"); fi
-    for path in "${cleanup_paths[@]}"; do
-      [[ -e "$path" || -L "$path" ]] || continue
-      rm -r -- "${path:?}" || { print -u2 -- "Cannot remove $path"; (( code )) || code=1; }
+    for cleanup_target in "${cleanup_paths[@]}"; do
+      [[ -e "$cleanup_target" || -L "$cleanup_target" ]] || continue
+      rm -r -- "${cleanup_target:?}" || { print -u2 -- "Cannot remove $cleanup_target"; (( code )) || code=1; }
     done
   fi
   exit $code

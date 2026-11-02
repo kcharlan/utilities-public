@@ -134,3 +134,33 @@ exit "$TEST_EXIT"
     }
   }
 });
+test('builder cleanup resolves the real removal command',()=>{
+  for(const builder of ['Snapshots/build.sh','Acceptance/build.sh']) {
+    const source=fs.readFileSync(path.join(project,'Tests',builder),'utf8');
+    const matches=[...source.matchAll(/^finish\(\) \{\n[\s\S]*?^\}/gm)];
+    assert.equal(matches.length,1,builder);
+    for(const original of [0,7]) {
+      const home=path.join(scratch,`real-cleanup-${path.basename(path.dirname(builder))}-${original}`);
+      fs.mkdirSync(path.join(home,'package'),{recursive:true});
+      fs.mkdirSync(path.join(home,'tmp'));
+      fs.writeFileSync(path.join(home,'retained.png'),'synthetic');
+      const script=matches[0][0]+String.raw`
+owned=true
+acceptance_home=$TEST_HOME
+snapshot_home=$TEST_HOME
+package_dir=$TEST_HOME/package
+build_tmp=$TEST_HOME/tmp
+trap finish EXIT
+exit "$TEST_EXIT"
+`;
+      const result=spawnSync('zsh',['-c',script],{encoding:'utf8',env:{...process.env,TEST_HOME:home,TEST_EXIT:String(original)}});
+      assert.equal(result.status,original,builder+'\n'+result.stderr);
+      if(original) assert.equal(fs.existsSync(home),false,builder);
+      else {
+        assert.equal(fs.existsSync(path.join(home,'package')),false,builder);
+        assert.equal(fs.existsSync(path.join(home,'tmp')),false,builder);
+        assert.equal(fs.readFileSync(path.join(home,'retained.png'),'utf8'),'synthetic');
+      }
+    }
+  }
+});

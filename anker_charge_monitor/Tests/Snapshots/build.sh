@@ -19,13 +19,13 @@ finish() {
   local code=$?
   trap - EXIT
   if $owned; then
-    local path failed_build=$code
+    local cleanup_target failed_build=$code
     local -a cleanup_paths
     if (( code )); then cleanup_paths=("$snapshot_home"); else cleanup_paths=("$snapshot_home"/*(DN)); fi
-    for path in "${cleanup_paths[@]}"; do
-      if (( ! failed_build )) && [[ ! -d "$path" || -L "$path" ]]; then continue; fi
-      [[ -e "$path" || -L "$path" ]] || continue
-      rm -r -- "${path:?}" || { print -u2 -- "Cannot remove $path"; (( code )) || code=1; }
+    for cleanup_target in "${cleanup_paths[@]}"; do
+      if (( ! failed_build )) && [[ ! -d "$cleanup_target" || -L "$cleanup_target" ]]; then continue; fi
+      [[ -e "$cleanup_target" || -L "$cleanup_target" ]] || continue
+      rm -r -- "${cleanup_target:?}" || { print -u2 -- "Cannot remove $cleanup_target"; (( code )) || code=1; }
     done
   fi
   exit $code

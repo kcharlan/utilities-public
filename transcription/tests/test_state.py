@@ -156,6 +156,8 @@ def test_readme_migration_block(sources, overrides, tmp_path, monkeypatch):
         monkeypatch.setenv("CUMULATIVE_JSON_PATH", "relative/counter.json")
         monkeypatch.setenv("LIFETIME_TXT_PATH", "~/outside/lifetime.txt")
         (tmp_path / "outside").mkdir(mode=0o755)
+        (tmp_path / "outside").chmod(0o755)
+        assert (tmp_path / "outside").stat().st_mode & 0o777 == 0o755
     legacy = tmp_path / "transcription"
     legacy.mkdir()
     names = ("session_backup.json", "transcription_odometer.txt")

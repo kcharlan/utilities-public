@@ -396,7 +396,7 @@ cleanup_repair_artifacts() {
     cleanup_metadata="$("${STAT_BIN}" -f '%d|%i|%u|%g|%Lp|%z|%l' -- "${cleanup_path}" 2>/dev/null)" || continue
     IFS='|' read -r cleanup_device cleanup_inode cleanup_owner cleanup_group cleanup_mode cleanup_size cleanup_links <<< "${cleanup_metadata}"
     if [[ -f "${cleanup_path}" && ! -L "${cleanup_path}" && "${cleanup_device}" == "${expected_device}" && "${cleanup_inode}" == "${expected_inode}" && "${cleanup_owner}" == "${expected_owner}" && "${cleanup_owner}" == "${EUID}" && "${cleanup_links}" == 1 ]]; then
-      /bin/rm -- "${cleanup_path:?}" 2>/dev/null || { print -u2 'Unable to remove a private repair artifact.'; cleanup_failed=1; }
+      /bin/rm -- "${cleanup_path:?}" </dev/null 2>/dev/null || { print -u2 'Unable to remove a private repair artifact.'; cleanup_failed=1; }
     fi
   done
   if (( ${repair_lock_owned:-0} )) && [[ "${repair_lock_pid:-}" == "$$" && -d "${repair_lock_dir}" && ! -L "${repair_lock_dir}" ]]; then
@@ -408,7 +408,7 @@ cleanup_repair_artifacts() {
       cleanup_metadata="$("${STAT_BIN}" -f '%d|%i|%u|%g|%Lp|%z|%l' -- "${marker_path}" 2>/dev/null)" || return "$cleanup_failed"
       IFS='|' read -r cleanup_device cleanup_inode cleanup_owner cleanup_group cleanup_mode cleanup_size cleanup_links <<< "${cleanup_metadata}"
       [[ -f "${marker_path}" && ! -L "${marker_path}" && "${cleanup_device}" == "${repair_lock_marker_device}" && "${cleanup_inode}" == "${repair_lock_marker_inode}" && "${cleanup_owner}" == "${repair_lock_marker_owner}" && "${cleanup_owner}" == "${EUID}" && "${cleanup_mode}" == 600 && "${cleanup_links}" == 1 ]] || return "$cleanup_failed"
-      /bin/rm -- "${marker_path:?}" 2>/dev/null || { print -u2 'Unable to remove the private repair lock marker.'; return 1; }
+      /bin/rm -- "${marker_path:?}" </dev/null 2>/dev/null || { print -u2 'Unable to remove the private repair lock marker.'; return 1; }
     elif [[ -e "${marker_path}" || -L "${marker_path}" ]]; then
       return "$cleanup_failed"
     fi
@@ -418,9 +418,15 @@ cleanup_repair_artifacts() {
 }
 
 repair_cleanup_exit() {
-  local incoming=$?
+  local incoming=$? cleanup_signal=0 cleanup_result=0
   trap - EXIT
-  cleanup_repair_artifacts || { (( incoming != 0 )) || incoming=1; }
+  trap '(( cleanup_signal != 0 )) || cleanup_signal=130' INT
+  trap '(( cleanup_signal != 0 )) || cleanup_signal=143' TERM
+  cleanup_repair_artifacts || cleanup_result=1
+  if (( incoming == 0 )); then
+    if (( cleanup_signal != 0 )); then incoming=$cleanup_signal
+    elif (( cleanup_result != 0 )); then incoming=1; fi
+  fi
   exit "$incoming"
 }
 
@@ -973,7 +979,8 @@ run_repair_config() {
 
 repair_signal_exit() {
   local signal_status="$1"
-  trap - EXIT INT TERM
+  trap - EXIT
+  trap '' INT TERM
   cleanup_repair_artifacts || true
   exit "${signal_status}"
 }
@@ -1095,15 +1102,21 @@ cleanup_temp_files() {
   integer failed=0
   for path in "${find_output_tmp:-}" "${find_error_tmp:-}"; do
     [[ -n "$path" && ( -e "$path" || -L "$path" ) ]] || continue
-    /bin/rm -- "${path:?}" 2>/dev/null || { print -u2 'Unable to remove a private scan artifact.'; failed=1; }
+    /bin/rm -- "${path:?}" </dev/null 2>/dev/null || { print -u2 'Unable to remove a private scan artifact.'; failed=1; }
   done
   return "$failed"
 }
 
 scan_cleanup_exit() {
-  local incoming=$?
+  local incoming=$? cleanup_signal=0 cleanup_result=0
   trap - EXIT
-  cleanup_temp_files || { (( incoming != 0 )) || incoming=1; }
+  trap '(( cleanup_signal != 0 )) || cleanup_signal=130' INT
+  trap '(( cleanup_signal != 0 )) || cleanup_signal=143' TERM
+  cleanup_temp_files || cleanup_result=1
+  if (( incoming == 0 )); then
+    if (( cleanup_signal != 0 )); then incoming=$cleanup_signal
+    elif (( cleanup_result != 0 )); then incoming=1; fi
+  fi
   exit "$incoming"
 }
 
@@ -1248,7 +1261,7 @@ for file in "${purge_candidates[@]}"; do
     continue
   fi
 
-  if "${RM_BIN}" -- "${file:?}" 2>/dev/null; then
+  if "${RM_BIN}" -- "${file:?}" </dev/null 2>/dev/null; then
     (( removed += 1 ))
     terminal_detail "Removed: ${(q)file}"
   else

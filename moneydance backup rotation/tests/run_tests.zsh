@@ -282,7 +282,7 @@ trap 'code=$?; remove_test_paths "$test_root" || { (( code != 0 )) || code=1; };
 # Extract the production cleanup functions unchanged except for their absolute rm
 # callee; the stub reports a synthetic error without attempting an OS deletion.
 cleanup_functions="${test_root}/cleanup-functions.zsh"
-awk '/^(cleanup_repair_artifacts|repair_cleanup_exit|cleanup_temp_files|scan_cleanup_exit)\(\) \{$/ {copy=1; count++} copy {print} copy && /^}$/ {copy=0} END {if (count != 4) exit 1}' "${SCRIPT}" > "${cleanup_functions}" || { print -u2 'FAIL: cleanup extraction'; exit 1; }
+awk '/^(cleanup_repair_artifacts|repair_cleanup_exit|repair_signal_exit|cleanup_temp_files|scan_cleanup_exit)\(\) \{$/ {copy=1; count++} copy {print} copy && /^}$/ {copy=0} END {if (count != 5) exit 1}' "${SCRIPT}" > "${cleanup_functions}" || { print -u2 'FAIL: cleanup extraction'; exit 1; }
 [[ "$(grep -c '/bin/rm --' "${cleanup_functions}")" == 3 ]] || { print -u2 'FAIL: cleanup extraction changed'; exit 1; }
 sed 's@/bin/rm --@synthetic_rm --@g' "${cleanup_functions}" > "${test_root}/cleanup-test-functions.zsh"
 [[ "$(grep -c 'synthetic_rm --' "${test_root}/cleanup-test-functions.zsh")" == 3 ]] || { print -u2 'FAIL: cleanup substitution changed'; exit 1; }
@@ -290,7 +290,11 @@ cat > "${test_root}/cleanup-contract.zsh" <<'EOF'
 #!/bin/zsh
 set -eu
 source "$TEST_FUNCTIONS"
-synthetic_rm() { print attempt >> "$TEST_ATTEMPTS"; return 91; }
+synthetic_rm() {
+  print attempt >> "$TEST_ATTEMPTS"
+  if [[ "${TEST_SIGNAL:-}" == TERM ]]; then /bin/kill -TERM $$; fi
+  return 91
+}
 STAT_BIN="$TEST_STAT"
 repair_candidate_tmp="$TEST_HOME/candidate"
 repair_snapshot_tmp="$TEST_HOME/snapshot"
@@ -299,7 +303,13 @@ repair_snapshot_device=1 repair_snapshot_inode=2 repair_snapshot_owner=$EUID
 repair_lock_owned=0
 find_output_tmp="$TEST_HOME/candidate"
 find_error_tmp="$TEST_HOME/snapshot"
-if [[ "$TEST_KIND" == repair ]]; then trap repair_cleanup_exit EXIT; else trap scan_cleanup_exit EXIT; fi
+if [[ "$TEST_KIND" == repair ]]; then
+  trap repair_cleanup_exit EXIT
+  trap 'repair_signal_exit 143' TERM
+else
+  trap scan_cleanup_exit EXIT
+  trap 'exit 143' TERM
+fi
 exit "$TEST_EXIT"
 EOF
 cat > "${test_root}/cleanup-stat" <<'EOF'
@@ -320,6 +330,19 @@ for cleanup_kind in repair scan; do
     [[ "$cleanup_code" == "$expected_exit" && "$(wc -l < "$cleanup_attempts" | tr -d ' ')" == 2 ]] || { print -u2 'FAIL: cleanup status or attempt count'; exit 1; }
     grep -q 'Unable to remove a private' "${test_root}/cleanup-output" || { print -u2 'FAIL: cleanup error not reported'; exit 1; }
     [[ -f "$cleanup_home/candidate" && -f "$cleanup_home/snapshot" ]] || { print -u2 'FAIL: synthetic cleanup failure removed evidence'; exit 1; }
+  done
+done
+for cleanup_kind in repair scan; do
+  for original_exit in 0 7; do
+    cleanup_home="${test_root}/cleanup-signal-${cleanup_kind}-${original_exit}"
+    mkdir "${cleanup_home}"
+    : > "${cleanup_home}/candidate"
+    : > "${cleanup_home}/snapshot"
+    cleanup_attempts="${test_root}/attempts-signal-${cleanup_kind}-${original_exit}"
+    cleanup_code=0
+    TEST_FUNCTIONS="${test_root}/cleanup-test-functions.zsh" TEST_STAT="${test_root}/cleanup-stat" TEST_HOME="${cleanup_home}" TEST_ATTEMPTS="${cleanup_attempts}" TEST_KIND="${cleanup_kind}" TEST_EXIT="${original_exit}" TEST_SIGNAL=TERM zsh "${test_root}/cleanup-contract.zsh" > "${test_root}/cleanup-output" 2>&1 || cleanup_code=$?
+    expected_exit=$original_exit; (( expected_exit != 0 )) || expected_exit=143
+    [[ "$cleanup_code" == "$expected_exit" && "$(wc -l < "$cleanup_attempts" | tr -d ' ')" == 2 ]] || { print -u2 'FAIL: signal during cleanup changed status or retried an artifact'; exit 1; }
   done
 done
 
@@ -2648,6 +2671,15 @@ race_status=$?
 assert_status "candidate eligibility is revalidated before deletion" 0 "${race_status}"
 assert_file_exists "candidate moved into a retained day is not deleted" "${old_file}"
 assert_contains "changed purge-day candidate is visibly skipped" "${race_output}" "Skipped 1 candidate"
+fixture_touch -t 202001010101 "${old_file}"
+
+# A read-only file in an owned writable directory needs no terminal confirmation.
+chmod 400 "${old_file}"
+PTY_INPUT=$'n\n'
+run_with_pty 10 both /usr/bin/env HOME="${test_root}/empty-home" MONEYDANCE_MOUNT_BIN="${mount_mock}" "${SCRIPT}" --config "${config}"
+assert_status "read-only candidate is removed without a terminal prompt" 0 "${PTY_STATUS}"
+assert_file_missing "read-only candidate was actually removed" "${old_file}"
+[[ ! -e "${old_file}" ]] || chmod 600 "${old_file}"
 fixture_touch -t 202001010101 "${old_file}"
 
 deletion_log="${test_root}/SYNTHETIC-DELETION-LOG"
