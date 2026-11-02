@@ -52,6 +52,8 @@ Git Fleet also requires at least one installed dependency-analysis tool from the
 
 The overview quick-scans up to eight registered repositories concurrently whenever it loads. Cards show the current branch, most recent commit, staged/modified/untracked counts, dependency summary, branch health, and a 13-week activity sparkline. Fleet KPIs summarize repository state, recent commits and line changes, stale branches, and dependency findings.
 
+When Git status fails, the card shows a **status failed** badge with the error in its tooltip instead of reporting a clean working tree.
+
 **Not Checked** counts declarations whose outdated or vulnerability check is incomplete, including declarations that also have a vulnerability or update finding. Outdated totals include minor and major update severities. Card coverage dots explain unchecked counts and missing tools; the fleet Dependencies view shows the same coverage per repository.
 
 The **Scan Dir** browser can navigate local directories and register repositories without a command-line path. Discovery skips hidden, generated, virtual-environment, and dependency directories and does not descend into a repository after finding its `.git` entry.

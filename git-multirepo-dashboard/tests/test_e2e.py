@@ -326,6 +326,28 @@ def test_fleet_browser_refresh_scans_synthetic_repo(page, server_context, tmp_pa
             db.execute('DELETE FROM repositories WHERE id=?', ('synthetic-refresh',))
 
 
+def test_card_shows_status_failed_badge(page, server_context, tmp_path):
+    import sqlite3
+    repo = _create_git_repo(tmp_path, 'synthetic-corrupt')
+    (repo / '.git' / 'index').write_bytes(b'synthetic corrupt index')
+    with sqlite3.connect(server_context['db_path']) as db:
+        db.execute("INSERT INTO repositories (id,name,path,added_at) VALUES (?,?,?,?)",
+                   ('synthetic-corrupt', 'synthetic-corrupt', str(repo), '2026-01-01'))
+    try:
+        _open_app(page, server_context['url'])
+        card = page.locator('.project-card').filter(has_text='synthetic-corrupt')
+        badge = card.get_by_text('status failed', exact=True)
+        expect(badge).to_be_visible()
+        badge.hover()
+        expect(badge).to_be_visible()
+        assert badge.get_attribute('title')
+        expect(card.get_by_text('Clean', exact=True)).to_have_count(0)
+    finally:
+        with sqlite3.connect(server_context['db_path']) as db:
+            db.execute('PRAGMA foreign_keys = ON')
+            db.execute('DELETE FROM repositories WHERE id=?', ('synthetic-corrupt',))
+
+
 @pytest.fixture
 def seeded_coverage(server_context, dependency_report_seed, tmp_path):
     import sqlite3

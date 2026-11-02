@@ -2035,3 +2035,11 @@ versions remain current. Preserve optional decoding for existing saved data.
 ### 2026-11-02 — Collector health and backwards clocks
 
 Run IDs preserve recording order when wall time moves backwards; timestamp ordering can hide newer failures. Reset a source problem's future start to the current run time so a later report can confirm it. The rollback regressions cover both the store and health evaluation and the source-state confirmation path.
+
+### 2026-11-02 — Preserve failed Git status observations
+
+A failed Git status command is an unknown working tree, not a clean one. Store
+its error independently from history-scan errors, retain unknown counts through
+the API, and clear the error only after a successful status scan. Count worktree
+deletions and type changes among modified files. Corrupt-index, timeout, API
+recovery, and browser-card regressions cover these paths.

@@ -48,7 +48,7 @@ except ImportError:  # pragma: no cover - Windows
 
 # ── Constants ─────────────────────────────────────────────────────────────────
 DEFAULT_PORT = 8300
-VERSION = "0.3.2"
+VERSION = "0.3.3"
 
 # Populated by build_tools_dict() during preflight; global so /api/status can
 # return it without re-running which() on every request.
@@ -296,6 +296,7 @@ CREATE TABLE IF NOT EXISTS working_state (
   last_commit_date     TEXT,
   checked_at           TEXT,
   scan_error           TEXT DEFAULT NULL,
+  quick_scan_error     TEXT DEFAULT NULL,
   dep_check_error      BOOLEAN DEFAULT FALSE,
   missing_dep_tools    TEXT DEFAULT '[]',
   dep_manifests        TEXT DEFAULT '[]'
@@ -337,6 +338,7 @@ def recover_interrupted_scans(db_path: Path) -> None:
 
 _MIGRATION_SQL = [
     "ALTER TABLE working_state ADD COLUMN scan_error TEXT DEFAULT NULL",
+    "ALTER TABLE working_state ADD COLUMN quick_scan_error TEXT DEFAULT NULL",
     "ALTER TABLE working_state ADD COLUMN dep_check_error BOOLEAN DEFAULT FALSE",
     "ALTER TABLE working_state ADD COLUMN missing_dep_tools TEXT DEFAULT '[]'",
     "ALTER TABLE working_state ADD COLUMN dep_manifests TEXT DEFAULT '[]'",
@@ -462,7 +464,7 @@ def parse_porcelain_status(output: str) -> dict:
 
     Rules:
       - X not in (' ', '?') → staged_count += 1
-      - Y == 'M'             → modified_count += 1
+      - Y in ('M', 'D', 'T') → modified_count += 1
       - XY == '??'           → untracked_count += 1
       - any non-empty output → has_uncommitted = True
     """
@@ -482,7 +484,7 @@ def parse_porcelain_status(output: str) -> dict:
         else:
             if x not in (" ", "?"):
                 staged_count += 1
-            if y == "M":
+            if y in ("M", "D", "T"):
                 modified_count += 1
 
     return {
@@ -532,8 +534,11 @@ async def quick_scan_repo(repo_path) -> dict:
     repo_path = str(repo_path)
 
     # 1. Status
-    status_out, _, _ = await run_git(repo_path, "status", "--porcelain=v1")
-    status = parse_porcelain_status(status_out)
+    status_out, status_err, status_rc = await run_git(repo_path, "status", "--porcelain=v1")
+    status = parse_porcelain_status(status_out) if status_rc == 0 else {
+        "has_uncommitted": None, "modified_count": None,
+        "untracked_count": None, "staged_count": None,
+    }
 
     # 2. Last commit
     log_out, _, log_rc = await run_git(
@@ -550,6 +555,7 @@ async def quick_scan_repo(repo_path) -> dict:
         "modified_count": status["modified_count"],
         "untracked_count": status["untracked_count"],
         "staged_count": status["staged_count"],
+        "quick_scan_error": (status_err or "git status failed") if status_rc != 0 else None,
         "current_branch": branch,
         "last_commit_hash": commit["hash"],
         "last_commit_date": commit["date"],
@@ -569,8 +575,8 @@ async def upsert_working_state(db, repo_id: str, data: dict) -> None:
         INSERT INTO working_state
           (repo_id, has_uncommitted, modified_count, untracked_count,
            staged_count, current_branch, last_commit_hash,
-           last_commit_message, last_commit_date, checked_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+           last_commit_message, last_commit_date, checked_at, quick_scan_error)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(repo_id) DO UPDATE SET
           has_uncommitted    = excluded.has_uncommitted,
           modified_count     = excluded.modified_count,
@@ -580,7 +586,8 @@ async def upsert_working_state(db, repo_id: str, data: dict) -> None:
           last_commit_hash   = excluded.last_commit_hash,
           last_commit_message = excluded.last_commit_message,
           last_commit_date   = excluded.last_commit_date,
-          checked_at         = excluded.checked_at
+          checked_at         = excluded.checked_at,
+          quick_scan_error   = excluded.quick_scan_error
         """,
         (
             repo_id,
@@ -593,6 +600,7 @@ async def upsert_working_state(db, repo_id: str, data: dict) -> None:
             data["last_commit_message"],
             data["last_commit_date"],
             datetime.now(timezone.utc).isoformat(),
+            data.get("quick_scan_error"),
         ),
     )
     await db.commit()
@@ -631,6 +639,7 @@ async def scan_fleet_quick(db) -> list:
                     "modified_count": 0,
                     "untracked_count": 0,
                     "staged_count": 0,
+                    "quick_scan_error": None,
                     "current_branch": None,
                     "last_commit_hash": None,
                     "last_commit_message": None,
@@ -3924,6 +3933,13 @@ const htmlTag = htm.bind(preact.h);
     // StatusPills — Clean or mod/new/staged pills
     function StatusPills({ repo }) {
       const { has_uncommitted, modified_count, untracked_count, staged_count } = repo;
+      if (repo.quick_scan_error) {
+        return htmlTag`<span title=${repo.quick_scan_error} style=${{
+          fontSize: '10px', fontFamily: 'var(--font-body)', fontWeight: 600,
+          color: 'var(--status-red)', background: 'var(--status-red-bg)',
+          padding: '2px 6px', borderRadius: '3px',
+        }}>status failed</span>`;
+      }
       if (!has_uncommitted) {
         return (
           htmlTag`<span style=${{
@@ -7009,19 +7025,20 @@ async def get_fleet(db=Depends(get_db)):
     cursor = await db.execute(
         "SELECT r.id, r.name, r.path, r.runtime, r.default_branch, "
         "w.has_uncommitted, w.modified_count, w.untracked_count, w.staged_count, "
-        "w.current_branch, w.last_commit_hash, w.last_commit_message, w.last_commit_date "
+        "w.current_branch, w.last_commit_hash, w.last_commit_message, w.last_commit_date, w.quick_scan_error "
         "FROM repositories r LEFT JOIN working_state w ON w.repo_id = r.id"
     )
     results = []
     for row in await cursor.fetchall():
-        repo_id, name, path, runtime, default_branch, dirty, modified, untracked, staged, branch, commit, message, date = row
+        repo_id, name, path, runtime, default_branch, dirty, modified, untracked, staged, branch, commit, message, date, quick_error = row
         exists = Path(path).is_dir()
         results.append(dict(id=repo_id, name=name, path=path, runtime=runtime,
                             default_branch=default_branch, path_exists=exists,
-                            has_uncommitted=bool(dirty) if exists else False,
-                            modified_count=(modified or 0) if exists else 0,
-                            untracked_count=(untracked or 0) if exists else 0,
-                            staged_count=(staged or 0) if exists else 0,
+                            has_uncommitted=None if exists and quick_error else bool(dirty) if exists else False,
+                            modified_count=None if exists and quick_error else (modified or 0) if exists else 0,
+                            untracked_count=None if exists and quick_error else (untracked or 0) if exists else 0,
+                            staged_count=None if exists and quick_error else (staged or 0) if exists else 0,
+                            quick_scan_error=quick_error if exists else None,
                             current_branch=branch if exists else None,
                             last_commit_hash=commit if exists else None,
                             last_commit_message=message if exists else None,

@@ -353,7 +353,7 @@ def test_schema_working_state_columns():
             "last_commit_hash", "last_commit_message",
             "last_commit_date", "checked_at",
             # Added in packet 22: error state columns
-            "scan_error", "dep_check_error", "missing_dep_tools", "dep_manifests",
+            "scan_error", "quick_scan_error", "dep_check_error", "missing_dep_tools", "dep_manifests",
         }
         assert expected_cols == col_names, f"Column mismatch: {col_names}"
     finally:

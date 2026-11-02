@@ -170,6 +170,12 @@ def test_parse_porcelain_modified_only():
     assert result["untracked_count"] == 0
 
 
+def test_parse_porcelain_worktree_deleted_and_typechange():
+    result = git_dashboard.parse_porcelain_status(" D a.txt\n T b.txt\n")
+    assert result["modified_count"] == 2
+    assert result["has_uncommitted"] is True
+
+
 def test_parse_porcelain_deleted_staged():
     """'D  file.py' is staged deletion."""
     result = git_dashboard.parse_porcelain_status("D  file.py\n")
@@ -262,6 +268,30 @@ def test_quick_scan_repo_clean(tmp_path):
     assert result["modified_count"] == 0
     assert result["staged_count"] == 0
     assert result["untracked_count"] == 0
+
+
+def test_quick_scan_corrupt_index_reports_error(tmp_path):
+    _make_git_repo(tmp_path)
+    (tmp_path / ".git" / "index").write_bytes(b"synthetic corrupt index")
+    result = run(git_dashboard.quick_scan_repo(tmp_path))
+    assert result["quick_scan_error"]
+    assert result["has_uncommitted"] is None
+    assert all(result[key] is None for key in ("modified_count", "untracked_count", "staged_count"))
+
+
+def test_quick_scan_timeout_reports_error(tmp_path, monkeypatch):
+    _make_git_repo(tmp_path)
+    real_run_git = git_dashboard.run_git
+
+    async def timeout_status(repo_path, *args, **kwargs):
+        if args[0] == "status":
+            return "", "timeout", -1
+        return await real_run_git(repo_path, *args, **kwargs)
+
+    monkeypatch.setattr(git_dashboard, "run_git", timeout_status)
+    result = run(git_dashboard.quick_scan_repo(tmp_path))
+    assert result["quick_scan_error"] == "timeout"
+    assert result["has_uncommitted"] is None
 
 
 def test_quick_scan_repo_empty_repo(tmp_path):
