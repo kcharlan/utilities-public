@@ -4,9 +4,11 @@ import io
 import os
 import stat
 import sys
+from datetime import date, datetime
 from pathlib import Path
 
 from openpyxl import Workbook, load_workbook
+from openpyxl.worksheet.table import Table
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(REPO_ROOT))
@@ -89,6 +91,7 @@ def test_append_expense_row_finds_headers_below_first_row(monkeypatch, tmp_path)
     worksheet.cell(row=3, column=1).value = 1
     worksheet.cell(row=3, column=11).value = "https://example.test/old"
     worksheet.cell(row=3, column=12).value = "old.pdf"
+    worksheet.add_table(Table(displayName="SyntheticExpenseTable", ref="A2:M3"))
 
     buffer = io.BytesIO()
     workbook.save(buffer)
@@ -120,6 +123,36 @@ def test_append_expense_row_finds_headers_below_first_row(monkeypatch, tmp_path)
     assert saved_worksheet.cell(row=4, column=1).value == 2
     assert saved_worksheet.cell(row=4, column=3).value == "SYNTHETIC VENDOR"
     assert saved_worksheet.cell(row=4, column=11).value == "https://example.test/new"
+    assert saved_worksheet.tables["SyntheticExpenseTable"].ref == "A2:M4"
+    assert saved_worksheet.tables["SyntheticExpenseTable"].autoFilter.ref == "A2:M4"
+
+
+def test_appends_to_shipped_template_stay_inside_table_and_totals(monkeypatch, tmp_path):
+    module = load_module(monkeypatch, tmp_path / "runtime_home")
+    template_bytes = (SCRIPT_PATH.parent / "docs" / "Expense_Tracker_Template.xlsx").read_bytes()
+    original = load_workbook(io.BytesIO(template_bytes), data_only=False)
+    formulas = {cell.coordinate: cell.value for row in original["Summary"] for cell in row if cell.data_type == "f"}
+    categories = {cell.coordinate: cell.value for row in original["Categories"] for cell in row}
+    submission = {
+        "date": "2030-01-02", "vendor": "SYNTHETIC VENDOR", "amount": 12.5,
+        "category": "SYNTHETIC CATEGORY 1", "business_purpose": "SYNTHETIC PURPOSE",
+        "paid_by": "SYNTHETIC USER", "payment_method": "SYNTHETIC PAYMENT 1",
+        "reimbursable": "Yes", "reimbursement_status": "SYNTHETIC STATUS 1",
+        "notes": "SYNTHETIC NOTE",
+    }
+    first, _, _ = module.append_expense_row(template_bytes, "Expense Log", submission, "https://example.test/first", "first.pdf")
+    second_submission = {**submission, "vendor": "SYNTHETIC VENDOR 2", "amount": 23.75}
+    second, _, _ = module.append_expense_row(first, "Expense Log", second_submission, "https://example.test/second", "second.pdf")
+    saved = load_workbook(io.BytesIO(second), data_only=False)
+    ws = saved["Expense Log"]
+    assert ws.tables["ExpenseLogTable"].ref == "A1:M3"
+    assert type(ws["A2"].value) is int and ws["A2"].value == 1
+    assert isinstance(ws["B2"].value, datetime) and ws["B2"].value.date() == date(2030, 1, 2)
+    assert type(ws["D2"].value) is float and ws["D2"].value == 12.5
+    assert ws["D2"].number_format == "$#,##0.00"
+    assert type(ws["A3"].value) is int and ws["A3"].value == 2
+    assert {cell.coordinate: cell.value for row in saved["Summary"] for cell in row if cell.data_type == "f"} == formulas
+    assert {cell.coordinate: cell.value for row in saved["Categories"] for cell in row} == categories
 
 
 def test_tracked_workbook_template_is_synthetic_and_schema_compatible():
