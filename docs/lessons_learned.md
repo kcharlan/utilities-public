@@ -6,6 +6,8 @@ Before resetting a local branch, check whether its tip is an ancestor of the
 selected start point and require explicit force when it is not. Exercise the
 refusal and forced reset with real synthetic Git repositories, checking both
 the branch ref and destination path.
+Use full local refs for membership checks: Git's shortened display name can
+change when a tag shares the branch name, bypassing a guard keyed by that name.
 
 ## 2026-11-02: Cover every launchd domain in target selection
 

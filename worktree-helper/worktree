@@ -413,10 +413,11 @@ def validate_create_request(request: ActionRequest, repo: Path) -> None:
     if request.orphan and not (request.new_branch or request.reset_branch):
         raise WorktreeError("Orphan creation needs --new-branch or --reset-branch.")
     if request.reset_branch and not request.force:
-        available = {entry.name for entry in get_local_branches(repo)}
-        if request.reset_branch in available:
+        branch_ref = f"refs/heads/{request.reset_branch}"
+        available = {entry.full_ref for entry in get_local_branches(repo)}
+        if branch_ref in available:
             start_ref = request.from_ref or "HEAD"
-            completed = git(repo, ["merge-base", "--is-ancestor", f"refs/heads/{request.reset_branch}", start_ref], check=False)
+            completed = git(repo, ["merge-base", "--is-ancestor", branch_ref, start_ref], check=False)
             if completed.returncode == 1:
                 raise WorktreeError(
                     f"Branch '{request.reset_branch}' has commits not in {start_ref}; --reset-branch would discard them. Use --force to reset it anyway."

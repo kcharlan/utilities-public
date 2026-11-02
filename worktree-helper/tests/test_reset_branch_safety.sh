@@ -40,4 +40,15 @@ grep -q 'missing-ref' "$d/error.out"
 [[ $(git -C "$d/repo" rev-parse feat) == "$(git -C "$d/repo" rev-parse main)" ]]
 "$tool" --create --repo "$d/repo" --reset-branch merged --from main --path "$d/wt2"
 [[ $(git -C "$d/repo" rev-parse merged) == "$(git -C "$d/repo" rev-parse main)" ]]
+git -C "$d/repo" branch tagged "$feature_sha"
+git -C "$d/repo" tag tagged main
+set +e
+"$tool" --create --repo "$d/repo" --reset-branch tagged --from main --path "$d/wt3"
+status=$?
+set -e
+[[ $status -eq 2 ]] || { echo "expected tagged branch refusal with exit 2, got $status" >&2; exit 1; }
+[[ $(git -C "$d/repo" rev-parse refs/heads/tagged) == "$feature_sha" ]]
+[[ ! -e "$d/wt3" ]]
+"$tool" --create --repo "$d/repo" --reset-branch tagged --from main --path "$d/wt3" --force
+[[ $(git -C "$d/repo" rev-parse refs/heads/tagged) == "$(git -C "$d/repo" rev-parse refs/heads/main)" ]]
 echo 'reset branch safety passed'
