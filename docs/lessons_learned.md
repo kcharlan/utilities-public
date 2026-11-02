@@ -1913,6 +1913,10 @@ for focused tests rather than appending unit paths to a browser category.
 When a synthetic deployment fixture copies the current source `Info.plist`,
 keep its receipt and expected version aligned with that plist after a release
 bump; otherwise the fixture represents an impossible mixed-version bundle.
+For compiled CLIs, check the deployer's expected version even when the deployer
+lives outside the project directory, and bind the current synthetic fixture to
+the CLI source version. Two matching stale strings can otherwise hide rejection
+of the current release.
 
 ### 2026-10-31 — Exercise the deployed scheduled command
 
