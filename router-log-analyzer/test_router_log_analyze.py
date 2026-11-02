@@ -7881,6 +7881,52 @@ def test_trusted_overlap_identity_is_resolved_router_instance_scoped(
         store.close()
 
 
+def make_synthetic_pdf_export(tmp_path: Path) -> tuple[Path, Path]:
+    import fitz
+
+    pages = [
+        [
+            "[DHCP IP: (192.0.2.25)] to MAC address 02:00:00:00:00:08, Saturday, March 21, 2037",
+            "08:07:26",
+            "[Internet disconnected], Saturday, March 21, 2037 08:08:00",
+            "Page 1 of 2",
+        ],
+        [
+            "[Internet connected], Saturday, March 21, 2037 08:09:00",
+            "Page 2 of 2",
+        ],
+    ]
+    pdf_path = tmp_path / "synthetic-netgear.pdf"
+    log_path = tmp_path / "synthetic-netgear.log"
+    with fitz.open() as document:
+        for lines in pages:
+            page = document.new_page()
+            for index, line in enumerate(lines):
+                page.insert_text((36, 36 + index * 14), line, fontsize=8)
+        document.save(pdf_path)
+    log_path.write_text("\n".join(line for page in pages for line in page), encoding="utf-8")
+    return pdf_path, log_path
+
+
+@pytest.mark.parametrize("backend", ["pymupdf", "pypdf"])
+def test_pdf_export_parses_like_text_export(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, backend: str,
+) -> None:
+    pdf_path, log_path = make_synthetic_pdf_export(tmp_path)
+    monkeypatch.setitem(sys.modules, "pypdf" if backend == "pymupdf" else "fitz", None)
+
+    _, text = analyzer.load_log_content(pdf_path)
+    events, stats = analyzer.parse_log_text(text, source="synthetic-netgear.log")
+    expected_events, expected_stats = analyzer.parse_log_text(
+        log_path.read_text(encoding="utf-8"), source="synthetic-netgear.log"
+    )
+
+    assert events == expected_events
+    assert stats == expected_stats
+    assert events[0].timestamp == datetime(2037, 3, 21, 8, 7, 26)
+    assert events[0].event_key == "DHCP_IP"
+
+
 def test_parse_log_text_normalizes_internet_transition_events() -> None:
     events, stats = analyzer.parse_log_text(
         "\n".join(
