@@ -151,9 +151,8 @@ UV_PYTHON_DOWNLOADS=never tools/run_project_tests.py harscope
 
 If Chromium is missing, install it once with `UV_PYTHON_DOWNLOADS=never tools/run_project_tests.py harscope --install-browsers`.
 
-The suite includes a Chromium smoke test for the embedded UI. The optional
-`tests/run_tests.sh <har-file>` workflow exercises a real HAR fixture. See
-`tests/README.md` and `tests/TEST_PLAN.md` for details.
+The suite includes Chromium coverage for the embedded UI. See
+`tests/README.md` for details.
 
 ## Port
 

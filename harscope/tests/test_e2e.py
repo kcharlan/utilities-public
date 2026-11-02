@@ -29,7 +29,6 @@ LAUNCHER = PROJECT_ROOT / "harscope"
 README = PROJECT_ROOT / "README.md"
 USER_GUIDE = PROJECT_ROOT / "docs" / "USER_GUIDE.md"
 TEST_README = PROJECT_ROOT / "tests" / "README.md"
-TEST_PLAN = PROJECT_ROOT / "tests" / "TEST_PLAN.md"
 
 
 def _find_free_port() -> int:

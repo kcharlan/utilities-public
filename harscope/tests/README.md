@@ -1,86 +1,24 @@
 # harscope Tests
 
-Automated API tests, a minimal Playwright browser smoke, and an optional
-real-HAR integration workflow.
+Automated API, CLI validation, and Playwright browser tests use synthetic HAR fixtures.
 
 ## Files
 
 | File | Description |
 |---|---|
-| `test_api.py` | Primary pytest suite for all 26 FastAPI routes, scanner behavior, exports, validation, and robustness cases |
-| `test_e2e.py` | Chromium smoke for offline loading, page errors, and tab interaction |
-| `test_redaction_matrix.py` | Synthetic redaction shapes across all export formats and fail-closed checks |
-| `conftest.py` | ASGI client, isolated application state, and conspicuously synthetic HAR fixtures |
-| `TEST_PLAN.md` | Durable matrix and failure-mode reference for the optional real-HAR workflow |
-| `run_tests.sh` | Starts a local server and runs eight real-HAR redaction scenarios |
-| `verify_redaction.py` | Python helper called by `run_tests.sh` to verify redaction state in HAR files |
+| `test_api.py` | FastAPI routes, scanner behavior, exports, validation, and robustness cases |
+| `test_cli_validate.py` | CLI validation and redaction workflow coverage |
+| `test_e2e.py` | Chromium coverage for offline loading, page errors, and interaction |
+| `test_redaction_matrix.py` | Synthetic redaction shapes across export formats and fail-closed checks |
+| `test_token_tiers.py` | Token thresholds and WebSocket redaction and validation |
+| `conftest.py` | ASGI client, isolated application state, and synthetic HAR fixtures |
 
-## Primary Pytest Suite
+## Running the Suite
 
 From the repository root, run `UV_PYTHON_DOWNLOADS=never tools/run_project_tests.py harscope`. If Chromium is missing, install it once with `UV_PYTHON_DOWNLOADS=never tools/run_project_tests.py harscope --install-browsers`.
 
-The API tests import the FastAPI application in-process and use `httpx.AsyncClient` with `ASGITransport`, so those tests do not open a network port. Their fixtures reset the launcher’s process-global state around every test. The Playwright smoke starts a separate local server on a free port and stops it after the module. The browser UI embeds its Preact runtime, icons, fonts and styles. Chromium tests verify offline loading, theme output, interaction, and browser error cleanliness. Safari and Firefox are not covered by the automated browser test.
-
-## Optional Real-HAR Workflow
-
-Use this workflow when you have a local HAR with security-relevant content and want to exercise the running server, export files, and CLI validation together:
-
-```bash
-cd harscope/tests
-source /path/to/venv/bin/activate
-
-# Default integration-test port: 8299
-./run_tests.sh /path/to/synthetic_fixture.har
-
-# Choose a different port
-./run_tests.sh /path/to/synthetic_fixture.har 8333
-```
-
-The runner starts and cleans up its own harscope process without opening a browser. Its temporary exports and logs are removed on exit.
-
-### What It Tests
-
-1. **All auto-detected findings redacted in export** — every flagged value becomes `[REDACTED]`
-2. **EDL export + CLI validation** — EDL round-trips cleanly with `--validate`
-3. **Toggle finding to KEEP** — kept values are preserved (not redacted) in export
-4. **Manual redact non-flagged value** — manually added redactions work and can be removed
-5. **Bulk deselect by severity** — warnings can be bulk-deselected while criticals stay
-6. **Mixed EDL round-trip** — keep + manual + auto decisions all validate correctly
-7. **Reset and reapply** — reset clears overrides, reapply restores defaults
-8. **Full round-trip** — sanitized HAR rescanned shows zero findings
-
-### Requirements
-
-- [uv](https://docs.astral.sh/uv/) for the harscope launcher and its Python 3.12–3.15 runtime
-- A virtual environment activated so `python3` resolves inside it. Agents use
-  the utility venv for this ad hoc workflow after `~/.claude/shared/agent-tools.sh ensure`,
-  with `PATH="$HOME/.venvs/agent-tools/bin:$PATH"` on the `run_tests.sh` command.
-- `curl` (used by the shell script for API calls)
-- A local HAR file with at least one security finding and no info-only findings
-
-The current runner's reset/reapply and zero-finding rescan assertions assume the fixture has no info-only findings, because info findings are intentionally kept by default.
-
-### Fixture Coverage
-
-A fixture must have at least one security finding and no info-only findings
-to satisfy the current runner's assertions. Keep private captures outside the
-repository. For full coverage, test with:
-
-- A HAR containing **WebSocket messages** with JSON payloads (exercises WS-specific container logic)
-- A HAR containing **HTTP request/response bodies** with nested JSON (exercises array index path navigation)
-- A HAR with both **critical and warning** severity findings (exercises bulk toggle)
-
-The runner discovers findings and a non-flagged manual-redaction target. It skips the manual-redaction scenario when no suitable JSON body key exists, and it skips the severity-specific bulk scenario unless both warning and critical findings exist.
-
-### Exit Codes
-
-- `0` — all tests passed
-- `1` — one or more tests failed (details printed to stdout)
+The API tests import the FastAPI application in-process and use `httpx.AsyncClient` with `ASGITransport`, so those tests do not open a network port. Their fixtures reset the launcher's process-global state around every test. CLI tests use the registered test interpreter. Playwright starts a separate local server on a free port and stops it after the module. The browser UI embeds its Preact runtime, icons, fonts and styles. Chromium tests verify offline loading, theme output, interaction, and browser error cleanliness. Safari and Firefox are not covered by the automated browser test.
 
 ## Adding Tests
 
-Add deterministic API and scanner coverage to `test_api.py` using the synthetic fixtures in `conftest.py`. For a scenario that specifically requires a running server and a representative local HAR:
-
-1. Add a scenario to `run_tests.sh`.
-2. Add a mode to `verify_redaction.py` if verification is too complex for the shell runner.
-3. Update the durable matrix and failure modes in `TEST_PLAN.md`.
+Add deterministic API and scanner coverage with synthetic fixtures. Keep private captures outside the repository.
