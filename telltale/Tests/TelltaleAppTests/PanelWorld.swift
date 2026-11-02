@@ -18,7 +18,7 @@ enum PanelWorld {
         naming: AppSyntheticNaming())]
     static let now = Synth.local(2026, 9, 4, 9, 30)
     static let statusSourceID = "example-status"
-    static let alertText = "Example is 25% slower than usual for prompts this size. Since 08:55."
+    static let alertText = Copy.slowerFired(model: "Example", percent: 25, since: Synth.local(2026, 9, 4, 8, 55), calendar: Synth.newYork)
 
     static func paths(_ directory: URL) -> TelltalePaths {
         TelltalePaths(home: directory.appending(path: "home", directoryHint: .isDirectory), codexHome: directory.appending(path: "codex", directoryHint: .isDirectory))

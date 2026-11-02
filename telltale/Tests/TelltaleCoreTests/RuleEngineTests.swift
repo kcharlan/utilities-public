@@ -175,8 +175,8 @@ extension RuleOutcome {
             let engine = RuleEngine(store: h.store, baseline: h.base.engine, calendar: h.calendar, providers: [.codex: info])
             try h.store.upsert(failedTurns: [h.failure(1, started: h.sep4(9, 1), completed: h.sep4(9, 2))])
             let outcomes = try engine.evaluate(points: [h.sep4(9, 5)], unit: .provider(.codex), settings: h.settings, watchedComponents: [])
-            #expect(outcomes.first?.message == "Synthetic Provider: 1 request failed: model at capacity")
-            #expect(try h.events().first?[4] == "Synthetic Provider: 1 request failed: model at capacity")
+            #expect(outcomes.first?.message == Copy.failedTurns(source: "Synthetic Provider", noun: "request", count: 1, reasons: ["model at capacity"]))
+            #expect(try h.events().first?[4] == Copy.failedTurns(source: "Synthetic Provider", noun: "request", count: 1, reasons: ["model at capacity"]))
         }
     }
     @Test func unsupportedRuleNeitherFiresNorNotifies() throws {
@@ -255,8 +255,8 @@ extension RuleOutcome {
             #expect(fired.at == h.sep4(9, 20))
             #expect(fired.provider == "codex" && fired.scope == h.model)
             #expect(fired.transition == .fired(onset: h.sep4(8, 55), severity: .amber))
-            #expect(fired.message == "Example is 25% slower than usual for prompts this size. Since 08:55.")
-            #expect(fired.catchUpMessage == "Example has been 25% slower than usual for prompts this size since 08:55.")
+            #expect(fired.message == Copy.slowerFired(model: "Example", percent: 25, since: h.sep4(8, 55), calendar: h.calendar))
+            #expect(fired.catchUpMessage == Copy.slowerCatchUp(model: "Example", percent: 25, since: h.sep4(8, 55), calendar: h.calendar))
 
             let points = try h.store.evalPoints(provider: .codex, model: h.model, in: h.sep4(9)...h.sep4(9, 20))
             #expect(points.map(\.at) == [h.sep4(9), h.sep4(9, 5), h.sep4(9, 10), h.sep4(9, 15), h.sep4(9, 20)])
@@ -286,7 +286,7 @@ extension RuleOutcome {
             let outcomes = try h.evaluate(through: h.sep4(9, 30))
             #expect(outcomes.map(\.rule) == [.faster])
             #expect(outcomes.first?.transition == .fired(onset: h.sep4(8, 55), severity: .blue))
-            #expect(outcomes.first?.message == "Example is 25% faster than usual for prompts this size. Check that output isn't shallower. Since 08:55.")
+            #expect(outcomes.first?.message == Copy.fasterFired(model: "Example", percent: 25, since: h.sep4(8, 55), calendar: h.calendar))
             let episode = try #require(try h.episodes(.faster).first)
             #expect(episode.direction == .faster && episode.severity == "blue")
             #expect(approximately(episode.worstValue, 1.25))
@@ -425,9 +425,9 @@ extension RuleOutcome {
             #expect(outcomes.map(\.rule) == [.largePrompts, .largePrompts])
             #expect(outcomes.map(\.at) == [h.sep4(9, 15), h.sep4(9, 25)])
             #expect(outcomes[0].transition == .fired(onset: h.sep4(9, 10), severity: .amber))
-            #expect(outcomes[0].message == "3 of your last 10 prompts were at least 300k tokens. A fresh session would speed things up.")
+            #expect(outcomes[0].message == Copy.largePromptsFired(count: 3, of: 10, tokens: 300_000))
             #expect(outcomes[1].transition == .cleared)
-            #expect(outcomes[1].message == "Prompt sizes are back to usual.")
+            #expect(outcomes[1].message == Copy.largePromptsCleared)
             let episode = try #require(try h.episodes(.largePrompts).first)
             #expect(episode.scope == h.model && episode.direction == nil && episode.worstValue == 3)
             #expect(episode.endReason == EpisodeRow.EndReason.cleared)
@@ -460,7 +460,7 @@ extension RuleOutcome {
             try h.run(1, throughput: 40, hour: 13, minute: 6, inputTokens: 400_000)
             let fresh = try h.evaluate(through: h.sep4(13, 10))
             #expect(fresh.map(\.transition) == [.fired(onset: h.sep4(13, 6), severity: .amber)])
-            #expect(fresh.first?.message == "4 of your last 10 prompts were at least 300k tokens. A fresh session would speed things up.")
+            #expect(fresh.first?.message == Copy.largePromptsFired(count: 4, of: 10, tokens: 300_000))
             let episodes = try h.episodes(.largePrompts)
             #expect(episodes.count == 2)
             #expect(episodes[0].endReason == EpisodeRow.EndReason.idleEnded && episodes[0].endedAt == h.sep4(12, 35))
@@ -527,7 +527,7 @@ extension RuleOutcome {
             #expect(first.map(\.at) == [h.sep4(9, 5), h.sep4(9, 15)])
             #expect(first[0].transition == .fired(onset: h.sep4(9, 1), severity: .red))
             #expect(first[0].failures.map(\.turnID) == ["turn_synthetic_901"])
-            #expect(first[0].message == "1 turn failed: model at capacity")
+            #expect(first[0].message == Copy.failedTurns(count: 1, reasons: ["model at capacity"]))
             // A failure while the episode is open carries no transition.
             #expect(first[1].transition == nil && first[1].failures.map(\.turnID) == ["turn_synthetic_902"])
             #expect(first[1].episodeID == first[0].episodeID)
@@ -535,7 +535,7 @@ extension RuleOutcome {
             // 30 quiet minutes after the last failure (counted at 09:15).
             let cleared = try h.evaluate(through: h.sep4(9, 45))
             #expect(cleared.map(\.transition) == [.cleared])
-            #expect(cleared.first?.message == "No failed turns for 30 minutes.")
+            #expect(cleared.first?.message == Copy.failedTurnsCleared(quietMinutes: 30))
             let episode = try #require(try h.episodes(.failedTurns).first)
             #expect(episode.scope == "*" && episode.severity == "red" && episode.worstValue == 2)
             #expect(try RawSQLite.column(h.url, "SELECT evaluated_at IS NOT NULL FROM failed_turns ORDER BY turn_id") == ["1", "1"])
@@ -607,7 +607,7 @@ extension RuleOutcome {
                     trigger: trigger, tokensBefore: 100, tokensAfter: nil, duration: duration, precomputed: false)
             })
             let outcome = try h.evaluate(through: h.sep4(9)).first { $0.rule == .compactions }
-            #expect(outcome?.message == "3 automatic compactions in the last 60 minutes. Fresh sessions or subagents would keep more context. They held sessions for 3 min 40 s.")
+            #expect(outcome?.message == Copy.compactionsFired(count: 3, windowMinutes: 60, blocked: 220))
         }
     }
 
@@ -628,9 +628,9 @@ extension RuleOutcome {
             #expect(outcomes.map(\.at) == [h.sep4(9, 10), h.sep4(10, 5)])
             #expect(outcomes[0].rule == .disconnects && outcomes[0].scope == "*")
             #expect(outcomes[0].transition == .fired(onset: h.sep4(9, 1), severity: .amber))
-            #expect(outcomes[0].message == "3 disconnect or retry events in the last 60 minutes.")
+            #expect(outcomes[0].message == Copy.disconnectsFired(count: 3, windowMinutes: 60))
             #expect(outcomes[1].transition == .cleared)
-            #expect(outcomes[1].message == "Connection is steady again.")
+            #expect(outcomes[1].message == Copy.disconnectsCleared)
             #expect(try h.episodes(.disconnects).first?.worstValue == 3)
         }
     }
@@ -645,7 +645,7 @@ extension RuleOutcome {
             // The log no longer covered 09:30–09:50 (spec section 6.3).
             try h.store.recordConnectionGap(provider: .codex, gap: DateInterval(start: h.sep4(9, 30), end: h.sep4(9, 50)), calendar: h.calendar)
             #expect(try h.events() == [[
-                "connectionHistoryIncomplete", "codex", "*", "Disconnects", "Connection history incomplete from 09:30 to 09:50.", "NULL", "NULL",
+                "connectionHistoryIncomplete", "codex", "*", "Disconnects", Copy.connectionGap(from: h.sep4(9, 30), to: h.sep4(9, 50), calendar: h.calendar), "NULL", "NULL",
             ]])
             #expect(try h.store.connectionGaps(provider: .codex, overlapping: DateInterval(start: h.sep4(9), end: h.sep4(9, 31)))
                 == [DateInterval(start: h.sep4(9, 30), end: h.sep4(9, 50))])
@@ -684,8 +684,8 @@ extension RuleOutcome {
             #expect(fired.rule == .incident && fired.provider == RuleHarness.sourceID && fired.scope == "inc_synthetic_01")
             #expect(fired.at == h.sep4(9, 5))
             #expect(fired.transition == .fired(onset: h.sep4(9, 2), severity: .amber))
-            #expect(fired.message == "Example Status: Elevated errors.")
-            #expect(fired.catchUpMessage == "Example Status: Elevated errors. Open since 09:02.")
+            #expect(fired.message == Copy.incidentFired(source: "Example Status", name: "Elevated errors"))
+            #expect(fired.catchUpMessage == Copy.incidentCatchUp(source: "Example Status", name: "Elevated errors", since: h.sep4(9, 2), calendar: h.calendar))
             #expect(try h.events() == [[
                 "ruleFired", RuleHarness.sourceID, "inc_synthetic_01", "Provider incident", fired.message, "\(fired.episodeID)",
                 "https://status.example.com/incidents/inc_synthetic_01",
@@ -736,7 +736,7 @@ extension RuleOutcome {
             let later = try h.evaluate(through: h.sep4(9, 40))
             #expect(later.map(\.transition) == [.escalated])
             #expect(later.map(\.at) == [h.sep4(9, 20)])
-            #expect(later.first?.message == "Example Status: Degraded CLI is now an outage.")
+            #expect(later.first?.message == Copy.incidentEscalated(source: "Example Status", name: "Degraded CLI"))
             let escalation = try #require(later.first)
             #expect(try h.events().last == [
                 "ruleEscalated", RuleHarness.sourceID, "inc_synthetic_02", "Provider incident", escalation.message,
@@ -759,7 +759,7 @@ extension RuleOutcome {
             let outcomes = try h.evaluate(through: h.sep4(9, 40))
             #expect(outcomes.map(\.transition) == [.cleared])
             #expect(outcomes.map(\.at) == [h.sep4(9, 30)])
-            #expect(outcomes.first?.message == "Example Status resolved: Elevated errors.")
+            #expect(outcomes.first?.message == Copy.incidentCleared(source: "Example Status", name: "Elevated errors"))
             #expect(try h.episodes(.incident).first?.endReason == EpisodeRow.EndReason.cleared)
         }
     }
@@ -895,9 +895,9 @@ extension RuleOutcome {
             // Before the snapshot nothing is known; at the reset it clears.
             #expect(outcomes.map(\.at) == [h.sep4(9, 5), h.sep4(9, 25)])
             #expect(outcomes[0].transition == .fired(onset: h.sep4(9, 3), severity: .amber))
-            #expect(outcomes[0].message == "92% of the 300-minute limit used. Resets at 09:22.")
+            #expect(outcomes[0].message == Copy.usageLimitFired(percent: 92, windowMinutes: 300, resets: h.sep4(9, 22), calendar: h.calendar))
             #expect(outcomes[1].transition == .cleared)
-            #expect(outcomes[1].message == "Usage is back under the limit you set.")
+            #expect(outcomes[1].message == Copy.usageLimitCleared)
         }
     }
 

@@ -153,7 +153,7 @@ private struct SyntheticKickstartFailure: LocalizedError {
             let paths = PanelWorld.paths(directory)
             try PanelWorld.seed(paths)
             let model = PanelModel(store: PanelWorld.live(paths), actions: PanelWorld.actions(paths), notifier: UserNotifier(service: NotificationServiceStub()), calendar: Synth.newYork)
-            #expect(model.emptyMessage == "Nothing to report.")
+            #expect(model.emptyMessage == Copy.nothingToReport)
             #expect(model.checkedText == "Checked 09:29")
             #expect(model.store.snapshot.signals == [.speed, .errors, .link, .provider, .load, .collector])
             // The strip leaves Collector to the footer.
@@ -181,7 +181,7 @@ private struct SyntheticKickstartFailure: LocalizedError {
             let paths = PanelWorld.paths(directory)
             let model = PanelModel(store: PanelWorld.live(paths), actions: PanelWorld.actions(paths), notifier: UserNotifier(service: NotificationServiceStub()), calendar: Synth.newYork)
             #expect(model.checkedText == nil)
-            #expect(model.store.snapshot.footer == "Waiting for the collector's first run.")
+            #expect(model.store.snapshot.footer == Copy.waitingForFirstRun)
             #expect(!FileManager.default.fileExists(atPath: paths.database.path))
         }
     }
@@ -283,7 +283,7 @@ private struct SyntheticKickstartFailure: LocalizedError {
             let actions = UserActions(paths: paths, calendar: Synth.newYork, now: { Synth.local(2026, 9, 17, 12) }, kickstart: {}, changed: { live.reload() })
             let model = PanelModel(store: live, actions: actions, notifier: UserNotifier(service: NotificationServiceStub()), calendar: Synth.newYork)
             let shift = try #require(live.snapshot.shift)
-            #expect(live.snapshot.shiftText == "Example has been about 25% slower than usual for 3 days. Accept as usual?")
+            #expect(live.snapshot.shiftText == Copy.shiftPrompt(model: "Example", percent: 25, days: 3, direction: .slower))
             #expect(model.acceptSince(for: shift) == Synth.local(2026, 9, 15))
 
             model.accept(shift, since: Synth.local(2026, 9, 15))

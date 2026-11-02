@@ -330,7 +330,7 @@ private enum Panel {
             #expect(snapshot.alerts.isEmpty)
             #expect(snapshot.checkedAt == h.sep4(9, 30).addingTimeInterval(4))
             #expect(snapshot.collector == .green)
-            #expect(snapshot.footer == "Collector running, every 5 min")
+            #expect(snapshot.footer == Copy.collectorRunning(minutes: 5))
             #expect(snapshot.labels[.provider] == "Example Status" && snapshot.labels[.speed] == "Speed")
         }
     }
@@ -400,7 +400,7 @@ private enum Panel {
             #expect(snapshot.lamps[.speed] == .amber)
             #expect(snapshot.mostSevere == .amber)
             let episode = try #require(try h.store.openEpisodes().first { $0.rule == RuleID.slower.rawValue })
-            #expect(snapshot.alerts == [PanelSnapshot.Alert(color: .amber, text: "Codex: Example has been up to 25% slower than usual for prompts this size since 08:55.",
+            #expect(snapshot.alerts == [PanelSnapshot.Alert(color: .amber, text: "Codex: " + Copy.slowerOpen(model: "Example", percent: 25, since: h.sep4(8, 55), calendar: h.calendar),
                 key: Acknowledgements.key(episode), threadID: NotificationPolicy.threadID(rule: .slower, provider: "codex", scope: Synth.model))])
             #expect([Signal.errors, .link, .provider, .load, .collector].allSatisfy { snapshot.lamps[$0] == .some(nil) })
         }
@@ -411,9 +411,9 @@ private enum Panel {
             try Panel.episode(h, rule: .faster, scope: Synth.otherModel, severity: .blue, fired: h.sep4(9, 20), body: "Sample is faster.")
             try Panel.episode(h, rule: .slower, severity: .amber, fired: h.sep4(9, 0), body: "Example is slower.")
             try Panel.episode(h, rule: .largePrompts, severity: .amber, fired: h.sep4(9, 10), body: "Large prompts.")
-            try Panel.episode(h, rule: .failedTurns, scope: "*", severity: .red, fired: h.sep4(8, 0), body: "1 turn failed: model at capacity")
+            try Panel.episode(h, rule: .failedTurns, scope: "*", severity: .red, fired: h.sep4(8, 0), body: Copy.failedTurns(count: 1, reasons: ["model at capacity"]))
             let snapshot = try Panel.load(h, at: h.sep4(9, 30))
-            #expect(snapshot.alerts.map(\.text) == ["Codex: 1 turn failed: model at capacity", "Codex: Large prompts.", "Codex: Example has been up to 30% slower than usual for prompts this size since 08:45.", "Codex: Sample has been up to 30% faster than usual for prompts this size since 09:05. Check that output isn't shallower."])
+            #expect(snapshot.alerts.map(\.text) == [Copy.failedTurns(source: "Codex", noun: "turn", count: 1, reasons: ["model at capacity"]), "Codex: Large prompts.", "Codex: " + Copy.slowerOpen(model: "Example", percent: 30, since: h.sep4(8, 45), calendar: h.calendar), "Codex: " + Copy.fasterOpen(model: "Sample", percent: 30, since: h.sep4(9, 5), calendar: h.calendar)])
             #expect(snapshot.alerts.map(\.color) == [.red, .amber, .amber, .blue])
             #expect(snapshot.lamps[.speed] == .amber && snapshot.lamps[.errors] == .red && snapshot.lamps[.load] == .amber)
             #expect(snapshot.mostSevere == .red)
@@ -427,7 +427,7 @@ private enum Panel {
                 at: h.sep4(9, 28), kind: EventKind.ruleEscalated, provider: "codex", scope: "example-model-3.0", title: "Slower than usual",
                 body: "Escalated wording.", episodeID: escalated))
             let later = try Panel.load(h, at: h.sep4(9, 30))
-            #expect(later.alerts.prefix(2).map(\.text) == ["Codex: example-model-3.0 has been up to 30% slower than usual for prompts this size since 09:10.", "Codex: 1 turn failed: model at capacity"])
+            #expect(later.alerts.prefix(2).map(\.text) == ["Codex: " + Copy.slowerOpen(model: "example-model-3.0", percent: 30, since: h.sep4(9, 10), calendar: h.calendar), Copy.failedTurns(source: "Codex", noun: "turn", count: 1, reasons: ["model at capacity"])])
             #expect(later.lamps[.speed] == .red)
         }
     }
@@ -609,7 +609,7 @@ private enum Panel {
             try h.run(5, throughput: 40, hour: 9)
             try h.evaluate(through: h.sep4(9, 10))
             let row = try #require(try Panel.load(h, at: h.sep4(9, 11)).models.first)
-            #expect(row.note == "Not enough recent responses to judge speed")
+            #expect(row.note == Copy.thinData)
         }
     }
 
@@ -619,7 +619,7 @@ private enum Panel {
             try h.run(30, throughput: 40, hour: 9)
             try h.evaluate(through: h.sep4(9, 30))
             let row = try #require(try Panel.load(h, at: h.sep4(9, 30)).models.first)
-            #expect(row.note == "Learning usual: 3 of 14 days")
+            #expect(row.note == Copy.learning(days: 3, of: 14))
         }
     }
 
@@ -634,7 +634,7 @@ private enum Panel {
             let shift = try #require(snapshot.shift)
             #expect(shift.model == Synth.model && shift.direction == .slower && shift.days == 3)
             #expect(shift.firstDay == LocalDay(year: 2026, month: 9, day: 1))
-            #expect(snapshot.shiftText == "Example has been about 25% slower than usual for 3 days. Accept as usual?")
+            #expect(snapshot.shiftText == Copy.shiftPrompt(model: "Example", percent: 25, days: 3, direction: .slower))
             // A shift is not an alert: nothing is lit.
             #expect(snapshot.alerts.isEmpty && snapshot.mostSevere == nil)
         }
@@ -661,13 +661,13 @@ private enum Panel {
                 enabled: false, installedExecutable: nil, installedAt: nil, currentExecutable: URL(fileURLWithPath: "/nonexistent-synthetic/Telltale"),
                 loaded: false, runs: [], intervalMinutes: 5, sourceStates: [], now: h.sep4(9), calendar: h.calendar)
             let snapshot = try Panel.load(h, at: h.sep4(9), health: off)
-            #expect(snapshot.footer == "Collector off. Turn it on to keep watching.")
+            #expect(snapshot.footer == Copy.collectorOff)
             #expect(snapshot.collector == .unlit && snapshot.lamps[.collector] == .some(nil) && snapshot.mostSevere == nil)
 
             // A health problem lights Collector red and takes the footer.
             var failing = Panel.healthy
             failing.loaded = .red
-            failing.problems = ["Telltale's collector isn't loaded. Open the Collector view to turn it back on."]
+            failing.problems = [Copy.collectorNotLoaded]
             let red = try Panel.load(h, at: h.sep4(9), health: failing)
             #expect(red.lamps[.collector] == .red && red.collector == .red && red.mostSevere == .red)
             #expect(red.footer == failing.problems[0])
@@ -677,14 +677,14 @@ private enum Panel {
     @Test func lampsLimitedToDeclaredSignals() throws {
         try withRules { h in
             let speedOnly = SourceSummary(provider: .codex, name: "Codex", statusName: "Example Status", statusSourceID: RuleHarness.sourceID, signals: [.speed], naming: SyntheticNaming())
-            try Panel.episode(h, rule: .failedTurns, scope: "*", severity: .red, fired: h.sep4(9), body: "1 turn failed: model at capacity")
-            try Panel.episode(h, rule: .incident, provider: RuleHarness.sourceID, scope: "inc_synthetic_01", severity: .amber, fired: h.sep4(9), body: "Example Status: Elevated errors.")
+            try Panel.episode(h, rule: .failedTurns, scope: "*", severity: .red, fired: h.sep4(9), body: Copy.failedTurns(count: 1, reasons: ["model at capacity"]))
+            try Panel.episode(h, rule: .incident, provider: RuleHarness.sourceID, scope: "inc_synthetic_01", severity: .amber, fired: h.sep4(9), body: Copy.incidentFired(source: "Example Status", name: "Elevated errors"))
             try Panel.episode(h, rule: .slower, provider: "example-unregistered", severity: .amber, fired: h.sep4(9), body: "Unregistered provider.")
             try Panel.episode(h, rule: .slower, severity: .amber, fired: h.sep4(9, 5), body: "Example is slower.")
             let snapshot = try Panel.load(h, at: h.sep4(9, 10), sources: [speedOnly])
             #expect(snapshot.signals == [.speed, .collector])
             #expect(snapshot.lamps[.errors] == nil && snapshot.lamps[.provider] == nil)
-            #expect(snapshot.alerts.map(\.text) == ["Codex: Example has been up to 30% slower than usual for prompts this size since 08:50."])
+            #expect(snapshot.alerts.map(\.text) == ["Codex: " + Copy.slowerOpen(model: "Example", percent: 30, since: h.sep4(8, 50), calendar: h.calendar)])
             #expect(snapshot.lamps[.speed] == .amber)
         }
     }
@@ -694,11 +694,11 @@ private enum Panel {
             let other = ProviderID(rawValue: "example-other")
             let second = SourceSummary(provider: other, name: "Example Other", statusName: "Example Status", statusSourceID: RuleHarness.sourceID, signals: Panel.signals, naming: SyntheticNaming())
             try Panel.episode(h, rule: .slower, severity: .amber, fired: h.sep4(9), body: "Example is slower.")
-            try Panel.episode(h, rule: .disconnects, provider: other.rawValue, scope: "*", severity: .amber, fired: h.sep4(9, 5), body: "3 disconnect or retry events in the last 60 minutes.")
-            try Panel.episode(h, rule: .incident, provider: RuleHarness.sourceID, scope: "inc_synthetic_01", severity: .amber, fired: h.sep4(9, 1), body: "Example Status: Elevated errors.")
+            try Panel.episode(h, rule: .disconnects, provider: other.rawValue, scope: "*", severity: .amber, fired: h.sep4(9, 5), body: Copy.disconnectsFired(count: 3, windowMinutes: 60))
+            try Panel.episode(h, rule: .incident, provider: RuleHarness.sourceID, scope: "inc_synthetic_01", severity: .amber, fired: h.sep4(9, 1), body: Copy.incidentFired(source: "Example Status", name: "Elevated errors"))
             let snapshot = try Panel.load(h, at: h.sep4(9, 10), sources: [Panel.codex, second])
             #expect(snapshot.alerts.map(\.text) == [
-                "Example Other: 3 disconnect or retry events in the last 60 minutes.", "Example Status: Elevated errors.", "Codex: Example has been up to 30% slower than usual for prompts this size since 08:45.",
+                "Example Other: " + Copy.disconnectsFired(count: 3, windowMinutes: 60), Copy.incidentFired(source: "Example Status", name: "Elevated errors"), "Codex: " + Copy.slowerOpen(model: "Example", percent: 30, since: h.sep4(8, 45), calendar: h.calendar),
             ])
             // One lamp per signal across providers.
             #expect(snapshot.lamps[.speed] == .amber && snapshot.lamps[.link] == .amber && snapshot.lamps[.provider] == .amber)
@@ -707,7 +707,7 @@ private enum Panel {
             var elsewhere = second
             elsewhere.statusName = "Other Status"
             #expect(try Panel.load(h, at: h.sep4(9, 10), sources: [Panel.codex, elsewhere]).labels[.provider] == "Status")
-            #expect(try Panel.load(h, at: h.sep4(9, 10)).alerts.map(\.text).contains("Codex: Example has been up to 30% slower than usual for prompts this size since 08:45."))
+            #expect(try Panel.load(h, at: h.sep4(9, 10)).alerts.map(\.text).contains("Codex: " + Copy.slowerOpen(model: "Example", percent: 30, since: h.sep4(8, 45), calendar: h.calendar)))
         }
     }
 
@@ -758,7 +758,7 @@ private struct PanelCollisionNaming: ModelNaming {
         }
         let source = SourceSummary(provider: .codex, name: "Codex", statusName: "Example", statusSourceID: RuleHarness.sourceID, signals: Panel.signals, naming: PanelCollisionNaming())
         let alerts = try Panel.load(h, at: h.sep4(9, 30), sources: [source]).alerts.map(\.text)
-        #expect(alerts.contains("Codex: Example (1.0) has been up to 25% slower than usual for prompts this size since 08:46."))
-        #expect(alerts.contains("Codex: Example (2.0) has been up to 25% slower than usual for prompts this size since 08:47."))
+        #expect(alerts.contains("Codex: " + Copy.slowerOpen(model: "Example (1.0)", percent: 25, since: h.sep4(8, 46), calendar: h.calendar)))
+        #expect(alerts.contains("Codex: " + Copy.slowerOpen(model: "Example (2.0)", percent: 25, since: h.sep4(8, 47), calendar: h.calendar)))
     }
 }

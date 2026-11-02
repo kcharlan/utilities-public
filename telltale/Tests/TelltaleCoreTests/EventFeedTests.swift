@@ -55,9 +55,9 @@ private enum Feed {
                     severity: LampColor.amber.rawValue, worstValue: 0.7))
             }
             let bodies = try EventFeed.load(store: h.store, limit: 10, sources: sources).filter { $0.kind == .ended }.map(\.body)
-            #expect(Set(bodies) == ["Codex: Ended with no recent responses to judge.",
-                                    "Synthetic Other: Ended because the rule was turned off.",
-                                    "Synthetic Status: Ended because the rule was turned off."])
+            #expect(Set(bodies) == ["Codex: " + Copy.episodeEndedIdle,
+                                    "Synthetic Other: " + Copy.episodeEndedRuleOff,
+                                    "Synthetic Status: " + Copy.episodeEndedRuleOff])
         }
     }
     @Test func connectionGapAndBaselineEventsArePrefixed() throws {
@@ -78,7 +78,7 @@ private enum Feed {
                 [RSSItem(title: "Synthetic maintenance", link: URL(string: "https://status.example.com/incidents/rss_01")!, publishedAt: h.at(9, 4, 8))],
                 source: "example-status", displayName: "Example Status")
             try Feed.fired(h, rule: .slower, severity: .amber, at: h.at(9, 4, 9), ended: h.at(9, 4, 9, 30),
-                           endReason: EpisodeRow.EndReason.idleEnded, body: "Example is 26% slower than usual for prompts this size. Since 08:50.")
+                           endReason: EpisodeRow.EndReason.idleEnded, body: Copy.slowerFired(model: "Example", percent: 26, since: h.at(9, 4, 8, 50), calendar: h.calendar))
             try Feed.fired(h, rule: .disconnects, scope: "*", severity: .amber, at: h.at(9, 4, 9, 10), ended: h.at(9, 4, 9, 40),
                            endReason: EpisodeRow.EndReason.ruleDisabled, body: Copy.disconnectsFired(count: 5, windowMinutes: 15))
             // Two failed collector runs in a row show as one entry; a success ends the streak.
@@ -98,8 +98,8 @@ private enum Feed {
                 count: 2, from: h.at(9, 4, 10, 5).addingTimeInterval(2), to: h.at(9, 4, 10, 15).addingTimeInterval(2),
                 reason: "synthetic history locked", calendar: h.calendar))
             #expect(feed[0].color == .red)
-            #expect(feed[1].title == RuleID.disconnects.title && feed[1].body == "Codex: Ended because the rule was turned off.")
-            #expect(feed[2].title == RuleID.slower.title && feed[2].body == "Codex: Ended with no recent responses to judge.")
+            #expect(feed[1].title == RuleID.disconnects.title && feed[1].body == "Codex: " + Copy.episodeEndedRuleOff)
+            #expect(feed[2].title == RuleID.slower.title && feed[2].body == "Codex: " + Copy.episodeEndedIdle)
             #expect(feed[4].color == .amber)
             #expect(feed[6].endsAt == h.at(9, 4, 7))
             #expect(Set(feed.map(\.id)).count == feed.count)
@@ -211,7 +211,7 @@ private enum Feed {
             let feed = try Feed.load(h)
             #expect(feed.map(\.kind) == [.failedTurns, .incident, .statusPost])
             #expect(feed.map(\.link) == [nil, incident, post])
-            #expect(feed[2].body == "Example Status posted: Synthetic maintenance.")
+            #expect(feed[2].body == Copy.statusPost(source: "Example Status", title: "Synthetic maintenance"))
             #expect(feed.map(\.color) == [.red, .amber, nil])
         }
     }

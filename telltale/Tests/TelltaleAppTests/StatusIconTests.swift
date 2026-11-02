@@ -65,7 +65,7 @@ private func snapshot(_ lit: [Signal: LampColor], unacknowledged: [Signal: LampC
     @Test func idleStatusIconIsTemplateLens() throws {
         let idle = try #require(StatusIcon.image(for: snapshot([:])))
         #expect(idle.isTemplate)
-        #expect(idle.accessibilityDescription == "Telltale: Nothing to report.")
+        #expect(idle.accessibilityDescription == "Telltale: " + Copy.nothingToReport)
     }
     @Test func templateWhenNothingLit() throws {
         // A waiting or quiet panel, and Collector merely running, stay a plain template.
@@ -117,7 +117,7 @@ private func snapshot(_ lit: [Signal: LampColor], unacknowledged: [Signal: LampC
         }
     }
     @Test func accessibilityNamesLitLamps() {
-        #expect(StatusIcon.accessibility(for: snapshot([:])) == "Telltale: Nothing to report.")
+        #expect(StatusIcon.accessibility(for: snapshot([:])) == "Telltale: " + Copy.nothingToReport)
         #expect(StatusIcon.accessibility(for: snapshot([.speed: .amber])) == "Telltale: Speed amber.")
         // Strip order, with the status source's caption for Provider and Collector last.
         #expect(StatusIcon.accessibility(for: snapshot([.collector: .red, .provider: .amber, .speed: .blue]))
@@ -130,7 +130,7 @@ private func snapshot(_ lit: [Signal: LampColor], unacknowledged: [Signal: LampC
             let live = PanelWorld.live(paths)
             var values: [String] = []
             let observation = StatusObservation(store: live) { values.append(StatusIcon.accessibility(for: $0)) }
-            #expect(values == ["Telltale: Nothing to report."])
+            #expect(values == ["Telltale: " + Copy.nothingToReport])
             try PanelWorld.addAlert(writer)
             await live.refresh()
             for _ in 0..<100 where values.count < 2 { await Task.yield() }

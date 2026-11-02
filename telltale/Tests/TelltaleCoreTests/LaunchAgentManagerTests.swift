@@ -178,7 +178,7 @@ private func withAgent(_ body: (AgentHarness) throws -> Void) throws {
             h.runner.respond(to: "bootstrap", with: CommandResult(status: 5, stdout: "", stderr: "Bootstrap failed: 5: Input/output error\n"))
             let error = #expect(throws: LaunchAgentError.self) { try h.manager.turnOn(executable: h.app, intervalMinutes: 5) }
             #expect(error == .launchctl(command: "bootstrap", status: 5, stderr: "Bootstrap failed: 5: Input/output error"))
-            #expect(error?.localizedDescription == "Collector command bootstrap failed (5): Bootstrap failed: 5: Input/output error")
+            #expect(error?.localizedDescription == Copy.launchctlError(command: "bootstrap", status: 5, stderr: "Bootstrap failed: 5: Input/output error"))
         }
     }
 
@@ -231,7 +231,7 @@ private func withAgent(_ body: (AgentHarness) throws -> Void) throws {
     func invalidIntervalThrowsBeforeAnyWrite(_ minutes: Int) throws {
         try withAgent { h in
             for action in h.installActions {
-                #expect(throws: LaunchAgentError.invalidInterval("Choose an interval from 1 to 60 minutes"), "\(action.name)") {
+                #expect(throws: LaunchAgentError.invalidInterval(Copy.intervalError(min: 1, max: 60)), "\(action.name)") {
                     try action.act(h.app, minutes)
                 }
                 h.expectUntouched("\(action.name)")
@@ -323,7 +323,7 @@ private func withAgent(_ body: (AgentHarness) throws -> Void) throws {
                 for action in h.installActions {
                     let error = #expect(throws: LaunchAgentError.self, "\(action.name) \(executable.path)") { try action.act(executable, 5) }
                     #expect(error == .notInAppBundle)
-                    #expect(error?.localizedDescription == "Run Telltale from Telltale.app to turn on the collector")
+                    #expect(error?.localizedDescription == Copy.notInAppBundle)
                     h.expectUntouched("\(action.name) \(executable.path)")
                 }
             }
@@ -339,7 +339,7 @@ private func withAgent(_ body: (AgentHarness) throws -> Void) throws {
             for action in h.installActions {
                 let error = #expect(throws: LaunchAgentError.self, "\(action.name)") { try action.act(acceptance, 5) }
                 #expect(error == .wrongBundle("com.example.telltale.acceptance"))
-                #expect(error?.localizedDescription == "This copy of Telltale can't run the collector")
+                #expect(error?.localizedDescription == Copy.wrongBundle)
                 h.expectUntouched("\(action.name)")
             }
         }

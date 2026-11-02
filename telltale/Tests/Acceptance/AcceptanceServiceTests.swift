@@ -41,11 +41,11 @@ import TelltaleCore
                 #expect(snapshot.alerts.count == 2)
                 #expect(snapshot.lamps[.speed] == .amber && snapshot.lamps[.load] == .amber)
                 #expect(snapshot.models.map(\.color) == [.amber, nil])
-                #expect(snapshot.alerts.map(\.text).contains("Codex: Example has been up to 26% slower than usual for prompts this size since 08:40."))
+                #expect(snapshot.alerts.map(\.text).contains("Codex: " + Copy.slowerOpen(model: "Example", percent: 26, since: SyntheticEnvironment.calendar.date(from: DateComponents(year: 2026, month: 9, day: 4, hour: 8, minute: 40))!, calendar: SyntheticEnvironment.calendar)))
             case .fasterAlerting:
                 #expect(snapshot.lamps[.speed] == .blue)
                 #expect(snapshot.models.map(\.color) == [.blue, nil])
-                #expect(snapshot.alerts.map(\.text) == ["Codex: Example has been up to 30% faster than usual for prompts this size since 08:40. Check that output isn't shallower."])
+                #expect(snapshot.alerts.map(\.text) == ["Codex: " + Copy.fasterOpen(model: "Example", percent: 30, since: SyntheticEnvironment.calendar.date(from: DateComponents(year: 2026, month: 9, day: 4, hour: 8, minute: 40))!, calendar: SyntheticEnvironment.calendar)])
             case .acknowledged:
                 let store = try Store.open(paths.database, mode: .readOnly)
                 let episode = try #require(try store.openEpisodes().first { $0.rule == RuleID.failedTurns.rawValue })
@@ -59,7 +59,7 @@ import TelltaleCore
             case .shift:
                 #expect(snapshot.alerts.isEmpty)
                 #expect(snapshot.shift?.days == 3)
-                #expect(snapshot.shiftText == "Example has been about 26% slower than usual for 3 days. Accept as usual?")
+                #expect(snapshot.shiftText == Copy.shiftPrompt(model: "Example", percent: 26, days: 3, direction: .slower))
             case .acceptance, .dashboard, .sidebarIdle, .collectorProblem, .settings, .twoProviders, .arrival, .claudeDashboard, .providersNormal, .providersNotSetUp, .providersFormatProblem, .providersBackfilling:
                 Issue.record("not a panel snapshot scene")
             }
