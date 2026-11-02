@@ -1,6 +1,7 @@
 """Regression tests for persisted scan integrity."""
 import asyncio
 import sqlite3
+import subprocess
 from unittest.mock import AsyncMock, patch
 
 import aiosqlite
@@ -160,4 +161,29 @@ def test_fleet_scan_enables_foreign_keys(tmp_path, monkeypatch):
         asyncio.run(app.run_fleet_scan(1, 'deps'))
     assert scan.await_count == 1
     with sqlite3.connect(path) as db:
+        assert db.execute('SELECT status FROM scan_log').fetchone() == ('completed',)
+
+
+def test_empty_repo_full_and_branch_scan_succeed(tmp_path, monkeypatch):
+    repo = tmp_path / 'empty-repo'
+    subprocess.run(['git', 'init', '-b', 'main', str(repo)], check=True, capture_output=True)
+    path = tmp_path / 'state.db'
+    app.init_schema(path)
+    with sqlite3.connect(path) as db:
+        db.execute("INSERT INTO repositories (id, name, path, added_at) VALUES ('r', 'r', ?, 'x')", (str(repo),))
+        db.execute("INSERT INTO scan_log (scan_type, started_at, status) VALUES ('full', 'x', 'running')")
+    monkeypatch.setattr(app, 'DB_PATH', path)
+
+    async def scan():
+        async with aiosqlite.connect(path) as db:
+            await app.run_full_history_scan(db, 'r', str(repo))
+            assert await app.run_branch_scan(db, 'r', str(repo)) == 0
+        await app.run_fleet_scan(1, 'full')
+
+    asyncio.run(scan())
+    with sqlite3.connect(path) as db:
+        assert db.execute('SELECT COUNT(*) FROM daily_stats').fetchone() == (0,)
+        assert db.execute('SELECT COUNT(*) FROM branches').fetchone() == (0,)
+        assert db.execute('SELECT last_full_scan_at FROM repositories').fetchone()[0] is not None
+        assert db.execute('SELECT scan_error FROM working_state').fetchone() == (None,)
         assert db.execute('SELECT status FROM scan_log').fetchone() == ('completed',)

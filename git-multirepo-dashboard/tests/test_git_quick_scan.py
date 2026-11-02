@@ -312,13 +312,12 @@ def test_quick_scan_timeout_reports_error(tmp_path, monkeypatch):
 
 def test_quick_scan_repo_empty_repo(tmp_path):
     """quick_scan_repo handles a repo with zero commits gracefully."""
-    _make_git_repo(tmp_path, empty=True)
+    subprocess.run(["git", "init", "-b", "main", str(tmp_path)], check=True, capture_output=True)
     result = run(git_dashboard.quick_scan_repo(tmp_path))
     assert result["last_commit_hash"] is None
     assert result["last_commit_date"] is None
     assert result["last_commit_message"] is None
-    # current_branch may be "HEAD" on empty repo — just verify it's a string or None
-    assert result["current_branch"] is None or isinstance(result["current_branch"], str)
+    assert result["current_branch"] == "main"
 
 
 # ─────────────────────────────────────────────────────────────────────────────
