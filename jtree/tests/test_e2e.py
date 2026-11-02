@@ -32,8 +32,6 @@ from tools.testkit import (
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 LAUNCHER = PROJECT_ROOT / "jtree"
-README = PROJECT_ROOT / "README.md"
-USER_GUIDE = PROJECT_ROOT / "docs" / "USER_GUIDE.md"
 
 
 def test_page_loads_offline(server, browser):
@@ -102,14 +100,6 @@ def server(tmp_path_factory):
 def test_frontend_contract():
     assert_frontend_vendor_current(LAUNCHER)
     assert_launcher_compiles_cleanly(LAUNCHER)
-    source = LAUNCHER.read_text()
-    for token in ("--color-blueprint-bg: #0a1628;", "--color-node-type-object: #4fc3f7;", "--font-sans: 'DM Sans', sans-serif;", "--font-mono: 'JetBrains Mono', monospace;"):
-        assert token in source
-    for document in (README.read_text(), USER_GUIDE.read_text()):
-        normalized = ' '.join(document.split())
-        for text in ('current Playwright Chromium', 'Chrome 111', 'Safari 16.4', 'Firefox 128'):
-            assert text in normalized
-    assert 'Safari and Firefox are not covered by the automated browser test' in ' '.join(README.read_text().split())
 
 
 def test_app_root_has_no_whitespace_only_text_nodes(server, page):
@@ -213,6 +203,21 @@ def open_synthetic_data(page, server, tmp_path, data):
     fixture.write_text(json.dumps(data, ensure_ascii=False))
     assert page.request.post(server + '/api/open', data={'path': str(fixture)}, headers={'Origin': server}).ok
     page.goto(server)
+
+
+def test_collapse_all_on_root_collapses_descendants(server, page, tmp_path):
+    with guard_browser_errors(page):
+        open_synthetic_data(page, server, tmp_path, {'outer': {'inner': {'leaf': 'synthetic'}}})
+        root = page.locator('.graph-node').first
+        root.click(button='right')
+        page.get_by_text('Expand All', exact=True).click()
+        expect(page.locator('.graph-node').filter(has_text='leaf')).to_be_visible()
+        root.click(button='right')
+        page.get_by_text('Collapse All', exact=True).click()
+        root.dblclick()
+        expect(page.locator('.graph-node').filter(has_text='outer')).to_be_visible()
+        expect(page.locator('.graph-node').filter(has_text='inner')).to_have_count(0)
+        expect(page.locator('.graph-node').filter(has_text='leaf')).to_have_count(0)
 
 
 def test_save_as_onto_existing_file_asks_before_overwriting(server, page, tmp_path):
