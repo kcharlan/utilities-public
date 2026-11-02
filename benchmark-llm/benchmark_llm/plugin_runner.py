@@ -6,7 +6,7 @@ from typing import Any
 
 from .metrics import aggregate_metrics
 from .plugin_api import BenchmarkPlugin, PluginContext
-from .reporting import write_report
+from .reporting import validate_score, write_report
 from .storage import record_run, write_json, write_jsonl
 from .util import elapsed_milliseconds, iso_timestamp, run_timestamp_slug, safe_slug, unique_child_name, utc_now
 
@@ -100,10 +100,20 @@ def run_plugin_benchmark(
         model=model,
         environ=dict(environ),
     )
-    _run_plugin_phase(ctx, "plugin_prepare", benchmark_dir, plugin.prepare, ctx)
-    _run_plugin_phase(ctx, "plugin_execute", benchmark_dir, plugin.execute, ctx, model)
-    score = _run_plugin_phase(ctx, "plugin_judge", benchmark_dir, plugin.judge, ctx)
-    summary_payload = _run_plugin_phase(ctx, "plugin_summarize", benchmark_dir, plugin.summarize, ctx, score) or {}
+    phase = "plugin_prepare"
+    try:
+        _run_plugin_phase(ctx, phase, benchmark_dir, plugin.prepare, ctx)
+        phase = "plugin_execute"
+        _run_plugin_phase(ctx, phase, benchmark_dir, plugin.execute, ctx, model)
+        phase = "plugin_judge"
+        score = _run_plugin_phase(ctx, phase, benchmark_dir, plugin.judge, ctx)
+        validate_score(score, "plugin judge")
+        phase = "plugin_summarize"
+        summary_payload = _run_plugin_phase(ctx, phase, benchmark_dir, plugin.summarize, ctx, score) or {}
+    except Exception as exc:
+        write_jsonl(run_dir / "commands.jsonl", ctx.commands)
+        write_json(run_dir / "failure.json", {"run_id": run_id, "model": model, "phase": phase, "error": str(exc)})
+        raise
     ended = utc_now()
     run_metrics = aggregate_metrics(ctx.commands)
 
