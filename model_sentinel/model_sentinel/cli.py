@@ -1326,7 +1326,7 @@ def _resolve_baseline(store: Store, provider_id: str, args: argparse.Namespace) 
         baseline = store.get_baseline_for_date(provider_id, target_date=args.baseline_date)
         if baseline is not None:
             return baseline
-        if args.save:
+        if args.save and store.get_latest_saved_baseline(provider_id) is None:
             return None
         prior, subsequent = store.nearest_saved_dates(provider_id, target_date=args.baseline_date)
         details = [f"No saved baseline exists for provider '{provider_id}' on {args.baseline_date.isoformat()}."]
@@ -1334,14 +1334,18 @@ def _resolve_baseline(store: Store, provider_id: str, args: argparse.Namespace) 
             details.append(f"Nearest prior saved scrape: {prior}")
         if subsequent:
             details.append(f"Nearest subsequent saved scrape: {subsequent}")
-        if not prior and not subsequent:
+        if args.save:
+            details.append("Nothing was saved.")
+        elif not prior and not subsequent:
             details.append(f"Run `{invocation} scan --save` to create the initial baseline.")
         return " ".join(details)
     if args.baseline == "previous-day":
         baseline = store.get_previous_day_baseline(provider_id, current_date=local_today())
         if baseline is None:
             if args.save:
-                return None
+                if store.get_latest_saved_baseline(provider_id) is None:
+                    return None
+                return f"No saved prior-day baseline exists for provider '{provider_id}'. Nothing was saved."
             return (
                 f"No saved prior-day baseline exists for provider '{provider_id}'. "
                 f"Run `{invocation} scan --save` to create an initial baseline."

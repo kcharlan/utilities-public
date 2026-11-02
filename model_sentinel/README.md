@@ -426,6 +426,9 @@ The default baseline is the latest saved snapshot for each provider.
 local calendar day. `--baseline-date YYYY-MM-DD` selects a saved snapshot on
 that local date and, in compare-only mode, reports the nearest surrounding
 saved dates when no exact match exists.
+With `--save`, a missing dated or prior-day baseline saves nothing when the
+provider already has saved history; a provider without history still gets its
+initial baseline.
 
 Human-readable scan reports use `--detail default` unless overridden by `MODEL_SENTINEL_REPORT_DETAIL` in `settings.env`. Default detail mode renders configured important fields and unclassified new fields, while summarizing configured noisy fields such as benchmarks. Use `--detail all` to render every field-level change, or `--detail squelched` to inspect only fields matched by the squelch patterns. JSON output remains full fidelity.
 

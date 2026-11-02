@@ -2065,6 +2065,13 @@ stored default can become stale. Prefer the local origin HEAD reference, then
 local main or master, and refresh the stored value during branch scans. Real
 synthetic repositories cover feature and detached checkouts and remote HEAD.
 
+## 2026-11-02: Distinguish missing selected baselines from first saves
+
+Model Sentinel treated a missing dated or prior-day baseline as an initial save
+even when the provider had history, creating false additions and advancing its
+snapshot. Check for any saved history before allowing an initial baseline and
+exercise both missing selections with real saved snapshots.
+
 ## 2026-11-02: Preserve alerts when report rendering fails
 
 Model Sentinel saves scan results before rendering reports, so a renderer exception

@@ -792,11 +792,68 @@ def test_scan_logs_runtime_identity_before_a_credential_error(
     )
 
 
-def test_save_mode_allows_initial_baseline_without_prior_snapshot(tmp_path: Path) -> None:
+@pytest.mark.parametrize(("baseline", "baseline_date"), [
+    ("previous", None), ("previous-day", None), ("previous", date(2030, 1, 3)),
+])
+def test_save_mode_allows_initial_baseline_without_prior_snapshot(
+    tmp_path: Path, baseline: str, baseline_date: date | None
+) -> None:
     store = Store(tmp_path / ".model_sentinel" / "sentinel.db")
     store.initialize()
-    args = Namespace(save=True, baseline="previous", baseline_date=None)
+    args = Namespace(save=True, baseline=baseline, baseline_date=baseline_date)
     assert cli._resolve_baseline(store, "openrouter", args) is None
+
+
+@pytest.mark.parametrize("selection", ["date", "previous-day"])
+def test_saved_scan_with_missing_requested_baseline_saves_nothing(
+    tmp_path: Path, monkeypatch, capsys, selection: str
+) -> None:
+    runtime_home = _write_config_files(tmp_path)
+    settings = runtime_home / "settings.env"
+    settings.write_text(settings.read_text().replace(
+        "MODEL_SENTINEL_NOTIFY_ON=never", "MODEL_SENTINEL_NOTIFY_ON=both"
+    ) + "MODEL_SENTINEL_ENDPOINT_CAPTURE=false\n")
+    monkeypatch.setenv("MODEL_SENTINEL_HOME", str(runtime_home))
+    monkeypatch.setenv("OPENROUTER_AI_CREDS", "SYNTHETIC_NOT_A_REAL_SECRET")
+    notifications = []
+    monkeypatch.setattr(cli, "send_notification", lambda **kwargs: notifications.append(kwargs))
+    catalog = [{"id": "synthetic/model-a"}]
+    fetches = []
+    def fetch(*args):
+        fetches.append(True)
+        return catalog
+    monkeypatch.setattr(cli, "fetch_raw_models", fetch)
+    for day in (2, 5):
+        instant = datetime(2030, 1, day, 12, tzinfo=UTC)
+        monkeypatch.setattr(cli, "_now", lambda: instant)
+        assert cli.main(["scan", "--save"]) == 0
+    capsys.readouterr()
+    notifications.clear()
+    db = runtime_home / "model_sentinel.db"
+    def counts():
+        with sqlite3.connect(db) as connection:
+            return tuple(connection.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0]
+                         for table in ("scrapes", "snapshot_models", "field_changes"))
+    before = counts()
+    catalog.append({"id": "synthetic/model-b"})
+    if selection == "date":
+        arguments = ["--baseline-date", "2030-01-03"]
+    else:
+        monkeypatch.setattr(cli, "local_today", lambda: date(2030, 1, 2))
+        arguments = ["--baseline", "previous-day"]
+    assert cli.main(["scan", "--save", "--notify", *arguments]) == 0
+    output = capsys.readouterr().out
+    assert counts() == before
+    assert len(fetches) == 2
+    assert notifications == []
+    assert "synthetic/model-b" not in output
+    if selection == "date":
+        assert "No saved baseline exists for provider 'openrouter' on 2030-01-03." in output
+        assert "Nearest prior saved scrape:" in output
+        assert "Nearest subsequent saved scrape:" in output
+        assert "Nothing was saved." in output
+    else:
+        assert "No saved prior-day baseline exists for provider 'openrouter'. Nothing was saved." in output
 
 
 @pytest.mark.parametrize(
