@@ -2074,3 +2074,9 @@ change and error notification policies to the recorded result summary.
 Fallback artifact writes can fail too: emit outside the original exception
 handler, keep the redacted console diagnostic, and attempt notification and
 retention cleanup even if the artifact cannot be written.
+
+### 2026-11-02 — Report conversion failures to scripted callers
+
+Missing or malformed inputs and output write errors must propagate to the CLI's
+nonzero exit and stderr path. Exercise each failure with synthetic input and
+check that input errors preserve an existing output file.
