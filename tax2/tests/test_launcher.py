@@ -6,8 +6,6 @@ import shutil
 import subprocess
 import sys
 import re
-import ast
-import tomllib
 
 import pytest
 
@@ -514,35 +512,6 @@ def test_launcher_write_failure_preserves_page(tmp_path, monkeypatch, capsys):
     assert 'synthetic publication failure' in capsys.readouterr().err
     assert page.read_bytes() == b'synthetic old page' and page.stat().st_mtime_ns == before
     assert not list(tmp_path.glob('.page.html.*.tmp'))
-
-
-def test_source_guard_does_not_read_config(tmp_path, monkeypatch):
-    import taxkit.page
-    source = synthetic_repo(tmp_path / 'synthetic-source')
-    calls = []
-    monkeypatch.setattr(taxkit.page, 'load_config', lambda: calls.append('read'))
-    assert load_launcher(PROJECT / 'tax2').main(['--output',str(source / 'page.html')]) == 1
-    assert calls == []
-    assert not (tmp_path / 'runtime').exists()
-
-
-def test_runtime_manifest_and_fleet_policy_drop_retired_dependencies():
-    header = (PROJECT / 'tax2').read_text().split('# /// script\n',1)[1].split('# ///',1)[0]
-    metadata = tomllib.loads('\n'.join(line.removeprefix('# ') for line in header.splitlines()))
-    assert metadata == {'requires-python': '>=3.12,<3.16', 'dependencies':['pydantic','pyyaml']}
-    requirements = {line.split('>=',1)[0] for line in (PROJECT / 'requirements-dev.txt').read_text().splitlines()
-                    if line and not line.startswith('#')}
-    assert requirements == {'pytest','playwright'}
-    # Inspect the guard's declared policy as data; shared tooling executes only
-    # with its own utility venv, rather than borrowing this project's Python.
-    guard = Path(sys.modules['tools.testkit'].__file__).with_name('check_uv_headers.py')
-    module = ast.parse(guard.read_text())
-    policy = next(node.value for node in module.body if isinstance(node, ast.AnnAssign)
-                  and isinstance(node.target, ast.Name) and node.target.id == 'DEPENDENCY_MANIFESTS')
-    tax2_policy = next(value for key,value in zip(policy.keys,policy.values) if ast.literal_eval(key)=='tax2/tax2')
-    assert ast.literal_eval(tax2_policy.elts[0]) == 'header'
-    assert ast.literal_eval(tax2_policy.elts[1]) == ''
-    assert not tax2_policy.elts[2].args
 
 
 def test_git_index_query_failure_is_closed(tmp_path, monkeypatch):

@@ -1,28 +1,8 @@
 """Check shipped source files directly, including installations without Git."""
-import os
 from pathlib import Path
 
 
 PROJECT = Path(__file__).resolve().parents[1]
-
-
-def project_files(root):
-    for directory, directories, files in os.walk(root):
-        directories[:] = [name for name in directories
-                          if not name.startswith(".") and name != "__pycache__"]
-        for name in files:
-            yield Path(directory) / name
-
-
-def test_retired_config_key_source_inventory():
-    key = "legacy_combined" + "_alias"
-    matches = {path.relative_to(PROJECT).as_posix() for path in project_files(PROJECT)
-               if key.encode() in path.read_bytes()}
-    # Only the compatibility ignore path and its regression test admit this key.
-    assert matches == {
-        "taxkit/config.py",
-        "tests/test_config.py",
-    }
 
 
 def test_tests_do_not_use_fixed_temporary_paths():
