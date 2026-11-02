@@ -31,6 +31,20 @@ PROJECT_ROOT = Path(__file__).parent.parent
 LAUNCHMASTER_SCRIPT = PROJECT_ROOT / "launchmaster"
 
 
+@pytest.fixture(autouse=True)
+def _refuse_native_launchd(monkeypatch):
+    """Prevent in-process tests from invoking native launchd tools."""
+    real_run = subprocess.run
+
+    def guarded(argv, *args, **kwargs):
+        first = argv[0] if isinstance(argv, (list, tuple)) else str(argv).split()[0]
+        if os.path.basename(str(first)) in {"launchctl", "log"}:
+            raise RuntimeError(f"native launchd tool refused in tests: {argv!r}")
+        return real_run(argv, *args, **kwargs)
+
+    monkeypatch.setattr(subprocess, "run", guarded)
+
+
 @pytest.fixture(scope="session")
 def base_url(pytestconfig):
     """Match Playwright's fallback without its deprecated instance fixture."""
