@@ -2067,3 +2067,10 @@ change and error notification policies to the recorded result summary.
 Fallback artifact writes can fail too: emit outside the original exception
 handler, keep the redacted console diagnostic, and attempt notification and
 retention cleanup even if the artifact cannot be written.
+
+### 2026-11-02 — Separate Git branch refs from checkout state and paths
+
+`git branch` can report a detached HEAD as a pseudo-branch; enumerate
+`refs/heads` instead when persisting local branches. End revision arguments
+with `--` in history commands so a branch sharing a directory name remains
+unambiguous. Exercise both cases against synthetic Git repositories.
