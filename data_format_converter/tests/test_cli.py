@@ -81,6 +81,19 @@ def test_json_to_xml():
         assert '<a>hello</a>' in content
         assert '<x>3.14</x>' in content
 
+
+def test_json_empty_list_to_xml_is_a_structured_error(tmp_path):
+    input_file = tmp_path / "input.json"
+    output_file = tmp_path / "output.xml"
+    input_file.write_text('{"root":{"keep":1,"empty":[]}}', encoding="utf-8")
+    result = run_cli(["--input", str(input_file), "--to", "xml", "--output", str(output_file)])
+
+    assert result.returncode == 4
+    error = json.loads(result.stderr)
+    assert error["code"] == "E_4"
+    assert "empty" in error["hint"]
+    assert not output_file.exists()
+
 def test_xml_to_jsonc():
     """Tests converting XML to compact JSON."""
     input_file = os.path.join(TEST_DATA_DIR, "sample.xml")

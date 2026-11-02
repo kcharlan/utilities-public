@@ -19,6 +19,8 @@ def _to_xml_recursive(obj: Any) -> str:
         for key in sorted(obj.keys()):
             value = obj[key]
             if isinstance(value, list):
+                if not value:
+                    raise ValueError(f"Cannot represent empty list '{key}' in XML.")
                 for item in value:
                     parts.append(f"<{key}>{_to_xml_recursive(item)}</{key}>")
             else:

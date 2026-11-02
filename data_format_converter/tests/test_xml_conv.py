@@ -52,6 +52,11 @@ def test_dump_xml_no_root():
         dump_xml({"a": 1, "b": 2})
 
 
+def test_dump_xml_rejects_empty_list():
+    with pytest.raises(ValueError, match="empty"):
+        dump_xml({"root": {"empty": []}})
+
+
 @pytest.mark.parametrize("value", [
     date(2030, 1, 2), datetime(2030, 1, 2, 3, 4, 5, 123456),
     datetime(2030, 1, 2, 3, 4, 5, tzinfo=timezone.utc), time(3, 4, 5, 123456),

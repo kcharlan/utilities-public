@@ -126,6 +126,8 @@ Important conversion behavior:
   when converting to XML.
 - XML element values load as strings through `xmltodict`; an XML round trip may
   therefore not preserve scalar Python types.
+- XML output rejects empty lists. A one-item list loads back as a scalar, and
+  an empty dictionary (`{}`) or empty string (`""`) loads back as null.
 - XML text is escaped, and conversions reject element names or characters
   that cannot form a well-formed XML document.
 - YAML expansion is limited to 100,000 units of values and string characters,

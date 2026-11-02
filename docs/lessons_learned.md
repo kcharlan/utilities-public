@@ -2067,3 +2067,9 @@ change and error notification policies to the recorded result summary.
 Fallback artifact writes can fail too: emit outside the original exception
 handler, keep the redacted console diagnostic, and attempt notification and
 retention cleanup even if the artifact cannot be written.
+
+### 2026-11-02 — Reject XML values that disappear
+
+An empty list produces no XML elements, silently dropping its key. Reject it
+at serialization and cover both the serializer and the CLI error boundary;
+document other XML round-trip type losses separately.
