@@ -48,7 +48,7 @@ except ImportError:  # pragma: no cover - Windows
 
 # ── Constants ─────────────────────────────────────────────────────────────────
 DEFAULT_PORT = 8300
-VERSION = "0.3.6"
+VERSION = "0.3.7"
 
 # Populated by build_tools_dict() during preflight; global so /api/status can
 # return it without re-running which() on every request.
@@ -3090,7 +3090,7 @@ async def discover_repos(root_path: Path) -> list:
 
     Skips hidden directories (starting with '.') and known non-repo directories.
     Stops descending into a directory once a .git is found (avoids submodule traversal).
-    Uses git rev-parse --show-toplevel for deduplication (belt-and-suspenders).
+    Deduplicates by checkout and shared Git directory, preferring the main checkout.
 
     Returns list of dicts with keys: path (str, resolved), name (str).
     """
@@ -3109,8 +3109,8 @@ async def discover_repos(root_path: Path) -> list:
             candidates.append(Path(dirpath))
             dirnames.clear()  # Don't descend further into this repo
 
-    # Async deduplication via git rev-parse --show-toplevel
-    repos: list = []
+    # Async deduplication via Git's checkout and shared-directory identities.
+    repos: dict = {}
     seen_toplevel: set = set()
     for candidate in candidates:
         stdout, _, rc = await run_git(candidate, "rev-parse", "--show-toplevel")
@@ -3121,11 +3121,20 @@ async def discover_repos(root_path: Path) -> list:
         except OSError:
             toplevel = Path(stdout)
         key = str(toplevel)
-        if key not in seen_toplevel:
-            seen_toplevel.add(key)
-            repos.append({"path": key, "name": toplevel.name})
+        if key in seen_toplevel:
+            continue
+        seen_toplevel.add(key)
+        common, _, rc = await run_git(
+            candidate, "rev-parse", "--path-format=absolute", "--git-common-dir"
+        )
+        if rc != 0:
+            continue
+        common_dir = Path(common).resolve()
+        common_key = str(common_dir)
+        if common_key not in repos or toplevel == common_dir.parent:
+            repos[common_key] = {"path": key, "name": toplevel.name}
 
-    return repos
+    return list(repos.values())
 
 
 async def register_repo(db, repo_info: dict) -> dict:

@@ -1,5 +1,14 @@
 """Helpers for reconciling identical samples from different sources."""
 
+DISTANCE_UNITS_TO_KM = {"m": 0.001, "km": 1.0, "mi": 1.609344}
+
+
+def distance_km(value, unit):
+    try:
+        return value * DISTANCE_UNITS_TO_KM[unit]
+    except KeyError:
+        raise ValueError(f"Unsupported distance unit {unit!r}") from None
+
 
 def deduplicate_sources(records, keys):
     if records.empty:

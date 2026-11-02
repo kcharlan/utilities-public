@@ -9,6 +9,18 @@ the branch ref and destination path.
 Use full local refs for membership checks: Git's shortened display name can
 change when a tag shares the branch name, bypassing a guard keyed by that name.
 
+## 2026-11-02: Handle decoding failures at the input boundary
+
+Parsing error handlers cannot catch invalid text encoding when a file is decoded
+before parsing. Exercise invalid bytes through the CLI and report decoding errors
+through the same structured input-error contract without creating output.
+
+## 2026-11-02: Normalize distance records before aggregation
+
+An output column labelled kilometres can silently misstate mixed-unit records if
+it sums raw values or assumes one unit. Convert each record using its declared
+unit before deduplication and aggregation; reject missing or unknown units.
+
 ## 2026-11-02: Cover every launchd domain in target selection
 
 Apple and non-Apple daemons both use the system launchd domain. Exercise every
@@ -2143,3 +2155,25 @@ An empty repository can have a named current branch even though `rev-parse`
 cannot resolve HEAD to a commit. Read the symbolic HEAD for quick scans, as for
 default-branch fallback, and retain detached HEAD as unknown. Exercise empty
 repositories with real Git and an isolated database through both scan paths.
+
+### 2026-11-02 — Deduplicate Git worktrees by shared directory
+
+Linked worktrees have distinct top-level paths but share repository history.
+Group discovery candidates by their Git common directory, preferring the main
+checkout even when a linked worktree is encountered first. If the main checkout
+is outside the scan root, retain the first discovered linked worktree. Exercise
+both cases with real synthetic repositories.
+
+## 2026-11-02: Restrict retention to owned files
+
+Model Sentinel's configurable report directory can contain unrelated files. A
+suffix and age alone do not establish ownership: cleanup must also match the
+report names the application creates, while preserving protected paths. Test
+both owned and unrelated aged files in a synthetic shared directory.
+
+### 2026-11-02 — Preserve loaded jobs after failed unloads
+
+A backup alone does not make deleting a loaded job's plist safe when unloading
+fails. Keep the original plist and report the backup path, while allowing an
+already unloaded job to be deleted even if bootout fails. Exercise both paths
+using synthetic plists and a mocked unload operation.

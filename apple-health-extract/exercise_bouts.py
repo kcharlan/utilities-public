@@ -11,7 +11,7 @@ import pandas as pd
 from datetime import timedelta, timezone
 import csv
 from tqdm import tqdm
-from record_utils import deduplicate_sources
+from record_utils import deduplicate_sources, distance_km
 
 # -------- CONFIGURATION --------
 XML_PATH = "export.xml"
@@ -63,7 +63,7 @@ with open(XML_PATH, "r", encoding="utf-8", errors="ignore") as file:
                 distance_rows.append({
                     "startDate": elem.attrib.get("startDate"),
                     "sourceName": elem.attrib.get("sourceName"),
-                    "value": float(elem.attrib.get("value", "0"))
+                    "value": distance_km(float(elem.attrib.get("value", "0")), elem.attrib.get("unit"))
                 })
             elif t == CALORIES_TYPE:
                 calories_rows.append({
