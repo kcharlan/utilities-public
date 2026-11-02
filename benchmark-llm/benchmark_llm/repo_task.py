@@ -12,7 +12,7 @@ import yaml
 
 from .execution import PROCESS_IDENTITY_ROOT, run_command
 from .metrics import aggregate_metrics
-from .reporting import write_report
+from .reporting import validate_score, write_report
 from .storage import record_run, write_json, write_jsonl
 from .util import (
     build_model_command_env,
@@ -602,7 +602,7 @@ def run_repo_task(
             command_rows: list[dict[str, Any]] = []
             last_error = ""
             last_retry_reason: str | None = None
-            last_record: dict[str, Any] | None = None
+            failed_record: dict[str, Any] | None = None
 
             _git(source_repo, ["worktree", "add", "-b", branch_name, str(workspace), "HEAD"])
             if progress_callback is not None:
@@ -684,7 +684,6 @@ def run_repo_task(
                             else None
                         ),
                     )
-                    last_record = record
                     after_status = _workspace_status(workspace) if step.model_visible else None
 
                     should_check_retryable_patterns = step.model_visible or record["exit_code"] != 0
@@ -704,6 +703,7 @@ def run_repo_task(
                     write_jsonl(attempt_dir / "commands.jsonl", command_rows)
 
                     if record["exit_code"] != 0 or retryable:
+                        failed_record = record
                         last_error = (
                             record["stderr"]
                             or record["stdout"]
@@ -717,6 +717,20 @@ def run_repo_task(
 
                 if workspace_config.get("commit_outputs", False):
                     commit_after_run = _commit_workspace(workspace, f"bench: capture outputs for {run_id}")
+
+                _promote_attempt_artifacts(attempt_dir, run_dir)
+                score_path = run_dir / str(config.get("scoring", {}).get("output", "score.json"))
+                try:
+                    try:
+                        payload = json.loads(score_path.read_text(encoding="utf-8"))
+                    except FileNotFoundError as exc:
+                        raise ValueError(f"{score_path.name}: score file was not written") from exc
+                    except json.JSONDecodeError as exc:
+                        raise ValueError(f"{score_path.name}: not valid JSON") from exc
+                    score = validate_score(payload, score_path.name)
+                except ValueError as exc:
+                    last_error = str(exc)
+                    raise RepoTaskRunError(last_error, run_dir=run_dir) from exc
 
                 attempt_status = "succeeded"
                 _write_attempt_metadata(
@@ -752,9 +766,6 @@ def run_repo_task(
                         }
                     )
 
-                _promote_attempt_artifacts(attempt_dir, run_dir)
-                score_path = run_dir / str(config.get("scoring", {}).get("output", "score.json"))
-                score = json.loads(score_path.read_text(encoding="utf-8"))
                 ended = utc_now()
                 run_metrics = aggregate_metrics(command_rows)
                 manifest = {
@@ -837,8 +848,8 @@ def run_repo_task(
                     "retry_reason": last_retry_reason,
                     "error": last_error,
                 }
-                if last_record is not None:
-                    attempt_payload["failed_command"] = _command_failure_summary(last_record)
+                if failed_record is not None:
+                    attempt_payload["failed_command"] = _command_failure_summary(failed_record)
                 _write_attempt_metadata(attempt_dir, attempt_payload)
                 attempt_summaries.append(
                     {
@@ -848,7 +859,7 @@ def run_repo_task(
                         "path": str(workspace),
                         "retry_reason": last_retry_reason,
                         "error": last_error,
-                        "failed_command": _command_failure_summary(last_record) if last_record is not None else None,
+                        "failed_command": _command_failure_summary(failed_record) if failed_record is not None else None,
                     }
                 )
                 if progress_callback is not None:
@@ -866,7 +877,9 @@ def run_repo_task(
                 if steps[min(len(command_rows), len(steps)) - 1].retry_backoff_sec > 0:
                     time.sleep(steps[min(len(command_rows), len(steps)) - 1].retry_backoff_sec)
                 continue
-            except Exception:
+            except Exception as exc:
+                if not last_error:
+                    last_error = f"{type(exc).__name__}: {exc}"
                 attempt_payload = {
                     "attempt": attempt_number,
                     "status": attempt_status,
@@ -880,8 +893,8 @@ def run_repo_task(
                     "retry_reason": last_retry_reason,
                     "error": last_error,
                 }
-                if last_record is not None:
-                    attempt_payload["failed_command"] = _command_failure_summary(last_record)
+                if failed_record is not None:
+                    attempt_payload["failed_command"] = _command_failure_summary(failed_record)
                 _write_attempt_metadata(attempt_dir, attempt_payload)
                 attempt_summaries.append(
                     {
@@ -891,7 +904,7 @@ def run_repo_task(
                         "path": str(workspace),
                         "retry_reason": last_retry_reason,
                         "error": last_error,
-                        "failed_command": _command_failure_summary(last_record) if last_record is not None else None,
+                        "failed_command": _command_failure_summary(failed_record) if failed_record is not None else None,
                     }
                 )
                 write_json(
@@ -902,7 +915,7 @@ def run_repo_task(
                         "model": model,
                         "attempts": attempt_summaries,
                         "error": last_error,
-                        "failed_command": _command_failure_summary(last_record) if last_record is not None else None,
+                        "failed_command": _command_failure_summary(failed_record) if failed_record is not None else None,
                     },
                 )
                 if progress_callback is not None:
@@ -917,7 +930,9 @@ def run_repo_task(
                             "error": last_error,
                         }
                     )
-                raise
+                if isinstance(exc, RepoTaskRunError):
+                    raise
+                raise RepoTaskRunError(last_error, run_dir=run_dir) from exc
     except KeyboardInterrupt:
         if workspace is not None and branch_name is not None:
             _cleanup_failed_repo_task(source_repo, workspace, branch_name, run_dir)

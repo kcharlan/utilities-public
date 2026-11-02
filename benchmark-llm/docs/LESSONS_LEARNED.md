@@ -1,5 +1,9 @@
 # Lessons learned
 
+- Validate a repo-task score before marking an attempt successful or indexing it;
+  retain the failed run and name the score file when the output is missing or
+  invalid so the final summary can include it. Regression: `tests/test_repo_task.py`.
+
 - Validator output must satisfy the runtime's score contract on both successful
   evaluation and import failure. Exercise the example through a complete synthetic
   bench run as well as checking each score path. Regression: `tests/test_cron_eval_example.py`.

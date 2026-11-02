@@ -298,6 +298,8 @@ scoring:
   output: score.json
 ```
 
+The `scoring.output` file must be a JSON object with numeric `summary.score_percent` from 0 to 100 inclusive; `summary.passed`, `summary.total`, and `checks` are optional.
+
 Repo-task settings at the top of `bench.yaml` control batch scheduling and artifact placement:
 
 - `output_dir` is required. The runtime expands `~`, creates the directory tree if needed, and writes each run directory there instead of under `~/.benchmark_llm/runs/`.
