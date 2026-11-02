@@ -4,11 +4,84 @@ import os
 from pathlib import Path
 
 from benchmark_llm.cli import main
+from benchmark_llm.storage import list_runs
+
+import pytest
 
 
 def _write_text(path: Path, content: str) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(content, encoding="utf-8")
+
+
+def _run_fixture_batch(tmp_path: Path, cases: list[tuple[str, str, str]], judge: str):
+    benchmark_dir = tmp_path / "synthetic-batch"
+    for filename, field, values in (
+        ("cases.jsonl", "prompt", [case_id for case_id, _, _ in cases]),
+        ("answers.jsonl", "answer", [answer for _, answer, _ in cases]),
+        ("responses.jsonl", "response", [response for _, _, response in cases]),
+    ):
+        _write_text(benchmark_dir / filename, "\n".join(
+            json.dumps({"id": case[0], field: value})
+            for case, value in zip(cases, values)
+        ) + "\n")
+    _write_text(benchmark_dir / "judge.yaml", judge)
+    executor = Path(__file__).resolve().parents[1] / "examples/shared/demo_prompt_executor.py"
+    runtime_home = tmp_path / "runtime-home"
+    stdout, stderr = io.StringIO(), io.StringIO()
+    code = main(
+        ["run", str(benchmark_dir), "-m", "demo-model", "--executor-command", str(executor)],
+        environ={"BENCH_RUNTIME_HOME": str(runtime_home)}, stdout=stdout, stderr=stderr,
+    )
+    return runtime_home, code, stderr
+
+
+def test_prompt_batch_counts_failed_cases_in_score_report_and_list(tmp_path: Path) -> None:
+    runtime_home, code, stderr = _run_fixture_batch(
+        tmp_path, [("p1", "yes", "yes"), ("p2", "yes", "wrong"), ("p3", "yes", "  YES ")],
+        "type: exact_match\nnormalize: [strip, lowercase]\n",
+    )
+    assert code == 0, stderr.getvalue()
+    run_dir = next((runtime_home / "runs").iterdir())
+    judged = [json.loads(line) for line in (run_dir / "judged.jsonl").read_text().splitlines()]
+    assert [row["passed"] for row in judged] == [True, False, True]
+    assert json.loads((run_dir / "score.json").read_text())["summary"] == {
+        "passed": 2, "total": 3, "score_percent": 66.7,
+    }
+    report = (run_dir / "report.md").read_text()
+    assert "| case p2 | no |" in report
+    assert "66.7%" in report
+    stdout, list_stderr = io.StringIO(), io.StringIO()
+    assert main(["list"], environ={"BENCH_RUNTIME_HOME": str(runtime_home)},
+                stdout=stdout, stderr=list_stderr) == 0, list_stderr.getvalue()
+    assert "66.7%" in stdout.getvalue()
+
+
+def test_prompt_batch_regex_judge_searches_raw_response(tmp_path: Path) -> None:
+    runtime_home, code, stderr = _run_fixture_batch(
+        tmp_path, [("p1", r"^4\b", "4 apples"), ("p2", "^four$", "FOUR")],
+        "type: regex\nnormalize: [lowercase]\n",
+    )
+    assert code == 0, stderr.getvalue()
+    run_dir = next((runtime_home / "runs").iterdir())
+    judged = [json.loads(line) for line in (run_dir / "judged.jsonl").read_text().splitlines()]
+    assert [row["passed"] for row in judged] == [True, False]
+    assert json.loads((run_dir / "score.json").read_text())["summary"]["score_percent"] == 50.0
+
+
+@pytest.mark.parametrize("verdict", ['{"passed": "false"}', '[]', '{}', '{"passed": 1}'])
+def test_prompt_batch_llm_judge_rejects_non_boolean_verdict(tmp_path: Path, verdict: str) -> None:
+    judge = tmp_path / "judge.py"
+    _write_text(judge, "#!/usr/bin/env python3\nprint(" + repr(verdict) + ")\n")
+    judge.chmod(0o755)
+    runtime_home, code, stderr = _run_fixture_batch(
+        tmp_path, [("p1", "yes", "yes")], f"type: llm_judge\njudge_command: {judge}\n",
+    )
+    assert code == 1
+    assert "Model failed: demo-model" in stderr.getvalue()
+    assert "case p1" in stderr.getvalue()
+    assert "boolean 'passed'" in stderr.getvalue()
+    assert list_runs(runtime_home) == []
 
 
 def test_prompt_batch_run_creates_expected_artifacts(tmp_path: Path) -> None:
@@ -185,11 +258,13 @@ def test_prompt_batch_supports_command_backed_llm_judge(tmp_path: Path) -> None:
     benchmark_dir = tmp_path / "semantic-mini"
     _write_text(
         benchmark_dir / "cases.jsonl",
-        json.dumps({"id": "p1", "prompt": "What is two plus two?"}) + "\n",
+        json.dumps({"id": "p1", "prompt": "What is two plus two?"}) + "\n"
+        + json.dumps({"id": "p2", "prompt": "Give a wrong answer"}) + "\n",
     )
     _write_text(
         benchmark_dir / "answers.jsonl",
-        json.dumps({"id": "p1", "answer": "4"}) + "\n",
+        json.dumps({"id": "p1", "answer": "4"}) + "\n"
+        + json.dumps({"id": "p2", "answer": "4"}) + "\n",
     )
     _write_text(
         benchmark_dir / "judge.yaml",
@@ -209,7 +284,8 @@ def test_prompt_batch_supports_command_backed_llm_judge(tmp_path: Path) -> None:
         "\n".join(
             [
                 "#!/usr/bin/env python3",
-                "print('four')",
+                "import os",
+                "print('four' if os.environ['CASE_ID'] == 'p1' else 'wrong')",
             ]
         )
         + "\n",
@@ -258,6 +334,7 @@ def test_prompt_batch_supports_command_backed_llm_judge(tmp_path: Path) -> None:
         for line in (run_dir / "judged.jsonl").read_text(encoding="utf-8").splitlines()
     ]
     assert judged_rows[0]["passed"] is True
+    assert judged_rows[1]["passed"] is False
     assert "semantic equivalence" in judged_rows[0]["judge_reason"].lower()
 
 
