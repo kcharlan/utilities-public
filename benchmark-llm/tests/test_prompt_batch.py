@@ -9,6 +9,30 @@ from benchmark_llm.storage import list_runs
 import pytest
 
 
+def test_prompt_batch_failed_executor_keeps_partial_artifacts_and_next_model_runs(tmp_path: Path) -> None:
+    benchmark_dir = tmp_path / "synthetic-batch"
+    for filename, field in (("cases.jsonl", "prompt"), ("answers.jsonl", "answer")):
+        _write_text(benchmark_dir / filename, "".join(
+            json.dumps({"id": case_id, field: "ok"}) + "\n" for case_id in ("p1", "p2")
+        ))
+    _write_text(benchmark_dir / "judge.yaml", "type: exact_match\n")
+    executor = tmp_path / "executor.sh"
+    _write_text(executor, '#!/bin/sh\nif [ "$MODEL_ID" = fail-model ] && [ "$CASE_ID" = p2 ]; then echo synthetic-failure >&2; exit 3; fi\necho ok\n')
+    executor.chmod(0o755)
+    runtime_home = tmp_path / "runtime-home"
+    stderr = io.StringIO()
+    code = main(["run", str(benchmark_dir), "-m", "fail-model,ok-model", "--executor-command", str(executor)],
+                environ={"BENCH_RUNTIME_HOME": str(runtime_home)}, stdout=io.StringIO(), stderr=stderr)
+    assert code == 1
+    assert "Model failed: fail-model" in stderr.getvalue()
+    assert [row["model"] for row in list_runs(runtime_home)] == ["ok-model"]
+    failed = next(path for path in (runtime_home / "runs").iterdir() if path.name.endswith("__fail-model"))
+    commands = [json.loads(line) for line in (failed / "commands.jsonl").read_text().splitlines()]
+    assert [(row["case_id"], row["exit_code"]) for row in commands] == [("p1", 0), ("p2", 3)]
+    failure = json.loads((failed / "failure.json").read_text())
+    assert failure == {"run_id": failed.name, "model": "fail-model", "case_id": "p2", "error": "synthetic-failure\n"}
+
+
 def _write_text(path: Path, content: str) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(content, encoding="utf-8")

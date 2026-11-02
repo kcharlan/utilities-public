@@ -232,6 +232,8 @@ examples/plugin-advanced/
 
 Use `benchsdk.BenchmarkPlugin` when a benchmark needs custom control flow:
 
+The `judge` method must return the score contract described under Repo-task Manifest.
+
 ```python
 from benchsdk import BenchmarkPlugin
 

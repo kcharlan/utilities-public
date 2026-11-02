@@ -151,60 +151,67 @@ def run_prompt_batch(
     raw_rows: list[dict[str, Any]] = []
     judged_rows: list[dict[str, Any]] = []
 
-    for case in cases:
-        metrics_path = run_dir / "command-metrics" / f"execute_case__{safe_slug(str(case['id']))}.json"
-        env = build_model_command_env(
-            environ,
-            {
-                "MODEL_ID": model,
-                "CASE_ID": str(case["id"]),
-                "TASK_PROMPT_TEXT": str(case["prompt"]),
-                "TASK_RESPONSE_FIXTURES_JSON": fixture_responses,
-                "TASK_METRICS_PATH": str(metrics_path),
-            },
-        )
-        command_record = run_command(
-            executor_command,
-            cwd=benchmark_dir,
-            env=env,
-            phase="execute_case",
-            metrics_path=metrics_path,
-        )
-        command_record["case_id"] = case["id"]
-        command_rows.append(command_record)
-        if command_record["exit_code"] != 0:
-            raise RuntimeError(command_record["stderr"] or command_record["stdout"] or "Executor failed.")
-        response_text = command_record["stdout"].strip()
-        raw_rows.append(
-            {
-                "case_id": case["id"],
-                "prompt": case["prompt"],
-                "response_text": response_text,
-            }
-        )
-        if judge.get("type") == "llm_judge":
-            judged = _judge_with_llm_command(
-                benchmark_dir=benchmark_dir,
-                run_dir=run_dir,
-                environ=env,
-                command_rows=command_rows,
-                case_id=str(case["id"]),
-                prompt_text=str(case["prompt"]),
-                response_text=response_text,
-                answer_text=str(answers[case["id"]]),
-                judge=judge,
+    case_id = None
+    try:
+        for case in cases:
+            case_id = case.get("id")
+            metrics_path = run_dir / "command-metrics" / f"execute_case__{safe_slug(str(case['id']))}.json"
+            env = build_model_command_env(
+                environ,
+                {
+                    "MODEL_ID": model,
+                    "CASE_ID": str(case["id"]),
+                    "TASK_PROMPT_TEXT": str(case["prompt"]),
+                    "TASK_RESPONSE_FIXTURES_JSON": fixture_responses,
+                    "TASK_METRICS_PATH": str(metrics_path),
+                },
             )
-        else:
-            judged = _judge_row(response_text, str(answers[case["id"]]), judge)
-        judged_rows.append(
-            {
-                "case_id": case["id"],
-                "prompt": case["prompt"],
-                "expected_answer": answers[case["id"]],
-                "response_text": response_text,
-                **judged,
-            }
-        )
+            command_record = run_command(
+                executor_command,
+                cwd=benchmark_dir,
+                env=env,
+                phase="execute_case",
+                metrics_path=metrics_path,
+            )
+            command_record["case_id"] = case["id"]
+            command_rows.append(command_record)
+            if command_record["exit_code"] != 0:
+                raise RuntimeError(command_record["stderr"] or command_record["stdout"] or "Executor failed.")
+            response_text = command_record["stdout"].strip()
+            raw_rows.append(
+                {
+                    "case_id": case["id"],
+                    "prompt": case["prompt"],
+                    "response_text": response_text,
+                }
+            )
+            if judge.get("type") == "llm_judge":
+                judged = _judge_with_llm_command(
+                    benchmark_dir=benchmark_dir,
+                    run_dir=run_dir,
+                    environ=env,
+                    command_rows=command_rows,
+                    case_id=str(case["id"]),
+                    prompt_text=str(case["prompt"]),
+                    response_text=response_text,
+                    answer_text=str(answers[case["id"]]),
+                    judge=judge,
+                )
+            else:
+                judged = _judge_row(response_text, str(answers[case["id"]]), judge)
+            judged_rows.append(
+                {
+                    "case_id": case["id"],
+                    "prompt": case["prompt"],
+                    "expected_answer": answers[case["id"]],
+                    "response_text": response_text,
+                    **judged,
+                }
+            )
+    except Exception as exc:
+        write_jsonl(run_dir / "commands.jsonl", command_rows)
+        write_json(run_dir / "failure.json", {"run_id": run_id, "model": model, "case_id": case_id, "error": str(exc)})
+        raise
 
     passed = sum(1 for row in judged_rows if row["passed"])
     total = len(judged_rows)

@@ -54,3 +54,7 @@
 
 - Failed and retried repo-task attempts keep their worktrees, so a venv a model
   created there is never rebuilt by validation and stays pinned.
+
+- Persist command provenance and failure context when prompt-batch or plugin
+  execution fails; completed executor calls may already have incurred cost.
+  Validate plugin scores before summarization or writing successful artifacts.
