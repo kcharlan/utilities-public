@@ -8,6 +8,13 @@ import {fileURLToPath} from 'node:url';
 import {buildInput} from '../deploy_colophon.mjs';
 
 const script = fileURLToPath(new URL('../deploy_colophon.mjs', import.meta.url));
+const currentVersion = 'colophon 0.5.3';
+test('synthetic current release matches the Colophon CLI version', () => {
+  const source = fs.readFileSync(new URL('../../colophon/src/cli/args.c', import.meta.url), 'utf8');
+  const versions = [...source.matchAll(/puts\("(colophon \d+\.\d+\.\d+)"\)/g)];
+  assert.equal(versions.length, 1, 'expected one CLI version declaration');
+  assert.equal(versions[0][1], currentVersion);
+});
 test('native build inputs include vendored zstd and exclude unrelated vendor trees', () => {
   assert.equal(buildInput('colophon/vendor/zstd/common/xxhash.c'), true);
   assert.equal(buildInput('colophon/vendor/zstd/VERSION'), true);
@@ -25,7 +32,7 @@ function fixture(t, root = 'colophon') {
   const gitEnv = {GIT_CONFIG_COUNT:'2', GIT_CONFIG_KEY_0:'maintenance.auto', GIT_CONFIG_VALUE_0:'false', GIT_CONFIG_KEY_1:'gc.auto', GIT_CONFIG_VALUE_1:'0'};
   const git = (...args) => execFileSync('git', ['-C', repo, ...args], {stdio: 'pipe', env:{...process.env, ...gitEnv}});
   function release(label, failInstalled = false) {
-    write('src/main.c', `#include <stdio.h>\n#include <string.h>\nint main(int argc, char **argv) { if (${failInstalled ? 1 : 0} && strstr(argv[0], "/Scripts/")) return 1; if (argc == 2 && !strcmp(argv[1], "--version")) { puts("colophon 0.5.2"); return 0; } if (argc == 2 && !strcmp(argv[1], "--help")) { puts("synthetic ${label}"); return 0; } return 2; }\n`);
+    write('src/main.c', `#include <stdio.h>\n#include <string.h>\nint main(int argc, char **argv) { if (${failInstalled ? 1 : 0} && strstr(argv[0], "/Scripts/")) return 1; if (argc == 2 && !strcmp(argv[1], "--version")) { puts("${currentVersion}"); return 0; } if (argc == 2 && !strcmp(argv[1], "--help")) { puts("synthetic ${label}"); return 0; } return 2; }\n`);
     git('add', '.');
   }
   write('Makefile', 'all: colophon\ncolophon: src/main.c\n\tclang -o colophon src/main.c\n');
