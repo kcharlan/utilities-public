@@ -2114,3 +2114,10 @@ instead of silently omitting a release input.
 Refreshing a lockfile does not update an existing dependency installation. Install
 the refreshed lock before running its dependent tests, and stop if installation
 fails. Assert the ordering and failure path with a strict external-command stub.
+
+### 2026-11-02 — Preserve schemas for empty extraction results
+
+DataFrames inferred from empty row lists have no columns, so downstream filters
+and CSV readers can fail even when an empty result is valid. Declare the input
+and output schemas explicitly and exercise both empty workouts and absent metric
+records through the complete extraction pipeline.
