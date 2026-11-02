@@ -33,10 +33,11 @@ public struct CheckInterval: Codable, Hashable, Sendable {
 }
 
 public enum CheckSchedule {
-    public static func nextDue(lastCheck: Date?, interval: CheckInterval) -> Date? {
-        lastCheck?.addingTimeInterval(TimeInterval(interval.minutes * 60))
+    public static func nextDue(lastCheck: Date?, interval: CheckInterval, now: Date) -> Date? {
+        guard let lastCheck, lastCheck <= now else { return nil }
+        return lastCheck.addingTimeInterval(TimeInterval(interval.minutes * 60))
     }
     public static func isDue(lastCheck: Date?, interval: CheckInterval, now: Date) -> Bool {
-        nextDue(lastCheck: lastCheck, interval: interval).map { $0 <= now } ?? true
+        nextDue(lastCheck: lastCheck, interval: interval, now: now).map { $0 <= now } ?? true
     }
 }
