@@ -51,7 +51,10 @@ def _load_metrics_payload(metrics_path: Path | None) -> tuple[dict[str, Any] | N
         return None, str(exc)
     if not isinstance(payload, dict):
         return None, "Metrics payload must be a JSON object."
-    return normalize_metrics(payload), None
+    try:
+        return normalize_metrics(payload), None
+    except (TypeError, ValueError, OverflowError) as exc:
+        return None, f"Invalid metrics value: {exc}"
 
 
 def _tail_lines(text: str, limit: int = _TAIL_LINE_LIMIT) -> str:

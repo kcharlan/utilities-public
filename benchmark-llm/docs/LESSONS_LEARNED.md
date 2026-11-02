@@ -1,5 +1,9 @@
 # Lessons learned
 
+- Optional metrics sidecars can contain valid JSON with invalid numeric values.
+  Treat normalization errors as recorded metrics errors so the benchmark result
+  survives. Regression: `tests/test_prompt_batch.py`.
+
 - Validate command-backed judge verdicts as JSON objects with an actual boolean
   `passed` field. Coercion can turn a string such as `"false"` into a passing
   result; malformed outputs should identify the case and fail the run instead.

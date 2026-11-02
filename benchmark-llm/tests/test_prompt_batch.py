@@ -539,6 +539,39 @@ def test_prompt_batch_collects_optional_executor_metrics_sidecar(tmp_path: Path)
     assert command_rows[1]["metrics"]["cost_usd"] == 0.08
 
 
+def test_prompt_batch_records_metrics_error_for_malformed_sidecar(tmp_path: Path) -> None:
+    benchmark_dir = tmp_path / "synthetic-batch"
+    for filename, field in (("cases.jsonl", "prompt"), ("answers.jsonl", "answer")):
+        _write_text(benchmark_dir / filename, "".join(
+            json.dumps({"id": case_id, field: "ok"}) + "\n" for case_id in ("p1", "p2")
+        ))
+    _write_text(benchmark_dir / "judge.yaml", "type: exact_match\n")
+    executor = tmp_path / "executor.py"
+    _write_text(executor, "\n".join([
+        "#!/usr/bin/env python3",
+        "import os",
+        "from pathlib import Path",
+        "payload = '{' if os.environ['CASE_ID'] == 'p1' else '{\"input_tokens\": \"n/a\", \"output_tokens\": 3}'",
+        "Path(os.environ['TASK_METRICS_PATH']).write_text(payload, encoding='utf-8')",
+        "print('ok')",
+    ]) + "\n")
+    executor.chmod(0o755)
+    runtime_home = tmp_path / "runtime-home"
+    stderr = io.StringIO()
+    code = main(
+        ["run", str(benchmark_dir), "-m", "demo-model", "--executor-command", str(executor)],
+        environ={"BENCH_RUNTIME_HOME": str(runtime_home)}, stdout=io.StringIO(), stderr=stderr,
+    )
+    assert code == 0, stderr.getvalue()
+    run_dir = next((runtime_home / "runs").iterdir())
+    rows = [json.loads(line) for line in (run_dir / "commands.jsonl").read_text().splitlines()]
+    assert len(rows) == 2
+    assert all(row.get("metrics_error") and "metrics" not in row for row in rows)
+    assert rows[1]["metrics_error"].startswith("Invalid metrics value:")
+    assert json.loads((run_dir / "manifest.json").read_text())["metrics"] == {}
+    assert json.loads((run_dir / "score.json").read_text())["summary"]["score_percent"] == 100.0
+
+
 def test_run_supports_models_file_via_at_syntax(tmp_path: Path) -> None:
     benchmark_dir = tmp_path / "logic-mini"
     _write_text(
