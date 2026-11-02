@@ -210,12 +210,22 @@ def test_job_list_merges_parsed_launchctl_state(launcher, calls, tmp_path):
     jobs = {job["label"]: job for job in launcher.build_job_list(include_apple=True)}
 
     running = jobs[RUNNING]
-    assert (running["pid"], running["status"], running["enabled"]) == (424242, "running", True)
+    assert (running["pid"], running["last_exit"], running["status"]) == (424242, 0, "running")
+    assert running["enabled"] is True and running["loaded"] is True
     disabled = jobs["com.example.synthetic-disabled"]
     assert (disabled["status"], disabled["enabled"]) == ("disabled", False)
-    assert jobs["com.example.synthetic-unloaded"]["status"] == "unloaded"
+    unloaded = jobs["com.example.synthetic-unloaded"]
+    assert (unloaded["status"], unloaded["enabled"], unloaded["loaded"]) == ("unloaded", True, False)
     orphan = jobs["com.example.synthetic-failed"]
     assert (orphan["plist_path"], orphan["status"], orphan["last_exit"]) == (None, "failed", 78)
+    assert all(
+        type(job["enabled"]) is bool and type(job["loaded"]) is bool
+        for job in jobs.values()
+    )
+    assert all(
+        job["status"] in {"running", "idle", "failed", "disabled", "unloaded"}
+        for job in jobs.values()
+    )
     assert jobs["com.apple.example-synthetic"]["is_apple"] is True
 
 

@@ -14,6 +14,7 @@ import re
 import shutil
 import sys
 import tempfile
+import uuid
 from typing import List, Optional, Set
 from urllib.parse import unquote, urlsplit
 
@@ -118,7 +119,7 @@ def discover_html_files_glob(site_dir: str) -> (List[str], dict):
     return sorted(relative_paths), {}
 
 
-def transform_waffle_tables(root_soup: BeautifulSoup, content_div: BeautifulSoup):
+def transform_waffle_tables(root_soup: BeautifulSoup, content_div: BeautifulSoup, table_blocks: dict):
     """
     Finds all tables with class 'waffle' and replaces them with
     Markdown-formatted text blocks so html2text preserves their layout.
@@ -130,7 +131,7 @@ def transform_waffle_tables(root_soup: BeautifulSoup, content_div: BeautifulSoup
             continue
         
         # The header cells are tds in this table
-        headers = [td.get_text(strip=True) for td in header_row.find_all("td")]
+        headers = [_sanitize_cell_text(td.get_text(strip=True)) for td in header_row.find_all("td")]
         if not headers:
             continue
 
@@ -147,28 +148,28 @@ def transform_waffle_tables(root_soup: BeautifulSoup, content_div: BeautifulSoup
             
             # Check for subheader rows (one cell with colspan)
             if len(tds) == 1 and tds[0].has_attr('colspan'):
-                subheader_text = tds[0].get_text(separator=" ", strip=True).replace("\n", " ")
+                subheader_text = _sanitize_cell_text(tds[0].get_text(separator=" ", strip=True))
                 cells = [f"**{subheader_text}**"] + [""] * (len(headers) - 1)
                 markdown_table.append(f"| {' | '.join(cells)} |")
             else:
                 cells = [
-                    td.get_text(separator=" ", strip=True).replace("\n", " ")
+                    _sanitize_cell_text(td.get_text(separator=" ", strip=True))
                     for td in tds
                 ]
                 if len(cells) == len(headers) and any(c.strip() for c in cells):
                     markdown_table.append(f"| {' | '.join(cells)} |")
 
         if markdown_table:
-            replace_table_with_markdown(table, "\n".join(markdown_table), root_soup)
+            replace_table_with_markdown(table, "\n".join(markdown_table), root_soup, table_blocks)
 
 
-def transform_dict_tables(root_soup: BeautifulSoup, content_div: BeautifulSoup):
+def transform_dict_tables(root_soup: BeautifulSoup, content_div: BeautifulSoup, table_blocks: dict):
     """
     Finds all tables with class 'dict' and replaces them with
     Markdown-formatted text blocks.
     """
     for table in content_div.find_all("table", class_="dict"):
-        headers = [th.get_text(strip=True) for th in table.find_all("th")]
+        headers = [_sanitize_cell_text(th.get_text(strip=True)) for th in table.find_all("th")]
         
         # Skip tables that don't look like a dictionary table
         if not headers:
@@ -182,13 +183,13 @@ def transform_dict_tables(root_soup: BeautifulSoup, content_div: BeautifulSoup):
 
         for row in table.find("tbody").find_all("tr"):
             cells = [
-                td.get_text(separator=" ", strip=True).replace("\n", " ")
+                _sanitize_cell_text(td.get_text(separator=" ", strip=True))
                 for td in row.find_all("td")
             ]
             if len(cells) == len(headers):
                 markdown_table.append(f"| {' | '.join(cells)} |")
         
-        replace_table_with_markdown(table, "\n".join(markdown_table), root_soup)
+        replace_table_with_markdown(table, "\n".join(markdown_table), root_soup, table_blocks)
 
 
 def extract_heading_prefix(soup: BeautifulSoup, content_div: BeautifulSoup) -> str:
@@ -309,10 +310,10 @@ def strip_decorative_elements(content_div: BeautifulSoup):
 
 def _sanitize_cell_text(text: str) -> str:
     collapsed = re.sub(r"\s+", " ", text or "")
-    return collapsed.replace("|", r"\|").strip()
+    return collapsed.replace("\\", r"\\").replace("|", r"\|").strip()
 
 
-def convert_tables_to_markdown(soup: BeautifulSoup, content_div: BeautifulSoup):
+def convert_tables_to_markdown(soup: BeautifulSoup, content_div: BeautifulSoup, table_blocks: dict):
     """
     Converts remaining HTML tables into pre-formatted Markdown blocks so that
     html2text doesn't mangle them.
@@ -328,7 +329,7 @@ def convert_tables_to_markdown(soup: BeautifulSoup, content_div: BeautifulSoup):
 
         markdown = build_markdown_from_table(table)
         if markdown:
-            replace_table_with_markdown(table, markdown, soup)
+            replace_table_with_markdown(table, markdown, soup, table_blocks)
 
 
 def build_markdown_from_table(table: BeautifulSoup) -> Optional[str]:
@@ -379,20 +380,17 @@ def build_markdown_from_table(table: BeautifulSoup) -> Optional[str]:
     return "\n".join(lines)
 
 
-def replace_table_with_markdown(table, markdown: str, root_soup: BeautifulSoup):
+def replace_table_with_markdown(table, markdown: str, root_soup: BeautifulSoup, table_blocks: dict):
     """
-    Replaces an HTML table with a div containing raw Markdown so html2text emits
-    it as a normal table instead of a code block.
+    Preserve raw Markdown through html2text, which otherwise collapses cell
+    padding and converts line breaks to Markdown hard breaks.
     """
     wrapper = root_soup.new_tag("p")
     wrapper["class"] = ["markdown-table"]
 
-    lines = markdown.strip().split("\n")
-    for idx, line in enumerate(lines):
-        wrapper.append(NavigableString(line))
-        if idx != len(lines) - 1:
-            wrapper.append(root_soup.new_tag("br"))
-
+    token = f"LINEARIZEDTABLE{uuid.uuid4().hex}END"
+    table_blocks[token] = markdown.strip()
+    wrapper.append(NavigableString(token))
     table.replace_with(wrapper)
 
 
@@ -439,9 +437,10 @@ def process_page(
     strip_decorative_elements(content_div)
 
     # Pre-process tables into Markdown-friendly blocks
-    transform_waffle_tables(soup, content_div)
-    transform_dict_tables(soup, content_div)
-    convert_tables_to_markdown(soup, content_div)
+    table_blocks = {}
+    transform_waffle_tables(soup, content_div, table_blocks)
+    transform_dict_tables(soup, content_div, table_blocks)
+    convert_tables_to_markdown(soup, content_div, table_blocks)
 
     assets_dir_name = os.path.basename(assets_dir.rstrip(os.sep))
     asset_extensions = {".json", ".xml", ".ttl", ".csv", ".xlsx", ".zip", ".tgz", ".png", ".jpg", ".jpeg", ".gif"}
@@ -498,6 +497,20 @@ def process_page(
     # Convert the soup to string, then let html2text handle it.
     html_string = str(content_div)
     markdown = converter.handle(html_string).strip()
+    for token, table_markdown in table_blocks.items():
+        def restore_table(match):
+            prefix, marker = match.group(1), match.group(2) or ""
+            continuation = prefix + " " * len(marker)
+            return prefix + marker + table_markdown.replace("\n", "\n" + continuation)
+
+        markdown = re.sub(
+            rf"^([ \t>]*?)((?:[*+-]|\d+[.)])[ \t]+)?{re.escape(token)}",
+            restore_table,
+            markdown,
+            flags=re.MULTILINE,
+        )
+        # Resolve tokens even in a converter context with an unfamiliar prefix.
+        markdown = markdown.replace(token, table_markdown)
 
     return f'<a id="{html.escape(page_anchor_id, quote=True)}"></a>\n\n{markdown}'
 

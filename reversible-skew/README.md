@@ -66,18 +66,19 @@ Run both scripts' built-in checks:
 ./rs-big.py selftest
 ```
 
-The reference selftest generates 1 MiB of random data, transforms it in
-64 KiB blocks, inverts it, and compares the result byte-for-byte. The optimized
-selftest checks 1 MiB each of random, periodic, and varied synthetic data and
-requires at least one varied block to use the transformed path.
+Both selftests check 1 MiB each of random, periodic, and varied synthetic data
+in 64 KiB blocks and require at least one varied block to use the transformed
+path.
 
 After code or dependency updates, run both selftests and both scripts' `--help`
 commands. Cross-decode random, periodic, and varied synthetic fixtures between
 the scripts and compare each recovered file with its original using `cmp`.
 Also decode a retained valid pre-change synthetic stream with the changed
-script and require byte equality. Keep fixtures and generated streams outside
-the checkout. These checks form the project's complete compatibility validation.
-Run `bash tests/test_input_safety.sh` as well to check input and output safety.
+script and require byte equality. Keep generated fixtures and streams outside
+the checkout; the committed golden stream is synthetic. These checks form the
+project's complete compatibility validation.
+Run `bash tests/test_input_safety.sh` and `bash tests/test_stream_format.sh` as
+well to check input/output safety and the committed synthetic stream format.
 
 ### Transform options
 

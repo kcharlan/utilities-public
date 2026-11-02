@@ -95,6 +95,9 @@ def test_delete_job_backs_up_unloads_and_removes_plist(
     assert len(backups) == 1
     assert plistlib.loads(backups[0].read_bytes())["Label"] == LABEL
     assert unload_calls == [(LABEL, DOMAIN, str(plist_path))]
+    listed = asyncio.run(lm_module.api_list_backups())
+    assert isinstance(listed, list)
+    assert [entry["filename"] for entry in listed] == [backups[0].name]
 
 
 def test_delete_job_unloads_when_plist_is_already_absent(

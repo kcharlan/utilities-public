@@ -77,7 +77,9 @@ existing declared type when it is something else.
 - SQL requests are limited to 100 KB and query results to 10,000 rows.
 - CSV uploads are limited to 50 MB.
 - Table APIs accept at most 1,000 rows per request; the UI requests 100.
-- SQLite connections use 30-second connection and busy timeouts.
+- SQLite connections use 30-second connection and busy timeouts. A locked
+  database can cause the affected request to fail after the timeout while
+  other requests continue.
 
 CSV imports commit every 1,000 rows. If a later batch fails, rows from earlier
 committed batches remain in the database.

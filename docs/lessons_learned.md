@@ -2218,3 +2218,22 @@ Office documents can nest paragraphs and slide shapes inside content controls
 and groups. Walk those containers in order and reuse the normal paragraph,
 table, and shape processing; strict-mode synthetic conversions catch silent
 text loss that a successful return code alone misses.
+
+### 2026-11-02 — Keep SQLite lock waits off the event loop
+
+Blocking SQLite operations inside async routes can stall unrelated requests for
+the full busy timeout. Run database work in worker threads and exercise a locked
+write through a real server with an independently timed status request. A SQLite
+connection context manager commits or rolls back but does not close the handle;
+close test fixture and readback connections explicitly.
+
+## Generated Markdown tables through HTML converters
+
+When an HTML-to-Markdown pipeline constructs table Markdown before calling the
+converter, preserve those blocks across conversion. HTML whitespace collapsing
+and `<br>` hard breaks can change empty-cell padding and table line endings;
+restore the surrounding block prefix on every line, and escape source
+backslashes before pipe delimiters. Check rendered cell values and quoted
+table structure as well as exact top-level lines. List markers belong only on
+the first line; indent continuation lines and ensure every placeholder is
+resolved even when the converter emits an unexpected prefix.
