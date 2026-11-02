@@ -48,7 +48,7 @@ except ImportError:  # pragma: no cover - Windows
 
 # ── Constants ─────────────────────────────────────────────────────────────────
 DEFAULT_PORT = 8300
-VERSION = "0.3.5"
+VERSION = "0.3.6"
 
 # Populated by build_tools_dict() during preflight; global so /api/status can
 # return it without re-running which() on every request.
@@ -514,14 +514,9 @@ def parse_last_commit(output: str) -> dict:
 
 
 async def get_current_branch(repo_path) -> str | None:
-    """Return the current branch name, or None if repo has no commits."""
-    stdout, _, rc = await run_git(repo_path, "rev-parse", "--abbrev-ref", "HEAD")
-    if rc != 0:
-        return None
-    # "HEAD" means detached or empty repo
-    if stdout == "HEAD":
-        return None
-    return stdout or None
+    """Return the current branch, including an unborn branch, or None if detached."""
+    stdout, _, rc = await run_git(repo_path, "symbolic-ref", "--short", "HEAD")
+    return (stdout or None) if rc == 0 else None
 
 
 async def quick_scan_repo(repo_path) -> dict:
@@ -3077,9 +3072,9 @@ async def get_default_branch(repo_path: Path) -> str:
         _, _, rc = await run_git(repo_path, "show-ref", "--verify", "--quiet", f"refs/heads/{branch}")
         if rc == 0:
             return branch
-    stdout, _, rc = await run_git(repo_path, "symbolic-ref", "--short", "HEAD")
-    if rc == 0 and stdout:
-        return stdout
+    branch = await get_current_branch(repo_path)
+    if branch:
+        return branch
     return "main"
 
 

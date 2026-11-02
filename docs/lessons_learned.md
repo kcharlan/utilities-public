@@ -2127,3 +2127,10 @@ records through the complete extraction pipeline.
 An empty list produces no XML elements, silently dropping its key. Reject it
 at serialization and cover both the serializer and the CLI error boundary;
 document other XML round-trip type losses separately.
+
+### 2026-11-02 — Read unborn Git branches from symbolic HEAD
+
+An empty repository can have a named current branch even though `rev-parse`
+cannot resolve HEAD to a commit. Read the symbolic HEAD for quick scans, as for
+default-branch fallback, and retain detached HEAD as unknown. Exercise empty
+repositories with real Git and an isolated database through both scan paths.
