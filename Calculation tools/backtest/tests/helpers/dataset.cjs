@@ -15,8 +15,9 @@ function copyBundle(bundle) {
   return {...bundle, payload:structuredClone(bundle.payload), provenance:structuredClone(bundle.provenance),
     files:new Map([...bundle.files].map(([name,bytes]) => [name,Buffer.from(bytes)]))};
 }
+let staleNoticeWritten = false;
 function createDatasetReader(options = dataOptions()) {
-  const pinnedOptions = {...options, requireCurrentRecipe:true};
+  const pinnedOptions = {requireCurrentRecipe:false, ...options};
   let promise;
   async function verified() {
     if (!promise) promise = (async () => {
@@ -24,6 +25,11 @@ function createDatasetReader(options = dataOptions()) {
         const contract = await import('../../tools/data_contract.mjs');
         const bundle = pinnedOptions.dataRoot ? await contract.verifyBundle(pinnedOptions) : await contract.verifySelected(pinnedOptions);
         if (!bundle) throw new Error('missing');
+        const currentRecipe = await contract.readRecipe(pinnedOptions.sourceRoot || SOURCE_ROOT);
+        if (!staleNoticeWritten && bundle.recipeId !== currentRecipe.recipeId) {
+          staleNoticeWritten = true;
+          process.stderr.write('Market Atlas test data predates the current recipe; tests check the edited code against the selected history. The owner refreshes the selection with npm run setup:data.\n');
+        }
         return bundle;
       } catch (error) {
         // Never include unknown paths, malformed payloads or data values in diagnostics.

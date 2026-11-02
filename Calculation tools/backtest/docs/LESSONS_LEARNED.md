@@ -76,3 +76,10 @@ distribution needs its own decision.
 The repository [deployment guide](../../../docs/local_deployment_sync.md#adding-a-deployment)
 describes choosing direct copy, maintained tree or generated static deployment
 and proving a small fixture lifecycle before considering shared abstractions.
+
+## Verified history and changing recipes
+
+Tests can compare edited engine and compiler code with a verified older selection
+without requiring a data refresh first. The retained-input reproduction detects
+changed compiler output; normal build and deployment remain strict so released
+assets match the current recipe.
