@@ -16,7 +16,7 @@ These are external CLI tools that docpipe shells out to. A missing optional fall
 
 | Tool | Install command | What it enables |
 |------|----------------|-----------------|
-| **poppler** | `brew install poppler` | PDF text extraction (`pdftotext`) and optional page-to-image rendering (`pdftoppm`). docpipe also checks for `pdfinfo`, but v0.1.2 does not emit its metadata. **Required for PDF conversion.** |
+| **poppler** | `brew install poppler` | PDF text extraction (`pdftotext`) and optional page-to-image rendering (`pdftoppm`). docpipe also checks for `pdfinfo`, but v0.1.3 does not emit its metadata. **Required for PDF conversion.** |
 | **pandoc** | `brew install pandoc` | Fallback HTML→Markdown conversion. Primary path uses the Python `markdownify` library (auto-installed), so Pandoc is only needed if markdownify fails on a particular HTML file. Also used as DOCX fallback if `python-docx` errors. |
 
 Install both in one shot:
@@ -73,8 +73,8 @@ On first run, uv resolves the dependencies into its shared cache (may briefly hi
 | Format | Text | Structured tables | Images/assets | Notes |
 |--------|------|-------------------|---------------|-------|
 | PDF | Yes (`pdftotext -layout`) | No | Page renders with `--images` (`pdftoppm`) | Born-digital PDFs only; no OCR |
-| DOCX | Yes (`python-docx`) | CSV | Embedded images with `--images` | Pandoc text fallback on `python-docx` error |
-| PPTX | Yes (`python-pptx`) | CSV from table shapes | Not supported | Includes speaker notes |
+| DOCX | Yes (`python-docx`), including body content controls | CSV | Embedded images with `--images` | Pandoc text fallback on `python-docx` error |
+| PPTX | Yes (`python-pptx`), including grouped shapes | CSV from table shapes | Not supported | Includes speaker notes |
 | HTML | Yes (Readability + markdownify) | CSV from HTML tables | Not supported | Pandoc, then plain text, are fallback paths |
 | XLSX | Yes (`openpyxl`) | CSV per sheet | Not supported | Reads cached formula values with `data_only=True` |
 | XLS | Not supported | — | — | Convert to XLSX manually |
