@@ -31,6 +31,9 @@ Frontend feature tests:
 import json
 import os
 
+import pytest
+
+from conftest import jtree_mod
 from tests.conftest import SAMPLE_DATA
 
 
@@ -94,6 +97,26 @@ class TestStatus:
 # ============================================================================
 
 class TestOpen:
+    @pytest.mark.parametrize("content, size_limit", [
+        (b'{"name": "caf\xe9"}', None),
+        (b'{"name":"123456"}', 16),
+    ], ids=["undecodable", "oversized"])
+    def test_open_rejects_undecodable_or_oversized_file(
+        self, loaded_client, tmp_path, monkeypatch, content, size_limit
+    ):
+        candidate = tmp_path / "invalid.json"
+        candidate.write_bytes(content)
+        if size_limit is not None:
+            monkeypatch.setattr(jtree_mod.JSONManager, "MAX_FILE_SIZE", size_limit)
+        before_node = loaded_client.get("/api/node").json()
+        before_file = loaded_client.get("/api/status").json()["file"]
+
+        response = loaded_client.post("/api/open", json={"path": str(candidate)})
+
+        assert response.status_code == 400
+        assert loaded_client.get("/api/node").json() == before_node
+        assert loaded_client.get("/api/status").json()["file"] == before_file
+
     def test_open_valid_file(self, client, sample_json_file):
         resp = client.post("/api/open", json={"path": sample_json_file})
         assert resp.status_code == 200

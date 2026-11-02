@@ -54,6 +54,7 @@ def test_failed_replacement_preserves_file(loaded_client, sample_json_file, monk
     response = loaded_client.post('/api/save')
     assert response.status_code == 500, response.text
     assert open(sample_json_file, 'rb').read() == before
+    assert not list(Path(sample_json_file).parent.glob('.jtree-*'))
 
 
 def test_failed_write_preserves_file(loaded_client, sample_json_file, monkeypatch):
@@ -63,6 +64,7 @@ def test_failed_write_preserves_file(loaded_client, sample_json_file, monkeypatc
     monkeypatch.setattr(jtree_mod.os, 'fsync', fail)
     assert loaded_client.post('/api/save').status_code == 500
     assert open(sample_json_file, 'rb').read() == before
+    assert not list(Path(sample_json_file).parent.glob('.jtree-*'))
 
 
 def test_process_death_during_write_preserves_original_and_metadata(tmp_path):
