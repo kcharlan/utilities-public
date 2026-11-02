@@ -1,3 +1,4 @@
+import base64
 import json
 
 import httpx
@@ -35,6 +36,21 @@ async def test_stream_invalid_credentials_returns_401():
     async with httpx.AsyncClient(transport=httpx.ASGITransport(app=local), base_url="http://test") as client:
         response = await client.post("/v1/chat/completions", json={"model":"fake", "messages":[], "stream":True})
     assert response.status_code == 401
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("stream", [False, True])
+async def test_non_object_credentials_return_401(httpx_mock, stream):
+    local = FastAPI()
+    local.include_router(T3ChatAdapter().create_router())
+    token = base64.b64encode(b"[]").decode()
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=local), base_url="http://test") as client:
+        response = await client.post(
+            "/v1/chat/completions", headers={"Authorization": f"Bearer {token}"},
+            json={"model": "synthetic", "messages": [], "stream": stream},
+        )
+    assert response.status_code == 401
+    assert httpx_mock.get_requests() == []
 
 
 @pytest.mark.asyncio

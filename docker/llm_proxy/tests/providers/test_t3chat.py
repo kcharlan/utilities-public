@@ -5,7 +5,9 @@ import pytest
 from fastapi import HTTPException
 
 from llm_proxy.models import ChatCompletionRequest, ChatMessage
-from llm_proxy.providers.t3chat import FALLBACK_MODELS, T3ChatAdapter
+from llm_proxy.providers.t3chat import (
+    FALLBACK_MODELS, T3_CHAT_API_URL, T3_SESSION_REFRESH_URL, T3ChatAdapter,
+)
 
 
 @pytest.fixture
@@ -115,6 +117,31 @@ class TestGetOpencodeModelConfig:
 
 
 class TestStreamParsing:
+    @pytest.mark.asyncio
+    async def test_refreshed_session_cookie_is_forwarded(self, adapter, httpx_mock):
+        httpx_mock.add_response(url=T3_SESSION_REFRESH_URL, headers={"x-workos-session": "synthetic-new"})
+        httpx_mock.add_response(url=T3_CHAT_API_URL, text='data: {"type":"text-delta","delta":"synthetic"}\n\n')
+        request = ChatCompletionRequest(model="synthetic", messages=[], stream=True)
+        creds = {"cookies": "wos-session=synthetic-old; a=1", "convex_session_id": "synthetic-sid"}
+
+        chunks = [chunk async for chunk in adapter.chat_completion_stream(request, creds)]
+
+        assert chunks[0].choices[0].delta.content == "synthetic"
+        assert httpx_mock.get_request(url=T3_CHAT_API_URL).headers["cookie"] == "a=1; wos-session=synthetic-new"
+
+    @pytest.mark.asyncio
+    async def test_failed_session_refresh_keeps_original_cookie(self, adapter, httpx_mock):
+        httpx_mock.add_exception(httpx.ConnectError("synthetic"), url=T3_SESSION_REFRESH_URL)
+        httpx_mock.add_response(url=T3_CHAT_API_URL, text='data: {"type":"text-delta","delta":"synthetic"}\n\n')
+        request = ChatCompletionRequest(model="synthetic", messages=[], stream=True)
+        cookie = "wos-session=synthetic-old; a=1"
+        creds = {"cookies": cookie, "convex_session_id": "synthetic-sid"}
+
+        chunks = [chunk async for chunk in adapter.chat_completion_stream(request, creds)]
+
+        assert chunks[0].choices[0].delta.content == "synthetic"
+        assert httpx_mock.get_request(url=T3_CHAT_API_URL).headers["cookie"] == cookie
+
     @pytest.mark.asyncio
     async def test_text_delta_chunks(self, adapter, httpx_mock):
         sse_lines = (
