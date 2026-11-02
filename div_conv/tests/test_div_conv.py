@@ -1004,6 +1004,42 @@ def test_fidelity_history_export_is_detected_and_converted(tmp_path: Path) -> No
     assert "2030-01-02       10.00  SYNTH1\nTotal            10.00\nCopy/paste sum:\n10.00\n" in result.stdout
 
 
+def test_fidelity_history_rejects_tabular_row_after_trailer(tmp_path: Path) -> None:
+    home = tmp_path / "runtime"
+    write_config(
+        home,
+        {"fidelity": configured_section("SYNTHETIC FIDELITY ACCOUNT", "SYNTH1")},
+    )
+    source = tmp_path / "synthetic-fidelity-history.csv"
+    dividend = [
+        "01/02/2030",
+        "Dividend Received Synthetic Income Distribution (Cash)",
+        "SYNTH1",
+        "SYNTHETIC INCOME FUND",
+        "SYNTHETIC CASH TYPE",
+        "",
+        "2.000",
+        "",
+        "",
+        "",
+        "10.00",
+        "100.00",
+        "01/05/2030",
+    ]
+    write_fidelity_history_csv(
+        source,
+        [dividend, [], ["SYNTHETIC FIDELITY EXPORT NOTICE"], dividend],
+        include_notices=False,
+    )
+
+    result = run_cli(home, str(source))
+
+    assert result.returncode == 2
+    assert "tabular data after the Fidelity trailing notices began" in result.stderr
+    assert not (tmp_path / "synthetic-fidelity-history.cooked.csv").exists()
+    assert not (tmp_path / "synthetic-fidelity-history.qif").exists()
+
+
 def test_accountless_fidelity_history_rejects_multiple_configured_accounts(
     tmp_path: Path,
 ) -> None:
