@@ -376,13 +376,12 @@ Errors report the retained recovery location, and include restoration failures
 if recovery cannot finish. A rollback to an older source intentionally causes
 the current-source audit to report drift until that source is deployed again.
 
-The same-directory legacy `Prime Monitor.app` migration retains ownership and
-signature checks; having both names present fails as ambiguous. A copy under
+The installer handles only the canonical app name. A copy under
 `~/Applications` is a separate one-time operator retirement: privately back it
 up and remove it only after the new canonical installation is verified. The
 installer does not scan other users' applications. Internal product/executable,
 bundle ID and `~/Library/Application Support/Prime Monitor/` state stay intact.
-Quit/reopen when convenient to use the installed 0.1.1 release (build 2); restart
+Quit/reopen when convenient to use the installed release; restart
 clears the process-memory credential/session cache and normal authorization
 may be requested. Actual GUI behavior, 1Password/TCC approvals and native launch
 at login registration for the `/Applications` copy require operator checks.

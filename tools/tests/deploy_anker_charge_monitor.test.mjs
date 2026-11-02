@@ -42,6 +42,13 @@ const backup=result=>/rollback backup: (.+)/.exec(result.stdout)[1];
 function state(f){return [fs.existsSync(f.app)?appTreeHash(f.app):null,fs.existsSync(f.receipt)?fs.readFileSync(f.receipt,'utf8'):null];}
 function tree(dir){return fs.readdirSync(dir,{withFileTypes:true}).sort((a,b)=>a.name.localeCompare(b.name)).map(e=>[e.name,fs.lstatSync(path.join(dir,e.name)).mode,e.isDirectory()?tree(path.join(dir,e.name)):fs.readFileSync(path.join(dir,e.name)).toString('base64')]);}
 
+test('an unrelated Prime Monitor.app is left untouched',t=>{
+  const f=fixture(t),unrelated=path.join(f.apps,'Prime Monitor.app');
+  fs.mkdirSync(unrelated);fs.writeFileSync(path.join(unrelated,'synthetic-payload'),'unrelated synthetic bytes');
+  const before=tree(unrelated);
+  ok(f.run());assert.ok(fs.existsSync(f.app));assert.deepEqual(tree(unrelated),before);ok(f.run('--audit'));assert.deepEqual(tree(unrelated),before);
+});
+
 test('fixture suppresses inherited aggressive Git maintenance while retaining mutation checks',t=>{
   const scratch=fs.mkdtempSync(path.join(os.tmpdir(),'synthetic-git-maintenance-'));t.after(()=>fs.rmSync(scratch,{recursive:true,force:true}));
   const config=path.join(scratch,'gitconfig'),trace=path.join(scratch,'trace');
@@ -74,6 +81,12 @@ test('first install, update, current, rebuild and independent rollback preserve 
   ok(f.run('--rollback',empty));assert.deepEqual(state(f),[null,null]);
   ok(f.run());assert.match(ok(f.run('--rebuild')).stdout,/rollback backup:/);
   assert.equal(fs.existsSync(path.join(f.scripts,'PrimeMonitor')),false);
+});
+
+test('an older current-name installation can be upgraded',t=>{
+  const f=fixture(t);ok(f.run());
+  execFileSync('/usr/libexec/PlistBuddy',['-c','Set :CFBundleShortVersionString 0.0.1',path.join(f.app,'Contents/Info.plist')]);
+  f.release('upgrade-older');ok(f.run());ok(f.run('--audit'));
 });
 
 for(const fail of [false,true]) test(`a ${fail?'failed':'successful'} release build leaves no temporary entries in TMPDIR or the Darwin user temp dir`,t=>{
@@ -133,12 +146,10 @@ for(const first of [false,true])test(`receipt publication failure restores ${fir
   const r=f.run();assert.equal(r.status,1);assert.match(r.stderr,/synthetic receipt failure/);assert.deepEqual(state(f),before);
 });
 
-test('failed activated signature restores prior bundle and receipt; legacy upgrades permit old versions',t=>{
+test('failed activated signature restores prior bundle and receipt',t=>{
   const f=fixture(t);ok(f.run());const before=state(f);f.release('activation-failure');
   const mv=path.join(f.bin,'mv');fs.writeFileSync(mv,`#!/bin/bash\n/bin/mv "$@" || exit\nif [[ "$1" = *'.prime-monitor-stage-'*'/Anker Charge Monitor.app' && "\${!#}" = ${JSON.stringify(f.app)} && -e "$SYNTHETIC_FAIL_ONCE" ]]; then rm "$SYNTHETIC_FAIL_ONCE"; touch "\${!#}/synthetic-reject"; fi\n`,{mode:0o755});
   f.env.SYNTHETIC_FAIL_ONCE=path.join(f.base,'fail-once');fs.writeFileSync(f.env.SYNTHETIC_FAIL_ONCE,'synthetic');assert.equal(f.run().status,1);assert.deepEqual(state(f),before);
-  fs.renameSync(f.app,path.join(f.apps,'Prime Monitor.app'));execFileSync('/usr/libexec/PlistBuddy',['-c','Set :CFBundleShortVersionString 0.0.1',path.join(f.apps,'Prime Monitor.app/Contents/Info.plist')]);
-  ok(f.run());assert.equal(fs.existsSync(path.join(f.apps,'Prime Monitor.app')),false);ok(f.run('--audit'));
 });
 
 test('cleanup failure restores prior deployment and retains verified backups',t=>{
