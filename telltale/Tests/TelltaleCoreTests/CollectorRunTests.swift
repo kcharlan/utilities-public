@@ -776,6 +776,19 @@ func withCollector(_ body: (CollectorHarness) async throws -> Void) async throws
         }
     }
 
+    @Test func formatProblemAfterAClockRollbackRestartsItsSince() async throws {
+        try await withCollector { h throws in
+            h.source.setState(.formatProblem("synthetic"))
+            _ = await h.run(at: h.at(9, 4, 10, 5))
+            _ = await h.run(at: h.at(9, 4, 10))
+            #expect(try h.store().sourceState("codex")?.unavailableSince == h.at(9, 4, 10))
+            _ = await h.run(at: h.at(9, 4, 10, 5))
+            let state = try #require(try h.store().sourceState("codex"))
+            #expect(state.unavailableSince == h.at(9, 4, 10))
+            #expect(state.updatedAt > (state.unavailableSince ?? state.updatedAt))
+        }
+    }
+
     @Test func ingestStoresBatchGapsCursorAndVersion() async throws {
         try await withCollector { harness throws in
             let gap = DateInterval(start: harness.at(9, 3, 18), end: harness.at(9, 4, 9))

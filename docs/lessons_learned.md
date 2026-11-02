@@ -2031,3 +2031,6 @@ ahead. Retain the optional scheme from both the listing and the selected keg's
 receipt, default missing values to zero, and compare schemes before package
 versions. A higher listing scheme marks differing versions outdated; equal
 versions remain current. Preserve optional decoding for existing saved data.
+### 2026-11-02 — Collector health and backwards clocks
+
+Run IDs preserve recording order when wall time moves backwards; timestamp ordering can hide newer failures. Reset a source problem's future start to the current run time so a later report can confirm it. The rollback regressions cover both the store and health evaluation and the source-state confirmation path.
