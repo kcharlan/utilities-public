@@ -55,6 +55,8 @@ RouterView is now a CSV-only OpenRouter analytics dashboard. The application no 
 
 ## Import Semantics
 
+Imports reject CSV headers missing `generation_id`, `created_at`, or `cost_total` before opening the database.
+
 ### Source of Truth
 
 `generations` is the canonical imported data set.
