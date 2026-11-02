@@ -46,4 +46,36 @@ CSV
 diff -u expected-summary.csv workout_summary.csv
 diff -u expected-detail.csv workout_heart_rate_detail.csv
 diff -u expected-bouts.csv exercise_bouts.csv
+
+mkdir "$scratch_dir/no-metrics"
+cd "$scratch_dir/no-metrics"
+cat > export.xml <<'XML'
+<HealthData>
+<Workout workoutActivityType="INVENTED_WORKOUT" sourceName="SYNTHETIC_DEVICE" startDate="2001-01-01 10:00:00 -0500" endDate="2001-01-01 10:10:00 -0500" duration="10"/>
+<Record type="HKQuantityTypeIdentifierAppleExerciseTime" sourceName="SYNTHETIC_SOURCE" device="SYNTHETIC_DEVICE" unit="min" value="1" startDate="2001-01-01 10:01:00 -0500" endDate="2001-01-01 10:02:00 -0500"/>
+</HealthData>
+XML
+UV_PYTHON_DOWNLOADS=never "$project_dir/extract_workout_stats.py"
+UV_PYTHON_DOWNLOADS=never "$project_dir/exercise_bouts.py"
+cat > expected-summary.csv <<'CSV'
+id,type,start,end,duration_min,device,hr_samples,hr_avg,hr_min,hr_max,steps_total,distance_km,calories_kcal
+0,INVENTED_WORKOUT,2001-01-01 15:00:00+00:00,2001-01-01 15:10:00+00:00,10.0,SYNTHETIC_DEVICE,0,,,,,,
+CSV
+diff -u expected-summary.csv workout_summary.csv
+
+mkdir "$scratch_dir/no-workouts"
+cd "$scratch_dir/no-workouts"
+cat > export.xml <<'XML'
+<HealthData>
+<Record type="HKQuantityTypeIdentifierAppleExerciseTime" sourceName="SYNTHETIC_SOURCE" device="SYNTHETIC_DEVICE" unit="min" value="1" startDate="2001-01-01 10:01:00 -0500" endDate="2001-01-01 10:02:00 -0500"/>
+<Record type="HKQuantityTypeIdentifierHeartRate" sourceName="SYNTHETIC_SOURCE" value="100" startDate="2001-01-01 10:01:30 -0500"/>
+</HealthData>
+XML
+UV_PYTHON_DOWNLOADS=never "$project_dir/extract_workout_stats.py"
+UV_PYTHON_DOWNLOADS=never "$project_dir/exercise_bouts.py"
+printf '%s\n' 'id,type,start,end,duration_min,device,hr_samples,hr_avg,hr_min,hr_max,steps_total,distance_km,calories_kcal' > expected-summary.csv
+printf '%s\n' 'workout_id,workout_start,workout_type,timestamp,heart_rate_bpm' > expected-detail.csv
+diff -u expected-summary.csv workout_summary.csv
+diff -u expected-detail.csv workout_heart_rate_detail.csv
+awk -F, 'NR==2 {if ($13 != "Incidental" || $14 != "") exit 1; found=1} END {if (!found || NR != 2) exit 1}' exercise_bouts.csv
 printf 'apple-health-extract extraction tests: PASS\n'

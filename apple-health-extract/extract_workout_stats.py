@@ -33,7 +33,7 @@ for event, elem in ET.iterparse(XML_PATH, events=("start",)):
             "device": elem.attrib.get("sourceName"),
         })
     elem.clear()
-workouts_df = pd.DataFrame(workouts)
+workouts_df = pd.DataFrame(workouts, columns=["id", "type", "start", "end", "duration_min", "device"])
 print(f"Found {len(workouts)} workouts.")
 
 # Pre-scan: Only parse records in relevant window for speed
@@ -54,7 +54,7 @@ for event, elem in tqdm(ET.iterparse(XML_PATH, events=("start",)), total=5_000_0
     elem.clear()
 print(f"Loaded {len(records)} health records.")
 
-records_df = pd.DataFrame(records)
+records_df = pd.DataFrame(records, columns=["type", "start", "sourceName", "value"])
 records_df = deduplicate_sources(records_df, ["type", "start", "value"])
 
 # Create summary and detail output lists
@@ -114,8 +114,13 @@ for idx, workout in tqdm(workouts_df.iterrows(), total=workouts_df.shape[0]):
     })
 
 # Save outputs
-summary_df = pd.DataFrame(summary_rows)
-hr_detail_df = pd.DataFrame(hr_detail_rows)
+summary_df = pd.DataFrame(summary_rows, columns=[
+    "id", "type", "start", "end", "duration_min", "device", "hr_samples",
+    "hr_avg", "hr_min", "hr_max", "steps_total", "distance_km", "calories_kcal",
+])
+hr_detail_df = pd.DataFrame(hr_detail_rows, columns=[
+    "workout_id", "workout_start", "workout_type", "timestamp", "heart_rate_bpm",
+])
 
 summary_df.to_csv("workout_summary.csv", index=False)
 hr_detail_df.to_csv("workout_heart_rate_detail.csv", index=False)
