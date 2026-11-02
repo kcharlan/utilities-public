@@ -2256,3 +2256,10 @@ An absent CSV cost column was treated like an empty value, silently importing
 rows at zero cost. Reject missing required headers before acquiring a database
 connection, and test rollback with a failure on the second valid row so the
 first insert must actually be undone.
+
+### 2026-11-02 — Encode SQLite BLOBs consistently across exports
+
+Passing SQLite bytes directly to a CSV writer produces a Python bytes
+representation instead of a portable encoding. Reuse the API's value encoder
+and serialize BLOB objects as JSON text in CSV cells; test both export formats
+with binary bytes, large integers, Unicode and nulls.

@@ -86,10 +86,11 @@ committed batches remain in the database.
 
 The grid uses all components of a composite primary key to locate a row. An
 update or deletion is rejected if its key no longer identifies exactly one row.
-In API responses and JSON exports, integers outside JavaScript's safe integer
-range are strings; BLOBs are objects such as `{"$blob": "ff00"}` containing
-hexadecimal bytes. The grid displays a BLOB as an object. Editing its cell
-replaces the BLOB with text; use the SQL console to write binary values.
+In API responses and JSON and CSV exports, integers outside JavaScript's safe
+integer range are strings; BLOBs are objects such as `{"$blob": "ff00"}`
+containing hexadecimal bytes (serialized as JSON text in CSV cells). The grid
+displays a BLOB as an object. Editing its cell replaces the BLOB with text; use
+the SQL console to write binary values.
 
 ## Architecture
 
