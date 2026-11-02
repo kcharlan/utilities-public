@@ -107,3 +107,29 @@ for expected in '| pipe | a\|b |' '| backslash pipe | a\\\|b |' '| dict | a\\\|b
 done
 if [ "$context_failed" -ne 0 ]; then cat "$context_output" >&2; exit 1; fi
 awk '/^> \| A \| B \|$/ {if (getline <= 0 || $0 != "> |---|---|") exit 1; if (getline <= 0 || $0 != "> | one | two |") exit 1; found=1} END {if (!found) exit 1}' "$context_output"
+
+# Tables that begin list items must not leak tokens or lose their cells.
+mkdir -p "$scratch_dir/lists/site" "$scratch_dir/lists-output"
+cat > "$scratch_dir/lists/site/index.html" <<'HTML'
+<html><body>
+<ul><li><table><tr><th>Unordered A</th><th>Unordered B</th></tr><tr><td>Unordered one</td><td>Unordered two</td></tr></table></li></ul>
+<ol><li><table><tr><th>Ordered A</th><th>Ordered B</th></tr><tr><td>Ordered one</td><td>Ordered two</td></tr></table></li></ol>
+</body></html>
+HTML
+UV_PYTHON_DOWNLOADS=never UV_OFFLINE=1 "$project_dir/linearize.py" "$scratch_dir/lists" -o "$scratch_dir/lists-output/guide.md"
+list_output="$scratch_dir/lists-output/guide.md"
+list_failed=0
+if grep -Eq 'LINEARIZEDTABLE[[:xdigit:]]+END' "$list_output"; then
+  printf 'unresolved table placeholder in list output\n' >&2; list_failed=1
+fi
+for expected in 'Unordered A' 'Unordered B' 'Unordered one' 'Unordered two' 'Ordered A' 'Ordered B' 'Ordered one' 'Ordered two'; do
+  if ! grep -Fq "$expected" "$list_output"; then
+    printf 'missing list table cell: %s\n' "$expected" >&2; list_failed=1
+  fi
+done
+if [ "$list_failed" -ne 0 ]; then cat "$list_output" >&2; exit 1; fi
+awk '
+  /^[[:space:]]*\* \| Unordered A \| Unordered B \|$/ {if (getline <= 0 || $0 !~ /^[[:space:]]+\|---\|---\|$/) exit 1; if (getline <= 0 || $0 !~ /^[[:space:]]+\| Unordered one \| Unordered two \|$/) exit 1; unordered=1}
+  /^[[:space:]]*1\. \| Ordered A \| Ordered B \|$/ {if (getline <= 0 || $0 !~ /^[[:space:]]+\|---\|---\|$/) exit 1; if (getline <= 0 || $0 !~ /^[[:space:]]+\| Ordered one \| Ordered two \|$/) exit 1; ordered=1}
+  END {if (!unordered || !ordered) exit 1}
+' "$list_output"

@@ -498,12 +498,19 @@ def process_page(
     html_string = str(content_div)
     markdown = converter.handle(html_string).strip()
     for token, table_markdown in table_blocks.items():
+        def restore_table(match):
+            prefix, marker = match.group(1), match.group(2) or ""
+            continuation = prefix + " " * len(marker)
+            return prefix + marker + table_markdown.replace("\n", "\n" + continuation)
+
         markdown = re.sub(
-            rf"^([ \t>]*?){re.escape(token)}",
-            lambda match: match.group(1) + table_markdown.replace("\n", "\n" + match.group(1)),
+            rf"^([ \t>]*?)((?:[*+-]|\d+[.)])[ \t]+)?{re.escape(token)}",
+            restore_table,
             markdown,
             flags=re.MULTILINE,
         )
+        # Resolve tokens even in a converter context with an unfamiliar prefix.
+        markdown = markdown.replace(token, table_markdown)
 
     return f'<a id="{html.escape(page_anchor_id, quote=True)}"></a>\n\n{markdown}'
 

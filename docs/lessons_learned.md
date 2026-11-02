@@ -2219,4 +2219,6 @@ converter, preserve those blocks across conversion. HTML whitespace collapsing
 and `<br>` hard breaks can change empty-cell padding and table line endings;
 restore the surrounding block prefix on every line, and escape source
 backslashes before pipe delimiters. Check rendered cell values and quoted
-table structure as well as exact top-level lines.
+table structure as well as exact top-level lines. List markers belong only on
+the first line; indent continuation lines and ensure every placeholder is
+resolved even when the converter emits an unexpected prefix.
