@@ -32,7 +32,7 @@ from fastapi.responses import HTMLResponse, JSONResponse, Response
 DATA_DIR = os.path.expanduser(os.environ.get("LAUNCHMASTER_HOME", "~/.launchmaster"))
 BACKUP_DIR = os.path.join(DATA_DIR, "backups")
 CONFIG_FILE = os.path.join(DATA_DIR, "config.json")
-VERSION = "1.1.3"
+VERSION = "1.1.4"
 DEFAULT_PORT = 8200
 
 logger = logging.getLogger("launchmaster")
@@ -3573,7 +3573,7 @@ async def create_job(plist_data: Dict[str, Any], domain: str) -> Dict[str, Any]:
     }
 
 
-async def delete_job(label: str, domain: str, plist_path: str) -> Dict[str, Any]:
+async def delete_job(label: str, domain: str, plist_path: str, loaded: bool = True) -> Dict[str, Any]:
     """Backup, unload, and delete a job."""
     if not plist_path or not os.path.isfile(plist_path):
         unload_result = await unload_job(label, domain, plist_path)
@@ -3590,8 +3590,14 @@ async def delete_job(label: str, domain: str, plist_path: str) -> Dict[str, Any]
     # Backup first
     backup_path = backup_plist(plist_path)
 
-    # Unload if loaded
-    await unload_job(label, domain, plist_path)
+    # A failed unload is expected for an unloaded job, but a loaded job must
+    # retain its plist so it can still be managed.
+    unload_result = await unload_job(label, domain, plist_path)
+    if loaded and not unload_result["success"]:
+        return {
+            "success": False,
+            "message": f"{unload_result['message']}; plist kept; backup at {backup_path}",
+        }
 
     # Delete
     try:
@@ -4094,7 +4100,7 @@ async def api_delete_job(label: str):
     if not job:
         return JSONResponse(status_code=404, content={"success": False, "message": f"Job not found: {label}"})
     plist_path = job.get("plist_path")
-    result = await delete_job(label, job.get("domain", "user-agent"), plist_path)
+    result = await delete_job(label, job.get("domain", "user-agent"), plist_path, job.get("loaded", True))
     if result["success"]:
         await _refresh_jobs()
     return result
