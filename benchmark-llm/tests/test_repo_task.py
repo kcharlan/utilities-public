@@ -1897,6 +1897,41 @@ def _repo_task_bench(
     return benchmark_dir, results_dir, source_repo
 
 
+def test_repo_task_exhausted_no_output_retries_record_every_attempt(tmp_path: Path) -> None:
+    benchmark_dir, results_dir, _ = _repo_task_bench(
+        tmp_path,
+        executor_script="#!/bin/sh\nexit 0\n",
+        step_scripts={"judge": "#!/bin/sh\nexit 0\n"},
+    )
+    (benchmark_dir / "scripts" / "executor.sh").rename(benchmark_dir / "scripts" / "invoke_model.sh")
+    manifest = benchmark_dir / "bench.yaml"
+    manifest.write_text(
+        manifest.read_text().replace("./scripts/executor.sh", "./scripts/invoke_model.sh").replace(
+            "    use_executor: true\n", "    use_executor: true\n    retries:\n      max_attempts: 2\n      backoff_sec: 0\n"
+        )
+    )
+    runtime_home = tmp_path / "runtime"
+    exit_code = main(
+        ["run", str(benchmark_dir), "-m", "demo-model"],
+        environ={"BENCH_RUNTIME_HOME": str(runtime_home)}, stdout=io.StringIO(), stderr=io.StringIO(),
+    )
+
+    run_dir, = results_dir.iterdir()
+    attempts = sorted((run_dir / "attempts").iterdir())
+    assert exit_code == 1
+    assert [attempt.name for attempt in attempts] == ["01", "02"]
+    failure = json.loads((run_dir / "failure.json").read_text())
+    assert [attempt["status"] for attempt in failure["attempts"]] == ["retryable_failure", "failed"]
+    assert [attempt["retry_reason"] for attempt in failure["attempts"]] == [
+        "missing_required_outputs", "missing_required_outputs"
+    ]
+    assert failure["error"] == "Step failed: ./scripts/invoke_model.sh"
+    assert len(list((runtime_home / "worktrees" / "synthetic" / "demo-model").iterdir())) == 2
+    for attempt in attempts:
+        commands = [json.loads(line) for line in (attempt / "commands.jsonl").read_text().splitlines()]
+        assert [command["phase"] for command in commands] == ["execute"]
+
+
 @pytest.mark.parametrize(
     ("score_content", "expected_error"),
     [

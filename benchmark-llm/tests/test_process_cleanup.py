@@ -53,6 +53,7 @@ def test_interrupted_attempt_removes_worktree_and_branch(tmp_path):
         run_repo_task(benchmark, tmp_path / "runtime", "fake", {}, config=config, progress_callback=interrupt)
     assert len(git("worktree", "list", "--porcelain").split("worktree ")) == 2
     assert not git("branch", "--list", "bench/*").strip()
+    assert not list((tmp_path / "results").iterdir())
 
 
 def test_interrupt_stops_command_group(tmp_path, monkeypatch):
