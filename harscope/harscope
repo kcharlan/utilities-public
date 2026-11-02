@@ -459,6 +459,7 @@ class SecurityScanner:
         r'^(authorization|cookie|set-cookie|x-api-key|x-auth-token|x-csrf-token|'
         r'x-xsrf-token|proxy-authorization|token|access_token|refresh_token|'
         r'auth_token|api_key|apikey|api-key|client_secret|password|new_password|passwd|secret|'
+        r'new_token|new_secret|new_api_key|new_access_token|'
         r'session_id|sessionid|sessionId|convexSessionId|private_key|secret_key)$', re.I
     )
 
@@ -641,10 +642,11 @@ class SecurityScanner:
             self._add_finding(entry_index, 'critical', 'Sensitive Field', path,
                               f'Sensitive field "{key}"', value, segments)
 
-        # Query parameters can occur in URLs, redirect headers, initiators and titles.
-        for match in re.finditer(r'(?i)(?:^|[?&;\s])(?:new_)?(?:password|token|secret|api_key|access_token)=([^&#;\s]+)', value):
-            self._add_finding(entry_index, 'critical', 'Sensitive Field', path,
-                              'Sensitive parameter', match.group(1), segments)
+        # Parameters can occur in URLs, fragments, redirect headers, initiators and titles.
+        for match in re.finditer(r'(?:^|[?&;#\s])([A-Za-z][A-Za-z0-9_.\-]*)=([^&#;\s]+)', value):
+            if self.SENSITIVE_KEYS.match(match.group(1)):
+                self._add_finding(entry_index, 'critical', 'Sensitive Field', path,
+                                  'Sensitive parameter', match.group(2), segments)
 
         # Run all patterns against the string (up to MAX_SCAN_LEN)
         scan_text = value[:self.MAX_SCAN_LEN]
