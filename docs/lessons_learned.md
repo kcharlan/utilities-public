@@ -15,6 +15,13 @@ Parsing error handlers cannot catch invalid text encoding when a file is decoded
 before parsing. Exercise invalid bytes through the CLI and report decoding errors
 through the same structured input-error contract without creating output.
 
+## 2026-11-02: Describe each launchd calendar entry independently
+
+Combining fields across StartCalendarInterval entries can invent a schedule and
+hide real trigger times. Group only entries differing in weekday, preserve the
+other entries separately, and cover month, day and both Sunday encodings with
+direct schedule tests alongside an API smoke test.
+
 ## 2026-11-02: Normalize distance records before aggregation
 
 An output column labelled kilometres can silently misstate mixed-unit records if
@@ -2189,3 +2196,10 @@ using synthetic plists and a mocked unload operation.
 A short read can look like a successful RAW block and cause atomic output to
 replace a valid destination with truncated data. Check header and payload lengths
 before writing, and test both absent and existing destinations on failure.
+
+### 2026-11-02 — Traverse document containers when extracting text
+
+Office documents can nest paragraphs and slide shapes inside content controls
+and groups. Walk those containers in order and reuse the normal paragraph,
+table, and shape processing; strict-mode synthetic conversions catch silent
+text loss that a successful return code alone misses.

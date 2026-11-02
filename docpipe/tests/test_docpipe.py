@@ -1,4 +1,5 @@
 import argparse
+import json
 from importlib.metadata import version
 import sys
 from pathlib import Path
@@ -119,6 +120,44 @@ def test_run_convert_strict_succeeds_without_warnings(monkeypatch, tmp_path):
     assert rc == 0
     assert (out_dir / "sample.opencode.md").exists()
     assert (out_dir / "sample.opencode.json").exists()
+
+
+def test_docx_content_control_text_is_extracted(tmp_path):
+    from docx import Document
+    from docx.oxml import OxmlElement
+
+    doc = Document()
+    doc.add_paragraph("Synthetic plain paragraph")
+    paragraph = doc.add_paragraph("Synthetic controlled text")._p
+    control, content = OxmlElement("w:sdt"), OxmlElement("w:sdtContent")
+    paragraph.addprevious(control)
+    content.append(paragraph)
+    control.append(content)
+    source, out = tmp_path / "sample.docx", tmp_path / "out"
+    doc.save(source)
+
+    assert load_docpipe_module().run_convert(make_args(source, out, strict=True)) == 0
+    result = json.loads((out / "sample.opencode.json").read_text())
+    segment = next(segment for segment in result["segments"] if segment["id"] == "p1")
+    assert segment["text"] == "Synthetic plain paragraph\nSynthetic controlled text"
+
+
+def test_pptx_group_shape_text_is_extracted(tmp_path):
+    from pptx import Presentation
+    from pptx.util import Inches
+
+    presentation = Presentation()
+    slide = presentation.slides.add_slide(presentation.slide_layouts[6])
+    group = slide.shapes.add_group_shape()
+    textbox = group.shapes.add_textbox(Inches(1), Inches(1), Inches(2), Inches(1))
+    textbox.text = "Synthetic grouped text"
+    source, out = tmp_path / "sample.pptx", tmp_path / "out"
+    presentation.save(source)
+
+    assert load_docpipe_module().run_convert(make_args(source, out, strict=True)) == 0
+    result = json.loads((out / "sample.opencode.json").read_text())
+    segment = next(segment for segment in result["segments"] if segment["id"] == "s1")
+    assert "Synthetic grouped text" in segment["text"]
 
 
 def test_pdf_rerun_uses_only_new_page_images(monkeypatch, tmp_path):
