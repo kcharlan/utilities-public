@@ -16,8 +16,10 @@ Command-line tool that flattens a multi-page HTML documentation site, such as a 
 Table conversion favors readable cell text over HTML layout: column spans are
 expanded, but row spans and rich cell markup are not preserved. Internal link
 matching uses literal discovered page paths, without general URL normalization.
-Each page anchor is attached to the page's first `<h2>`, so links to a page
-without one point to a missing anchor.
+Each included page starts with an explicit anchor, even if it has no `<h2>`.
+Links to included pages land at that page's start; source section fragments
+are discarded because their IDs are not retained during conversion. Same-page
+fragment links remain plain text.
 
 ## Setup
 
@@ -46,4 +48,4 @@ Supported linked asset extensions are `.json`, `.xml`, `.ttl`, `.csv`, `.xlsx`, 
 
 ## Validation
 
-From `doc_linearizer/`, run `bash tests/test_launcher.sh` and `bash tests/test_output_safety.sh` using synthetic inputs.
+From `doc_linearizer/`, run `bash tests/test_launcher.sh`, `bash tests/test_output_safety.sh`, and `bash tests/test_conversion.sh` using synthetic inputs.
