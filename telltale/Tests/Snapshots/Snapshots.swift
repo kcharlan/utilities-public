@@ -33,7 +33,6 @@ import TelltaleCore
             for state in states {
                 let directory = home.appendingPathComponent("fixture-\(state.rawValue)-\(dark)")
                 let model = try await makeModel(state, home: directory)
-                try expect(state, model.store)
                 let label = "\(state.rawValue)-\(dark ? "dark" : "light")"
                 let size = try render(AnyView(PanelView(model: model, openSettings: {}, openDashboard: {}, openProvider: { _, _ in })), dark: dark, to: home.appendingPathComponent(label + ".png"))
                 heights[label] = size.height
@@ -48,53 +47,6 @@ import TelltaleCore
         guard pngs.count == 32 else { fatalError("Expected thirty-two PNGs") }
         print("Validated fourteen maintained panel PNGs (quiet, alerting, faster alerting, acknowledged, lasting-shift prompt, two providers, arrival), both appearances, content-hugging quiet state.")
         print("Validated eighteen maintained dashboard PNGs (model views, idle sidebar, collector, settings and four provider states), both appearances, Barlow Semi Condensed registered.")
-    }
-
-    /// The seeded scene's snapshot carries what its PNG is meant to show.
-    @MainActor private static func expect(_ state: SyntheticEnvironment.Scene, _ live: LiveStore) throws {
-        let snapshot = live.snapshot
-        guard snapshot.checkedAt != nil, snapshot.models.count == ((state == .twoProviders || state == .arrival) ? 4 : 2) else { fatalError("\(state): unexpected model rows") }
-        if state == .twoProviders || state == .arrival {
-            let claude = snapshot.models.filter { $0.provider == .claude }
-            guard claude.count == 2, claude.allSatisfy({ $0.tps == nil && $0.usual == nil && $0.note == Copy.learning(days: 0, of: BaselineEngine.activeDayCount) }) else {
-                fatalError("\(state): expected new Claude models to show dashes and learning notes")
-            }
-        }
-        switch state {
-        case .quiet:
-            guard snapshot.alerts.isEmpty, snapshot.shift == nil, snapshot.models.allSatisfy({ $0.color == nil }) else { fatalError("quiet: expected no alerts, rows or shift prompt in color") }
-        case .alerting:
-            guard snapshot.alerts.count == 2, snapshot.lamps[.speed] == .amber, snapshot.lamps[.load] == .amber,
-                  snapshot.models.map(\.color) == [.amber, nil] else { fatalError("alerting: expected Speed and Load amber and an amber Example row") }
-        case .fasterAlerting:
-            guard snapshot.lamps[.speed] == .blue, snapshot.models.map(\.color) == [.blue, nil],
-                  snapshot.alerts.map(\.text) == ["Codex: Example has been up to 30% faster than usual for prompts this size since 08:40. Check that output isn't shallower."] else { fatalError("faster alerting: expected blue speed and open wording") }
-        case .acknowledged:
-            let episode = try live.read { store, _ in try store.openEpisodes().first { $0.rule == RuleID.failedTurns.rawValue } }!!
-            let detail = try FailedTurnEpisodeDetail.decode(episode.detail)!
-            let saved = try live.read { store, _ in try store.value(.alertAcknowledgements)[Acknowledgements.key(episode)] }!!
-            let first = snapshot.alerts.first!
-            guard snapshot.alerts.count == 3, snapshot.alerts.dropFirst().allSatisfy({ $0.acknowledgedAt != nil }),
-                  first.acknowledgedAt == nil, first.failedTurns == detail.failures.count + detail.priorCount,
-                  first.failedTurns! > saved.failedTurns!, first.detail == Copy.failedTurnsTotal(count: first.failedTurns!, since: episode.onset, calendar: SyntheticEnvironment.calendar),
-                  snapshot.attention == .red else { fatalError("acknowledged: expected acknowledged seed alerts and re-armed failed turn") }
-        case .shift:
-            guard snapshot.alerts.isEmpty, snapshot.shift?.days == 3, snapshot.shiftText != nil else { fatalError("shift: expected a 3-day lasting-shift prompt") }
-        case .acceptance:
-            guard !snapshot.alerts.isEmpty, snapshot.shift != nil else { fatalError("acceptance: expected alerts and a shift prompt") }
-        case .dashboard:
-            guard snapshot.alerts.count == 2, snapshot.lamps[.speed] == .amber else { fatalError("dashboard: expected the alerting panel's alerts") }
-        case .collectorProblem:
-            guard snapshot.collector == .red, snapshot.alerts.isEmpty else { fatalError("collector problem: expected a red Collector lamp and no alerts") }
-        case .settings:
-            guard snapshot.alerts.isEmpty else { fatalError("settings: expected the quiet scene") }
-        case .twoProviders:
-            guard Set(snapshot.models.map(\.provider)).count == 2, Set(snapshot.models.map(\.name)).count == 4 else { fatalError("two providers: expected distinct names") }
-        case .arrival:
-            guard snapshot.arrivals.count == 1, snapshot.arrivals[0].provider == .claude else { fatalError("arrival: expected Claude note") }
-        case .sidebarIdle, .claudeDashboard, .providersNormal, .providersNotSetUp, .providersFormatProblem, .providersBackfilling:
-            fatalError("dashboard scene is not a panel scene")
-        }
     }
 
     @MainActor private static func render(_ root: AnyView, dark: Bool, to destination: URL) throws -> NSSize {

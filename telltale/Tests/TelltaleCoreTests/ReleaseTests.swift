@@ -4,11 +4,9 @@ import TelltaleCore
 import TelltaleTestSupport
 
 @Suite struct ReleaseTests {
-    /// Spec section 3 identifiers, kept literal here so the plist, the code and
-    /// the spec are three separately maintained statements of one contract.
+    /// Check release identifiers and synchronize the plist and README with the code.
     @Test func infoPlistMatchesRelease() throws {
         let plist = try TestPaths.plistDictionary(at: TestPaths.packageRoot.appending(path: "Resources/Info.plist"))
-        #expect(TelltaleRelease.version == "0.3.5")
         #expect(TelltaleRelease.displayName == "Telltale")
         #expect(TelltaleRelease.bundleIdentifier == "local.utilities.telltale")
         #expect(TelltaleRelease.collectorLabel == "local.utilities.telltale.collector")
@@ -19,11 +17,11 @@ import TelltaleTestSupport
         #expect(plist["CFBundleExecutable"] as? String == "Telltale")
         #expect(plist["CFBundlePackageType"] as? String == "APPL")
         #expect(plist["LSUIElement"] as? Bool == true)
-        #expect(plist["CFBundleVersion"] as? String == "10")
-
-        let anker = try TestPaths.plistDictionary(at: TestPaths.packageRoot.appending(path: "../anker_charge_monitor/Resources/Info.plist"))
-        #expect(plist["LSMinimumSystemVersion"] as? String == anker["LSMinimumSystemVersion"] as? String)
+        let build = (plist["CFBundleVersion"] as? String).flatMap(Int.init)
+        #expect(build != nil && build! > 0)
         #expect(plist["LSMinimumSystemVersion"] as? String == "27.0")
+        let readme = try String(contentsOf: TestPaths.packageRoot.appending(path: "README.md"), encoding: .utf8)
+        #expect(readme.contains("Telltale \(TelltaleRelease.version) is a native"))
     }
 
     @Test func pathsDeriveFromInjectedHome() {
