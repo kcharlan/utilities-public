@@ -18,3 +18,32 @@ test('conversion failure is reported with real line breaks', async () => {
   assert.match(result, /synthetic failure/)
   assert.doesNotMatch(result, /## Conversion Result/)
 })
+
+test('success passes flags and returns the markdown inline', async () => {
+  let command
+  const fakeFs = {
+    existsSync: () => false,
+    readFileSync: (file, encoding) => {
+      assert.equal(file, '/synthetic/out/in.opencode.md')
+      assert.equal(encoding, 'utf-8')
+      return '# synthetic markdown'
+    },
+  }
+  const context = {
+    tool, path, fs: fakeFs, existsSync: () => false,
+    Bun: { $: (_strings, cmd) => { command = cmd; return { text: async () => 'synthetic summary' } } },
+  }
+  vm.runInNewContext(source, context)
+  const result = await context.wrapper.execute({
+    input_path: '/synthetic/in.pdf', output_dir: '/synthetic/out',
+    extract_images: true, max_page_images: 3, xlsx_max_cells: 10, strict: true,
+  }, { worktree: '/synthetic' })
+  assert.deepEqual(Array.from(command), [
+    'docpipe', 'convert', '--input', '/synthetic/in.pdf', '--out', '/synthetic/out',
+    '--format', 'md+json', '--xlsx-max-cells', '10', '--images', '--max-page-images', '3', '--strict',
+  ])
+  assert.match(result, /^## Conversion Result/)
+  assert.ok(result.includes('/synthetic/out/in.opencode.md'))
+  assert.ok(result.includes('# synthetic markdown'))
+  assert.ok(result.includes('synthetic summary'))
+})
