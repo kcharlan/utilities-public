@@ -104,8 +104,11 @@ def main(argv=None) -> int:
         exit_with_error(3, f"Input file not found: {args.input}")
 
     # 1. Read input file
-    with open(args.input, 'r', encoding='utf-8') as f:
-        contents = f.read()
+    try:
+        with open(args.input, 'r', encoding='utf-8') as f:
+            contents = f.read()
+    except UnicodeDecodeError as e:
+        exit_with_error(3, "Input file is not valid UTF-8.", str(e))
 
     # 2. Detect format and load data
     from_format = detect_format(args.input)

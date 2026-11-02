@@ -154,7 +154,7 @@ Important conversion behavior:
 - YAML binary values cannot be represented in TOON. Conversion reports a
   structured error with exit code `4` without creating an output file
   ([`test_yaml_binary_to_toon_is_a_structured_error`](tests/test_cli.py)).
-- Missing input paths and parse errors use exit code `3`, conversion errors
+- Missing input paths, non-UTF-8 input, and parse errors use exit code `3`, conversion errors
   use `4`, output-write errors use `5`, and `argparse` usage errors use `2`.
   Handled runtime errors are emitted as one-line JSON on standard error;
   other input-read failures, such as permission errors, propagate as Python
