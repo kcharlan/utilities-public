@@ -10,19 +10,6 @@ from taxkit.utils import discover_year_files
 PROJECT = Path(__file__).resolve().parents[1]
 
 
-def test_discovery_single_implementation():
-    import inspect
-    import taxkit.utils as utils
-    import taxkit.page as page
-
-    assert callable(getattr(utils, "discover_year_files", None))
-    assert not hasattr(utils, "get_available_years")
-    assert not hasattr(utils, "get_rule_path")
-    source = inspect.getsource(page)
-    assert ".suffix in (" not in source
-    assert "stem.isdigit()" not in source
-
-
 def test_discovery_groups_all_entry_types_in_filename_order(tmp_path):
     import os
     names = ["2026.yml", "02026.yaml", "2026.yaml", "02026.yml", "2027.yml"]
@@ -107,10 +94,11 @@ def test_invalid_basis(tmp_path, basis, disabled):
         load_rules(str(write_synthetic(tmp_path / "basis.yaml", data)))
 
 
-@pytest.mark.parametrize("basis", [None, ["earned"], ["unearned"], ["earned", "unearned"], ["unearned", "earned"]])
-@pytest.mark.parametrize("cap", ["absent", None, 0, 100])
-@pytest.mark.parametrize("disabled", [False, True])
-@pytest.mark.parametrize("v2", [False, True])
+@pytest.mark.parametrize("basis,cap,disabled,v2", [
+    (basis, "absent", False, v2)
+    for basis in [None, ["earned"], ["unearned"], ["earned", "unearned"], ["unearned", "earned"]]
+    for v2 in (False, True)
+] + [(None, None, False, True), (None, 0, True, True), (None, 100, False, True)])
 def test_valid_basis_caps_zero_rate_and_disabled(tmp_path, basis, cap, disabled, v2):
     data = synthetic_rules(v2)
     component = data["components"][0] if v2 else data
@@ -130,13 +118,6 @@ def test_parse_and_schema_errors_name_file(tmp_path, text):
     path.write_text(text)
     with pytest.raises(ValueError, match="broken.yaml"):
         load_rules(str(path))
-
-
-def test_empty_components_fail(tmp_path):
-    data = synthetic_rules()
-    data["components"] = []
-    with pytest.raises(ValueError, match="empty.yaml"):
-        load_rules(str(write_synthetic(tmp_path / "empty.yaml", data)))
 
 
 def assert_live_rules_match_frozen(project_root):

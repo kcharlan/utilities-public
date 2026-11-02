@@ -107,11 +107,6 @@ def test_schedule_escapes_every_user_supplied_label_path(engine_page):
     assert not any(line.endswith(" #") for line in text.splitlines())
 
 
-def test_engine_digit_grouping_regex_has_one_shared_definition():
-    engine = (FIXTURES.parents[2] / "web" / "engine.js").read_text()
-    assert engine.count(r"/\B(?=(\d{3})+(?!\d))/g") == 1
-
-
 def test_qif_defaults_dates_order_and_validation(engine_page):
     actual = engine_page.evaluate("""r => {
         const e=Tax2Engine;

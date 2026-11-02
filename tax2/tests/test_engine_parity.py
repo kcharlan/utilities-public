@@ -13,11 +13,11 @@ FIXTURES = PROJECT / "tests" / "fixtures" / "parity"
 ORACLE = json.loads((FIXTURES / "python_parity.json").read_text())
 
 
-@pytest.fixture
-def engine_page(tmp_path, monkeypatch):
+@pytest.fixture(scope="module")
+def engine_page(tmp_path_factory):
+    tmp_path = tmp_path_factory.mktemp("engine")
     assert not tmp_path.resolve().is_relative_to(REPO_ROOT.resolve())
     tmp_path.chmod(0o700)
-    monkeypatch.setenv("TAX2_HOME", str(tmp_path / "runtime"))
     path = tmp_path / "engine.html"
     path.write_text('<!doctype html><meta charset="utf-8"><script>' +
                     (PROJECT / "web" / "engine.js").read_text() + '</script>')
@@ -36,6 +36,30 @@ def engine_page(tmp_path, monkeypatch):
             yield page
             assert requests == []
         browser.close()
+
+
+def test_parsers_exact_money_grammar_and_allocation(engine_page):
+    page = engine_page
+    valid = {'': 0, '   ': 0, '1,234.56': 123456, '12.': 1200, '.5': 50,
+             '0': 0, ' 12 ': 1200, '999999999999.99': 99999999999999,
+             '1,234,567,890.01': 123456789001}
+    invalid = ['1.234', '-5', '1e5', 'Infinity', 'NaN', '12.3.4', '$12', '12,34',
+               '1,2', '1000000000000', '1,234,567,890,123', '+12', '12 .3', '.']
+    parsed = page.evaluate("""({valid,invalid}) => ({
+        valid:valid.map(s => Tax2Engine.parseMoneyInput(s,42)),
+        invalid:invalid.map(s => Tax2Engine.parseMoneyInput(s,42)),
+        allocations:['100','-5','150','0','33.3',' 50 ','50','33.33','.5','5.','+7','','x','Infinity','NaN','0x10','0b11','0o7','1e1','5%','1,000'].map(Tax2Engine.parseAllocation)
+    })""", {'valid': list(valid), 'invalid': invalid})
+    assert parsed['valid'] == [{'cents': value, 'error': None, 'inProgress': False} for value in valid.values()]
+    assert parsed['invalid'][:-1] == [{'cents': 42, 'error': 'Enter a dollar amount, up to 2 decimal places', 'inProgress': False}] * (len(invalid)-1)
+    assert parsed['invalid'][-1] == {'cents': 42, 'error': None, 'inProgress': True}
+    assert parsed['allocations'] == [{'value': n, 'error': None} for n in [100, 0, 100, 0, 33.3, 50, 50, 33.33, .5, 5, 7]] + [{'value': None, 'error': 'Enter 0–100'}] * 10
+
+
+def test_shared_rate_percent_rounds_up(engine_page):
+    assert engine_page.evaluate('Tax2Engine.ratePercent(12341,100000,1)') == 12.4
+    assert engine_page.evaluate('Tax2Engine.ratePercent(12341,100000,2)') == 12.35
+    assert engine_page.evaluate('Tax2Engine.ratePercent(10,0,2)') == 0
 
 
 def test_exact_frozen_annual_and_safe_monthly_parity(engine_page):

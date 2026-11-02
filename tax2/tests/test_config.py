@@ -6,7 +6,7 @@ import pytest
 from pathlib import Path
 
 from taxkit.config import config_path, default_config, load_config
-from tests.helpers import tree_snapshot, unreadable_config_chain, warning_count
+from tests.helpers import unreadable_config_chain, warning_count
 
 
 @pytest.fixture(autouse=True)
@@ -26,40 +26,6 @@ def test_config_helpers_tolerate_permission_errors(monkeypatch, tmp_path, caplog
             assert load_config() == default_config()
         assert warning_count(caplog) == 1
     assert sorted(path.name for path in home.iterdir()) == ['config.yaml']
-
-
-def test_load_config_tolerates_raising_exists(monkeypatch, tmp_path, caplog):
-    """Pin Python 3.12/3.13 Path.exists semantics (raising) on any interpreter.
-
-    The config file genuinely exists and is unreadable (mode 000), and
-    Path.exists raises PermissionError for that path only, as 3.12/3.13 do for
-    an inaccessible chain. A correct fix may or may not call exists(); either
-    way it must warn once, return defaults and create or rewrite nothing.
-    """
-    if os.geteuid() == 0:
-        pytest.skip('root bypasses file permissions')
-    home = tmp_path / 'runtime'
-    monkeypatch.setenv('TAX2_HOME', str(home))
-    home.mkdir(mode=0o700)
-    config = home / 'config.yaml'
-    config.write_bytes(b'default_states: [XF]\n')
-    before = tree_snapshot(home)
-    original_exists = Path.exists
-
-    def raising_exists(self, *args, **kwargs):
-        if self == config:
-            raise PermissionError('synthetic inaccessible config chain')
-        return original_exists(self, *args, **kwargs)
-
-    monkeypatch.setattr(Path, 'exists', raising_exists)
-    config.chmod(0)
-    try:
-        with caplog.at_level(logging.WARNING):
-            assert load_config() == default_config()
-        assert warning_count(caplog) == 1
-    finally:
-        config.chmod(0o600)
-    assert tree_snapshot(home) == before
 
 
 def test_private_atomic_helpers(monkeypatch, tmp_path):

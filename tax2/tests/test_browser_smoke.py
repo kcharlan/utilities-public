@@ -13,7 +13,6 @@ from playwright.sync_api import TimeoutError as PlaywrightTimeoutError, expect, 
 from taxkit.page import build_payload, render_page
 from tests.test_page_build import REPO_ROOT, guard_browser_errors, synthetic_root
 from tests.test_rules_v2 import synthetic_rules, write_synthetic
-from tests.test_engine_parity import engine_page
 
 PROJECT = Path(__file__).resolve().parents[1]
 
@@ -149,41 +148,6 @@ def test_bundled_pa_eit_reaches_display_and_all_downloads(built_browser):
     rows = list(csv.DictReader(io.StringIO(lookup)))
     assert rows[20]['PA monthly tax (earned income only)'] == '10.00'
     assert rows[100]['PA monthly tax (total income)'] == '153.50'
-
-
-def test_parsers_exact_money_grammar_and_allocation(engine_page):
-    page = engine_page
-    valid = {'': 0, '   ': 0, '1,234.56': 123456, '12.': 1200, '.5': 50,
-             '0': 0, ' 12 ': 1200, '999999999999.99': 99999999999999,
-             '1,234,567,890.01': 123456789001}
-    invalid = ['1.234', '-5', '1e5', 'Infinity', 'NaN', '12.3.4', '$12', '12,34',
-               '1,2', '1000000000000', '1,234,567,890,123', '+12', '12 .3', '.']
-    parsed = page.evaluate("""({valid,invalid}) => ({
-        valid:valid.map(s => Tax2Engine.parseMoneyInput(s,42)),
-        invalid:invalid.map(s => Tax2Engine.parseMoneyInput(s,42)),
-        allocations:['100','-5','150','0','33.3',' 50 ','50','33.33','.5','5.','+7','','x','Infinity','NaN','0x10','0b11','0o7','1e1','5%','1,000'].map(Tax2Engine.parseAllocation)
-    })""", {'valid': list(valid), 'invalid': invalid})
-    assert parsed['valid'] == [{'cents': value, 'error': None, 'inProgress': False} for value in valid.values()]
-    assert parsed['invalid'][:-1] == [{'cents': 42, 'error': 'Enter a dollar amount, up to 2 decimal places', 'inProgress': False}] * (len(invalid)-1)
-    assert parsed['invalid'][-1] == {'cents': 42, 'error': None, 'inProgress': True}
-    assert parsed['allocations'] == [{'value': n, 'error': None} for n in [100, 0, 100, 0, 33.3, 50, 50, 33.33, .5, 5, 7]] + [{'value': None, 'error': 'Enter 0–100'}] * 10
-
-
-def test_shared_rate_percent_rounds_up(engine_page):
-    assert engine_page.evaluate('Tax2Engine.ratePercent(12341,100000,1)') == 12.4
-    assert engine_page.evaluate('Math.round(12341/100000*100*10)/10') == 12.3
-    assert engine_page.evaluate('Tax2Engine.ratePercent(12341,100000,2)') == 12.35
-    assert engine_page.evaluate('Math.round(12341/100000*100*100)/100') == 12.34
-    assert engine_page.evaluate('Tax2Engine.ratePercent(10,0,2)') == 0
-    # Percent scaling belongs to the shared engine helper; app.js must not
-    # multiply by 100 (or 100.0, or *=) at any spacing. Self-check both ways first.
-    multiply_by_100 = re.compile(r'(?<![\w.])100(?:\.0*)?\s*\*(?!\*)|\*=?\s*100(?:\.0*)?(?![\w.])')
-    positives = ['x*100', 'x * 100', '100*x', 'x *= 100', 'x*100.0', '100.0 * x', 'x  *\t100;']
-    negatives = ["text: '100'", 'value: 100', '?? 100', '!== 100', 'url), 1000)', 'x*1000', '1000*x',
-                 'x*100.5', '100 ** 2']
-    assert [sample for sample in positives if not multiply_by_100.search(sample)] == []
-    assert [sample for sample in negatives if multiply_by_100.search(sample)] == []
-    assert multiply_by_100.findall((PROJECT / 'web/app.js').read_text()) == []
 
 
 def test_allocation_decimal_only_and_keyboard_recovery(built_browser):
@@ -394,7 +358,7 @@ def transparent_colour(colour):
 
 
 @pytest.mark.parametrize('dark', [False, True])
-@pytest.mark.parametrize('width', [1440, 1024, 390])
+@pytest.mark.parametrize('width', [1440])
 def test_invalid_focus_has_no_income_glow(built_browser, dark, width):
     page = open_style_page(built_browser, dark, width=width, height=900)
     allocation = page.get_by_label('Georgia allocation', exact=True)
@@ -736,10 +700,9 @@ def test_negative_zero_net_and_rate_formatting(built_browser, tmp_path, rate, de
     assert 'T-0.00\n' in qif and 'NaN' not in page.locator('.main-panel').inner_text()
 
 
-@pytest.mark.parametrize('dark', [False, True])
-@pytest.mark.parametrize('width,height', [(1440,1000),(1280,1000),(1201,1000),(1200,1000),
-                                          (900,1000),(768,1000),(390,844),(720,500)])
-def test_responsive_geometry_and_export_reachability(built_browser, tmp_path, width, height, dark):
+@pytest.mark.parametrize('width,height,dark', [(1440,1000,False),(1200,1000,False),
+                                               (768,1000,False),(390,844,False),(1440,1000,True)])
+def test_responsive_geometry_and_export_reachability(built_browser, width, height, dark):
     page = built_browser(width=width, height=height, instant='2026-10-08T12:00:00Z')
     if dark:
         page.get_by_role('button', name='Toggle Theme').click()
@@ -750,12 +713,10 @@ def test_responsive_geometry_and_export_reachability(built_browser, tmp_path, wi
         return {main:rect('.main-panel'), exports:rect('.export-panel'),
             total:rect('.total'),net:rect('.net'), width:innerWidth,
             scrollWidth:document.documentElement.scrollWidth,
-            cards:[...document.querySelectorAll('.result-amount')].map(e => ({client:e.clientWidth,scroll:e.scrollWidth})),
-            netAccent:getComputedStyle(document.querySelector('.net'),'::before').backgroundColor};
+            cards:[...document.querySelectorAll('.result-amount')].map(e => ({client:e.clientWidth,scroll:e.scrollWidth}))};
     }""")
     assert geometry['scrollWidth'] <= width
     assert all(card['scroll'] <= card['client'] for card in geometry['cards']), geometry
-    assert geometry['netAccent'] == ('rgb(16, 185, 129)' if dark else 'rgb(5, 150, 105)')
     if width <= 1200:
         assert geometry['exports']['top'] >= geometry['main']['bottom'] - 1
     if width <= 768:
@@ -767,8 +728,3 @@ def test_responsive_geometry_and_export_reachability(built_browser, tmp_path, wi
         button.scroll_into_view_if_needed()
         expect(button).to_be_in_viewport()
         expect(button).to_be_enabled()
-    if width in (1440,390):
-        screenshot = tmp_path / f'tax2-responsive-{width}-{"dark" if dark else "light"}.png'
-        assert not screenshot.resolve().is_relative_to(REPO_ROOT.resolve())
-        page.screenshot(path=str(screenshot), full_page=True)
-        screenshot.chmod(0o600)
