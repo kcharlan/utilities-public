@@ -1,5 +1,10 @@
 # Lessons learned
 
+- Validate command-backed judge verdicts as JSON objects with an actual boolean
+  `passed` field. Coercion can turn a string such as `"false"` into a passing
+  result; malformed outputs should identify the case and fail the run instead.
+  Regression: `tests/test_prompt_batch.py`.
+
 - Validate a repo-task score before marking an attempt successful or indexing it;
   retain the failed run and name the score file when the output is missing or
   invalid so the final summary can include it. Regression: `tests/test_repo_task.py`.

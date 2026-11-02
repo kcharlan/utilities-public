@@ -108,8 +108,10 @@ def _judge_with_llm_command(
     if record["exit_code"] != 0:
         raise RuntimeError(record["stderr"] or record["stdout"] or "LLM judge failed.")
     payload = json.loads(record["stdout"])
+    if not isinstance(payload, dict) or not isinstance(payload.get("passed"), bool):
+        raise RuntimeError(f"LLM judge for case {case_id} must print a JSON object with boolean 'passed'")
     return {
-        "passed": bool(payload["passed"]),
+        "passed": payload["passed"],
         "normalized_response": response_text,
         "normalized_answer": answer_text,
         "judge_reason": payload.get("reason", ""),
