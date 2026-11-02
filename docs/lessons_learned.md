@@ -1993,3 +1993,9 @@ Scan fragment parameters as well as query parameters using the shared sensitive
 key vocabulary, and preserve names recognized by the prior matcher. Export
 regressions should include secrets too short for generic opaque-token detection;
 formats that omit a field cannot independently prove that field was redacted.
+
+### 2026-11-02 — Check application-level success in HTTP responses
+
+A 200 response carrying `ok: false` is not a successful operation. Check the
+response body before closing a dialog or reporting success, and test both the
+rejected and confirmed paths.
