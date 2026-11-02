@@ -1,8 +1,8 @@
 import json
-import os
 import subprocess
 import sys
 import tomllib
+from pathlib import Path
 
 import pytest
 import yaml
@@ -11,38 +11,11 @@ from src.converters.toon_conv import load_toon
 from src.converters.xml_conv import load_xml
 
 # Define the path to the CLI script
-CLI_PATH = "src/data_convert.py"
-TEST_DATA_DIR = "tests/data"
-OUTPUT_DIR = "tests/output"
+CLI_PATH = Path(__file__).resolve().parents[1] / "src/data_convert.py"
+TEST_DATA_DIR = Path(__file__).resolve().parent / "data"
 
 # Data for the two test cases
-DATASET_1 = {
-  "name": "First Dataset",
-  "type": "test",
-  "data": {
-    "items": [
-      { "id": 101, "value": "A" },
-      { "id": 102, "value": "B" }
-    ],
-    "metadata": {
-      "timestamp": "2025-11-11T10:00:00Z",
-      "source": "test-generator"
-    }
-  }
-}
-
-DATASET_2 = {
-    "user": "test_user_2",
-    "permissions": ["read", "write"],
-    "config": {
-        "theme": "dark",
-        "notifications": {
-            "email": True,
-            "sms": False
-        }
-    },
-    "status": None
-}
+DATASETS = {i: json.loads((TEST_DATA_DIR / f"cli_test_{i}.json").read_text()) for i in (1, 2)}
 
 FORMATS = ['json', 'xml', 'toon', 'yaml', 'toml']
 
@@ -59,30 +32,17 @@ def contains_none(value):
 
 ROUND_TRIP_CASES = [
     (dataset_id, from_format, to_format)
-    for dataset_id, dataset in ((1, DATASET_1), (2, DATASET_2))
+    for dataset_id, dataset in DATASETS.items()
     for from_format in FORMATS
     for to_format in FORMATS
     if from_format != to_format
     and not ('toml' in (from_format, to_format) and contains_none(dataset))
 ]
 
-# Fixture to ensure the output directory exists and is clean
-@pytest.fixture(scope="module", autouse=True)
-def setup_output_dir():
-    os.makedirs(OUTPUT_DIR, exist_ok=True)
-    yield
-    # Clean up generated files
-    for f in os.listdir(OUTPUT_DIR):
-        try:
-            os.remove(os.path.join(OUTPUT_DIR, f))
-        except OSError:
-            pass # Ignore if file is already gone
-    os.rmdir(OUTPUT_DIR)
-
-def run_cli(args):
+def run_cli(args, cwd):
     """Helper function to run the CLI."""
-    command = [sys.executable, CLI_PATH] + args
-    result = subprocess.run(command, capture_output=True, text=True)
+    command = [sys.executable, str(CLI_PATH)] + [str(arg) for arg in args]
+    result = subprocess.run(command, capture_output=True, text=True, cwd=cwd)
     assert result.returncode == 0, f"""CLI command failed: {' '.join(command)}
 {result.stderr}"""
     return result
@@ -127,32 +87,31 @@ def deep_compare(d1, d2):
         return s1 == s2
 
 @pytest.mark.parametrize("dataset_id,from_format,to_format", ROUND_TRIP_CASES)
-def test_round_trip_conversion(dataset_id, from_format, to_format):
+def test_round_trip_conversion(tmp_path, dataset_id, from_format, to_format):
     # 1. Prepare source file
     source_filename = f"source_{dataset_id}_{from_format}_{to_format}.{from_format}"
-    source_path = os.path.join(OUTPUT_DIR, source_filename)
-    json_source_path = os.path.join(TEST_DATA_DIR, f"cli_test_{dataset_id}.json")
-    run_cli(["--input", json_source_path, "--to", from_format, "--output", source_path])
+    source_path = tmp_path / source_filename
+    json_source_path = TEST_DATA_DIR / f"cli_test_{dataset_id}.json"
+    run_cli(["--input", json_source_path, "--to", from_format, "--output", source_path], cwd=tmp_path)
 
     # 2. Convert to intermediate format
     intermediate_filename = f"intermediate_{dataset_id}_{from_format}_{to_format}.{to_format}"
-    intermediate_path = os.path.join(OUTPUT_DIR, intermediate_filename)
-    run_cli(["--input", source_path, "--to", to_format, "--output", intermediate_path])
+    intermediate_path = tmp_path / intermediate_filename
+    run_cli(["--input", source_path, "--to", to_format, "--output", intermediate_path], cwd=tmp_path)
 
     # 3. Convert back to source format
     final_filename = f"final_{dataset_id}_{from_format}_{to_format}.{from_format}"
-    final_path = os.path.join(OUTPUT_DIR, final_filename)
-    run_cli(["--input", intermediate_path, "--to", from_format, "--output", final_path])
+    final_path = tmp_path / final_filename
+    run_cli(["--input", intermediate_path, "--to", from_format, "--output", final_path], cwd=tmp_path)
 
     # 4. Load and compare
     loader = get_loader(from_format)
     with open(final_path, 'r') as f:
         final_data = loader(f)
 
-    with open(source_path, 'r') as f:
-        original_data = get_loader(from_format)(f)
-
-    if from_format != 'xml' and to_format == 'xml':
+    original_data = DATASETS[dataset_id]
+    if 'xml' in (from_format, to_format):
         final_data = final_data.get('root', final_data)
-    
-    assert deep_compare(final_data, original_data)
+        assert deep_compare(final_data, original_data)
+    else:
+        assert final_data == original_data
