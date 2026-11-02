@@ -47,6 +47,8 @@ import PrimeMonitorCore
         #expect(store.load().state == AppState(charger: nil, closedInterval: .m1))
         let value = AppState(charger: appCharger, closedInterval: .m5)
         try store.save(value); #expect(store.load().state == value)
+        var sized = value; sized.menuBarTextSize = .pt11
+        try store.save(sized); #expect(store.load().state == sized)
         #expect(try FileManager.default.attributesOfItem(atPath: directory.path(percentEncoded: false))[.posixPermissions] as? Int == 0o700)
         #expect(try FileManager.default.attributesOfItem(atPath: store.fileURL.path(percentEncoded: false))[.posixPermissions] as? Int == 0o600)
         try Data("invalid".utf8).write(to: store.fileURL)
@@ -54,17 +56,45 @@ import PrimeMonitorCore
         #expect(FileManager.default.fileExists(atPath: store.fileURL.appendingPathExtension("bad").path(percentEncoded: false)))
         try store.save(value); #expect(store.load().state == value)
     }
-    @Test func stateSavedBeforeTextSizeLoadsWithoutQuarantine() throws {
+    @Test(arguments: [
+        (#"{"charger":{"serial":"synthetic-charger","model":"A2345","alias":"Desk","name":"Prime"},"closedInterval":300,"credentials":{"provider":"onePassword","settings":{"item":"Synthetic Item","country":"ZZ"}}}"#, nil as MenuBarTextSize?),
+        (#"{"charger":{"serial":"synthetic-charger","model":"A2345","alias":"Desk","name":"Prime"},"closedInterval":300,"credentials":{"provider":"onePassword","settings":{"item":"Synthetic Item","country":"ZZ"}},"menuBarTextSize":11}"#, .pt11)
+    ]) func pinnedStateShapesLoadWithoutQuarantine(json: String, size: MenuBarTextSize?) throws {
         let directory = FileManager.default.temporaryDirectory.appending(path: "prime-synthetic-" + UUID().uuidString, directoryHint: .isDirectory)
         defer { try? FileManager.default.removeItem(at: directory) }
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         let store = StateStore(fileURL: directory.appending(path: "state.json", directoryHint: .notDirectory))
-        try store.save(AppState(charger: appCharger, closedInterval: .m5))
-        // A 0.1.x file has no menuBarTextSize key at all.
-        #expect(!(try String(contentsOf: store.fileURL, encoding: .utf8)).contains("menuBarTextSize"))
-        let legacy = store.load()
-        #expect(legacy.problem == nil && legacy.state.charger == appCharger && legacy.state.menuBarTextSize == nil)
+        try Data(json.utf8).write(to: store.fileURL)
+        let loaded = store.load()
+        #expect(loaded.problem == nil && loaded.canSave)
+        #expect(loaded.state.charger == ChargerInfo(serial: "synthetic-charger", model: "A2345", alias: "Desk", name: "Prime"))
+        #expect(loaded.state.credentials == CredentialSelection(provider: "onePassword", settings: ["item": "Synthetic Item", "country": "ZZ"]))
+        #expect(loaded.state.closedInterval == .m5 && loaded.state.menuBarTextSize == size)
         #expect(!FileManager.default.fileExists(atPath: store.fileURL.appendingPathExtension("bad").path(percentEncoded: false)))
-        var sized = legacy.state; sized.menuBarTextSize = .pt11
-        try store.save(sized); #expect(store.load().state == sized)
+    }
+    @Test func unknownEnumValuesFallBackWithoutLosingSelection() throws {
+        let directory = FileManager.default.temporaryDirectory.appending(path: "prime-synthetic-" + UUID().uuidString, directoryHint: .isDirectory)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        let store = StateStore(fileURL: directory.appending(path: "state.json", directoryHint: .notDirectory))
+        let json = #"{"charger":{"serial":"synthetic-charger","model":"A2345","alias":"Desk","name":"Prime"},"closedInterval":45,"credentials":{"provider":"onePassword","settings":{"item":"Synthetic Item","country":"ZZ"}},"menuBarTextSize":99}"#
+        try Data(json.utf8).write(to: store.fileURL)
+        let loaded = store.load()
+        #expect(loaded.problem == nil && loaded.canSave)
+        #expect(loaded.state.charger == ChargerInfo(serial: "synthetic-charger", model: "A2345", alias: "Desk", name: "Prime"))
+        #expect(loaded.state.credentials == CredentialSelection(provider: "onePassword", settings: ["item": "Synthetic Item", "country": "ZZ"]))
+        #expect(loaded.state.closedInterval == .default && loaded.state.menuBarTextSize == nil)
+        #expect(!FileManager.default.fileExists(atPath: store.fileURL.appendingPathExtension("bad").path(percentEncoded: false)))
+    }
+    @Test(arguments: [#"{"charger":{"serial":123},"closedInterval":60}"#, #"{"charger":null}"#])
+    func invalidChargerOrMissingIntervalStillQuarantines(json: String) throws {
+        let directory = FileManager.default.temporaryDirectory.appending(path: "prime-synthetic-" + UUID().uuidString, directoryHint: .isDirectory)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        let store = StateStore(fileURL: directory.appending(path: "state.json", directoryHint: .notDirectory))
+        try Data(json.utf8).write(to: store.fileURL)
+        let loaded = store.load()
+        #expect(loaded.problem != nil && loaded.canSave)
+        #expect(FileManager.default.fileExists(atPath: store.fileURL.appendingPathExtension("bad").path(percentEncoded: false)))
     }
 }

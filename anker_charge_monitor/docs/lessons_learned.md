@@ -575,3 +575,10 @@ and test the full path through reconnect rather than silently dropping packets.
 Decoded-event subscribers also need a finite queue and an explicit terminal
 overflow. Retire only the stalled subscriber, invalidate command confirmation
 state and subscribe again without resetting the backend's reconnect backoff.
+
+## 2026-11-02: Preserve selections across unknown saved enum values
+
+An older release may encounter enum values saved by a newer release. Decode the
+integer first and fall back per field, keeping the charger and credential
+selection; malformed values and invalid charger shapes still quarantine. Pin
+historical state shapes as literal JSON so encoder changes cannot mask a break.

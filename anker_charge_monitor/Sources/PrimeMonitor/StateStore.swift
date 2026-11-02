@@ -7,6 +7,17 @@ struct AppState: Codable, Equatable {
     var credentials: CredentialSelection? = nil
     /// Optional so state saved before 0.2.0 decodes; nil means the default size.
     var menuBarTextSize: MenuBarTextSize? = nil
+    init(charger: ChargerInfo?, closedInterval: ClosedInterval, credentials: CredentialSelection? = nil, menuBarTextSize: MenuBarTextSize? = nil) {
+        self.charger = charger; self.closedInterval = closedInterval
+        self.credentials = credentials; self.menuBarTextSize = menuBarTextSize
+    }
+    init(from decoder: any Decoder) throws {
+        let values = try decoder.container(keyedBy: CodingKeys.self)
+        charger = try values.decodeIfPresent(ChargerInfo.self, forKey: .charger)
+        closedInterval = ClosedInterval(rawValue: try values.decode(Int.self, forKey: .closedInterval)) ?? .default
+        credentials = try values.decodeIfPresent(CredentialSelection.self, forKey: .credentials)
+        menuBarTextSize = try values.decodeIfPresent(Int.self, forKey: .menuBarTextSize).flatMap(MenuBarTextSize.init(rawValue:))
+    }
     static let initial = AppState(charger: nil, closedInterval: .default)
 }
 struct StateLoad {
