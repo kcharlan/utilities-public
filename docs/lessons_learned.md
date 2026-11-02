@@ -2211,3 +2211,10 @@ Office documents can nest paragraphs and slide shapes inside content controls
 and groups. Walk those containers in order and reuse the normal paragraph,
 table, and shape processing; strict-mode synthetic conversions catch silent
 text loss that a successful return code alone misses.
+
+## Generated Markdown tables through HTML converters
+
+When an HTML-to-Markdown pipeline constructs table Markdown before calling the
+converter, preserve those blocks across conversion. HTML whitespace collapsing
+and `<br>` hard breaks can change empty-cell padding and table line endings;
+check exact rendered lines as well as cell values and escaped pipes.

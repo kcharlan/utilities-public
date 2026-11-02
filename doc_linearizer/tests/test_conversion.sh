@@ -39,3 +39,45 @@ text.scan(/\]\(#([^)]*)\)/).flatten.each do |id|
   abort "missing anchor for #{id.inspect}" unless anchors.include?(id)
 end
 RUBY
+
+# Check numbering and table output against the documented conversion contract.
+mkdir -p "$scratch_dir/contracts/site" "$scratch_dir/contracts-output"
+cat > "$scratch_dir/contracts/site/index.html" <<'HTML'
+<html><head><style>:root{--heading-prefix:"4"}</style></head><body>
+<h2>Overview</h2><h3>Scope</h3><h3>Terms</h3><h4>Detail</h4>
+<table><tr><th>Key</th><th>Value</th></tr><tr><td colspan="2">Spanning a|b</td></tr></table>
+<table class="dict"><thead><tr><th>Name</th><th>Card</th></tr></thead><tbody><tr><td>Example</td><td>1</td></tr></tbody></table>
+<table class="waffle"><tbody><tr><td>First</td><td>Second</td></tr><tr><td colspan="2">Group</td></tr><tr><td>Alpha</td><td>Beta</td></tr></tbody></table>
+</body></html>
+HTML
+UV_PYTHON_DOWNLOADS=never UV_OFFLINE=1 "$project_dir/linearize.py" "$scratch_dir/contracts" -o "$scratch_dir/contracts-output/guide.md"
+contract_output="$scratch_dir/contracts-output/guide.md"
+for expected in '## 4 Overview' '### 4.1 Scope' '### 4.2 Terms' '#### 4.2.1 Detail' \
+  '| Key | Value |' '|---|---|' '| Spanning a\|b |  |' \
+  '| Name | Card |' '| Example | 1 |' '| **Group** |  |' '| Alpha | Beta |'; do
+  if ! grep -Fxq "$expected" "$contract_output"; then
+    printf 'missing expected line: %s\n' "$expected" >&2; cat "$contract_output" >&2; exit 1
+  fi
+done
+awk '/^\| Name \| Card \|$/ {if (getline <= 0 || $0 != "|---|---|") exit 1; if (getline <= 0 || $0 != "| Example | 1 |") exit 1; found=1} END {if (!found) exit 1}' "$contract_output"
+
+# The table of contents orders pages, with an omitted index inserted first.
+mkdir -p "$scratch_dir/order/site" "$scratch_dir/order-output"
+printf '<html><body><p>Index sentinel</p></body></html>\n' > "$scratch_dir/order/site/index.html"
+printf '<html><body><p>Page A sentinel</p></body></html>\n' > "$scratch_dir/order/site/a.html"
+printf '<html><body><p>Page B sentinel</p></body></html>\n' > "$scratch_dir/order/site/b.html"
+printf '<div id="segment-content"><div class="col-12"><a href="b.html">B</a><a href="a.html">A</a></div></div>\n' > "$scratch_dir/order/site/toc.html"
+UV_PYTHON_DOWNLOADS=never UV_OFFLINE=1 "$project_dir/linearize.py" "$scratch_dir/order" -o "$scratch_dir/order-output/guide.md"
+awk '/Index sentinel/ {if (state != 0) exit 1; state=1} /Page B sentinel/ {if (state != 1) exit 1; state=2} /Page A sentinel/ {if (state != 2) exit 1; state=3} END {if (state != 3) exit 1}' "$scratch_dir/order-output/guide.md"
+
+# Glob discovery includes ordinary pages and excludes generated asset views.
+mkdir -p "$scratch_dir/glob/site" "$scratch_dir/glob-output"
+printf '<html><body><p>Glob index</p></body></html>\n' > "$scratch_dir/glob/site/index.html"
+printf '<html><body><p>Glob page</p></body></html>\n' > "$scratch_dir/glob/site/a.html"
+printf '<html><body><p>Generated asset sentinel</p></body></html>\n' > "$scratch_dir/glob/site/x.json.html"
+UV_PYTHON_DOWNLOADS=never UV_OFFLINE=1 "$project_dir/linearize.py" "$scratch_dir/glob" -o "$scratch_dir/glob-output/guide.md"
+grep -Fq 'Glob index' "$scratch_dir/glob-output/guide.md"
+grep -Fq 'Glob page' "$scratch_dir/glob-output/guide.md"
+if grep -Fq 'Generated asset sentinel' "$scratch_dir/glob-output/guide.md"; then
+  printf 'generated asset view was included\n' >&2; exit 1
+fi
