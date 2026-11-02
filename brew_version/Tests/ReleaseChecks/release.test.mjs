@@ -53,11 +53,11 @@ test('release plist and both Mach-O products require the supported runtime',()=>
   assert.equal(info.LSMinimumSystemVersion,'27.0');
   for(const executable of [command,path.join(app,'Contents/MacOS/BrewVersion')]) assertMinimumRuntime(executable);
 });
-test('acceptance builder keeps only its signed bundle in a fresh private home',()=>{
+test('acceptance and prototype builders keep only signed bundles in fresh private homes',()=>{
   // The builders honor TMPDIR, so their own homes land inside this scratch.
   const temporary=path.join(scratch,'tmp'),home=path.join(scratch,'synthetic-home');
   fs.mkdirSync(temporary,{mode:0o700});fs.mkdirSync(home,{mode:0o700});
-  for(const [builder,label] of [['build.sh','Private synthetic home: ']]) {
+  for(const [builder,label] of [['build.sh','Private synthetic home: '],['build-settings-prototype.sh','Settings prototype: ']]) {
     const output=execFileSync('zsh',[path.join(scratch,'Tests/Acceptance',builder)],{
       encoding:'utf8',env:{...process.env,HOME:home,TMPDIR:temporary},stdio:'pipe',timeout:900000});
     const value=output.split('\n').find(line=>line.startsWith(label))?.slice(label.length);
@@ -73,7 +73,7 @@ test('acceptance builder keeps only its signed bundle in a fresh private home',(
   }
   // SwiftPM's lock files and TemporaryDirectory.* folders stay in each home, removed with it.
   const left=fs.readdirSync(temporary);
-  assert.equal(left.length,1,left.join('\n'));
+  assert.equal(left.length,2,left.join('\n'));
   for(const name of left) assert.match(name,/^brew-version-acceptance\.[^.]+$/,'builder left '+name+' in TMPDIR');
 });
 test('maintained snapshot builder uses the same supported runtime',()=>{
