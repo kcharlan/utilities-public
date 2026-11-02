@@ -325,6 +325,33 @@ class TestComputeNeedHelp:
 
 
 class TestComputeScenarios:
+    def test_contention_numbers_match_hand_calculation(self):
+        target = _make_team("Target", pts=30, gp=20, position=10)
+        cutoff = _make_team("Cutoff", pts=40, gp=20, position=9)
+        result = mls_tracker.compute_scenarios(target, cutoff)
+        assert result["status"] == "contention"
+        assert result["cutoff"]["projected"] == 68.0
+        assert result["worst_case"] == {
+            "wins": 13, "ties": 0, "losses": 1, "final_pts": 69, "possible": True,
+        }
+        assert result["easiest_path"] == {
+            "wins": 13, "ties": 1, "losses": 0, "final_pts": 70, "possible": True,
+        }
+        assert result["points_to_safety"] == 39
+        assert result["ppg_required"] == 2.79
+        assert result["target"]["max_possible"] == 72
+        assert result["cutoff"]["max_possible"] == 82
+
+    def test_equal_max_is_not_clinched(self):
+        target = _make_team("Target", pts=50, gp=30, position=1)
+        cutoff = _make_team("Cutoff", pts=41, gp=31, position=9)
+        assert mls_tracker.compute_scenarios(target, cutoff)["status"] == "contention"
+
+    def test_equal_max_is_not_eliminated(self):
+        target = _make_team("Target", pts=20, gp=30, position=10)
+        cutoff = _make_team("Cutoff", pts=32, gp=30, position=9)
+        assert mls_tracker.compute_scenarios(target, cutoff)["status"] == "need_help"
+
     def test_clinched(self):
         target = _make_team("Top", pts=60, gp=30, position=1)
         cutoff = _make_team("Ninth", pts=15, gp=30, position=9)
@@ -373,6 +400,40 @@ class TestComputeScenarios:
         assert "ppg_required" in result
         assert result["target"]["name"] == "Any"
         assert result["cutoff"]["name"] == "CutTeam"
+
+
+# ============================================================
+# Unit tests — fetch_standings_from_espn
+# ============================================================
+
+class TestFetchStandings:
+    def test_maps_fixture_team(self):
+        standings = mls_tracker.fetch_standings_from_espn(2025)
+        assert standings["Eastern Conference"][0] == {
+            "position": 1, "name": "Team Alpha", "id": "1", "gp": 20,
+            "w": 14, "l": 2, "t": 4, "pts": 46, "gf": 35, "ga": 15,
+            "gd": 20, "ppg": 2.3,
+        }
+
+    def test_string_stats_and_missing_rank(self):
+        ranked = _make_standing_entry(
+            1, "Team Alpha", "1.0", "20.0", "14.0", "2.0", "4.0", "46.0", "35.0", "15.0"
+        )
+        rankless = _make_standing_entry(2, "Team Bravo", 2, 20, 12, 4, 4, 40, 30, 18)
+        rankless["stats"] = [stat for stat in rankless["stats"] if stat["name"] != "rank"]
+        response = MagicMock()
+        response.json.return_value = {"children": [{
+            "name": "Synthetic Conference", "standings": {"entries": [rankless, ranked]},
+        }]}
+        with patch("mls_tracker.requests.get", return_value=response):
+            teams = mls_tracker.fetch_standings_from_espn(2025)["Synthetic Conference"]
+        assert teams[0] == {
+            "position": 1, "name": "Team Alpha", "id": "1", "gp": 20,
+            "w": 14, "l": 2, "t": 4, "pts": 46, "gf": 35, "ga": 15,
+            "gd": 20, "ppg": 2.3,
+        }
+        assert teams[1]["name"] == "Team Bravo"
+        assert teams[1]["position"] == 99
 
 
 # ============================================================

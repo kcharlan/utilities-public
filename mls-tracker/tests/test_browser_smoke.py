@@ -383,8 +383,16 @@ def test_refresh_and_page_stay_responsive_during_a_slow_fetch(monkeypatch):
             assert response.status == 200
         return time.monotonic() - begin
 
+    results = []
+
+    def fetch_data(request):
+        try:
+            results.append(timed(request))
+        except BaseException as exc:
+            results.append(exc)
+
     with live_server(mls_tracker.app) as url:
-        data_request = threading.Thread(target=timed, args=(f"{url}/api/data?season=2025",))
+        data_request = threading.Thread(target=fetch_data, args=(f"{url}/api/data?season=2025",))
         data_request.start()
         try:
             assert started.wait(10)
@@ -395,4 +403,8 @@ def test_refresh_and_page_stay_responsive_during_a_slow_fetch(monkeypatch):
             release.set()
             data_request.join(20)
     assert not data_request.is_alive()
+    assert len(results) == 1
+    if isinstance(results[0], BaseException):
+        raise results[0]
+    assert 0 <= results[0] < 20
     assert mls_tracker.cache._teams is None
