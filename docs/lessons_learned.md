@@ -1,5 +1,13 @@
 # Lessons learned
 
+## 2026-11-02: Drain request handlers before closing shared databases
+
+Stopping an HTTP accept loop does not finish daemon request threads. Model
+Sentinel's server must join its handlers before closing their SQLite connections;
+bound inactive socket reads so an incomplete local request cannot block shutdown
+forever. Coordinate an in-flight request and guard the close in a regression test
+so the unsafe ordering is detected without closing SQLite during a query.
+
 ## 2026-11-02: Guard branch resets against commit loss
 
 Before resetting a local branch, check whether its tip is an ancestor of the
