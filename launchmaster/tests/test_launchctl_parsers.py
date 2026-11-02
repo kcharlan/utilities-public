@@ -24,8 +24,28 @@ def launcher(monkeypatch, tmp_path):
     monkeypatch.setenv("LAUNCHMASTER_HOME", str(tmp_path / "launchmaster-home"))
     module = load_launcher(SCRIPT_PATH)
     monkeypatch.setattr(module.os, "getuid", lambda: 501)
+    module.test_plist_domains = set(module.PLIST_DIRS)
     monkeypatch.setattr(module, "PLIST_DIRS", {"user-agent": str(tmp_path)})
     return module
+
+
+@pytest.mark.parametrize(
+    ("domain", "prefix"),
+    [
+        ("user-agent", "gui/501"),
+        ("global-agent", "gui/501"),
+        ("system-daemon", "system"),
+        ("apple-agent", "gui/501"),
+        ("apple-daemon", "system"),
+        ("unknown", "gui/501"),
+    ],
+)
+def test_domain_target_and_prefix_for_every_plist_dir(launcher, domain, prefix):
+    assert launcher.test_plist_domains == {
+        "user-agent", "global-agent", "system-daemon", "apple-agent", "apple-daemon"
+    }
+    assert launcher._domain_target("L", domain) == f"{prefix}/L"
+    assert launcher._domain_prefix(domain) == prefix
 
 
 @pytest.fixture
