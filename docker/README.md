@@ -86,11 +86,22 @@ with problems first. `PROPAGATE_DEPLOY_ROOT` and `PROPAGATE_BACKUP_ROOT`
 override the deployed copy and backup locations. A new top-level project must
 be registered in the script's `STACKS` table before deploy will copy it.
 
-The stubbed test suite runs without Docker, the network or real deployments:
+## Tests
 
-```bash
-zsh docker/tests/test_propagate_updates.zsh
-```
+Run these from the repository root. The Compose contract needs the
+`docker-compose` CLI and `jq`; it renders synthetic configuration without
+starting containers. The propagation, trusted-updater and n8n tests also
+require `jq`, and the propagation and Actual tests use Git. The other scripts
+use zsh or Node as indicated and standard system tools; they use stubs instead
+of real deployments or network access.
+
+- `zsh docker/tests/test_compose_contract.zsh` — rendered Compose contracts.
+- `zsh docker/tests/test_propagate_updates.zsh` — update propagation.
+- `zsh docker/tests/test_trusted_updaters.zsh` — trusted updater scripts.
+- `zsh docker/tests/test_actual_start.zsh` — Actual start script.
+- `zsh docker/tests/test_mermaid_update.zsh` — Mermaid updater.
+- `zsh docker/tests/test_n8n_up.zsh` — n8n start script.
+- `node --test docker/tests/image-cleanup.test.mjs` — image cleanup commands.
 
 ## Local Data and Secrets
 

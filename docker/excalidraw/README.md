@@ -49,7 +49,7 @@ ports:
   - "127.0.0.1:NEW_PORT:80"
 ```
 
-Run `node --test docker/excalidraw/tests/compose.test.mjs` from the repository root to check the published interface without starting the service.
+Run `zsh docker/tests/test_compose_contract.zsh` from the repository root to check the published interface without starting the service.
 
 ---
 *Note: This setup is intended for local development and personal use.*

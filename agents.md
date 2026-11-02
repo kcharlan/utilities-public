@@ -134,6 +134,10 @@ Project-specific validation commands, applied with the Testing Scope above. A co
 - Docker update propagation (`docker/propagate-updates.zsh`):
   - `zsh docker/tests/test_propagate_updates.zsh` (stubbed refresh/deploy suite; no Docker, network or real deployment access).
   - `docker/propagate-updates.zsh refresh --dry-run` and `deploy --dry-run` are read-only. A real `refresh` changes lockfiles and a real `deploy` rebuilds running stacks; agents need approval for each.
+- Docker stack scripts (from repository root):
+  - `zsh docker/tests/test_compose_contract.zsh` (requires `docker-compose` and `jq`; renders synthetic configuration).
+  - `zsh docker/tests/test_trusted_updaters.zsh`, `zsh docker/tests/test_actual_start.zsh`, `zsh docker/tests/test_mermaid_update.zsh`, and `zsh docker/tests/test_n8n_up.zsh`.
+  - `node --test docker/tests/image-cleanup.test.mjs`.
 - `storage_monitor` (from the repository root):
   - `UV_PYTHON_DOWNLOADS=never tools/run_project_tests.py storage_monitor` (complete unit, native protocol, integration, and browser suite; builds the walker into a temporary directory; no skips).
   - `make -C storage_monitor/native sanitize tsan`, then `STORAGE_MONITOR_WALKER="$PWD/storage_monitor/native/build/sanitize/storage_monitor_walk" UV_PYTHON_DOWNLOADS=never tools/run_project_tests.py storage_monitor` and `STORAGE_MONITOR_WALKER="$PWD/storage_monitor/native/build/tsan/storage_monitor_walk" UV_PYTHON_DOWNLOADS=never tools/run_project_tests.py storage_monitor` (complete suite against ASan/UBSan and TSan walkers).
