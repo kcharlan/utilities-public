@@ -32,7 +32,7 @@ from fastapi.responses import HTMLResponse, JSONResponse, Response
 DATA_DIR = os.path.expanduser(os.environ.get("LAUNCHMASTER_HOME", "~/.launchmaster"))
 BACKUP_DIR = os.path.join(DATA_DIR, "backups")
 CONFIG_FILE = os.path.join(DATA_DIR, "config.json")
-VERSION = "1.1.4"
+VERSION = "1.1.5"
 DEFAULT_PORT = 8200
 
 logger = logging.getLogger("launchmaster")
@@ -2996,7 +2996,7 @@ PLIST_DIRS = {
 }
 _SYSTEM_DOMAINS = frozenset({"system-daemon", "apple-daemon"})
 
-WEEKDAY_NAMES = {0: "Sun", 1: "Mon", 2: "Tue", 3: "Wed", 4: "Thu", 5: "Fri", 6: "Sat"}
+WEEKDAY_NAMES = {0: "Sun", 1: "Mon", 2: "Tue", 3: "Wed", 4: "Thu", 5: "Fri", 6: "Sat", 7: "Sun"}
 
 
 # ============================================================
@@ -3255,6 +3255,8 @@ def humanize_schedule(plist_data: Dict[str, Any]) -> str:
 
     keep_alive = plist_data.get("KeepAlive", False)
     if keep_alive:
+        if isinstance(keep_alive, dict):
+            return "Conditional KeepAlive"
         return "Always running (KeepAlive)"
 
     start_interval = plist_data.get("StartInterval")
@@ -3302,28 +3304,28 @@ def _humanize_calendar_interval(sci: Any) -> str:
     if not entries:
         return "Calendar schedule"
 
-    # Collect all weekdays mentioned
-    weekdays: List[str] = []
-    hour = None
-    minute = None
-
+    # Group only entries whose remaining fields match and whose weekdays differ.
+    groups = []
     for entry in entries:
         if not isinstance(entry, dict):
             continue
-        wd = entry.get("Weekday")
-        if wd is not None:
-            weekdays.append(WEEKDAY_NAMES.get(wd, str(wd)) if isinstance(wd, int) else str(wd))
-        h = entry.get("Hour")
-        m = entry.get("Minute")
-        if h is not None:
-            hour = h
-        if m is not None:
-            minute = m
+        fields = {key: value for key, value in entry.items() if key != "Weekday"}
+        weekday = entry.get("Weekday")
+        for group_fields, weekdays in groups:
+            if weekday is not None and weekdays and weekday not in weekdays and fields == group_fields:
+                weekdays.append(weekday)
+                break
+        else:
+            groups.append((fields, [weekday] if weekday is not None else []))
 
-    # Build time string
+    return "; ".join(_humanize_calendar_entry(fields, weekdays) for fields, weekdays in groups) or "Calendar schedule"
+
+
+def _humanize_calendar_entry(entry: Dict[str, Any], weekdays: List[Any]) -> str:
+    """Describe one calendar entry or a group differing only by weekday."""
     try:
-        hour = int(hour) if hour is not None else None
-        minute = int(minute) if minute is not None else None
+        hour = int(entry["Hour"]) if entry.get("Hour") is not None else None
+        minute = int(entry["Minute"]) if entry.get("Minute") is not None else None
     except (ValueError, TypeError, OverflowError):
         return "Calendar schedule"
     if hour is not None:
@@ -3340,18 +3342,19 @@ def _humanize_calendar_interval(sci: Any) -> str:
     else:
         time_str = None
 
-    # Build day string
-    if weekdays:
-        day_str = ", ".join(weekdays)
-    elif any(isinstance(e, dict) and "Day" in e for e in entries):
-        days = [str(e["Day"]) for e in entries if isinstance(e, dict) and "Day" in e]
-        day_str = "Day " + ", ".join(days) + " of month"
-    else:
-        day_str = None
-
     parts = []
-    if day_str:
-        parts.append(day_str)
+    if weekdays:
+        parts.append(
+            ", ".join(WEEKDAY_NAMES.get(wd, str(wd)) if isinstance(wd, int) else str(wd) for wd in weekdays)
+        )
+    month = entry.get("Month")
+    day = entry.get("Day")
+    if month is not None:
+        months = ("", "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec")
+        month_name = months[month] if isinstance(month, int) and 1 <= month <= 12 else str(month)
+        parts.append(f"{month_name} {day}" if day is not None else f"{'in' if parts else 'In'} {month_name}")
+    elif day is not None:
+        parts.append(f"Day {day} of month")
     if time_str:
         parts.append(f"at {time_str}")
 

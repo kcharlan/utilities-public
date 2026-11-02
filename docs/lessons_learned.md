@@ -15,6 +15,13 @@ Parsing error handlers cannot catch invalid text encoding when a file is decoded
 before parsing. Exercise invalid bytes through the CLI and report decoding errors
 through the same structured input-error contract without creating output.
 
+## 2026-11-02: Describe each launchd calendar entry independently
+
+Combining fields across StartCalendarInterval entries can invent a schedule and
+hide real trigger times. Group only entries differing in weekday, preserve the
+other entries separately, and cover month, day and both Sunday encodings with
+direct schedule tests alongside an API smoke test.
+
 ## 2026-11-02: Normalize distance records before aggregation
 
 An output column labelled kilometres can silently misstate mixed-unit records if
