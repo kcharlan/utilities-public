@@ -2006,3 +2006,11 @@ Pattern matching decoded content alone misses sensitive field names and opaque
 values inside encoded JSON. Reuse the structured scanner within existing depth
 and length limits, then target the encoded container so severity-based bulk
 decisions cannot leave its detected contents in an export.
+
+### 2026-11-02 — Check file identity across editing sessions
+
+Atomic replacement protects a single write but does not detect an external edit
+made after a document was opened. Record the file identity at open and after
+successful saves, reject conflicting in-place saves, and leave a Save As escape
+hatch for the unsaved edits. Tests that adjust the file's modification time as
+setup must reopen it before exercising the save contract.

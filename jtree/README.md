@@ -99,6 +99,7 @@ jtree [file.json] [--port 8100] [--readonly]
 - Node paths use JSON arrays of object-key strings and numeric array indices, so keys containing periods remain distinct from nested paths.
 - Loading reports duplicate keys and numbers that may lose precision when saved. Non-finite numbers and invalid Unicode are rejected.
 - Server saves use atomic replacement and preserve file mode, ownership, ACLs and accessible extended attributes on macOS; a save fails if metadata cannot be copied or verified, or the destination has multiple hard links. macOS manages `com.apple.provenance` itself.
+- Save refuses a server-backed file whose identity, modification time or size changed since it was opened or last saved; reopen it or use Save As to preserve your edits. This metadata check cannot detect changes that leave all those values unchanged.
 - Expand All traverses at most 200 immediate children per container and stops after 5,000 expanded containers
 
 ## Architecture

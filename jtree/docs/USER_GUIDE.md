@@ -176,6 +176,7 @@ Press **Ctrl/Cmd+S** or click the **Save** button.
 
 - If the file was opened from a path, it saves directly to that path
 - If no path exists (e.g., opened via browser picker), the Save As dialog opens
+- If the file changed on disk since it was opened or last saved, Save refuses to overwrite it. Reopen the file or use Save As to preserve your edits.
 
 ### Save As
 
@@ -335,6 +336,8 @@ All exports capture the current visible graph (expanded nodes, lanes, edges, and
 jtree identifies nodes with JSON-array paths, with strings for object keys and numbers for array indices. A key containing a period is distinct from a nested path. Loading warns when duplicate keys or number precision may change on save; non-finite numbers and invalid Unicode are rejected.
 
 Server saves replace the destination atomically. On macOS, file mode, ownership, ACLs and accessible extended attributes are copied and verified before replacement; a save fails if they cannot be preserved or the destination has multiple hard links. macOS manages `com.apple.provenance` independently.
+
+Save checks the file's device, inode, modification time and size against the values recorded at open or the last save. Changes that leave all four values unchanged are not detected.
 
 ---
 
