@@ -3,12 +3,31 @@ set -euo pipefail
 # Proves tools/check_no_temp_leaks.sh catches a leak and sweeps only this run's empty SwiftPM
 # markers, against a private fake TMPDIR and a fake Darwin user temp dir inside this script's own
 # scratch, which the trap removes. The real Darwin user temp dir is never touched. Then proves that
-# the brew_version and anker_charge_monitor Makefiles run their suite and harness builders inside
-# it, with a fake `swift` standing in for the toolchain. Ported from
+# the selected project Makefiles run their suite and harness builders inside it, with a fake
+# `swift` standing in for the toolchain. Arguments select brew_version and/or
+# anker_charge_monitor; no arguments selects both. Ported from
 # telltale/Tests/ReleaseChecks/test_check_no_temp_leaks.sh.
 repo=$(cd "$(dirname "$0")/../.." && pwd)
 source "$repo/tools/tests/cleanup_fixture.sh"
 checker="$repo/tools/check_no_temp_leaks.sh"
+projects=("$@")
+if [ "$#" -eq 0 ]; then projects=(brew_version anker_charge_monitor); fi
+for project in "${projects[@]}"; do
+    case "$project" in
+        brew_version|anker_charge_monitor) ;;
+        *) echo "Usage: $0 [brew_version|anker_charge_monitor ...]" >&2; exit 2 ;;
+    esac
+done
+selected() {
+    local item
+    for item in "${projects[@]}"; do [ "$item" != "$1" ] || return 0; done
+    return 1
+}
+if [ "$#" -eq 0 ]; then
+    bv4_unknown_status=0
+    "$0" synthetic-unknown >/dev/null 2>&1 || bv4_unknown_status=$?
+    [ "$bv4_unknown_status" -eq 2 ] || { echo "FAIL: unknown project exited $bv4_unknown_status, expected 2"; exit 1; }
+fi
 scratch=$(mktemp -d "${TMPDIR:-/tmp}/no-temp-leaks-test.XXXXXX")
 chmod 700 "$scratch"
 trap 'remove_fixture_paths "$scratch"' EXIT
@@ -197,23 +216,30 @@ echo "Private home: \$home"
 SH
     chmod 755 "$1"
 }
-mkdir "$tree/brew_version" "$tree/anker_charge_monitor"
-cp "$repo/brew_version/Makefile" "$tree/brew_version/"
-cp "$repo/anker_charge_monitor/Makefile" "$tree/anker_charge_monitor/"
+for project in brew_version anker_charge_monitor; do
+    selected "$project" || continue
+    mkdir "$tree/$project"
+    cp "$repo/$project/Makefile" "$tree/$project/"
+done
+if selected brew_version; then
 mkdir -p "$tree/brew_version/Tests/ReleaseChecks"
 : > "$tree/brew_version/Tests/ReleaseChecks/synthetic.test.mjs"
 builder "$tree/brew_version/Tests/Snapshots/build.sh" brew-version-snapshots
 builder "$tree/brew_version/Tests/Acceptance/build.sh" brew-version-acceptance
 builder "$tree/brew_version/Tests/Acceptance/build-settings-prototype.sh" brew-version-acceptance
+fi
+if selected anker_charge_monitor; then
 stub "$tree/anker_charge_monitor/Tests/ReleaseChecks/check_secrets_tests.sh"
 stub "$tree/anker_charge_monitor/Tests/ReleaseChecks/check_bundle.sh"
 builder "$tree/anker_charge_monitor/Tests/Snapshots/build.sh" prime-snapshots
+fi
 export SWIFT_LOG="$scratch/swift.log"
 make_target() { env -u MAKEFLAGS -u MFLAGS -u MAKELEVEL TMPDIR="$caller" PATH="$scratch/bin:$PATH" make -C "$tree/$1" --no-print-directory "$2" > "$scratch/out.log" 2>&1; }
 expect_clean_darwin() {
     [ "$(ls -A "$DARWIN")" = TemporaryDirectory.before1 ] || { echo "FAIL: make $1 left Darwin markers"; ls -A "$DARWIN"; exit 1; }
 }
 for project in brew_version anker_charge_monitor; do
+    selected "$project" || continue
     dir=$(cd "$tree/$project" && pwd -P)
     : > "$SWIFT_LOG"
     make_target "$project" test || { echo "FAIL: $project make test"; cat "$scratch/out.log"; exit 1; }
@@ -226,6 +252,7 @@ done
 for target in brew_version:snapshots:brew-version-snapshots brew_version:acceptance:brew-version-acceptance \
     brew_version:settings-prototype:brew-version-acceptance anker_charge_monitor:snapshots:prime-snapshots; do
     IFS=: read -r project goal home <<< "$target"
+    selected "$project" || continue
     : > "$SWIFT_LOG"
     make_target "$project" "$goal" || { echo "FAIL: $project make $goal"; cat "$scratch/out.log"; exit 1; }
     left=$(ls -A "$caller")

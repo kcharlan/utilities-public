@@ -36,7 +36,9 @@ import TelltaleCore
             switch scene {
             case .quiet:
                 #expect(snapshot.alerts.isEmpty && snapshot.shift == nil)
+                #expect(snapshot.models.allSatisfy { $0.color == nil })
             case .alerting:
+                #expect(snapshot.alerts.count == 2)
                 #expect(snapshot.lamps[.speed] == .amber && snapshot.lamps[.load] == .amber)
                 #expect(snapshot.models.map(\.color) == [.amber, nil])
                 #expect(snapshot.alerts.map(\.text).contains("Codex: Example has been up to 26% slower than usual for prompts this size since 08:40."))
@@ -53,8 +55,10 @@ import TelltaleCore
                 #expect(snapshot.alerts.first?.failedTurns == detail.priorCount + detail.failures.count)
                 #expect(snapshot.alerts.first?.failedTurns ?? 0 > saved.failedTurns ?? 0)
                 #expect(snapshot.alerts.first?.acknowledgedAt == nil && snapshot.attention == .red)
+                #expect(snapshot.alerts.first?.detail == Copy.failedTurnsTotal(count: detail.priorCount + detail.failures.count, since: episode.onset, calendar: SyntheticEnvironment.calendar))
             case .shift:
                 #expect(snapshot.alerts.isEmpty)
+                #expect(snapshot.shift?.days == 3)
                 #expect(snapshot.shiftText == "Example has been about 26% slower than usual for 3 days. Accept as usual?")
             case .acceptance, .dashboard, .sidebarIdle, .collectorProblem, .settings, .twoProviders, .arrival, .claudeDashboard, .providersNormal, .providersNotSetUp, .providersFormatProblem, .providersBackfilling:
                 Issue.record("not a panel snapshot scene")
@@ -81,6 +85,13 @@ import TelltaleCore
             let codex = live.snapshot.models.filter { $0.provider == .codex }
             let claude = live.snapshot.models.filter { $0.provider == .claude }
             #expect(codex.count == 2 && claude.count == 2)
+            #expect(live.snapshot.checkedAt != nil)
+            if scene == .twoProviders {
+                #expect(Set(live.snapshot.models.map(\.name)).count == 4)
+            }
+            if scene == .arrival {
+                #expect(live.snapshot.arrivals.count == 1 && live.snapshot.arrivals[0].provider == .claude)
+            }
             for row in codex {
                 let points = try store.evalPoints(provider: .codex, model: row.model, in: now.addingTimeInterval(-900)...now)
                 let point = try #require(points.last)

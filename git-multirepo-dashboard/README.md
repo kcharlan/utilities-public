@@ -66,6 +66,8 @@ A full scan processes registered repositories sequentially and stores three kind
 2. Local branches, including default/stale status. A non-default branch is stale after 30 days without a commit.
 3. Dependencies and health results for supported manifests.
 
+At registration and each branch scan, Git Fleet resolves the default branch from the local `origin/HEAD` reference, then local `main` or `master`, then the current branch, and finally `main`. This uses local Git references and does not contact the remote.
+
 Progress is streamed to the browser with server-sent events. Only one fleet scan may run at a time. Missing paths and per-repository scan failures are retained as visible error state. A scan interrupted by server shutdown is marked failed on the next startup.
 
 ### Repository detail

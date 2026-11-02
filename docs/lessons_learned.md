@@ -1,5 +1,9 @@
 # Lessons learned
 
+## 2026-11-02: Scope shared Makefile self-tests to their caller
+
+A shared self-test that always exercises every consumer couples otherwise independent project suites. Accept explicit consumer selections, validate them before making scratch space, and retain the unscoped form for the fleet-wide check.
+
 ## Synthetic directory modes and umask
 
 When a test requires a specific directory mode, explicitly chmod the synthetic fixture and assert its precondition: mkdir’s requested mode is filtered by the caller’s umask. Preserve the post-operation mode assertion so rejection and non-mutation remain tested under restrictive umasks.
@@ -2046,6 +2050,13 @@ recovery, and browser-card regressions cover these paths.
 Preserve the leading status columns of real porcelain output across subprocess
 helpers: stripping whitespace can turn a worktree change into a staged one.
 Exercise both deletion and type change through an actual quick scan.
+
+### 2026-11-02 — Resolve default branches from local refs
+
+A checkout's current branch is not necessarily its default, and a previously
+stored default can become stale. Prefer the local origin HEAD reference, then
+local main or master, and refresh the stored value during branch scans. Real
+synthetic repositories cover feature and detached checkouts and remote HEAD.
 
 ## 2026-11-02: Preserve alerts when report rendering fails
 

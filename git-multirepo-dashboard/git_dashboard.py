@@ -48,7 +48,7 @@ except ImportError:  # pragma: no cover - Windows
 
 # ── Constants ─────────────────────────────────────────────────────────────────
 DEFAULT_PORT = 8300
-VERSION = "0.3.3"
+VERSION = "0.3.4"
 
 # Populated by build_tools_dict() during preflight; global so /api/status can
 # return it without re-running which() on every request.
@@ -933,15 +933,19 @@ async def upsert_branches(db, repo_id: str, branches: list[dict]) -> None:
 async def run_branch_scan(db, repo_id: str, repo_path: str) -> int:
     """Orchestrate a single-repo branch scan.
 
-    Reads default_branch from the repositories table, calls scan_branches,
-    upserts the result, and returns the count of branches parsed.
+    Refreshes the default branch, scans branches, and stores the snapshot.
     """
     cursor = await db.execute(
         "SELECT default_branch FROM repositories WHERE id = ?",
         (repo_id,),
     )
     row = await cursor.fetchone()
-    default_branch = row[0] if row else "main"
+    default_branch = await get_default_branch(Path(repo_path))
+    if row and row[0] != default_branch:
+        await db.execute(
+            "UPDATE repositories SET default_branch = ? WHERE id = ?",
+            (default_branch, repo_id),
+        )
 
     branches = await scan_branches(repo_path, default_branch)
     await upsert_branches(db, repo_id, branches)
@@ -3064,7 +3068,14 @@ def check_php_deps(repo_path: Path, deps: list[dict]) -> list[dict]:
 
 
 async def get_default_branch(repo_path: Path) -> str:
-    """Return the current branch name from symbolic-ref, or 'main' as fallback."""
+    """Resolve the default using local refs without contacting the remote."""
+    stdout, _, rc = await run_git(repo_path, "symbolic-ref", "--short", "refs/remotes/origin/HEAD")
+    if rc == 0 and stdout.startswith("origin/"):
+        return stdout.removeprefix("origin/")
+    for branch in ("main", "master"):
+        _, _, rc = await run_git(repo_path, "show-ref", "--verify", "--quiet", f"refs/heads/{branch}")
+        if rc == 0:
+            return branch
     stdout, _, rc = await run_git(repo_path, "symbolic-ref", "--short", "HEAD")
     if rc == 0 and stdout:
         return stdout
