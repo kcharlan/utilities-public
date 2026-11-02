@@ -29,6 +29,7 @@ Frontend feature tests:
   TestCollapseAll            - Collapse-all clears all descendant expanded state
 """
 import json
+import os
 
 from tests.conftest import SAMPLE_DATA
 
@@ -603,6 +604,45 @@ class TestSave:
 # ============================================================================
 
 class TestSaveAs:
+    def test_save_as_existing_file_without_force_changes_nothing(self, loaded_client, tmp_path):
+        target = tmp_path / 'existing.json'
+        original = b'{"keep": "synthetic"}\n'
+        target.write_bytes(original)
+        response = loaded_client.post('/api/save-as', json={'path': str(target)})
+        assert response.status_code == 200
+        assert response.json()['ok'] is False
+        assert response.json()['exists'] is True
+        assert target.read_bytes() == original
+
+    def test_save_as_existing_file_with_force_overwrites(self, loaded_client, tmp_path):
+        target = tmp_path / 'existing.json'
+        target.write_bytes(b'{"keep": "synthetic"}\n')
+        response = loaded_client.post('/api/save-as', json={'path': str(target), 'force': True})
+        assert response.status_code == 200
+        assert response.json()['ok'] is True
+        with target.open() as f:
+            assert json.load(f)['name'] == 'jtree'
+
+    def test_save_as_adopts_path_for_uploaded_document(self, client, tmp_path):
+        target = tmp_path / 'adopted.json'
+        assert client.post('/api/open-content', json={'content': '{"a": 1}', 'fileName': 'synthetic.json'}).status_code == 200
+        assert client.post('/api/save-as', json={'path': str(target)}).json()['ok'] is True
+        assert client.put('/api/node', params={'path': json.dumps(['a'])}, json={'value': 2}).status_code == 200
+        assert client.post('/api/save').status_code == 200
+        assert json.loads(target.read_text()) == {'a': 2}
+        status = client.get('/api/status').json()
+        assert status['file'] == os.path.realpath(target)
+        assert status['dirty'] is False
+
+    def test_save_as_keeps_original_target_for_disk_file(self, loaded_client, sample_json_file, tmp_path):
+        assert loaded_client.put('/api/node', params={'path': json.dumps(['version'])}, json={'value': 999}).status_code == 200
+        assert loaded_client.post('/api/save-as', json={'path': str(tmp_path / 'copy.json')}).json()['ok'] is True
+        status = loaded_client.get('/api/status').json()
+        assert status['file'] == os.path.realpath(sample_json_file)
+        assert status['dirty'] is True
+        with open(sample_json_file) as f:
+            assert json.load(f)['version'] == 1
+
     def test_no_file_returns_409(self, client):
         assert client.post("/api/save-as", json={"path": "/tmp/x.json"}).status_code == 409
 

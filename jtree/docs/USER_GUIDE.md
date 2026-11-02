@@ -181,7 +181,7 @@ Press **Ctrl/Cmd+S** or click the **Save** button.
 
 Two methods:
 1. **Browser save** — Click "Choose location..." to use the browser file picker when supported, or the browser's download fallback
-2. **Server path** — Click "or save to a server path" and type a destination path (supports `~` expansion)
+2. **Server path** — Click "or save to a server path" and type a destination path (supports `~` expansion). If the path already exists, jtree asks before overwriting it.
 
 Save As writes a copy. A browser save/download does not attach a server path to the open document. A server-path save attaches that path only when the document originally came from a browser upload; when a server-backed file is already open, its original path remains the active Save target.
 

@@ -215,6 +215,33 @@ def open_synthetic_data(page, server, tmp_path, data):
     page.goto(server)
 
 
+def test_save_as_onto_existing_file_asks_before_overwriting(server, page, tmp_path):
+    with guard_browser_errors(page):
+        open_synthetic_data(page, server, tmp_path, {'value': 'synthetic-new'})
+        target = tmp_path / 'existing.json'
+        original = b'{"keep": "synthetic-old"}\n'
+        target.write_bytes(original)
+        page.get_by_title('Save As...').click()
+        page.get_by_text('or save to a server path').click()
+        page.get_by_placeholder('/path/to/file.json').fill(str(target))
+        messages = []
+
+        def dismiss(dialog):
+            messages.append(dialog.message)
+            dialog.dismiss()
+
+        page.once('dialog', dismiss)
+        page.locator('.modal-box').get_by_role('button', name='Save', exact=True).click()
+        expect(page.get_by_text('Not saved')).to_be_visible()
+        assert messages and 'already exists' in messages[0]
+        assert target.read_bytes() == original
+        expect(page.get_by_text('Saved to')).not_to_be_visible()
+        page.once('dialog', lambda dialog: dialog.accept())
+        page.locator('.modal-box').get_by_role('button', name='Save', exact=True).click()
+        expect(page.get_by_text('Saved to')).to_be_visible()
+        assert json.loads(target.read_text()) == {'value': 'synthetic-new'}
+
+
 def test_special_key_paths_can_be_edited_in_browser(server, page, tmp_path):
     with guard_browser_errors(page):
         open_synthetic_data(page, server, tmp_path, {'a.b': 'original', 'a': {'b': 'other'}})
