@@ -375,7 +375,7 @@ Repo-task runs with retries also keep attempt-scoped artifacts under:
 - `attempts/02/`
 - ...
 
-The top-level `commands.jsonl`, `score.json`, and `report.md` reflect the final successful attempt. Earlier failed attempts are preserved beneath `attempts/` for debugging. Successful repo-task branches remain available in the source repository, but their worktree checkouts are removed after the run completes.
+The top-level `commands.jsonl`, `score.json`, and `report.md` reflect the final successful attempt. Earlier failed attempts are preserved beneath `attempts/` for debugging. An interrupted (Ctrl-C) repo-task run removes its run directory, worktree, and branch. Successful repo-task branches remain available in the source repository, but their worktree checkouts are removed after the run completes.
 
 When available, command rows also include:
 
