@@ -2080,3 +2080,10 @@ retention cleanup even if the artifact cannot be written.
 Missing or malformed inputs and output write errors must propagate to the CLI's
 nonzero exit and stderr path. Exercise each failure with synthetic input and
 check that input errors preserve an existing output file.
+
+### 2026-11-02 — Separate Git branch refs from checkout state and paths
+
+`git branch` can report a detached HEAD as a pseudo-branch; enumerate
+`refs/heads` instead when persisting local branches. End revision arguments
+with `--` in history commands so a branch sharing a directory name remains
+unambiguous. Exercise both cases against synthetic Git repositories.

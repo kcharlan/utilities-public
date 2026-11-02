@@ -5,6 +5,7 @@ Run from the repository root:
 """
 
 import asyncio
+import subprocess
 import sys
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
@@ -311,7 +312,7 @@ def test_upsert_branches_empty_list():
 # ─────────────────────────────────────────────────────────────────────────────
 
 def test_scan_branches_calls_run_git():
-    """scan_branches calls run_git with the correct git branch --format flag."""
+    """scan_branches requests local refs with the expected format."""
     captured_args = []
 
     async def fake_run_git(repo_path, *args):
@@ -321,7 +322,7 @@ def test_scan_branches_calls_run_git():
     with patch.object(git_dashboard, "run_git", side_effect=fake_run_git):
         run(git_dashboard.scan_branches("/tmp/test-repo", default_branch="main"))
 
-    assert "branch" in captured_args
+    assert captured_args[:2] == ["for-each-ref", "refs/heads"]
     # Verify the --format flag contains both refname:short and committerdate:iso-strict
     # separated by %09 (git format escape for tab character)
     format_arg = next((a for a in captured_args if a.startswith("--format=")), None)
@@ -356,3 +357,27 @@ def test_run_branch_scan_returns_count():
         return count
 
     assert run(_run()) == 3
+
+
+def test_detached_head_has_no_pseudo_branch_row(tmp_path):
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    def git(*args):
+        subprocess.run(["git", "-c", "core.hooksPath=/dev/null", "-c", "core.fsmonitor=false",
+                        "-c", "commit.gpgsign=false", "-C", str(repo), *args],
+                       check=True, capture_output=True)
+    git("init", "-b", "main")
+    git("-c", "user.name=Synthetic", "-c", "user.email=synthetic@example.invalid",
+        "commit", "--allow-empty", "-m", "Synthetic commit")
+    git("checkout", "--detach")
+
+    async def scan():
+        async with aiosqlite.connect(":memory:") as db:
+            await db.executescript(git_dashboard._SCHEMA_SQL)
+            await db.execute("INSERT INTO repositories (id, name, path, added_at) VALUES (?, ?, ?, ?)",
+                             ("synthetic", "synthetic", str(repo), "2026-01-01"))
+            await git_dashboard.run_branch_scan(db, "synthetic", str(repo))
+            async with db.execute("SELECT name FROM branches") as cursor:
+                return [row[0] for row in await cursor.fetchall()]
+
+    assert run(scan()) == ["main"]

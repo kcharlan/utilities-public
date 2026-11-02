@@ -29,7 +29,32 @@ def test_known_branch_is_passed_as_a_ref(test_app, tmp_path, monkeypatch):
         return ('0', '', 0)
     monkeypatch.setattr(dashboard, 'run_git', fake_git)
     assert client.get('/api/repos/synthetic/commits', params={'branch': 'main'}).status_code == 200
-    assert calls == [('rev-list', '--count', '--end-of-options', 'main')]
+    assert calls == [('rev-list', '--count', '--end-of-options', 'main', '--')]
+
+
+def test_branch_named_like_directory_lists_commits(test_app, tmp_path):
+    client, db = test_app
+    repo = tmp_path / 'repo'
+    repo.mkdir()
+    def git(*args):
+        subprocess.run(['git', '-c', 'core.hooksPath=/dev/null', '-c', 'core.fsmonitor=false',
+                        '-c', 'commit.gpgsign=false', '-C', str(repo), *args],
+                       check=True, capture_output=True)
+    git('init', '-b', 'main')
+    (repo / 'docs').mkdir()
+    (repo / 'docs' / 'example.txt').write_text('synthetic\n')
+    git('add', 'docs')
+    git('-c', 'user.name=Synthetic', '-c', 'user.email=synthetic@example.invalid',
+        'commit', '-m', 'Synthetic commit')
+    git('branch', 'docs')
+    with sqlite3.connect(db) as conn:
+        conn.execute('INSERT INTO repositories (id,name,path,added_at) VALUES (?,?,?,?)',
+                     ('synthetic', 'synthetic', str(repo), '2026-01-01'))
+        conn.execute('INSERT INTO branches (repo_id,name) VALUES (?,?)', ('synthetic', 'docs'))
+    response = client.get('/api/repos/synthetic/commits', params={'branch': 'docs'})
+    assert response.status_code == 200
+    assert response.json()['total'] >= 1
+    assert len(response.json()['commits']) >= 1
 
 
 def test_trust_flag_defaults_off():
