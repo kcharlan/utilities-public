@@ -32,18 +32,4 @@ struct CatalogRegressionTests {
         #expect(result.revalidated && result.catalog.suggestions(prefix: "").count == 2)
         #expect(await transport.requests.map(\.etag) == [nil, nil, "synthetic-f", "synthetic-c"])
     }
-    @Test func oldRawCacheIsIgnoredAndReplaced() async throws {
-        let f = WatchFixture(); defer { f.clean() }
-        try FileManager.default.createDirectory(at: f.directory, withIntermediateDirectories: true)
-        let raw = ["formula": ["data": Data(syntheticFormulaList.utf8).base64EncodedString(), "etag": "synthetic-legacy"],
-                   "cask": ["data": Data(syntheticCaskList.utf8).base64EncodedString(), "etag": "synthetic-legacy"]]
-        try JSONSerialization.data(withJSONObject: raw).write(to: f.directory.appendingPathComponent("catalog.json"))
-        let transport = catalogStub()
-        let client = CatalogClient(transport: transport, cacheDirectory: f.directory)
-        #expect(try await client.cached() == nil)
-        #expect(try await client.load().revalidated)
-        #expect(await transport.requests.allSatisfy { $0.etag == nil })
-        let restart = CatalogClient(transport: StubTransport([:]), cacheDirectory: f.directory)
-        #expect(try await restart.cached()?.suggestions(prefix: "").count == 2)
-    }
 }

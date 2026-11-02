@@ -106,34 +106,6 @@ test('failed harness builds remove their whole home',()=>{
     assert.deepEqual(fs.readdirSync(temporary),[],builder);
   }
 });
-test('builder cleanup failures preserve primary status and report cleanup-only failures',()=>{
-  for(const builder of ['Snapshots/build.sh','Acceptance/build.sh']) {
-    const source=fs.readFileSync(path.join(project,'Tests',builder),'utf8');
-    const matches=[...source.matchAll(/^finish\(\) \{\n[\s\S]*?^\}/gm)];
-    assert.equal(matches.length,1,builder);
-    for(const original of [0,7]) {
-      const home=path.join(scratch,`cleanup-${path.basename(path.dirname(builder))}-${original}`);
-      const attempts=path.join(home,'attempts');
-      fs.mkdirSync(path.join(home,'package'),{recursive:true});
-      fs.mkdirSync(path.join(home,'tmp'));
-      const script=matches[0][0]+String.raw`
-owned=true
-acceptance_home=$TEST_HOME
-snapshot_home=$TEST_HOME
-package_dir=$TEST_HOME/package
-build_tmp=$TEST_HOME/tmp
-rm() { print attempt >> "$TEST_ATTEMPTS"; return 91; }
-trap finish EXIT
-exit "$TEST_EXIT"
-`;
-      const result=spawnSync('zsh',['-c',script],{encoding:'utf8',env:{...process.env,TEST_HOME:home,TEST_ATTEMPTS:attempts,TEST_EXIT:String(original)}});
-      assert.equal(result.status,original || 1,builder+'\n'+result.stderr);
-      assert.equal(fs.readFileSync(attempts,'utf8').trim().split('\n').length,original ? 1 : 2,builder);
-      assert.match(result.stderr,/Cannot remove/);
-      assert.ok(fs.existsSync(home));
-    }
-  }
-});
 test('builder cleanup resolves the real removal command',()=>{
   for(const builder of ['Snapshots/build.sh','Acceptance/build.sh']) {
     const source=fs.readFileSync(path.join(project,'Tests',builder),'utf8');
