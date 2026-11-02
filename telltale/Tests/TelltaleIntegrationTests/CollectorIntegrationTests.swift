@@ -120,6 +120,38 @@ func withIntegration(_ body: (IntegrationHarness) async throws -> Void) async th
 }
 
 @Suite struct CollectorIntegrationTests {
+    @Test func formatProblemNotifiesFromTheSecondRunAcrossSkips() async throws {
+        try await withIntegration { h in
+            let history = try CodexDatabase.threadHistory(codexHome: h.paths.codexHome, omitting: ["error_json"])
+            let t1 = h.at(9, 4, 10)
+            let executable = URL(fileURLWithPath: "/synthetic/Telltale.app/Contents/MacOS/Telltale")
+            let expected = Copy.formatProblem(source: "codex", since: t1, calendar: h.calendar)
+
+            func health(at now: Date) throws -> CollectorHealthReport {
+                let store = try h.store()
+                return try CollectorHealth.evaluate(
+                    enabled: true, installedExecutable: executable, installedAt: nil, currentExecutable: executable,
+                    loaded: true, runs: store.recentRuns(limit: 20, includingSkipped: false), intervalMinutes: 5,
+                    sourceStates: store.sourceStates(), now: now.addingTimeInterval(60), calendar: h.calendar)
+            }
+
+            #expect(await h.run(at: t1).outcome == .succeeded)
+            let first = try health(at: t1)
+            #expect(!first.notify)
+            #expect(first.problems.contains(expected))
+
+            try history.closeLikeCodex()
+            let t2 = t1.addingTimeInterval(300)
+            #expect(await h.run(at: t2).outcome == .succeeded)
+            #expect(try health(at: t2).notice == expected)
+
+            let t3 = t1.addingTimeInterval(600)
+            #expect(await h.run(at: t3).outcome == .succeeded)
+            #expect(try health(at: t3).notice == expected)
+            #expect(try h.store().sourceState("codex")?.unavailableSince == t1)
+        }
+    }
+
     @Test func coldStartReadsOnlyLinesInsideTheLookback() async throws {
         try await withIntegration { h throws in
             let now = h.at(9, 4, 10)
