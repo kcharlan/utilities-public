@@ -558,7 +558,7 @@ func withCollector(_ body: (CollectorHarness) async throws -> Void) async throws
                 threadID: "thread_synthetic_01", turnID: "turn_synthetic_01", startedAt: now.addingTimeInterval(-60),
                 completedAt: now.addingTimeInterval(-60), errorCode: "overloaded", message: "Synthetic failure")]))
             #expect(await h.run(at: now, sources: [source]).outcome == .succeeded)
-            #expect(await h.notifier.posted.map(\.body) == ["Synthetic Provider: 1 request failed: model overloaded"])
+            #expect(await h.notifier.posted.map(\.body) == [Copy.failedTurns(source: "Synthetic Provider", noun: "request", count: 1, reasons: ["model overloaded"])])
         }
     }
 
@@ -1069,7 +1069,7 @@ func withCollector(_ body: (CollectorHarness) async throws -> Void) async throws
             // lookback start, is settled there uncounted rather than reported as failing then.
             let history = try failedTurnHistory(harness)
             #expect(history.episodes == [[unix(harness.at(9, 4, 9, 1)), "1.0"]])
-            #expect(history.events == [[unix(harness.at(9, 4, 9, 5)), "Example: 1 turn failed: model at capacity"]])
+            #expect(history.events == [[unix(harness.at(9, 4, 9, 5)), Copy.failedTurns(source: "Example", noun: "turn", count: 1, reasons: ["model at capacity"])]])
             #expect(try RawSQLite.rows(harness.paths.database, "SELECT turn_id, CAST(evaluated_at AS INTEGER) FROM failed_turns ORDER BY turn_id") == [
                 ["turn_synthetic_901", unix(harness.at(8, 5, 10))],
                 ["turn_synthetic_902", unix(harness.at(9, 4, 9, 5))],
@@ -1134,7 +1134,7 @@ func withCollector(_ body: (CollectorHarness) async throws -> Void) async throws
             let retried = await harness.run(at: harness.at(9, 4, 9, 10))
 
             #expect(retried.notificationsPosted == 1)
-            #expect(await harness.notifier.posted.map(\.body) == ["Example: 1 turn failed: model at capacity"])
+            #expect(await harness.notifier.posted.map(\.body) == [Copy.failedTurns(source: "Example", noun: "turn", count: 1, reasons: ["model at capacity"])])
             #expect(try harness.store().failureNotices(provider: .codex) == FailureNotices(lastNoticeAt: harness.at(9, 4, 9, 10), waiting: []))
         }
     }
@@ -1361,7 +1361,7 @@ extension CollectorRunTests {
 
             let report = await harness.run(at: harness.at(9, 4, 10))
 
-            let note = "Rule settings are invalid, so this run used the defaults: The stored rules couldn't be read."
+            let note = "Rule settings are invalid, so this run used the defaults: " + Copy.storedRulesUndecodable
             #expect(report.outcome == .succeeded)
             #expect(report.detail == note)
             #expect(harness.log.contains(note))

@@ -88,8 +88,8 @@ import TelltaleTestSupport
     try await withAsyncScratchDirectory { try await body(MonitorHarness($0)) }
 }
 
-private let notLoaded = "Telltale's collector isn't loaded. Open the Collector view to turn it back on."
-private let recovered = "Telltale's collector is running again."
+private let notLoaded = Copy.collectorNotLoaded
+private let recovered = Copy.collectorRecovered
 private func waitForLock(_ semaphore: DispatchSemaphore) -> Bool { semaphore.wait(timeout: .now() + 3) == .success }
 
 @MainActor @Suite struct CollectorMonitorTests {
@@ -280,7 +280,7 @@ private func waitForLock(_ semaphore: DispatchSemaphore) -> Bool { semaphore.wai
             #expect(h.service.posted.isEmpty)
             await h.tick(monitor)
             await h.tick(monitor)
-            #expect(h.bodies == ["The collector hasn't run since 09:00."])
+            #expect(h.bodies == [Copy.collectorOverdue(since: MonitorHarness.at(9, 0), calendar: Synth.newYork)])
             #expect(h.service.posted.first?.content.title == "🔴 Collector health")
         }
     }
@@ -293,19 +293,19 @@ private func waitForLock(_ semaphore: DispatchSemaphore) -> Bool { semaphore.wai
             h.setLoaded(true)
             let monitor = h.monitor()
             for _ in 0..<17 { await h.tick(monitor) }
-            #expect(h.bodies == ["The collector hasn't run since 09:00."])
+            #expect(h.bodies == [Copy.collectorOverdue(since: MonitorHarness.at(9, 0), calendar: Synth.newYork)])
             let opened = try h.store.value(.collectorHealthNotice)
             #expect(opened != nil)
 
             h.sleep(hours: 9)
             await monitor.check()
             for _ in 0..<20 { await h.tick(monitor) }
-            #expect(h.bodies == ["The collector hasn't run since 09:00."])
+            #expect(h.bodies == [Copy.collectorOverdue(since: MonitorHarness.at(9, 0), calendar: Synth.newYork)])
             #expect(try h.store.value(.collectorHealthNotice) == opened)
 
             try h.recordRun(at: h.now, .succeeded)
             await h.tick(monitor)
-            #expect(h.bodies == ["The collector hasn't run since 09:00.", recovered])
+            #expect(h.bodies == [Copy.collectorOverdue(since: MonitorHarness.at(9, 0), calendar: Synth.newYork), recovered])
         }
     }
 
@@ -420,7 +420,7 @@ private func waitForLock(_ semaphore: DispatchSemaphore) -> Bool { semaphore.wai
             let first = await h.tick(monitor)
             #expect(first?.problems.first?.hasPrefix("claude") == true)
             await h.tick(monitor)
-            #expect(h.bodies == ["codex changed its log format. Telltale can't read codex responses since 08:55."])
+            #expect(h.bodies == [Copy.formatProblem(source: "codex", since: MonitorHarness.at(8, 55), calendar: Synth.newYork)])
         }
     }
 
@@ -518,7 +518,7 @@ private func waitForLock(_ semaphore: DispatchSemaphore) -> Bool { semaphore.wai
             for _ in 0..<3 { await h.tick(monitor) }
             #expect(h.service.posted.isEmpty)
             let report = await monitor.check()
-            #expect(report?.footer == "Collector off. Turn it on to keep watching.")
+            #expect(report?.footer == Copy.collectorOff)
         }
     }
 
@@ -634,11 +634,11 @@ private func waitForLock(_ semaphore: DispatchSemaphore) -> Bool { semaphore.wai
             h.now = MonitorHarness.at(9, 14)
             let waiting = try #require(await h.tick(monitor))
             #expect(!waiting.notify)
-            #expect(waiting.footer == "Waiting for the collector's first run.")
+            #expect(waiting.footer == Copy.waitingForFirstRun)
 
             await h.tick(monitor)
             await h.tick(monitor)
-            #expect(h.bodies == ["The collector hasn't run since 09:00."])
+            #expect(h.bodies == [Copy.collectorOverdue(since: MonitorHarness.at(9, 0), calendar: Synth.newYork)])
         }
     }
 

@@ -1,5 +1,12 @@
 # Lessons learned
 
+## 2026-11-02: Cover every launchd domain in target selection
+
+Apple and non-Apple daemons both use the system launchd domain. Exercise every
+discovered plist domain and the unknown fallback when constructing job targets
+and bootstrap prefixes, so a new or overlooked domain cannot silently use the
+user GUI domain.
+
 ## 2026-11-02: Scope shared Makefile self-tests to their caller
 
 A shared self-test that always exercises every consumer couples otherwise independent project suites. Accept explicit consumer selections, validate them before making scratch space, and retain the unscoped form for the fleet-wide check.
@@ -2067,6 +2074,12 @@ change and error notification policies to the recorded result summary.
 Fallback artifact writes can fail too: emit outside the original exception
 handler, keep the redacted console diagnostic, and attempt notification and
 retention cleanup even if the artifact cannot be written.
+
+### 2026-11-02 — Report conversion failures to scripted callers
+
+Missing or malformed inputs and output write errors must propagate to the CLI's
+nonzero exit and stderr path. Exercise each failure with synthetic input and
+check that input errors preserve an existing output file.
 
 ### 2026-11-02 — Separate Git branch refs from checkout state and paths
 

@@ -96,7 +96,7 @@ import TelltaleTestSupport
             #expect(first.at == Synthetic.at(60))
             #expect(first.kind == "statusPost" && first.provider == "example.status" && first.scope == "*")
             #expect(first.title == "Synthetic post 1")
-            #expect(first.body == "Example posted: Synthetic post 1.")
+            #expect(first.body == Copy.statusPost(source: "Example", title: "Synthetic post 1"))
             #expect(first.link == "https://status.example.com/incidents/synthetic-1")
             #expect(first.episode == nil && first.epoch == nil && first.undone == nil)
         }

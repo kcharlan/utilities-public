@@ -26,3 +26,26 @@ if "$python" "$root/md_converter.py" --input "$d/missing.json" --output "$d/outp
 fi
 grep -qi 'split' "$d/log"
 cmp "$d/expected.csv" "$d/output.csv"
+
+printf 'preserve existing output\n' > "$d/output.csv"
+failures=0
+if "$python" "$root/md_converter.py" --input "$d/absent.json" --output "$d/output.csv" > "$d/stdout" 2> "$d/stderr"; then
+    echo 'missing input unexpectedly succeeded' >&2
+    failures=$((failures + 1))
+else
+    grep -qi 'not found' "$d/stderr"
+fi
+grep -qx 'preserve existing output' "$d/output.csv"
+
+printf '{\n' > "$d/invalid.json"
+if "$python" "$root/md_converter.py" --input "$d/invalid.json" --output "$d/output.csv" > "$d/stdout" 2> "$d/stderr"; then
+    echo 'invalid JSON unexpectedly succeeded' >&2
+    failures=$((failures + 1))
+fi
+grep -qx 'preserve existing output' "$d/output.csv"
+
+if "$python" "$root/md_converter.py" --input "$d/valid.json" --output "$d/no-such-dir/out.csv" > "$d/stdout" 2> "$d/stderr"; then
+    echo 'unwritable output unexpectedly succeeded' >&2
+    failures=$((failures + 1))
+fi
+test "$failures" -eq 0

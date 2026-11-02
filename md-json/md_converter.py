@@ -89,11 +89,9 @@ def generate_csv_from_json(json_file_path, output_csv_file_path):
         with open(json_file_path, 'r', encoding='utf-8') as f:
             data = json.load(f)
     except FileNotFoundError:
-        print(f"Error: JSON file not found at {json_file_path}")
-        return
+        raise ValueError(f"JSON file not found at {json_file_path}")
     except json.JSONDecodeError:
-        print(f"Error: Could not decode JSON from {json_file_path}")
-        return
+        raise ValueError(f"Could not decode JSON from {json_file_path}")
 
     for item in data.get("all_items", []):
         if item.get("obj_type") == "acct": # Ensure we only process accounts for this map
@@ -238,7 +236,7 @@ def generate_csv_from_json(json_file_path, output_csv_file_path):
                 writer.writerow(row_dict)
         print(f"CSV file generated successfully: {output_csv_file_path}")
     except IOError:
-        print(f"Error: Could not write to CSV file at {output_csv_file_path}")
+        raise ValueError(f"Could not write to CSV file at {output_csv_file_path}")
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='Convert Moneydance JSON to CSV.')

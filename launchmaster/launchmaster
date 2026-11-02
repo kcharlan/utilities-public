@@ -32,7 +32,7 @@ from fastapi.responses import HTMLResponse, JSONResponse, Response
 DATA_DIR = os.path.expanduser(os.environ.get("LAUNCHMASTER_HOME", "~/.launchmaster"))
 BACKUP_DIR = os.path.join(DATA_DIR, "backups")
 CONFIG_FILE = os.path.join(DATA_DIR, "config.json")
-VERSION = "1.1.2"
+VERSION = "1.1.3"
 DEFAULT_PORT = 8200
 
 logger = logging.getLogger("launchmaster")
@@ -2994,6 +2994,7 @@ PLIST_DIRS = {
     "apple-agent": "/System/Library/LaunchAgents",
     "apple-daemon": "/System/Library/LaunchDaemons",
 }
+_SYSTEM_DOMAINS = frozenset({"system-daemon", "apple-daemon"})
 
 WEEKDAY_NAMES = {0: "Sun", 1: "Mon", 2: "Tue", 3: "Wed", 4: "Thu", 5: "Fri", 6: "Sat"}
 
@@ -3366,7 +3367,7 @@ def _humanize_calendar_interval(sci: Any) -> str:
 def _domain_target(label: str, domain: str) -> str:
     """Return the launchctl domain target path for a job."""
     uid = os.getuid()
-    if domain in ("system-daemon",):
+    if domain in _SYSTEM_DOMAINS:
         return f"system/{label}"
     return f"gui/{uid}/{label}"
 
@@ -3374,7 +3375,7 @@ def _domain_target(label: str, domain: str) -> str:
 def _domain_prefix(domain: str) -> str:
     """Return the domain prefix (without label) for bootstrap/bootout."""
     uid = os.getuid()
-    if domain in ("system-daemon",):
+    if domain in _SYSTEM_DOMAINS:
         return "system"
     return f"gui/{uid}"
 
