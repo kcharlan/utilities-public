@@ -219,6 +219,9 @@ def test_sequence_wheel_and_pointer_pan(server, page, minimal_har_dict):
         canvas = page.locator('.seq-canvas')
         expect(canvas.locator('svg').first).to_be_visible()
         assert canvas.locator("line[marker-end], line[marker-start]").count() > 0
+        minimap = canvas.locator('.seq-minimap')
+        expect(minimap).to_be_visible()
+        expect(minimap).to_have_css('position', 'absolute')
         scene = canvas.locator('div[style*="transform"]').first
         before = scene.get_attribute('style')
         canvas.hover()
