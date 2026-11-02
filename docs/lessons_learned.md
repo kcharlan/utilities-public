@@ -2087,3 +2087,10 @@ check that input errors preserve an existing output file.
 `refs/heads` instead when persisting local branches. End revision arguments
 with `--` in history commands so a branch sharing a directory name remains
 unambiguous. Exercise both cases against synthetic Git repositories.
+
+## 2026-11-02: Distinguish missing selected baselines from first saves
+
+Model Sentinel treated a missing dated or prior-day baseline as an initial save
+even when the provider had history, creating false additions and advancing its
+snapshot. Check for any saved history before allowing an initial baseline and
+exercise both missing selections with real saved snapshots.
