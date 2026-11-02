@@ -564,7 +564,7 @@ defaults; session config can override them.
 - **Session max (`session_max`, default 14400 s).** Measured from the start of
   the current run's execution phase; planning, resolution, and idle time are
   excluded. On expiry every worker is killed, its task is blocked, and the
-  session becomes `aborted` with full artifacts kept.
+  session becomes `paused` with workspaces and artifacts kept.
 
 Kills send SIGTERM, wait a 5-second grace period, then SIGKILL. A task killed
 by idle, max, or stale-execute is handled like any task failure (auto-fix if
@@ -588,33 +588,33 @@ The rule is: **incomplete work is reverted, completed work is preserved.**
 Recovery runs when a session in `running`, `paused`, `verifying`, or
 `auto_fixing` is re-entered by `switchyard start` or by Start or Resume in the
 UI. Starting the server does not recover sessions by itself. An unhandled
-exception in a session thread marks the session `aborted`.
+exception in a session thread marks the session `paused`.
 
 ### 8.2 Execution recovery
 
 `recovery.py` `recover_execution_session()`:
 
-1. For each `workers/<N>/` holding a plan, read `recovery.json`
+1. Reconcile the database to the filesystem before processing worker slots.
+2. For each `workers/<N>/` holding a plan, read `recovery.json`
    (`{"task_id", "workspace_path", "pid"}`) to locate the workspace.
-2. Classify by sidecar. `STATUS: done` means completed but uncollected: run
-   `isolate_end` with `done` (a failure is logged as a warning), project the
-   task to `done`, and clear the metadata.
-3. Anything else (no sidecar, `blocked`, or malformed) is incomplete: terminate
+3. Classify by sidecar. `STATUS: done` means completed but uncollected: run
+   `isolate_end` with `done`, project the task to `done`, and clear the metadata.
+   A teardown failure logs a warning and blocks the task instead.
+4. Anything else (no sidecar, `blocked`, or malformed) is incomplete: terminate
    the recorded PID (SIGTERM, grace, SIGKILL), run `isolate_end` with
    `blocked`, delete the sidecar, and return the task to **`ready`**, since the
    failure was infrastructure, not the task. If `isolate_end` fails, the
    workspace is force-removed only when it lies inside the session directory.
-4. `cleanup_orphaned_workspaces()` handles `recovery.json` files with no plan:
+5. `cleanup_orphaned_workspaces()` handles `recovery.json` files with no plan:
    it terminates the PID and runs `isolate_end` with `blocked`, falling back to
-   removal. Steps 3 and 4 skip `isolate_end` when `isolation.type` is `none`.
-5. `reconcile_filesystem_projection()` brings the database in line with the
+   removal. Steps 4 and 5 skip `isolate_end` when `isolation.type` is `none`.
+6. `reconcile_filesystem_projection()` brings the database in line with the
    directories.
 
 `recovery.json` is written right after the worker process starts and cleared
 after `isolate_end` and the state projection commit. A crash between launch and
 that write leaves no metadata: the plan is still reverted to `ready`, but the
-process is not terminated by PID and `isolate_end` receives the session root as
-its workspace.
+process is not terminated by PID and `isolate_end` is not run.
 
 ### 8.3 Planning and resolution recovery
 
@@ -633,12 +633,12 @@ its workspace.
 | `planning` | Planners running | Re-enter planning; `claimed/` returns to intake |
 | `resolving` | Resolver running | Re-run resolution over staging plus ready |
 | `running` | Execution active | Execution recovery, then resume dispatch |
-| `paused` | Operator pause, or verification or auto-fix exhausted | Start re-enters as paused; Resume sets `running` and continues |
+| `paused` | Operator pause, session timeout, thread crash, or verification or auto-fix exhausted | Start re-enters as paused; Resume sets `running` and continues |
 | `verifying` | Verification command running | Recover, then replay verification |
 | `auto_fixing` | Fixer running | Recover, replay verification, then continue the fix loop from the next attempt |
 | `idle` | Run finished | New run if new intake, ready, or blocked work exists; End Session completes it |
 | `completed` | Ended by the operator; trimmed | Read-only history |
-| `aborted` | Operator abort, session timeout, or thread crash | Read-only history; artifacts kept |
+| `aborted` | Operator abort | Read-only history; artifacts kept |
 
 Pausing stops new dispatch. Active workers finish, and then the loop exits.
 
