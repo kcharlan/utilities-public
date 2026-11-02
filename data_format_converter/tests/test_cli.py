@@ -224,6 +224,19 @@ def test_input_file_not_found():
     assert result.returncode == 3
     assert "Input file not found" in result.stderr
 
+def test_non_utf8_input_is_a_structured_error(tmp_path):
+    input_file = tmp_path / "in.json"
+    output_file = tmp_path / "out.yaml"
+    input_file.write_bytes(b'{"a": "\xff"}')
+
+    result = run_cli(["--input", str(input_file), "--to", "yaml", "--output", str(output_file)])
+
+    assert result.returncode == 3
+    assert result.stdout == ""
+    assert len(result.stderr.splitlines()) == 1
+    assert json.loads(result.stderr)["code"] == "E_3"
+    assert not output_file.exists()
+
 def test_invalid_format_conversion():
     """Tests that the CLI handles parsing errors gracefully."""
     # Try to convert an XML file as if it were JSON

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 import json
+from functools import partial
 from pathlib import Path
 from textwrap import dedent
 from datetime import UTC, datetime, timedelta
@@ -2561,195 +2562,87 @@ def _make_effective_runtime_config(*, auto_fix_enabled: bool) -> "EffectiveSessi
     )
 
 
-def test_handle_failed_task_defers_isolate_end_on_autofix_success(tmp_path: Path) -> None:
-    """isolate_end must NOT be called before _attempt_task_auto_fix, and must be
-    called with final_status='done' and plan_path set when auto-fix succeeds."""
-    from unittest.mock import MagicMock, call, patch
+def _run_failed_isolated_task(tmp_path: Path, *, auto_fix: bool, fixer_success: bool, teardown_fails: bool):
+    from cognitive_switchyard.models import FixerAttemptResult
+    from cognitive_switchyard.orchestrator import execute_session
 
-    from cognitive_switchyard.orchestrator import _handle_failed_task
-
-    plan_path = tmp_path / "task-reg-001.plan.md"
-    plan_path.write_text("plan content\n", encoding="utf-8")
-
-    pack_manifest = _make_pack_manifest_with_autofix(tmp_path)
-    active_task = _make_active_task(plan_path)
-    effective_runtime_config = _make_effective_runtime_config(auto_fix_enabled=True)
-
-    call_order: list[str] = []
-    mock_store = MagicMock()
-    mock_store.project_task.return_value = active_task
-
-    def recording_isolate_end(**kwargs):
-        call_order.append("isolate_end")
-        return True
-
-    def recording_autofix(**kwargs):
-        call_order.append("autofix")
-        # Assert isolate_end has NOT been called yet — this is the regression guard.
-        assert "isolate_end" not in call_order[:-1], (
-            "_run_isolate_end was called BEFORE _attempt_task_auto_fix — worktree destroyed too early"
-        )
-        return True  # auto-fix succeeds
-
-    with (
-        patch(
-            "cognitive_switchyard.orchestrator._run_isolate_end",
-            side_effect=recording_isolate_end,
-        ) as mock_isolate_end,
-        patch(
-            "cognitive_switchyard.orchestrator._attempt_task_auto_fix",
-            side_effect=recording_autofix,
-        ),
-        patch("cognitive_switchyard.orchestrator._finalize_blocked_task") as mock_finalize,
-    ):
-        _handle_failed_task(
-            store=mock_store,
-            session_id="session-reg-001",
-            pack_manifest=pack_manifest,
-            effective_runtime_config=effective_runtime_config,
-            active_task=active_task,
-            slot_number=0,
-            workspace_path=tmp_path / "workspace",
-            reason="worker failed",
-            log_path=None,
-            status_path=None,
-            env=None,
-            fixer_executor=MagicMock(),
-            runtime_event_sink=None,
-        )
-
-    # Call order: autofix must precede isolate_end
-    assert call_order == ["autofix", "isolate_end"], (
-        f"Expected ['autofix', 'isolate_end'], got {call_order}"
+    store, runtime_paths = _build_store(tmp_path)
+    session = store.create_session(
+        session_id="synthetic-isolation", name="Synthetic isolation", pack="synthetic-pack",
+        created_at="2026-01-01T00:00:00Z",
     )
-    # isolate_end called exactly once with final_status='done' and plan_path set
-    assert mock_isolate_end.call_count == 1
-    kwargs = mock_isolate_end.call_args.kwargs
-    assert kwargs["final_status"] == "done", f"Expected final_status='done', got {kwargs['final_status']!r}"
-    assert kwargs["plan_path"] == plan_path, f"Expected plan_path={plan_path!r}, got {kwargs['plan_path']!r}"
-    # _finalize_blocked_task must NOT be called when auto-fix succeeds
-    mock_finalize.assert_not_called()
-
-
-def test_handle_failed_task_defers_isolate_end_on_autofix_failure(tmp_path: Path) -> None:
-    """isolate_end must NOT be called before _attempt_task_auto_fix, and must be
-    called with final_status='blocked' when auto-fix fails; _finalize_blocked_task
-    must be called with run_isolation_end=False."""
-    from unittest.mock import MagicMock, patch
-
-    from cognitive_switchyard.orchestrator import _handle_failed_task
-
-    plan_path = tmp_path / "task-reg-001.plan.md"
-    plan_path.write_text("plan content\n", encoding="utf-8")
-
-    pack_manifest = _make_pack_manifest_with_autofix(tmp_path)
-    active_task = _make_active_task(plan_path)
-    effective_runtime_config = _make_effective_runtime_config(auto_fix_enabled=True)
-
-    call_order: list[str] = []
-    mock_store = MagicMock()
-    mock_store.project_task.return_value = active_task
-
-    def recording_isolate_end(**kwargs):
-        call_order.append("isolate_end")
-        return True
-
-    def recording_autofix(**kwargs):
-        call_order.append("autofix")
-        assert "isolate_end" not in call_order[:-1], (
-            "_run_isolate_end was called BEFORE _attempt_task_auto_fix — worktree destroyed too early"
-        )
-        return False  # auto-fix fails
-
-    with (
-        patch(
-            "cognitive_switchyard.orchestrator._run_isolate_end",
-            side_effect=recording_isolate_end,
-        ) as mock_isolate_end,
-        patch(
-            "cognitive_switchyard.orchestrator._attempt_task_auto_fix",
-            side_effect=recording_autofix,
-        ),
-        patch("cognitive_switchyard.orchestrator._finalize_blocked_task") as mock_finalize,
-    ):
-        _handle_failed_task(
-            store=mock_store,
-            session_id="session-reg-001",
-            pack_manifest=pack_manifest,
-            effective_runtime_config=effective_runtime_config,
-            active_task=active_task,
-            slot_number=0,
-            workspace_path=tmp_path / "workspace",
-            reason="worker failed",
-            log_path=None,
-            status_path=None,
-            env=None,
-            fixer_executor=MagicMock(),
-            runtime_event_sink=None,
-        )
-
-    # Call order: autofix must precede isolate_end
-    assert call_order == ["autofix", "isolate_end"], (
-        f"Expected ['autofix', 'isolate_end'], got {call_order}"
-    )
-    # isolate_end called exactly once with final_status='blocked'
-    assert mock_isolate_end.call_count == 1
-    kwargs = mock_isolate_end.call_args.kwargs
-    assert kwargs["final_status"] == "blocked", f"Expected final_status='blocked', got {kwargs['final_status']!r}"
-    # _finalize_blocked_task called with run_isolation_end=False (no double-cleanup)
-    mock_finalize.assert_called_once()
-    finalize_kwargs = mock_finalize.call_args.kwargs
-    assert finalize_kwargs.get("run_isolation_end") is False, (
-        f"Expected run_isolation_end=False, got {finalize_kwargs.get('run_isolation_end')!r}"
+    _register_task(store, session_id=session.id, task_id="001")
+    trace = tmp_path / "trace"
+    flag = tmp_path / "verify.ok"
+    pack = _write_pack(
+        tmp_path, name="synthetic-pack", max_workers=1, isolation_type="temp-directory",
+        verification_enabled=True, verification_interval=99,
+        verification_command='test -f "$VERIFY_FLAG"', auto_fix_enabled=auto_fix,
+        isolate_start=f'''#!/bin/sh
+        workspace="$3/isolated/$2"
+        mkdir -p "$workspace"
+        printf 'start|%s\\n' "$2" >> '{trace}'
+        printf '%s\\n' "$workspace"
+        ''',
+        isolate_end=f'''#!/bin/sh
+        printf 'end|%s|%s\\n' "$2" "$4" >> '{trace}'
+        exit {1 if teardown_fails else 0}
+        ''',
+        execute_script_body='''#!/bin/sh
+        printf 'partial\\n' > partial.txt
+        printf 'STATUS: blocked\\n' > "${1%.plan.md}.status"
+        exit 1
+        ''',
     )
 
+    def fixer(context, *, session_root):
+        present = "yes" if (session_root / "partial.txt").exists() else "no"
+        with trace.open("a", encoding="utf-8") as handle:
+            handle.write(f"fixer|partial={present}\n")
+        if fixer_success:
+            flag.write_text("ok\n", encoding="utf-8")
+        return FixerAttemptResult(success=fixer_success, summary="synthetic fixer")
 
-def test_handle_failed_task_no_autofix_calls_finalize_with_isolation(tmp_path: Path) -> None:
-    """When auto-fix is disabled, _handle_failed_task delegates entirely to
-    _finalize_blocked_task with the default run_isolation_end=True; it must NOT
-    call _run_isolate_end directly."""
-    from unittest.mock import MagicMock, patch
-
-    from cognitive_switchyard.orchestrator import _handle_failed_task
-
-    plan_path = tmp_path / "task-reg-001.plan.md"
-    plan_path.write_text("plan content\n", encoding="utf-8")
-
-    pack_manifest = _make_pack_manifest_with_autofix(tmp_path)
-    active_task = _make_active_task(plan_path)
-    # auto_fix_enabled=False — skips the auto-fix branch entirely
-    effective_runtime_config = _make_effective_runtime_config(auto_fix_enabled=False)
-
-    mock_store = MagicMock()
-
-    with (
-        patch("cognitive_switchyard.orchestrator._run_isolate_end") as mock_isolate_end,
-        patch("cognitive_switchyard.orchestrator._finalize_blocked_task") as mock_finalize,
-    ):
-        _handle_failed_task(
-            store=mock_store,
-            session_id="session-reg-001",
-            pack_manifest=pack_manifest,
-            effective_runtime_config=effective_runtime_config,
-            active_task=active_task,
-            slot_number=0,
-            workspace_path=tmp_path / "workspace",
-            reason="worker failed",
-            log_path=None,
-            status_path=None,
-            env=None,
-            fixer_executor=None,
-            runtime_event_sink=None,
-        )
-
-    # _run_isolate_end must NOT be called directly — it's delegated to _finalize_blocked_task
-    mock_isolate_end.assert_not_called()
-    # _finalize_blocked_task called once without run_isolation_end kwarg (defaults to True)
-    mock_finalize.assert_called_once()
-    finalize_kwargs = mock_finalize.call_args.kwargs
-    assert "run_isolation_end" not in finalize_kwargs or finalize_kwargs["run_isolation_end"] is True, (
-        f"Expected run_isolation_end to be absent or True, got {finalize_kwargs.get('run_isolation_end')!r}"
+    result = execute_session(
+        store=store, session_id=session.id, pack_manifest=load_pack_manifest(pack),
+        env={"PATH": os.environ["PATH"], "VERIFY_FLAG": str(flag)}, poll_interval=0.01,
+        fixer_executor=partial(fixer, session_root=tmp_path),
     )
+    return store, runtime_paths, session.id, result, trace.read_text(encoding="utf-8").splitlines()
+
+
+@pytest.mark.parametrize("fixer_success", [True, False], ids=["success", "failure"])
+def test_failed_task_auto_fix_works_in_preserved_workspace_before_teardown(tmp_path: Path, fixer_success: bool) -> None:
+    store, paths, session_id, result, trace = _run_failed_isolated_task(
+        tmp_path, auto_fix=True, fixer_success=fixer_success, teardown_fails=False,
+    )
+    if fixer_success:
+        assert result.session_status == "idle"
+        assert store.get_task(session_id, "001").status == "done"
+        assert trace == ["start|001", "fixer|partial=yes", "end|001|done"]
+        assert not paths.session_paths(session_id).worker_recovery_path(0).exists()
+    else:
+        assert store.get_task(session_id, "001").status == "blocked"
+        assert trace[0] == "start|001"
+        assert trace[-1] == "end|001|blocked"
+        fixer_lines = trace[1:-1]
+        assert fixer_lines
+        assert all(line == "fixer|partial=yes" for line in fixer_lines)
+
+
+@pytest.mark.parametrize("auto_fix", [True, False], ids=["auto-fix-on", "auto-fix-off"])
+def test_isolation_teardown_failure_preserves_workspace_and_metadata(tmp_path: Path, auto_fix: bool) -> None:
+    store, _paths, session_id, result, trace = _run_failed_isolated_task(
+        tmp_path, auto_fix=auto_fix, fixer_success=True, teardown_fails=True,
+    )
+    assert store.get_task(session_id, "001").status == "blocked"
+    assert trace[-1] == f"end|001|{'done' if auto_fix else 'blocked'}"
+    if auto_fix:
+        assert result.session_status == "paused"
+        assert store.get_session(session_id).runtime_state.verification_reason == "isolation_failed"
+    metadata = store.read_worker_recovery_metadata(session_id, slot_number=0)
+    assert metadata is not None
+    assert (metadata.workspace_path / "partial.txt").is_file()
 
 
 def test_task_lifecycle_events_include_task_id_and_title(
@@ -3057,24 +2950,6 @@ def test_idle_session_run_counter_increments(tmp_path: Path) -> None:
     assert rs.run_started_at != old_run_started_at, "run_started_at must be refreshed"
 
 
-def test_autofix_isolation_failure_blocks_task(tmp_path: Path) -> None:
-    from unittest.mock import MagicMock, patch
-    from cognitive_switchyard.orchestrator import _handle_failed_task
-
-    plan = tmp_path / "task-reg-001.plan.md"
-    plan.write_text("synthetic plan")
-    task = _make_active_task(plan)
-    store = MagicMock()
-    store.project_task.return_value = task
-    with (patch("cognitive_switchyard.orchestrator._attempt_task_auto_fix", return_value=True),
-          patch("cognitive_switchyard.orchestrator._run_isolate_end", return_value=False),
-          patch("cognitive_switchyard.orchestrator._finalize_blocked_task") as blocked):
-        _handle_failed_task(store=store, session_id=task.session_id, pack_manifest=_make_pack_manifest_with_autofix(tmp_path), effective_runtime_config=_make_effective_runtime_config(auto_fix_enabled=True), active_task=task, slot_number=0, workspace_path=tmp_path, reason="synthetic failure", log_path=None, status_path=None, env=None, fixer_executor=MagicMock(), runtime_event_sink=None)
-    blocked.assert_called_once()
-    assert blocked.call_args.kwargs["run_isolation_end"] is False
-    store.update_session_status.assert_called_with(task.session_id, status="paused")
-
-
 def test_task_autofix_and_verification_run_in_workspace(tmp_path: Path, monkeypatch) -> None:
     from functools import partial
     from cognitive_switchyard.models import FixerAttemptResult, VerificationRunResult
@@ -3213,18 +3088,6 @@ def test_worker_inspection_failure_pauses_direct_execution(tmp_path: Path, monke
     assert store.get_session("synthetic").status == "paused"
     assert marker.read_text() == "synthetic"
     assert any("cannot inspect synthetic group" in e.message for e in store.list_events("synthetic"))
-
-
-def test_failed_blocked_isolation_preserves_recovery_metadata(tmp_path: Path) -> None:
-    from unittest.mock import MagicMock, patch
-    from cognitive_switchyard.orchestrator import _finalize_blocked_task
-    plan = tmp_path / "task-reg-001.plan.md"
-    plan.write_text("synthetic plan")
-    store = MagicMock()
-    task = _make_active_task(plan)
-    with patch("cognitive_switchyard.orchestrator._run_isolate_end", return_value=False):
-        _finalize_blocked_task(store=store, session_id=task.session_id, pack_manifest=_make_pack_manifest_with_autofix(tmp_path), active_task=task, slot_number=0, workspace_path=tmp_path, reason="synthetic failure")
-    store.clear_worker_recovery_metadata.assert_not_called()
 
 
 def test_pause_during_verification_is_not_overwritten(tmp_path: Path, monkeypatch) -> None:

@@ -1,5 +1,17 @@
 # Lessons learned
 
+## 2026-11-02: Handle decoding failures at the input boundary
+
+Parsing error handlers cannot catch invalid text encoding when a file is decoded
+before parsing. Exercise invalid bytes through the CLI and report decoding errors
+through the same structured input-error contract without creating output.
+
+## 2026-11-02: Normalize distance records before aggregation
+
+An output column labelled kilometres can silently misstate mixed-unit records if
+it sums raw values or assumes one unit. Convert each record using its declared
+unit before deduplication and aggregation; reject missing or unknown units.
+
 ## 2026-11-02: Cover every launchd domain in target selection
 
 Apple and non-Apple daemons both use the system launchd domain. Exercise every
@@ -2142,3 +2154,17 @@ Group discovery candidates by their Git common directory, preferring the main
 checkout even when a linked worktree is encountered first. If the main checkout
 is outside the scan root, retain the first discovered linked worktree. Exercise
 both cases with real synthetic repositories.
+
+## 2026-11-02: Restrict retention to owned files
+
+Model Sentinel's configurable report directory can contain unrelated files. A
+suffix and age alone do not establish ownership: cleanup must also match the
+report names the application creates, while preserving protected paths. Test
+both owned and unrelated aged files in a synthetic shared directory.
+
+### 2026-11-02 — Preserve loaded jobs after failed unloads
+
+A backup alone does not make deleting a loaded job's plist safe when unloading
+fails. Keep the original plist and report the backup path, while allowing an
+already unloaded job to be deleted even if bootout fails. Exercise both paths
+using synthetic plists and a mocked unload operation.
