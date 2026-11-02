@@ -2094,3 +2094,9 @@ Model Sentinel treated a missing dated or prior-day baseline as an initial save
 even when the provider had history, creating false additions and advancing its
 snapshot. Check for any saved history before allowing an initial baseline and
 exercise both missing selections with real saved snapshots.
+
+### 2026-11-02 — Validate decoded credential shapes
+
+Valid JSON can still be the wrong type for downstream credential handling.
+Reject non-object values at the decoding boundary so both streaming and
+non-streaming requests return an authentication error before contacting an upstream.

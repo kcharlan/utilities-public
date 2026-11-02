@@ -24,7 +24,7 @@ async def lifespan(app: FastAPI):
     yield
 
 
-app = FastAPI(title="LLM Proxy", version="0.1.1", lifespan=lifespan)
+app = FastAPI(title="LLM Proxy", version="0.1.2", lifespan=lifespan)
 
 @app.get("/health")
 async def health():
