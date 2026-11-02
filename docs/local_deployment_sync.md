@@ -336,8 +336,9 @@ destinations stay outside the checkout; symlink ancestors are rejected.
 
 The admitted inventory is tracked Package.swift, Makefile and every regular
 Sources, Resources, Tests and tools file under `anker_charge_monitor/`, plus
-`tools/deploy_anker_charge_monitor.mjs`, `tools/deployment_files.mjs` and the
-imported generic app hash owner `tools/deploy_brew_version.mjs`. It includes the
+`tools/deploy_anker_charge_monitor.mjs`, `tools/macos_app_deployment.mjs`,
+`tools/deployment_files.mjs`, `tools/transaction.mjs` and the imported generic
+app hash owner `tools/deploy_brew_version.mjs`. It includes the
 actual release/installer/signing scripts. Working bytes and modes must equal
 the stage-zero index; missing, linked, sparse or unmerged inputs fail closed.
 Only those captured bytes are copied to private scratch for `make release`, which
@@ -392,8 +393,9 @@ its output belongs only in private storage.
 ## Telltale app deployment
 
 The app-only generated artifact installs at `/Applications/Telltale.app`; there
-is no installed CLI command. `tools/deploy_telltale.mjs` is a port of the Anker
-Charge Monitor deployer above, with the same flags, receipt, backup and recovery
+is no installed CLI command. `tools/deploy_telltale.mjs` and the Anker Charge
+Monitor deployer above share `tools/macos_app_deployment.mjs`, with the same
+flags, receipt, backup and recovery
 rules and no legacy app name. Use Node.js, macOS 27 and Swift 6 with the
 macOS 27 SDK. Validate the complete [project suite](../telltale/README.md) and
 the Static deployment/fleet audit tooling suites, review and merge, then deploy
@@ -428,11 +430,11 @@ The admitted inventory is tracked Package.swift, Makefile and every regular
 Sources, Resources, Tests and tools file under `telltale/`, plus
 `tools/check_no_temp_leaks.sh`, `tools/deploy_telltale.mjs`,
 `tools/deployment_files.mjs`, `tools/deploy_brew_version.mjs` (the generic app
-hash) and `tools/transaction.mjs`. Package.swift, the
-Makefile, `Resources/Info.plist`, the two Barlow Semi Condensed fonts and
+hash), `tools/transaction.mjs` and `tools/macos_app_deployment.mjs`.
+Package.swift, the Makefile, `Resources/Info.plist`, the two Barlow Semi Condensed fonts and
 `Resources/Fonts/OFL.txt` (the release recipe copies all three into
 `Contents/Resources/Fonts`), `tools/install.sh`,
-`tools/resolve_signing_identity.sh`, a Sources file and all five root helpers are
+`tools/resolve_signing_identity.sh`, a Sources file and all six root helpers are
 required. README and `docs/` are not inputs, and neither are the Codex logs, the
 database or the collector's job plist. Working bytes and modes must equal the
 stage-zero index. Only those captured bytes are copied to private scratch for

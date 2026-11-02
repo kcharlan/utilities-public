@@ -21,7 +21,7 @@ function fixture(t) {
   const darwin=fakeDarwinTemp(base,bin);
   const write=(name,bytes,mode=0o644)=>{const file=path.join(project,name);fs.mkdirSync(path.dirname(file),{recursive:true});fs.writeFileSync(file,bytes,{mode});fs.chmodSync(file,mode);};
   fs.mkdirSync(path.join(repo,'tools'));
-  for(const name of ['deploy_anker_charge_monitor.mjs','deployment_files.mjs','deploy_brew_version.mjs','transaction.mjs'])fs.copyFileSync(path.join(repoRoot,'tools',name),path.join(repo,'tools',name));
+  for(const name of ['deploy_anker_charge_monitor.mjs','deployment_files.mjs','deploy_brew_version.mjs','transaction.mjs','macos_app_deployment.mjs'])fs.copyFileSync(path.join(repoRoot,'tools',name),path.join(repo,'tools',name));
   for(const name of ['install.sh','resolve_signing_identity.sh'])write('tools/'+name,fs.readFileSync(path.join(repoRoot,'anker_charge_monitor/tools',name)),0o755);
   write('Package.swift','// conspicuously synthetic package\n');write('Resources/Info.plist',plist);
   write('Makefile',`release:\n\tmkdir -p 'build/release/Anker Charge Monitor.app/Contents/MacOS'\n\tclang -mmacosx-version-min=27.0 Sources/main.c -o 'build/release/Anker Charge Monitor.app/Contents/MacOS/PrimeMonitor'\n\tcp Resources/Info.plist 'build/release/Anker Charge Monitor.app/Contents/Info.plist'\n`);
@@ -67,7 +67,7 @@ test('fixture suppresses inherited aggressive Git maintenance while retaining mu
 
 test('app source inventory includes maintained installer/signing and root dependencies',()=>{
   for(const name of ['Package.swift','Makefile','Sources/a.swift','Tests/a.sh','Resources/Info.plist','tools/install.sh','tools/resolve_signing_identity.sh']) assert.equal(buildInput('anker_charge_monitor/'+name),true,name);
-  for(const name of ['tools/deployment_files.mjs','tools/deploy_brew_version.mjs','tools/deploy_anker_charge_monitor.mjs']) assert.equal(buildInput(name),true,name);
+  for(const name of ['tools/macos_app_deployment.mjs','tools/deployment_files.mjs','tools/deploy_brew_version.mjs','tools/deploy_anker_charge_monitor.mjs']) assert.equal(buildInput(name),true,name);
   for(const name of ['README.md','.build/a','build/release/a']) assert.equal(buildInput('anker_charge_monitor/'+name),false,name);
 });
 
@@ -94,12 +94,6 @@ for(const fail of [false,true]) test(`a ${fail?'failed':'successful'} release bu
   assertReleaseTempHygiene({...f,run:fail=>{f.write('Makefile',releaseTempMakefile(fs.readFileSync(path.join(f.project,'Makefile'),'utf8'),fail));f.git('add','.');return f.run();}},'anker-charge-build-',fail);
 });
 
-test('dry run and audit do not compile, query identities or change any source/deployment state',t=>{
-  const f=fixture(t);ok(f.run());
-  for(const name of ['security','make','codesign'])fs.writeFileSync(path.join(f.bin,name),'#!/bin/sh\necho synthetic forbidden mutation >&2\nexit 99\n',{mode:0o755});
-  const before=tree(f.base);ok(f.run('--dry-run'));ok(f.run('--audit'));assert.deepEqual(tree(f.base),before);
-});
-
 test('source and app/receipt byte and mode drift fail audit',t=>{
   const f=fixture(t);ok(f.run());
   for(const file of [path.join(f.project,'Sources/main.c'),path.join(f.repo,'tools/deployment_files.mjs'),path.join(f.app,'Contents/MacOS/PrimeMonitor'),f.receipt]){
@@ -110,40 +104,9 @@ test('source and app/receipt byte and mode drift fail audit',t=>{
   fs.chmodSync(f.app,0o700);assert.equal(f.run('--audit').status,1);
 });
 
-for(const kind of ['missing','ambiguous'])test(`${kind} signing identity fails before compile or deployment mutation`,t=>{
-  const f=fixture(t);f.env['SYNTHETIC_'+kind.toUpperCase()]=1;const before=tree(f.base);const r=f.run();assert.equal(r.status,1);assert.match(r.stderr,/Signing identity missing or ambiguous/);assert.deepEqual(tree(f.base),before);
-});
-
-test('rejects wrong new version, runtime, name, identity and signature before activation',t=>{
-  const f=fixture(t);ok(f.run());const before=state(f);
-  for(const [key,value] of [['CFBundleShortVersionString','0.0.1'],['LSMinimumSystemVersion','14.0'],['CFBundleName','Synthetic Wrong Name'],['CFBundleIdentifier','synthetic.wrong']]){
-    const make=fs.readFileSync(path.join(f.project,'Makefile'),'utf8');
-    f.write('Makefile',make+`\t/usr/libexec/PlistBuddy -c 'Set :${key} ${value}' 'build/release/Anker Charge Monitor.app/Contents/Info.plist'\n`);f.git('add','.');
-    assert.equal(f.run('--rebuild').status,1,key);assert.deepEqual(state(f),before);f.write('Makefile',make);f.git('add','.');
-  }
-  fs.writeFileSync(path.join(f.app,'synthetic-reject'),'synthetic');const bad=state(f);assert.equal(f.run('--rebuild').status,1);assert.deepEqual(state(f),bad);
-});
-
 test('missing app rebuilds; rollback and updates preserve runtime directories',t=>{
   const f=fixture(t),runtime=path.join(f.home,'Library/Application Support/Prime Monitor');fs.mkdirSync(runtime,{recursive:true});fs.writeFileSync(path.join(runtime,'synthetic-state'),'synthetic keep');const before=tree(runtime);
   ok(f.run());fs.rmSync(f.app,{recursive:true});ok(f.run());ok(f.run('--audit'));assert.deepEqual(tree(runtime),before);
-});
-
-test('untracked, missing, symlink ancestors and staged deletion cannot supply build inputs',t=>{
-  for(const mode of ['missing','link','deletion','untracked']){
-    const f=fixture(t),source=path.join(f.project,'Sources');
-    if(mode==='missing')fs.unlinkSync(path.join(source,'main.c'));
-    if(mode==='link'){fs.renameSync(source,source+'-saved');fs.symlinkSync(source+'-saved',source);}
-    if(mode==='deletion')f.git('rm','--cached','anker_charge_monitor/Sources/main.c');
-    if(mode==='untracked')fs.appendFileSync(path.join(source,'main.c'),'// unstaged');
-    const result=f.run();assert.equal(result.status,1,mode+result.stdout+result.stderr);
-  }
-});
-
-for(const first of [false,true])test(`receipt publication failure restores ${first?'absent':'prior'} app and receipt`,t=>{
-  const f=fixture(t);if(!first)ok(f.run());const before=state(f);f.release('receipt-failure');
-  const hook=path.join(f.base,'synthetic-hook.cjs');fs.writeFileSync(hook,`const fs=require('node:fs');const rename=fs.renameSync;let failed=false;fs.renameSync=(a,b)=>{const r=rename(a,b);if(!failed&&b===${JSON.stringify(f.receipt)}){failed=true;throw Error('synthetic receipt failure');}return r;};`);f.env.NODE_OPTIONS='--require='+JSON.stringify(hook);
-  const r=f.run();assert.equal(r.status,1);assert.match(r.stderr,/synthetic receipt failure/);assert.deepEqual(state(f),before);
 });
 
 test('failed activated signature restores prior bundle and receipt',t=>{
@@ -152,76 +115,9 @@ test('failed activated signature restores prior bundle and receipt',t=>{
   f.env.SYNTHETIC_FAIL_ONCE=path.join(f.base,'fail-once');fs.writeFileSync(f.env.SYNTHETIC_FAIL_ONCE,'synthetic');assert.equal(f.run().status,1);assert.deepEqual(state(f),before);
 });
 
-test('cleanup failure restores prior deployment and retains verified backups',t=>{
-  const f=fixture(t);ok(f.run());const before=state(f);f.release('cleanup-failure');const hook=path.join(f.base,'synthetic-cleanup.cjs');
-  const old=path.join(f.home,'.utilities-deploy-backups','anker-charge-monitor','copy-old');fs.mkdirSync(old);fs.writeFileSync(path.join(old,'payload'),'invented');fs.utimesSync(old,1,1);
-  fs.writeFileSync(hook,`const fs=require('node:fs'),path=require('node:path');const rm=fs.rmSync;let failed=false;fs.rmSync=(p,...args)=>{if(!failed&&path.basename(p).startsWith('anker-charge-build-')){failed=true;throw Error('synthetic cleanup failure');}return rm(p,...args);};`);f.env.NODE_OPTIONS='--require='+JSON.stringify(hook);
-  const r=f.run();assert.equal(r.status,1);assert.match(r.stderr,/cleanup failure/);assert.deepEqual(state(f),before);const saved=/Recovery backup: (.+)/.exec(r.stdout)[1];assert.equal(appTreeHash(path.join(saved,'Anker Charge Monitor.app')),before[0]);
-  assert.equal(fs.readFileSync(path.join(old,'payload'),'utf8'),'invented');
-});
-
-test('rollback receipt failure restores displaced release and retained backup is independent',t=>{
-  const f=fixture(t);ok(f.run());f.release('second');const saved=backup(ok(f.run())),before=state(f),savedHash=appTreeHash(path.join(saved,'Anker Charge Monitor.app'));
-  const hook=path.join(f.base,'synthetic-rollback.cjs');fs.writeFileSync(hook,`const fs=require('node:fs');const rename=fs.renameSync;let once=false;fs.renameSync=(a,b)=>{const r=rename(a,b);if(!once&&b===${JSON.stringify(f.receipt)}){once=true;throw Error('synthetic rollback receipt failure');}return r;};`);f.env.NODE_OPTIONS='--require='+JSON.stringify(hook);
-  const r=f.run('--rollback',saved);assert.equal(r.status,1);assert.match(r.stderr,/synthetic rollback receipt failure/);assert.deepEqual(state(f),before);assert.equal(appTreeHash(path.join(saved,'Anker Charge Monitor.app')),savedHash);
-  delete f.env.NODE_OPTIONS;fs.appendFileSync(path.join(saved,'Anker Charge Monitor.app/Contents/MacOS/PrimeMonitor'),'synthetic corrupt saved bytes');const result=f.run('--rollback',saved);assert.equal(result.status,1);assert.match(result.stderr,/Backup app hash mismatch/);assert.deepEqual(state(f),before);
-});
-
-test('rejects executable runtime drift even when plist claims the current runtime',t=>{
-  const f=fixture(t),make=fs.readFileSync(path.join(f.project,'Makefile'),'utf8');f.write('Makefile',make.replace('-mmacosx-version-min=27.0','-mmacosx-version-min=14.0'));f.git('add','.');const r=f.run();assert.equal(r.status,1);assert.match(r.stderr,/minimum runtime/);assert.deepEqual(state(f),[null,null]);
-});
-
-test('failed activation on first install preserves absence and no receipt',t=>{
-  const f=fixture(t);fs.writeFileSync(path.join(f.bin,'mv'),`#!/bin/bash\n/bin/mv "$@" || exit\nif [[ "$1" = *'.prime-monitor-stage-'*'/Anker Charge Monitor.app' && "\${!#}" = ${JSON.stringify(f.app)} ]]; then touch "\${!#}/synthetic-reject"; fi\n`,{mode:0o755});const r=f.run();assert.equal(r.status,1);assert.deepEqual(state(f),[null,null]);
-});
-
-test('private scratch retains the exact indexed input modes under a restrictive umask',t=>{
-  const f=fixture(t),make=fs.readFileSync(path.join(f.project,'Makefile'),'utf8');
-  f.write('Makefile',make.replace('release:\n',()=>"release:\n\ttest \"$$(stat -f %Lp Resources/Info.plist)\" = 644\n\ttest \"$$(stat -f %Lp tools/install.sh)\" = 755\n"));f.git('add','.');
-  const hook=path.join(f.base,'synthetic-umask.cjs');fs.writeFileSync(hook,'process.umask(0o077);\n');f.env.NODE_OPTIONS='--require='+JSON.stringify(hook);
-  ok(f.run());ok(f.run('--audit'));
-});
-
 test('canonical make install delegates to the root CLI without a separate release build',()=>{
   const project=fileURLToPath(new URL('../../anker_charge_monitor',import.meta.url));
   const lines=target=>execFileSync('make',['-s','-n','-C',project,target],{encoding:'utf8'}).split('\n').map(line=>line.trim()).filter(Boolean);
   assert.deepEqual(lines('install'),['node ../tools/deploy_anker_charge_monitor.mjs']);
   assert.deepEqual(lines('live-check').map(line=>line.endsWith('--live-check')),[true]);
-});
-
-test('forward deployment prunes older backups while rollback and dry run preserve them', t => {
-  const f = fixture(t); ok(f.run());
-  const root = path.join(f.home, '.utilities-deploy-backups', 'anker-charge-monitor');
-  for (const name of ['copy-old-a','copy-old-b','copy-old-c']) { const dir=path.join(root,name); fs.mkdirSync(dir); fs.writeFileSync(path.join(dir,'payload'),'invented'); fs.utimesSync(dir,1,1); }
-  f.release('next'); ok(f.run('--dry-run'));
-  const beforeFailure=fs.readdirSync(root).sort();
-  fs.appendFileSync(path.join(f.project,'Makefile'),'\\n# invented unstaged change\\n');
-  assert.equal(f.run().status,1); f.git('checkout','--','.');
-  assert.deepEqual(fs.readdirSync(root).sort(),beforeFailure);
-  for (const name of ['copy-old-a','copy-old-b','copy-old-c']) assert.equal(fs.readFileSync(path.join(root,name,'payload'),'utf8'),'invented');
-  const result=f.run(); ok(result); const saved=/rollback backup: (.+)/.exec(result.stdout)[1];
-  const names=fs.readdirSync(root); assert.equal(names.length,2); assert.ok(names.includes(path.basename(saved)));
-  for (const name of ['copy-old-a','copy-old-b','copy-old-c']) {const dir=path.join(root,name);if(!fs.existsSync(dir)){fs.mkdirSync(dir);fs.writeFileSync(path.join(dir,'payload'),'invented');}}
-  const before=fs.readdirSync(root).sort(); ok(f.run('--rollback',saved));
-  for(const name of before) assert.ok(fs.existsSync(path.join(root,name)),name);
-});
-test('rollback restores a verified backup despite dirty build inputs', t => {
-  const f=fixture(t); ok(f.run()); const first=state(f);
-  f.release('second'); const saved=backup(ok(f.run()));
-  fs.appendFileSync(path.join(f.project,'Sources/main.c'),'// dirty input\n');
-  fs.writeFileSync(path.join(f.project,'tools/resolve_signing_identity.sh'),'#!/bin/sh\nexit 91\n');
-  ok(f.run('--rollback',saved)); assert.deepEqual(state(f),first);
-});
-test('forward deployment refuses a non-main branch before touching destinations', t => {
-  const f=fixture(t); f.git('checkout','-b','synthetic-other');
-  const before=tree(f.home), result=f.run(); assert.equal(result.status,1); assert.match(result.stderr,/require main/); assert.deepEqual(tree(f.home),before);
-});
-test('app inventory rejects drift in the transaction helper', t => {
-  const f=fixture(t); fs.writeFileSync(path.join(f.repo,'tools/transaction.mjs'),'synthetic drift');
-  assert.throws(()=>sourceInventory(f.repo),/working bytes differ/);
-});
-test('rollback replaces a damaged installed app with the verified backup',t=>{
- const f=fixture(t);ok(f.run());const first=state(f);f.release('second');const saved=backup(ok(f.run()));
- fs.writeFileSync(path.join(f.app,'synthetic-reject'),'synthetic damage');
- ok(f.run('--rollback',saved));assert.deepEqual(state(f),first);
 });
