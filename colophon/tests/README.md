@@ -1,5 +1,8 @@
 # Standalone validation
 
+Codex fork-chain cases check inherited usage is excluded regardless of discovery order.
+A Codex subagent case checks ordinal-owned suffix accounting and activity-based spawn linking.
+
 Antigravity reader units and `test_antigravity.py` create only invented UUID
 databases/annotations in external private scratch. `fixtures/antigravity/`
 contains only the public qualified protobuf schema projection with its producing
