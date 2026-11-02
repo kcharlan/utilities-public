@@ -171,7 +171,13 @@ def _write_zero_score(run_dir: Path, reason: str) -> None:
     category_breakdown = {
         category: {"earned": 0, "max": maximum} for category, maximum in CATEGORY_MAX.items()
     }
-    score = {"score": 0, "max_score": 100, "category_breakdown": category_breakdown, "import_ok": False}
+    score = {
+        "score": 0,
+        "max_score": 100,
+        "category_breakdown": category_breakdown,
+        "import_ok": False,
+        "summary": {"passed": 0, "total": 0, "score_percent": 0.0},
+    }
     summary = {
         "total_cases": 0,
         "passed_cases": 0,
@@ -276,6 +282,7 @@ def main(argv: list[str] | None = None) -> int:
         "max_score": 100,
         "category_breakdown": category_breakdown,
         "import_ok": True,
+        "summary": {"passed": passed_cases, "total": total_cases, "score_percent": float(score_value)},
     }
     summary = {
         "total_cases": total_cases,

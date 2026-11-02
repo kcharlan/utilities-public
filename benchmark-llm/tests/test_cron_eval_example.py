@@ -1,11 +1,17 @@
 import importlib.util
+import io
 import json
+import shlex
 import shutil
+import subprocess
 from datetime import datetime
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
 import yaml
+
+from benchmark_llm.cli import main
+from benchmark_llm.storage import list_runs
 
 
 def _load_module(path: Path):
@@ -123,8 +129,56 @@ def test_cron_eval_validator_scores_reference_impl_at_100(tmp_path: Path) -> Non
     assert score["score"] == 100
     assert score["max_score"] == 100
     assert score["import_ok"] is True
+    assert score["summary"] == {"passed": 100, "total": 100, "score_percent": 100.0}
     assert summary["total_cases"] == 100
     assert summary["failed_cases"] == []
+
+
+def test_cron_eval_validator_zero_score_has_runtime_summary(tmp_path: Path) -> None:
+    benchmark_dir = Path(__file__).resolve().parents[1] / "examples" / "cron-eval"
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    run_dir = tmp_path / "run"
+    validator = _load_module(benchmark_dir / "scripts" / "run_checks.py")
+
+    assert validator.main([str(run_dir), str(workspace), str(benchmark_dir / "hidden")]) == 0
+    score = json.loads((run_dir / "score.json").read_text(encoding="utf-8"))
+    assert score["summary"] == {"passed": 0, "total": 0, "score_percent": 0.0}
+    assert score["import_ok"] is False
+
+
+def test_cron_eval_reference_impl_completes_bench_run_at_100(tmp_path: Path) -> None:
+    example = Path(__file__).resolve().parents[1] / "examples" / "cron-eval"
+    benchmark = tmp_path / "cron-eval"
+    shutil.copytree(example, benchmark, ignore=shutil.ignore_patterns("__pycache__"))
+    source_repo = tmp_path / "synthetic-repo"
+    source_repo.mkdir()
+    for args in (["init", "-b", "main"], ["commit", "--allow-empty", "-m", "Synthetic initial commit"]):
+        subprocess.run(
+            ["git", "-c", "user.name=Benchmark Tests", "-c", "user.email=synthetic-user@example.invalid", *args],
+            cwd=source_repo, check=True, capture_output=True, text=True,
+        )
+    manifest_path = benchmark / "bench.yaml"
+    manifest = yaml.safe_load(manifest_path.read_text(encoding="utf-8"))
+    manifest["runs"] = 1
+    manifest["output_dir"] = str(tmp_path / "results")
+    manifest["workspace"]["source_repo"] = str(source_repo)
+    manifest["workspace"]["commit_outputs"] = False
+    reference = shlex.quote(str(benchmark / "hidden" / "reference_impl.py"))
+    manifest["executor"]["command"] = f'cp {reference} "$WORKSPACE_ROOT/cron_eval.py"'
+    manifest["steps"] = [step for step in manifest["steps"] if step["name"] != "adjudicate"]
+    manifest_path.write_text(yaml.safe_dump(manifest), encoding="utf-8")
+    runtime_home = tmp_path / "runtime"
+    stdout, stderr = io.StringIO(), io.StringIO()
+
+    result = main(["run", str(benchmark), "-m", "synthetic-model"],
+                  environ={"BENCH_RUNTIME_HOME": str(runtime_home)}, stdout=stdout, stderr=stderr)
+
+    assert result == 0, stderr.getvalue()
+    runs = list_runs(runtime_home)
+    assert len(runs) == 1
+    assert runs[0]["score_percent"] == 100.0
+    assert len(list((tmp_path / "results").glob("*/manifest.json"))) == 1
 
 
 def test_cron_eval_adjudication_prompt_is_explanatory_not_scoring() -> None:
