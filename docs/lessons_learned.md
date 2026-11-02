@@ -2108,3 +2108,9 @@ helper in both the deployer's required inputs and the fleet audit's indexed scop
 and child inventory. Synthetic deployment and fleet fixtures must carry it too.
 Test an indexed helper's removal so the fleet audit reports an unverified source
 instead of silently omitting a release input.
+
+### 2026-11-02 — Test refreshed dependencies after installing them
+
+Refreshing a lockfile does not update an existing dependency installation. Install
+the refreshed lock before running its dependent tests, and stop if installation
+fails. Assert the ordering and failure path with a strict external-command stub.
