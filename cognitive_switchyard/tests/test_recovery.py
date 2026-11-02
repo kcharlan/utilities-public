@@ -339,6 +339,49 @@ def test_recover_done_worker_supports_json_status_sidecar(tmp_path: Path) -> Non
     assert store.get_task(session.id, "111").status == "done"
 
 
+@pytest.mark.parametrize("contents", [b"", b"{", b"[]", b'{"pid": null}', b'{"task_id":"101","workspace_path":null}', b"\xff"])
+def test_unreadable_recovery_metadata_is_quarantined_and_task_returns_to_ready(tmp_path: Path, contents: bytes) -> None:
+    from cognitive_switchyard.recovery import recover_execution_session
+
+    store, runtime_paths = _build_store(tmp_path)
+    session = store.create_session(session_id="synthetic-corrupt", name="Synthetic", pack="synthetic-pack", created_at="2026-03-09T10:00:00Z")
+    _register_task(store, session_id=session.id, task_id="101")
+    store.project_task(session.id, "101", status="active", worker_slot=0)
+    marker = tmp_path / "teardown-marker"
+    pack = load_pack_manifest(_write_pack(tmp_path, name="synthetic-pack", isolate_end=f"#!/bin/sh\ntouch {marker}\n"))
+    path = runtime_paths.session_paths(session.id).worker_recovery_path(0)
+    path.write_bytes(contents)
+
+    result = recover_execution_session(store=store, session_id=session.id, pack_manifest=pack)
+
+    assert store.get_task(session.id, "101").status == "ready"
+    assert any("recovery metadata" in warning for warning in result.warnings)
+    assert any(event.event_type == "session.recovery_warning" and "slot 0" in event.message for event in store.list_events(session.id))
+    assert not path.exists()
+    assert path.with_name("recovery.json.corrupt").read_bytes() == contents
+    assert not marker.exists()
+    again = recover_execution_session(store=store, session_id=session.id, pack_manifest=pack)
+    assert not any("recovery metadata" in warning for warning in again.warnings)
+
+
+def test_orphan_cleanup_quarantines_unreadable_metadata(tmp_path: Path) -> None:
+    from cognitive_switchyard.recovery import cleanup_orphaned_workspaces
+
+    store, runtime_paths = _build_store(tmp_path)
+    session = store.create_session(session_id="synthetic-orphan", name="Synthetic", pack="synthetic-pack", created_at="2026-03-09T10:00:00Z")
+    paths = runtime_paths.session_paths(session.id)
+    path = paths.worker_recovery_path(0)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_bytes(b"{")
+    pack = load_pack_manifest(_write_pack(tmp_path, name="synthetic-pack"))
+
+    warnings = cleanup_orphaned_workspaces(session_paths=paths, pack_manifest=pack, env=None, store=store, session_id=session.id)
+
+    assert any("recovery metadata" in warning for warning in warnings)
+    assert path.with_name("recovery.json.corrupt").read_bytes() == b"{"
+    assert any(event.event_type == "session.recovery_warning" and "slot 0" in event.message for event in store.list_events(session.id))
+
+
 def test_recover_incomplete_worker_returns_task_to_ready_and_clears_slot_projection(tmp_path: Path) -> None:
     from cognitive_switchyard.recovery import recover_execution_session
 

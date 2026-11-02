@@ -127,16 +127,20 @@ EOF
 install_stubs() {
   mkdir -p "$CASE/bin"
   write_stub docker '
-if [[ "$1" == compose && "$2" == ls && "$3" == --all ]]; then [[ "${FAKE_REFERENCE_FAILURE:-0}" == 0 ]] || exit 1; cat "$STATE_DIR/all-compose.json"; exit 0; fi
-if [[ "$1" == compose && "$2" == ls ]]; then cat "$STATE_DIR/compose.json"; exit 0; fi
-if [[ "$1" == ps && "$2" == -aq ]]; then [[ "${FAKE_REFERENCE_FAILURE:-0}" == 0 ]] || exit 1; cat "$STATE_DIR/all-ids.txt"; exit 0; fi
-if [[ "$1" == inspect ]]; then [[ "${FAKE_REFERENCE_FAILURE:-0}" == 0 ]] || exit 1; cat "$STATE_DIR/inspect.json"; exit 0; fi
-if [[ "$1" == compose && " $* " == *" config --format json "* ]]; then print -r -- "{\"services\":{\"n8n\":{\"environment\":{\"N8N_ENCRYPTION_KEY\":\"synthetic-key\"}}}}"; exit 0; fi
-if [[ "$1" == ps ]]; then [[ "${FAKE_PS_RC:-0}" == 0 ]] || exit "$FAKE_PS_RC"; cat "$STATE_DIR/containers.txt"; exit 0; fi
-if [[ "$1" == pull ]]; then exit "${FAKE_PULL_RC:-0}"; fi
-if [[ "$1" == compose && " $* " == *" build "* ]]; then exit "${FAKE_BUILD_RC:-0}"; fi'
+if [[ "$*" == "compose ls --all --format json" ]]; then [[ "${FAKE_REFERENCE_FAILURE:-0}" == 0 ]] || exit 1; cat "$STATE_DIR/all-compose.json"; exit 0; fi
+if [[ "$*" == "compose ls --format json" ]]; then cat "$STATE_DIR/compose.json"; exit 0; fi
+if [[ "$*" == "ps -aq" ]]; then [[ "${FAKE_REFERENCE_FAILURE:-0}" == 0 ]] || exit 1; cat "$STATE_DIR/all-ids.txt"; exit 0; fi
+if [[ "$1" == inspect && $# -ge 2 ]]; then [[ "${FAKE_REFERENCE_FAILURE:-0}" == 0 ]] || exit 1; cat "$STATE_DIR/inspect.json"; exit 0; fi
+if [[ "$*" == "compose config --format json" ]]; then print -r -- "{\"services\":{\"n8n\":{\"environment\":{\"N8N_ENCRYPTION_KEY\":\"synthetic-key\"}}}}"; exit 0; fi
+if [[ "$*" == "compose config --quiet" || "$*" == "compose pull" || "$*" == "compose up -d --wait --wait-timeout 180" || "$*" == "compose ps" ]]; then exit 0; fi
+if [[ "$1" == ps && "$2" == --format && "$3" == "{{.Names}}" && $# == 3 ]]; then [[ "${FAKE_PS_RC:-0}" == 0 ]] || exit "$FAKE_PS_RC"; cat "$STATE_DIR/containers.txt"; exit 0; fi
+if [[ "$1" == pull && $# == 2 ]]; then exit "${FAKE_PULL_RC:-0}"; fi
+if [[ "$*" == "compose -p propagate-check-webserver build index app_py app_node" || "$*" == "compose -p propagate-check-llm_proxy build" ]]; then exit "${FAKE_BUILD_RC:-0}"; fi
+if [[ "$*" == "compose -p propagate-check-webserver down --rmi local" || "$*" == "compose -p propagate-check-llm_proxy down --rmi local" ]]; then exit 0; fi
+print -ru2 -- "stub docker: unexpected call: $*"; exit 97'
   write_stub npm '
 if [[ "$1" == update ]]; then print -- "// refreshed" >> package-lock.json; fi
+if [[ "$1" == ci ]]; then exit "${FAKE_NPM_CI_RC:-0}"; fi
 if [[ "$1" == audit ]]; then exit "${FAKE_NPM_AUDIT_RC:-0}"; fi'
   write_stub uv '
 if [[ "$1" == pip && "$2" == compile ]]; then print -- "# refreshed" >> requirements.lock; fi
@@ -290,9 +294,29 @@ test_refresh_runs_each_lock_audit_build_and_suite() {
 
 line_of() {
   local line
-  line="$(grep -Fn -- "$2" "$1" | head -1 | cut -d: -f1)"
+  line="$(grep -Fn -- "$2" "$1" | head -1 | cut -d: -f1 || true)"
   [[ -n "$line" ]] || fail "expected '$2' in ${1:t}"
   print -r -- "$line"
+}
+
+test_refresh_installs_refreshed_index_dependencies_before_webserver_tests() {
+  new_case refresh_index_dependencies
+  run_script refresh --stack webserver
+  assert_status 0
+  local log="$CASE/calls.log" src="$REPO/docker" update install tests
+  update="$(line_of "$log" "npm $src/webserver/index :: update --package-lock-only")"
+  install="$(line_of "$log" "npm $src/webserver/index :: ci --ignore-scripts --no-audit --no-fund")"
+  tests="$(line_of "$log" "node $REPO :: --test docker/webserver/tests/nginx-routing.test.mjs docker/webserver/tests/index-server.test.mjs")"
+  (( update < install && install < tests )) || fail 'refreshed dependencies must be installed before webserver tests'
+}
+
+test_refresh_npm_ci_failure_skips_webserver_tests() {
+  new_case refresh_index_install_fail
+  FAKE_NPM_CI_RC=1 run_script refresh --stack webserver
+  assert_status 1
+  assert_contains "$CASE/out" 'webserver tests failed'
+  assert_contains "$CASE/out" 'FAILED'
+  assert_not_contains "$CASE/calls.log" "node $REPO :: --test"
 }
 
 # The routing test runs `docker run --pull=never`, and a check build does not

@@ -427,12 +427,13 @@ symlink ancestors are rejected.
 
 The admitted inventory is tracked Package.swift, Makefile and every regular
 Sources, Resources, Tests and tools file under `telltale/`, plus
-`tools/deploy_telltale.mjs`, `tools/deployment_files.mjs` and
-`tools/deploy_brew_version.mjs` (the generic app hash). Package.swift, the
+`tools/check_no_temp_leaks.sh`, `tools/deploy_telltale.mjs`,
+`tools/deployment_files.mjs`, `tools/deploy_brew_version.mjs` (the generic app
+hash) and `tools/transaction.mjs`. Package.swift, the
 Makefile, `Resources/Info.plist`, the two Barlow Semi Condensed fonts and
 `Resources/Fonts/OFL.txt` (the release recipe copies all three into
 `Contents/Resources/Fonts`), `tools/install.sh`,
-`tools/resolve_signing_identity.sh`, a Sources file and the three root tools are
+`tools/resolve_signing_identity.sh`, a Sources file and all five root helpers are
 required. README and `docs/` are not inputs, and neither are the Codex logs, the
 database or the collector's job plist. Working bytes and modes must equal the
 stage-zero index. Only those captured bytes are copied to private scratch for

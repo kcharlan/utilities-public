@@ -40,7 +40,7 @@ import TelltaleTestSupport
             live.start()
             defer { live.stop() }
             try PanelWorld.addAlert(writer)
-            #expect(await eventually { live.snapshot.alerts.map(\.text) == ["Codex: Example has been up to 25% slower than usual for prompts this size since 08:55."] })
+            #expect(await eventually { live.snapshot.alerts.map(\.text) == ["Codex: " + Copy.slowerOpen(model: "Example", percent: 25, since: Synth.local(2026, 9, 4, 8, 55), calendar: Synth.newYork)] })
             #expect(live.snapshot.lamps[.speed] == .amber)
         }
     }
@@ -65,7 +65,7 @@ import TelltaleTestSupport
             defer { live.stop() }
             await live.refresh()
             #expect(live.snapshot == PanelSnapshot.waiting(sources: PanelWorld.sources))
-            #expect(live.snapshot.footer == "Waiting for the collector's first run.")
+            #expect(live.snapshot.footer == Copy.waitingForFirstRun)
             #expect(live.snapshot.checkedAt == nil && live.snapshot.models.isEmpty && live.lastError == nil)
             // Reading never creates the database or its directory.
             #expect(!FileManager.default.fileExists(atPath: paths.appSupport.path))

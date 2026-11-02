@@ -1,5 +1,12 @@
 # Lessons learned
 
+## 2026-11-02: Cover every launchd domain in target selection
+
+Apple and non-Apple daemons both use the system launchd domain. Exercise every
+discovered plist domain and the unknown fallback when constructing job targets
+and bootstrap prefixes, so a new or overlooked domain cannot silently use the
+user GUI domain.
+
 ## 2026-11-02: Scope shared Makefile self-tests to their caller
 
 A shared self-test that always exercises every consumer couples otherwise independent project suites. Accept explicit consumer selections, validate them before making scratch space, and retain the unscoped form for the fleet-wide check.
@@ -2067,6 +2074,53 @@ change and error notification policies to the recorded result summary.
 Fallback artifact writes can fail too: emit outside the original exception
 handler, keep the redacted console diagnostic, and attempt notification and
 retention cleanup even if the artifact cannot be written.
+
+### 2026-11-02 — Report conversion failures to scripted callers
+
+Missing or malformed inputs and output write errors must propagate to the CLI's
+nonzero exit and stderr path. Exercise each failure with synthetic input and
+check that input errors preserve an existing output file.
+
+### 2026-11-02 — Separate Git branch refs from checkout state and paths
+
+`git branch` can report a detached HEAD as a pseudo-branch; enumerate
+`refs/heads` instead when persisting local branches. End revision arguments
+with `--` in history commands so a branch sharing a directory name remains
+unambiguous. Exercise both cases against synthetic Git repositories.
+
+## 2026-11-02: Distinguish missing selected baselines from first saves
+
+Model Sentinel treated a missing dated or prior-day baseline as an initial save
+even when the provider had history, creating false additions and advancing its
+snapshot. Check for any saved history before allowing an initial baseline and
+exercise both missing selections with real saved snapshots.
+
+### 2026-11-02 — Validate decoded credential shapes
+
+Valid JSON can still be the wrong type for downstream credential handling.
+Reject non-object values at the decoding boundary so both streaming and
+non-streaming requests return an authentication error before contacting an upstream.
+
+### 2026-11-02 — Include shared build helpers in fleet inventories
+
+When a native release moves a build helper outside its project tree, include that
+helper in both the deployer's required inputs and the fleet audit's indexed scope
+and child inventory. Synthetic deployment and fleet fixtures must carry it too.
+Test an indexed helper's removal so the fleet audit reports an unverified source
+instead of silently omitting a release input.
+
+### 2026-11-02 — Test refreshed dependencies after installing them
+
+Refreshing a lockfile does not update an existing dependency installation. Install
+the refreshed lock before running its dependent tests, and stop if installation
+fails. Assert the ordering and failure path with a strict external-command stub.
+
+### 2026-11-02 — Preserve schemas for empty extraction results
+
+DataFrames inferred from empty row lists have no columns, so downstream filters
+and CSV readers can fail even when an empty result is valid. Declare the input
+and output schemas explicitly and exercise both empty workouts and absent metric
+records through the complete extraction pipeline.
 
 ### 2026-11-02 — Reject XML values that disappear
 

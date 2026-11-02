@@ -286,6 +286,7 @@ audited_scopes=(
   tools/deploy_anker_charge_monitor.mjs
   telltale
   tools/deploy_telltale.mjs
+  tools/check_no_temp_leaks.sh
   colophon
   tools/deploy_colophon.mjs
   storage_monitor
@@ -693,7 +694,7 @@ audit_native_deployment telltale tools/deploy_telltale.mjs \
   telltale/Resources/Fonts/BarlowSemiCondensed-Medium.ttf \
   telltale/Resources/Fonts/BarlowSemiCondensed-Regular.ttf telltale/Resources/Fonts/OFL.txt \
   telltale/tools/install.sh telltale/tools/resolve_signing_identity.sh \
-  tools/deploy_telltale.mjs tools/deploy_brew_version.mjs tools/deployment_files.mjs tools/transaction.mjs
+  tools/deploy_telltale.mjs tools/deploy_brew_version.mjs tools/deployment_files.mjs tools/transaction.mjs tools/check_no_temp_leaks.sh
 
 for mapping in "${copy_mappings[@]}"; do
   source_relative="${mapping%%|*}"

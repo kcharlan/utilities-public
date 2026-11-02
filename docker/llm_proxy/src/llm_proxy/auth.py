@@ -12,9 +12,12 @@ def decode_credentials(authorization: str) -> dict:
     token = authorization[len(prefix):]
     try:
         decoded = base64.b64decode(token)
-        return json.loads(decoded)
+        credentials = json.loads(decoded)
     except Exception:
         raise HTTPException(status_code=401, detail="Invalid credentials format")
+    if not isinstance(credentials, dict):
+        raise HTTPException(status_code=401, detail="Invalid credentials format")
+    return credentials
 
 
 def extract_authorization(request: Request) -> str:

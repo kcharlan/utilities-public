@@ -8,6 +8,13 @@ from llm_proxy.auth import decode_credentials, extract_authorization
 
 
 class TestDecodeCredentials:
+    @pytest.mark.parametrize("payload", [b"[]", b'\"text\"', b"1", b"null"])
+    def test_non_object_json_is_rejected(self, payload):
+        token = base64.b64encode(payload).decode()
+        with pytest.raises(HTTPException) as exc_info:
+            decode_credentials(f"Bearer {token}")
+        assert exc_info.value.status_code == 401
+
     def test_valid_base64_json(self):
         payload = {"cookies": "abc", "convex_session_id": "123"}
         token = base64.b64encode(json.dumps(payload).encode()).decode()

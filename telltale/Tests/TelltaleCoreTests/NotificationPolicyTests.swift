@@ -178,7 +178,7 @@ import TelltaleTestSupport
         }
 
         // 09:05: the first failure notifies at once.
-        #expect(run(at: 5, [failed(at: 5, [failure(1, at: t(3))], fires: true)]) == ["1 turn failed: model at capacity"])
+        #expect(run(at: 5, [failed(at: 5, [failure(1, at: t(3))], fires: true)]) == [Copy.failedTurns(count: 1, reasons: ["model at capacity"])])
         #expect(notices.lastNoticeAt == t(5))
         // 09:10 and 09:20: inside the 20-minute window, failures wait.
         #expect(run(at: 10, [failed(at: 10, [failure(2, at: t(8)), failure(3, at: t(9), code: "cyberPolicy")])]).isEmpty)
@@ -186,12 +186,12 @@ import TelltaleTestSupport
         #expect(run(at: 20, [failed(at: 20, [failure(4, at: t(18))])]).isEmpty)
         #expect(notices.waiting.count == 3)
         // 09:25: the window has ended; the 3 waiting failures go out with their reasons.
-        #expect(run(at: 25, []) == ["3 turns failed: model at capacity, blocked by policy"])
+        #expect(run(at: 25, []) == [Copy.failedTurns(count: 3, reasons: ["model at capacity", "blocked by policy"])])
         #expect(notices == FailureNotices(lastNoticeAt: t(25), waiting: []))
         // 09:30: a new failure waits again until 09:45.
         #expect(run(at: 30, [failed(at: 30, [failure(5, at: t(28))])]).isEmpty)
         #expect(run(at: 40, []).isEmpty)
-        #expect(run(at: 45, []) == ["1 turn failed: model at capacity"])
+        #expect(run(at: 45, []) == [Copy.failedTurns(count: 1, reasons: ["model at capacity"])])
     }
 
     @Test func failedTurnsInsideGapUseCatchUpCopyWhileOpen() {
@@ -201,7 +201,7 @@ import TelltaleTestSupport
             outcome(.failedTurns, at: minutesBefore(20), nil, episode: 3, scope: "*", failures: [failure(2, at: minutesBefore(22))]),
         ]
         let bodies = select(outcomes, notices: &notices).map(\.body)
-        #expect(bodies == ["2 turns failed since 11:27: model at capacity"])
+        #expect(bodies == [Copy.failedTurnsCatchUp(count: 2, reasons: ["model at capacity"], since: minutesBefore(33), calendar: Synth.newYork)])
         #expect(notices.lastNoticeAt == latest)
 
         // Cleared inside the gap: recorded only.

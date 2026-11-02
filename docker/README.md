@@ -42,7 +42,9 @@ docker/propagate-updates.zsh deploy
   `webserver/app_py`, `uv lock --upgrade` for `llm_proxy`) and audits them
   (`npm audit`, `pip-audit`). It then test-builds the images under throwaway
   `propagate-check-*` Compose project names, removes those images, and runs
-  the webserver Nginx routing test and the `llm_proxy` pytest suite. The
+  both webserver test files and the `llm_proxy` pytest suite. Before the
+  webserver tests, it reinstalls `webserver/index/node_modules` from the
+  refreshed lock with `npm ci`. The
   routing test never pulls images, and a check build does not leave its base
   images as named local images, so `refresh` first pulls the test's
   `nginx:stable-alpine` and `node:24-alpine` (or the images named by

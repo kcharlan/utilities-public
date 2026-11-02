@@ -11,10 +11,24 @@ from typing import Mapping
 _logger = logging.getLogger(__name__)
 
 from .hook_runner import HookNotFoundError, run_pack_hook
-from .models import PackManifest, RecoveryResult
+from .models import PackManifest, RecoveryResult, WorkerRecoveryMetadata
 from .parsers import ArtifactParseError, parse_status_sidecar
 from .process_identity import process_identity
 from .state import StateStore
+
+
+def _read_recovery_metadata(
+    store: StateStore, session_id: str, slot_number: int, warnings: list[str],
+) -> WorkerRecoveryMetadata | None:
+    try:
+        return store.read_worker_recovery_metadata(session_id, slot_number=slot_number)
+    except (ValueError, KeyError, TypeError) as exc:
+        path = store.runtime_paths.session_paths(session_id).worker_recovery_path(slot_number)
+        path.replace(path.with_name("recovery.json.corrupt"))
+        warning = f"Quarantined unreadable recovery metadata for worker slot {slot_number}: {exc}"
+        warnings.append(warning)
+        store.append_event(session_id, timestamp=_timestamp(), event_type="session.recovery_warning", message=warning)
+        return None
 
 
 def recover_execution_session(
@@ -40,7 +54,7 @@ def recover_execution_session(
         if not worker_dir.name.isdigit():
             continue
         slot_number = int(worker_dir.name)
-        metadata = store.read_worker_recovery_metadata(session_id, slot_number=slot_number)
+        metadata = _read_recovery_metadata(store, session_id, slot_number, warnings)
         autofix_task_id = session.runtime_state.auto_fix_task_id
         if (session.runtime_state.auto_fix_context == "task_failure" and metadata is not None
                 and metadata.task_id == autofix_task_id):
@@ -217,7 +231,7 @@ def cleanup_orphaned_workspaces(
         slot_number = int(worker_dir.name)
         if protected_slots and slot_number in protected_slots:
             continue
-        metadata = store.read_worker_recovery_metadata(session_id, slot_number=slot_number)
+        metadata = _read_recovery_metadata(store, session_id, slot_number, warnings)
         if metadata is None:
             continue
 

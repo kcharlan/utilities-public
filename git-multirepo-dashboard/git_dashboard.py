@@ -48,7 +48,7 @@ except ImportError:  # pragma: no cover - Windows
 
 # ── Constants ─────────────────────────────────────────────────────────────────
 DEFAULT_PORT = 8300
-VERSION = "0.3.4"
+VERSION = "0.3.5"
 
 # Populated by build_tools_dict() during preflight; global so /api/status can
 # return it without re-running which() on every request.
@@ -895,14 +895,15 @@ def parse_branches(output: str, default_branch: str) -> list[dict]:
 
 
 async def scan_branches(repo_path: str, default_branch: str) -> list[dict]:
-    """Run git branch command and return parsed branch list.
+    """List local branch refs and return the parsed branch list.
 
     Uses %(refname:short)%09%(committerdate:iso-strict) format with tab
     delimiter. Git interprets %09 as a real tab character.
     """
     stdout, stderr, rc = await run_git(
         repo_path,
-        "branch",
+        "for-each-ref",
+        "refs/heads",
         "--format=%(refname:short)%09%(committerdate:iso-strict)",
     )
     if rc != 0:
@@ -6753,7 +6754,7 @@ async def get_repo_commits(
     ref_args = ["--end-of-options", branch] if branch else ["--all"]
 
     # Total commit count
-    stdout, _, rc = await run_git(repo_path, "rev-list", "--count", *ref_args)
+    stdout, _, rc = await run_git(repo_path, "rev-list", "--count", *ref_args, "--")
     total = int(stdout.strip()) if rc == 0 and stdout.strip().isdigit() else 0
 
     if total == 0:
@@ -6768,6 +6769,7 @@ async def get_repo_commits(
         f"--skip={skip}",
         f"--max-count={per_page}",
         *ref_args,
+        "--",
     )
 
     parsed = parse_git_log(stdout) if rc == 0 else []

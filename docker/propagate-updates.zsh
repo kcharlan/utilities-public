@@ -311,7 +311,8 @@ pull_test_images() {
 run_stack_tests() {
   case "$1" in
     webserver)
-      run_in "$REPO_ROOT" node --test docker/webserver/tests/nginx-routing.test.mjs
+      run_in "$DOCKER_SRC/webserver/index" npm ci --ignore-scripts --no-audit --no-fund || return 1
+      run_in "$REPO_ROOT" node --test docker/webserver/tests/nginx-routing.test.mjs docker/webserver/tests/index-server.test.mjs
       ;;
     llm_proxy)
       run_in "$DOCKER_SRC/llm_proxy" env UV_PYTHON_DOWNLOADS=never \

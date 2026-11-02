@@ -82,7 +82,7 @@ private enum Health {
         let report = CollectorHealth.evaluate(enabled: true, installedExecutable: Health.app, installedAt: nil, currentExecutable: Health.app,
             loaded: true, runs: Health.healthyRuns, intervalMinutes: 5, sourceStates: [state], now: Health.at(9, 21), calendar: Synth.newYork,
             sourceNames: ["synthetic-provider": "Synthetic Provider"])
-        #expect(report.problems.contains("Synthetic Provider changed its log format. Telltale can't read Synthetic Provider responses since 09:12."))
+        #expect(report.problems.contains(Copy.formatProblem(source: "Synthetic Provider", since: Health.at(9, 12), calendar: Synth.newYork)))
     }
     @Test func allGreenWhenHealthy() {
         let report = Health.evaluate(runs: Health.healthyRuns, now: Health.at(9, 7))
@@ -100,7 +100,7 @@ private enum Health {
             now: Health.at(12, 0))
         #expect(report == CollectorHealthReport(
             installed: .unlit, loaded: .unlit, lastRun: .unlit, onSchedule: .unlit, problems: [], needsRepair: false,
-            footer: "Collector off. Turn it on to keep watching.", notice: nil))
+            footer: Copy.collectorOff, notice: nil))
         #expect(report.lamp == .unlit)
     }
 
@@ -120,7 +120,7 @@ private enum Health {
         let report = Health.evaluate(loaded: false, runs: Health.healthyRuns, now: Health.at(9, 7))
         #expect(report.loaded == .red)
         #expect([report.installed, report.lastRun, report.onSchedule] == [.green, .green, .green])
-        #expect(report.problems == ["Telltale's collector isn't loaded. Open the Collector view to turn it back on."])
+        #expect(report.problems == [Copy.collectorNotLoaded])
         #expect(report.notify)
         #expect(report.lamp == .red)
     }
@@ -131,12 +131,12 @@ private enum Health {
         #expect(report.lastRun == .red)
         #expect(report.onSchedule == .green)
         // It failed at 09:05:04, when it finished; launchd starts the next run an interval after 09:05.
-        #expect(report.problems == ["The collector failed at 09:05: database is locked. Next try 09:10."])
+        #expect(report.problems == [Copy.collectorFailing(at: Health.at(9, 5), reason: "database is locked", next: Health.at(9, 10), calendar: Synth.newYork)])
         // One failure, and a success within three intervals: shown, not notified.
         #expect(!report.notify)
 
         // Past the expected start, the next try is the next interval boundary after now.
-        #expect(Health.evaluate(runs: runs, now: Health.at(9, 13)).problems == ["The collector failed at 09:05: database is locked. Next try 09:15."])
+        #expect(Health.evaluate(runs: runs, now: Health.at(9, 13)).problems == [Copy.collectorFailing(at: Health.at(9, 5), reason: "database is locked", next: Health.at(9, 15), calendar: Synth.newYork)])
     }
 
     @Test func onScheduleBoundary() {
@@ -145,7 +145,7 @@ private enum Health {
         #expect(Health.evaluate(runs: runs, now: Health.at(9, 11, 0)).onSchedule == .green)
         let late = Health.evaluate(runs: runs, now: Health.at(9, 11, 1))
         #expect(late.onSchedule == .red)
-        #expect(late.problems == ["The collector hasn't run since 09:00."])
+        #expect(late.problems == [Copy.collectorOverdue(since: Health.at(9, 0), calendar: Synth.newYork)])
         #expect(!late.notify)
 
         // 21:00 for a 10-minute interval.
@@ -162,7 +162,7 @@ private enum Health {
         let report = Health.evaluate(runs: two, now: Health.at(9, 11))
         #expect(report.notify)
         #expect(report.lastRun == .red)
-        #expect(report.problems == ["The collector failed at 09:10: interrupted. Next try 09:15."])
+        #expect(report.problems == [Copy.collectorFailing(at: Health.at(9, 10), reason: "interrupted", next: Health.at(9, 15), calendar: Synth.newYork)])
 
         // A success in between breaks the streak.
         let broken = [
@@ -178,7 +178,7 @@ private enum Health {
         #expect(!Health.evaluate(runs: runs, now: Health.at(9, 15, 0)).notify)
         let overdue = Health.evaluate(runs: runs, now: Health.at(9, 15, 1))
         #expect(overdue.notify)
-        #expect(overdue.problems == ["The collector hasn't run since 09:00."])
+        #expect(overdue.problems == [Copy.collectorOverdue(since: Health.at(9, 0), calendar: Synth.newYork)])
 
         // Never a success: measured from the oldest run on record.
         let failing = [Health.run(1, Health.at(9, 0), .failed, detail: "synthetic failure")]
@@ -196,7 +196,7 @@ private enum Health {
         let stuck = Health.evaluate(runs: runs + [Health.run(2, Health.at(9, 5), .running)], now: Health.at(9, 16, 1))
         #expect(stuck.notify)
         #expect(stuck.onSchedule == .red)
-        #expect(stuck.problems == ["The collector hasn't run since 09:05."])
+        #expect(stuck.problems == [Copy.collectorOverdue(since: Health.at(9, 5), calendar: Synth.newYork)])
     }
 
     @Test func skippedRunsDoNotCount() {
@@ -210,7 +210,7 @@ private enum Health {
         let report = Health.evaluate(runs: streak, now: Health.at(9, 14))
         #expect(report.notify)
         #expect(report.lastRun == .red)
-        #expect(report.problems == ["The collector failed at 09:12: second failure. Next try 09:17."])
+        #expect(report.problems == [Copy.collectorFailing(at: Health.at(9, 12), reason: "second failure", next: Health.at(9, 17), calendar: Synth.newYork)])
 
         // Skips neither keep the schedule nor count as a success.
         let skipsOnly = [
@@ -227,7 +227,7 @@ private enum Health {
         let none = Health.evaluate(runs: [Health.run(1, Health.at(9, 0), .skipped, detail: CollectorRun.skippedDetail)], now: Health.at(9, 1))
         #expect([none.lastRun, none.onSchedule] == [.unlit, .unlit])
         #expect(!none.notify)
-        #expect(none.footer == "Waiting for the collector's first run.")
+        #expect(none.footer == Copy.waitingForFirstRun)
     }
 
     @Test func noRunsYetWaitsForTheFirstRun() {
@@ -236,7 +236,7 @@ private enum Health {
         for now in [Health.at(9, 0), Health.at(9, 15, 0)] {
             let report = Health.evaluate(installedAt: turnedOn, runs: [], now: now)
             #expect([report.installed, report.loaded, report.lastRun, report.onSchedule] == [.green, .green, .unlit, .unlit])
-            #expect(report.footer == "Waiting for the collector's first run.")
+            #expect(report.footer == Copy.waitingForFirstRun)
             #expect(report.problems.isEmpty)
             #expect(!report.notify)
             #expect(report.lamp == .green)
@@ -245,13 +245,13 @@ private enum Health {
         // The first run never arrived: measured from turn-on, as if it were the last success.
         let late = Health.evaluate(installedAt: turnedOn, runs: [], now: Health.at(9, 15, 1))
         #expect(late.notify)
-        #expect(late.problems == ["The collector hasn't run since 09:00."])
+        #expect(late.problems == [Copy.collectorOverdue(since: Health.at(9, 0), calendar: Synth.newYork)])
         #expect([late.lastRun, late.onSchedule] == [.unlit, .unlit])
         #expect(late.lamp == .red)
         // Task 11: the footer no longer says it's waiting beside a problem that says it gave up.
         #expect(late.footer == "")
         let unloaded = Health.evaluate(installedAt: turnedOn, loaded: false, runs: [], now: Health.at(9, 1))
-        #expect(unloaded.problems == ["Telltale's collector isn't loaded. Open the Collector view to turn it back on."])
+        #expect(unloaded.problems == [Copy.collectorNotLoaded])
         #expect(unloaded.footer == "")
 
         // No plist, no reference: nothing to measure from.
@@ -272,7 +272,7 @@ private enum Health {
         let runs = [Health.run(1, Health.at(9, 15), .succeeded), Health.run(2, Health.at(9, 20), .succeeded)]
         let report = Health.evaluate(runs: runs, states: states, now: Health.at(9, 21))
         #expect([report.installed, report.loaded, report.lastRun, report.onSchedule] == [.green, .green, .green, .green])
-        #expect(report.problems == ["codex changed its log format. Telltale can't read codex responses since 09:12."])
+        #expect(report.problems == [Copy.formatProblem(source: "codex", since: Health.at(9, 12), calendar: Synth.newYork)])
         #expect(report.notify)
         #expect(report.lamp == .red)
 
@@ -284,7 +284,7 @@ private enum Health {
         let state = SourceStateRow(source: "codex", state: .formatProblem("synthetic"), unavailableSince: Health.at(9, 20), updatedAt: Health.at(9, 20))
         let runs = [Health.run(1, Health.at(9, 15), .succeeded), Health.run(2, Health.at(9, 20), .succeeded)]
         let report = Health.evaluate(runs: runs, states: [state], now: Health.at(9, 21))
-        #expect(report.problems == ["codex changed its log format. Telltale can't read codex responses since 09:20."])
+        #expect(report.problems == [Copy.formatProblem(source: "codex", since: Health.at(9, 20), calendar: Synth.newYork)])
         #expect(report.lamp == .red)
         #expect(!report.notify)
     }
@@ -298,15 +298,15 @@ private enum Health {
         let runs = [Health.run(1, Health.at(9, 15), .succeeded), Health.run(2, Health.at(9, 20), .succeeded)]
         let report = Health.evaluate(runs: runs, states: states, now: Health.at(9, 21))
         #expect(report.problems == [
-            "claude changed its log format. Telltale can't read claude responses since 09:20.",
-            "codex changed its log format. Telltale can't read codex responses since 09:12.",
+            Copy.formatProblem(source: "claude", since: Health.at(9, 20), calendar: Synth.newYork),
+            Copy.formatProblem(source: "codex", since: Health.at(9, 12), calendar: Synth.newYork),
         ])
-        #expect(report.notice == "codex changed its log format. Telltale can't read codex responses since 09:12.")
+        #expect(report.notice == Copy.formatProblem(source: "codex", since: Health.at(9, 12), calendar: Synth.newYork))
         #expect(report.notify)
 
         // Another notify condition names itself, ahead of any format problem.
         let unloaded = Health.evaluate(loaded: false, runs: runs, states: states, now: Health.at(9, 21))
-        #expect(unloaded.notice == "Telltale's collector isn't loaded. Open the Collector view to turn it back on.")
+        #expect(unloaded.notice == Copy.collectorNotLoaded)
         // Unconfirmed problems alone don't notify.
         #expect(Health.evaluate(runs: runs, states: [states[0]], now: Health.at(9, 21)).notice == nil)
     }
@@ -322,7 +322,7 @@ private enum Health {
         #expect(lateSchedule.onSchedule == .red && !lateSchedule.notify && lateSchedule.heldAfterWake)
         #expect(Health.evaluate(runs: runs, now: Health.at(9, 15), awakeSince: woke).notice == nil)
         let overdue = Health.evaluate(runs: runs, now: Health.at(9, 15, 1), awakeSince: woke)
-        #expect(overdue.notice == "The collector hasn't run since 01:00.")
+        #expect(overdue.notice == Copy.collectorOverdue(since: Health.at(1, 0), calendar: Synth.newYork))
         #expect(!overdue.heldAfterWake)
     }
 
@@ -345,7 +345,7 @@ private enum Health {
     @Test func wakeDoesNotHoldProblemsSleepCannotExplain() {
         let woke = Health.at(9, 5)
         let unloaded = Health.evaluate(loaded: false, runs: Health.healthyRuns, now: Health.at(9, 6), awakeSince: woke)
-        #expect(unloaded.notice == "Telltale's collector isn't loaded. Open the Collector view to turn it back on.")
+        #expect(unloaded.notice == Copy.collectorNotLoaded)
         let state = SourceStateRow(source: "example", state: .formatProblem("synthetic"), unavailableSince: Health.at(9, 0), updatedAt: Health.at(9, 5))
         #expect(Health.evaluate(runs: Health.healthyRuns, states: [state], now: Health.at(9, 6), awakeSince: woke).notify)
     }

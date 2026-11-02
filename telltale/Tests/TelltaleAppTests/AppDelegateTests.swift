@@ -142,7 +142,7 @@ final class MemoryPreferences: BoolPreferences {
             defer { h.terminate(delegate) }
             await delegate.liveStore?.refresh()
             #expect(h.stateChanges.isEmpty && !h.plistExists)
-            #expect(delegate.liveStore?.snapshot.footer == "Collector off. Turn it on to keep watching.")
+            #expect(delegate.liveStore?.snapshot.footer == Copy.collectorOff)
         }
     }
 
@@ -176,7 +176,7 @@ final class MemoryPreferences: BoolPreferences {
             for _ in 0..<3 { await delegate.liveStore?.refresh() }
             // No database yet, but the panel still shows that the collector isn't loaded.
             #expect(delegate.liveStore?.snapshot.collector == .red)
-            #expect(delegate.liveStore?.snapshot.footer == "Telltale's collector isn't loaded. Open the Collector view to turn it back on.")
+            #expect(delegate.liveStore?.snapshot.footer == Copy.collectorNotLoaded)
             #expect(h.service.requests.isEmpty && h.service.authorizationRequests == 0)
             #expect(!h.databaseExists && h.stateChanges.isEmpty)
 
@@ -185,7 +185,7 @@ final class MemoryPreferences: BoolPreferences {
             let before = try Data(contentsOf: h.paths.database)
             for _ in 0..<3 { await delegate.liveStore?.refresh() }
             #expect(delegate.liveStore?.snapshot.collector == .red)
-            #expect(delegate.liveStore?.snapshot.footer == "Telltale's collector isn't loaded. Open the Collector view to turn it back on.")
+            #expect(delegate.liveStore?.snapshot.footer == Copy.collectorNotLoaded)
             #expect(try Store.open(h.paths.database, mode: .readOnly).value(.collectorHealthNotice) == nil)
             #expect(try Data(contentsOf: h.paths.database) == before)
             #expect(h.service.requests.isEmpty)
