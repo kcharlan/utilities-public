@@ -5,6 +5,7 @@ const assert = require('node:assert/strict');
 const { getMarketRows } = require('./helpers/dataset.cjs');
 const {
   sweepStartYears,
+  simulate,
   STRATEGIES,
 } = require('../engine.js');
 
@@ -35,3 +36,21 @@ for (const [billSeries, horizon, depleted, under100k] of [
       .map(({ startYear }) => startYear), under100k);
   });
 }
+
+const lifestyleMarketRows = getMarketRows;
+const lifestyleOptions = { startingBalance: 1_000_000, allocation: { stock: 0.6, bond: 0.4, bill: 0 }, horizon: 30 };
+function close(actual, expected) {
+  assert.ok(Math.abs(actual - expected) <= 1e-9 * Math.max(1, Math.abs(expected)));
+}
+
+test('historical guardrails use the first tolerant minimum and expose a frozen spending profile', async () => {
+  const result = simulate((await lifestyleMarketRows()).filter(row => row.year >= 1966 && row.year <= 1995), STRATEGIES.guytonKlinger, { initialRate: 0.04 }, lifestyleOptions);
+  // Floating-point drift of about 1e-16 used to select 1991 instead of the first minimum in 1978.
+  assert.equal(result.metrics.minRealSpendingYear, 1978);
+  close(result.metrics.minRealSpending, 22631.650335181035);
+  assert.equal(result.metrics.spending.floorFirstIndex, 12);
+  assert.equal(result.metrics.spending.floorHeldYears, 14);
+  close(result.metrics.spending.floor, 22631.650335181035);
+  assert.ok(Object.isFrozen(result.metrics.spending));
+  assert.ok(Object.isFrozen(result.metrics.spending.path));
+});

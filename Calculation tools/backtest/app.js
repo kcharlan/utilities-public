@@ -16,7 +16,7 @@ const {
   createConfigurationApplier, HEATMAP_HORIZONS, PARTIAL_WEALTH_CAVEAT, chartSeries,
   clampWindowSelection, cohortStartYear, configurationLabelModel, contiguousSweepLineSegments,
   createLatestWinsScheduler, createLruCache, createRenderCoordinator, displayBalance,
-  executeRendererRequest, findQualitySeam, heatmapCellTarget, heatmapLegendModel,
+  executeRendererRequest, findQualitySeam, frontierStartRange, heatmapCellTarget, heatmapLegendModel,
   heatmapModel, heatmapPalette, heatmapSafeRateJobs, intersectYearRanges,
   marketGeneration, moveHeatmapFocus, normalizeNotes,
   safeRatePointModel, selectWindowRows, setHeatmapRovingCell, stableStringify,
@@ -1576,13 +1576,13 @@ async function runFrontierStage(input, request) {
     const entries = frontierEntries(input, paramKey, input.frontier.override);
     const jobs = [];
     let cachedCount = 0;
-    const fixedLast = input.commonRange.last - input.horizon + 1;
+    const range = frontierStartRange(input.commonRange, input.horizon);
     const perSeries = entries.map(({ configuration, strategy, plan }) => {
       const label = configurationLabelModel(configuration, strategy, HUMAN_LABELS);
       const points = plan.values.map(value => {
         const point = { value, lifestyle: null };
         const varied = { ...configuration, params: { ...configuration.params, [plan.key]: value } };
-        const key = sweepConfigurationKey(varied, input.horizon, `frontier:${input.commonRange.first}-${fixedLast}`, input.generation);
+        const key = sweepConfigurationKey(varied, input.horizon, `frontier:${range.first}-${range.last}`, input.generation);
         if (FrontierCache.has(key)) {
           point.lifestyle = FrontierCache.get(key); cachedCount += 1;
         } else jobs.push({
@@ -1591,7 +1591,7 @@ async function runFrontierStage(input, request) {
           run() {
             const results = globalThis.BacktestEngine.sweepStartYears(
               input.marketRows, input.horizon, strategy, varied.params, configuration.options,
-            ).filter(result => result.startYear >= input.commonRange.first && result.startYear <= fixedLast);
+            ).filter(result => result.startYear >= range.first && result.startYear <= range.last);
             const lifestyle = summarizeSweep(results, false, null).lifestyle;
             FrontierCache.set(key, lifestyle);
             return lifestyle;

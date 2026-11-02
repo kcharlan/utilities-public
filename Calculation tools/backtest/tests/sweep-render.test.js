@@ -1,7 +1,6 @@
 'use strict';
 
 const test = require('node:test');
-const { getMarketRows } = require('./helpers/dataset.cjs');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const vm = require('node:vm');
@@ -21,32 +20,19 @@ test('progressive jobs stop between chunks without assigning any remaining work'
   assert.deepEqual(progress, [{kind:'frontier',completed:2,total:5},{kind:'frontier',completed:3,total:5}]);
 });
 
-test('real-data frontier compares the same 69 windows even when recent early failures look complete', async () => {
-  const marketRows = await getMarketRows();
+test('frontier keeps only start years whose fixed horizon ends inside the common range', () => {
   const { STRATEGIES, sweepStartYears } = require('../engine.js');
-  const { summarizeSweep } = require('../views.js');
-  const options = { startingBalance: 1_000_000, allocation: {stock:.6,bond:.4,bill:0}, feeRate:0,taxRate:0 };
-  const summary = (strategy, value) => summarizeSweep(sweepStartYears(marketRows,30,strategy,{...Object.fromEntries(strategy.paramSchema.map(field=>[field.key,field.default])),[strategy.frontierParamKey]:value},options).filter(result=>result.startYear>=1928 && result.startYear<=1996),false,null).lifestyle;
-  const floors = [];
-  for (const [value, expected] of [[.03,17561],[.04,21073],[.0575,22083]]) {
-    const actual = summary(STRATEGIES.guytonKlinger,value);
-    assert.equal(actual.completeCount,69);
-    assert.equal(actual.failedCount,0);
-    assert.ok(Math.abs(actual.worstFloor-expected)<2);
-    floors.push(actual.worstFloor);
-  }
-  // A lower initial rate need not deliver a higher worst spending floor.
-  assert.ok(floors[0] < floors[1]);
-  const failed = summary(STRATEGIES.guytonKlinger,.06);
-  assert.equal(failed.failedCount,1);
-  assert.equal(failed.worstFloor,0);
-  assert.equal(failed.worstFloorStartYear,1959);
-  const fixed = summary(STRATEGIES.fixedReal,.08);
-  assert.equal(fixed.completeCount,69);
-  assert.equal(fixed.failedCount,55);
-  const fixedResults = sweepStartYears(marketRows, 30, STRATEGIES.fixedReal, {initialRate:.08}, options)
-    .filter(result => result.startYear >= 1928 && result.startYear <= 1996);
-  assert.equal(fixedResults.find(result => result.metrics.success).startYear, 1948);
+  const { frontierStartRange, summarizeSweep } = require('../views.js');
+  const rows = Array.from({length: 10}, (_, i) => ({year: 4200 + i, stock_tr: i === 7 ? -1 : 0, bond10_tr: 0, tbill_tr: 0, cpi_change: 0}));
+  const range = frontierStartRange({first:4200,last:4209}, 5);
+  assert.deepEqual(range, {first:4200,last:4205});
+  const results = sweepStartYears(rows, 5, STRATEGIES.fixedReal, {initialRate:.2}, {startingBalance:100, allocation:{stock:1,bond:0,bill:0}});
+  const recent = results.find(result => result.startYear === 4207);
+  assert.equal(recent.metrics.partial, false);
+  assert.equal(recent.metrics.success, false);
+  const kept = results.filter(result => result.startYear >= range.first && result.startYear <= range.last);
+  assert.deepEqual(kept.map(result => result.startYear), [4200,4201,4202,4203,4204,4205]);
+  assert.equal(summarizeSweep(kept,false,null).lifestyle.completeCount, kept.length);
 });
 
 test('frontier shares the progressive worker while owning cancellation independently', () => {

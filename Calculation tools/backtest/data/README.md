@@ -129,7 +129,7 @@ work uses the venv. Existing directories are not chmodded.
 Never acquire dependencies/data from deployment, recovery, audit or browser startup.
 
 `npm run test:synthetic` first validates a ready external venv, then runs its
-whole-file invented Node subset and exactly `test_compile_market_data` plus
+whole-file invented Node subset, including engine, lifestyle, export and sweep-render tests, and exactly `test_compile_market_data` plus
 `test_external_compiler` from `data/` (invented cases). Select the
 interpreter with `MARKET_ATLAS_TEST_PYTHON`, or use `<DATA_HOME>/.venv/bin/python`.
 Run the root audit suites independently as described in the test instructions. Tests never create a

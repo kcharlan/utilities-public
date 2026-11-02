@@ -36,6 +36,10 @@
   const { median, quantile, extremeBy, comparisonTolerance, needProfile } = stats;
   const { fmtMoney, fmtMoneyCompact, fmtPct, fmtPctConcise, fmtCount } = format;
 
+  function frontierStartRange(commonRange, horizon) {
+    return { first: commonRange.first, last: commonRange.last - horizon + 1 };
+  }
+
   /* ===== Render coordination — latest request wins, predecessors abort ===== */
   function createRenderCoordinator(resetTransient = null) {
     if (resetTransient !== null && typeof resetTransient !== 'function') {
@@ -769,6 +773,7 @@
     displayBalance,
     executeRendererRequest,
     findQualitySeam,
+    frontierStartRange,
     heatmapCellTarget,
     heatmapForeground,
     heatmapLegendModel,

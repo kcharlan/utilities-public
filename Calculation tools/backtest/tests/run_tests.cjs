@@ -11,6 +11,7 @@ async function runTests({synthetic=false,env=process.env,signal}={}) {
  if(synthetic){
   process.stdout.write('Explicit synthetic subset: invented Node fixtures and both invented compiler modules. This does not certify historical/browser acceptance.\n');
   const python=await validatePython({env,signal});
+  process.stdout.write('Synthetic Node files: '+SYNTHETIC_TESTS.map(n=>'tests/'+n).join(', ')+'\n');
   await runChild(process.execPath,['--test','--test-concurrency=1',...SYNTHETIC_TESTS.map(n=>'tests/'+n)],{env,signal,requireZeroSkips:true});
   await runSyntheticCompiler(python,{env,signal});
 

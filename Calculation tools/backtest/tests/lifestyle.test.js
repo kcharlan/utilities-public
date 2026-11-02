@@ -1,6 +1,5 @@
 'use strict';
 const test = require('node:test');
-const { getMarketRows } = require('./helpers/dataset.cjs');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const vm = require('node:vm');
@@ -53,7 +52,10 @@ test('failed and partial floor cells retain funding and observed-year context', 
 test('sweep lifestyle excludes partials, chooses earliest tolerance ties and summarizes need once per path', () => {
   const results = [entry(2002, profile([100, 50])), entry(2001, profile([100, 50 + 1e-14])), entry(2000, profile([100, 1], { partial: true }))];
   const l = Views.summarizeSweep(results, false, 90).lifestyle;
-  assert.equal(l.completeCount, 2); assert.equal(l.worstFloorStartYear, 2001);
+  assert.equal(l.completeCount, 2); assert.equal(l.failedCount, 0);
+  close(l.worstFloor, 50); close(l.worstFloorRatio, .5);
+  close(l.worstSurvivingFloor, 50); close(l.medianFloorRatio, .5);
+  close(l.deepestCut, .5); assert.equal(l.worstFloorStartYear, 2001);
   assert.equal(l.worstSurvivingStartYear, 2001); assert.equal(l.survivorsUniform, true);
   assert.equal(l.deepestCutStartYear, 2001); assert.equal(l.worstShortfallStartYear, 2001);
   assert.equal(l.longestBelowNeedRun, 1); assert.equal(l.baselineUniform, true);
@@ -159,25 +161,6 @@ test('need readout resolves both anchors and caveat uses schema rather than stra
   assert.equal(api().needReadout(null, 0).amountText, '—');
   assert.match(api().horizonCaveat({ paramSchema: [{ key: 'preservationCutoffYears' }] }), /horizon/i);
   assert.equal(api().horizonCaveat({ id: 'guytonKlinger', paramSchema: [] }), '');
-});
-
-const market = async () => (await getMarketRows()).filter(r => r.year >= 1928);
-const options = { startingBalance: 1e6, allocation: { stock: .6, bond: .4, bill: 0 }, feeRate: 0, taxRate: 0, horizon: 30 };
-for (const [strategyId, params, floor, startYear, failed, longest] of [
-  ['guytonKlinger', { initialRate: .04 }, 21073.055650429807, 1968, 0, 24],
-  ['fixedReal', { initialRate: .04 }, 0, 1965, 4, null],
-  ['fixedPercent', { rate: .04 }, 16339.197517681008, 1966, 0, 26],
-]) test(`real-data ${strategyId} lifestyle aggregates`, async () => {
-  const l = Views.summarizeSweep(sweepStartYears(await market(), 30, STRATEGIES[strategyId], params, options), false, 36000).lifestyle;
-  assert.equal(l.completeCount, 69); assert.equal(l.failedCount, failed); close(l.worstFloor, floor); assert.equal(l.worstFloorStartYear, startYear);
-  if (longest !== null) assert.equal(l.longestBelowNeedRun, longest);
-  if (strategyId === 'guytonKlinger') { close(l.worstFloorRatio, .5268, .0001); close(l.medianFloorRatio, .9286, .0005); close(l.deepestCut, .473, .001); assert.equal(l.deepestCutStartYear, 1968); assert.equal(l.worstShortfallStartYear, 1966); }
-  if (strategyId === 'fixedReal') { close(l.worstSurvivingFloor, 40000); assert.equal(l.worstSurvivingStartYear, 1928); assert.equal(l.survivorsUniform, true); }
-});
-
-test('real-data GK 1966 window names the reached and held floor', async () => {
-  const result = simulate((await market()).filter(r => r.year >= 1966).slice(0, 30), STRATEGIES.guytonKlinger, { initialRate: .04 }, options);
-  assert.match(api().windowLifestyleCells(result.metrics, 36000)[0].detail, /57% of year 1 · reached 1978 \(year 13\) · held 14 yrs/);
 });
 
 test('meaningful dollar shortfall remains positive when divided by a large baseline', () => {
