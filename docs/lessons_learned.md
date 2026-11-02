@@ -2043,3 +2043,6 @@ its error independently from history-scan errors, retain unknown counts through
 the API, and clear the error only after a successful status scan. Count worktree
 deletions and type changes among modified files. Corrupt-index, timeout, API
 recovery, and browser-card regressions cover these paths.
+Preserve the leading status columns of real porcelain output across subprocess
+helpers: stripping whitespace can turn a worktree change into a staged one.
+Exercise both deletion and type change through an actual quick scan.

@@ -419,11 +419,12 @@ def run_migrations(db_path: Path) -> None:
 
 # ── Git Quick Scan ────────────────────────────────────────────────────────────
 
-async def run_git(repo_path, *args: str, timeout: float = 30.0) -> tuple:
+async def run_git(repo_path, *args: str, timeout: float = 30.0, strip_output: bool = True) -> tuple:
     """Run a git command and return (stdout, stderr, returncode).
 
     Always uses asyncio.create_subprocess_exec (never shell=True).
     Decodes output with errors='replace' to handle non-UTF8 commit messages.
+    Stdout is stripped by default; structured output can preserve whitespace.
     On timeout, kills the process and returns ("", "timeout", -1).
     """
     proc = await asyncio.create_subprocess_exec(
@@ -438,8 +439,9 @@ async def run_git(repo_path, *args: str, timeout: float = 30.0) -> tuple:
         proc.kill()
         await proc.communicate()
         return ("", "timeout", -1)
+    output = stdout.decode("utf-8", errors="replace")
     return (
-        stdout.decode("utf-8", errors="replace").strip(),
+        output.strip() if strip_output else output,
         stderr.decode("utf-8", errors="replace").strip(),
         proc.returncode,
     )
@@ -534,7 +536,9 @@ async def quick_scan_repo(repo_path) -> dict:
     repo_path = str(repo_path)
 
     # 1. Status
-    status_out, status_err, status_rc = await run_git(repo_path, "status", "--porcelain=v1")
+    status_out, status_err, status_rc = await run_git(
+        repo_path, "status", "--porcelain=v1", strip_output=False
+    )
     status = parse_porcelain_status(status_out) if status_rc == 0 else {
         "has_uncommitted": None, "modified_count": None,
         "untracked_count": None, "staged_count": None,

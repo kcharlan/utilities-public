@@ -270,6 +270,22 @@ def test_quick_scan_repo_clean(tmp_path):
     assert result["untracked_count"] == 0
 
 
+@pytest.mark.parametrize("change", ["delete", "typechange"])
+def test_quick_scan_counts_unstaged_deletion_and_typechange(tmp_path, change):
+    _make_git_repo(tmp_path)
+    tracked = tmp_path / "synthetic.txt"
+    tracked.write_text("synthetic content\n")
+    subprocess.run(["git", "-C", str(tmp_path), "add", "synthetic.txt"], check=True)
+    subprocess.run(["git", "-C", str(tmp_path), "commit", "-m", "add synthetic file"],
+                   check=True, capture_output=True)
+    tracked.unlink()
+    if change == "typechange":
+        tracked.symlink_to("synthetic-target")
+    result = run(git_dashboard.quick_scan_repo(tmp_path))
+    assert result["has_uncommitted"] is True
+    assert (result["modified_count"], result["staged_count"]) == (1, 0)
+
+
 def test_quick_scan_corrupt_index_reports_error(tmp_path):
     _make_git_repo(tmp_path)
     (tmp_path / ".git" / "index").write_bytes(b"synthetic corrupt index")
