@@ -46,13 +46,13 @@ extension Store {
             """, [.text(RunOutcome.succeeded.rawValue)]) { $0.date(0) }.first
     }
 
-    /// The latest runs, newest first. Collector health passes `includingSkipped: false`: skipped runs
+    /// The latest runs, most recently begun first. Collector health passes `includingSkipped: false`: skipped runs
     /// count for nothing there, so they mustn't use up the limit.
     public func recentRuns(limit: Int, includingSkipped: Bool = true) throws -> [CollectorRunRecord] {
         try query("""
             SELECT id, started_at, finished_at, outcome, detail FROM collector_runs
             WHERE ? OR outcome <> ?
-            ORDER BY started_at DESC, id DESC LIMIT ?
+            ORDER BY id DESC LIMIT ?
             """, [.bool(includingSkipped), .text(RunOutcome.skipped.rawValue), .integer(max(0, limit))]) { row in
             CollectorRunRecord(
                 id: Int64(row.int(0)), startedAt: row.date(1), finishedAt: row.optionalDate(2),

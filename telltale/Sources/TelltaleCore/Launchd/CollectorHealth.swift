@@ -62,6 +62,7 @@ public struct CollectorHealthReport: Sendable, Equatable {
 ///
 /// - Skipped runs (another run held the lock) count for nothing: not as a run, a success or a
 ///   failure.
+/// - Runs are ranked in the order recorded, so a backwards clock cannot hide newer runs.
 /// - Last run is the newest finished run. When it failed, the message gives its detail and the
 ///   next start: the first interval boundary after now, counted from the newest run's start.
 /// - On schedule: the newest run (including one still running) started within 2 × the interval
@@ -113,7 +114,7 @@ public enum CollectorHealth {
         }
         let interval = TimeInterval(Settings.usableInterval(intervalMinutes) * 60)
         let counted = runs.filter { $0.outcome != .skipped }
-            .sorted { ($0.startedAt, $0.id) > ($1.startedAt, $1.id) }
+            .sorted { $0.id > $1.id }
         let finished = counted.filter { $0.outcome == .succeeded || $0.outcome == .failed }
         var problems: [String] = []
         /// The later of `date` and the wake: where the awake time that counts against the collector starts.

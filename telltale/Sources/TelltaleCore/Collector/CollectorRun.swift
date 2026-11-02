@@ -506,11 +506,12 @@ public struct CollectorRun: Sendable {
 
         /// When the source became unavailable in its current way (spec 6.5): nil while ready; kept while the same
         /// kind of problem continues, whatever its text; `now` when the source changes from ready or from the
-        /// other kind of problem.
+        /// other kind of problem or when the previous start lies in the future after a clock rollback.
         private static func unavailableSince(previous: SourceStateRow?, new: SetupState, now: Date) -> Date? {
             switch (previous?.state, new) {
             case (_, .ready): nil
-            case (.notSetUp?, .notSetUp), (.formatProblem?, .formatProblem), (.readProblem?, .readProblem): previous?.unavailableSince ?? now
+            case (.notSetUp?, .notSetUp), (.formatProblem?, .formatProblem), (.readProblem?, .readProblem):
+                previous?.unavailableSince.flatMap { $0 <= now ? $0 : nil } ?? now
             default: now
             }
         }

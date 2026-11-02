@@ -31,6 +31,18 @@ private enum Health {
 }
 
 @Suite struct CollectorHealthTests {
+    @Test func runsRecordedAfterAClockRollbackAreTheNewest() {
+        let runs = [
+            Health.run(1, Health.at(10, 0), .succeeded), Health.run(2, Health.at(10, 5), .succeeded),
+            Health.run(3, Health.at(9, 0), .failed, detail: "synthetic failure"),
+            Health.run(4, Health.at(9, 5), .failed, detail: "synthetic failure"),
+        ]
+        let report = Health.evaluate(runs: runs, now: Health.at(9, 6))
+        #expect(report.lastRun == .red)
+        #expect(report.notify)
+        #expect(report.notice?.hasPrefix("The collector failed at 09:05") == true)
+    }
+
     @Test func problemKeysNameTheCollectorAndEachSource() {
         let state = SourceStateRow(source: "example", state: .formatProblem("synthetic"), unavailableSince: Health.at(9, 0), updatedAt: Health.at(9, 5))
         #expect(Health.evaluate(loaded: false, runs: Health.healthyRuns, now: Health.at(9, 7)).problemKeys == ["collector"])

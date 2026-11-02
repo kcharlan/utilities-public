@@ -362,6 +362,9 @@ stored source state: a report after the one that began the problem has an
 problems, the notification names a confirmed one, even when the panel lists a
 newer one first.
 
+If the clock moves backwards past the stored start, the next report restarts
+"since" at the current time so a subsequent report can confirm the problem.
+
 **Read problems.** A failure to read a provider's file is a read problem, not
 format drift. It shares the format-problem lamp, message and two-consecutive-run
 notification policy. If one ingest reports both kinds, the first format problem
@@ -691,7 +694,8 @@ Collector lamps:
   the panel footer says "Collector off. Turn it on to keep watching."
 - **Truth comes from run records** in the database, which the collector
   writes at start and end of each run. `launchctl print` is used only for
-  Loaded, because its output format isn't stable.
+  Loaded, because its output format isn't stable. Runs are ranked by recording
+  order so a backwards clock cannot hide newer runs.
 - **The UI app checks collector health every minute** and posts the
   Collector health notification. The collector can't report its own absence.
   If both the app and the job are down, nothing alerts; the panel says so on

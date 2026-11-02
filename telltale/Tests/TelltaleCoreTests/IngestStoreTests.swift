@@ -217,6 +217,18 @@ import TelltaleTestSupport
         }
     }
 
+    @Test func runRecordsListInTheOrderTheyWereRecorded() throws {
+        try withScratchDirectory { directory in
+            let store = try Self.makeStore(directory)
+            let first = try store.beginRun(at: Synthetic.at(400))
+            try store.finishRun(first, at: Synthetic.at(405), outcome: .succeeded, detail: "")
+            let second = try store.beginRun(at: Synthetic.at(100))
+            try store.finishRun(second, at: Synthetic.at(105), outcome: .failed, detail: "synthetic failure")
+            #expect(try store.recentRuns(limit: 1).map(\.id) == [second])
+            #expect(try store.recentRuns(limit: 1, includingSkipped: false).map(\.id) == [second])
+        }
+    }
+
     @Test func sourceStatesListsEveryRowBySource() throws {
         try withScratchDirectory { directory in
             let store = try Self.makeStore(directory)
