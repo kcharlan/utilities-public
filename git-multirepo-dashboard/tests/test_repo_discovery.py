@@ -80,6 +80,40 @@ def test_discover_repos_finds_git_repos(tmp_path):
     assert len(repos) == 2
 
 
+def test_discover_repos_dedupes_linked_worktrees(tmp_path, monkeypatch):
+    main = _make_git_repo(tmp_path / "z-main")
+    linked = tmp_path / "a-linked"
+    subprocess.run(
+        ["git", "-C", str(main), "worktree", "add", "-b", "synthetic-branch", str(linked)],
+        check=True, capture_output=True,
+    )
+    walk = git_dashboard.os.walk
+
+    def linked_first(*args, **kwargs):
+        for dirpath, dirnames, filenames in walk(*args, **kwargs):
+            dirnames.sort()
+            yield dirpath, dirnames, filenames
+
+    monkeypatch.setattr(git_dashboard.os, "walk", linked_first)
+    assert run(git_dashboard.discover_repos(tmp_path)) == [
+        {"path": str(main.resolve()), "name": main.name}
+    ]
+
+
+def test_discover_repos_keeps_lone_linked_worktree(tmp_path):
+    main = _make_git_repo(tmp_path / "main")
+    root = tmp_path / "scan"
+    root.mkdir()
+    linked = root / "linked"
+    subprocess.run(
+        ["git", "-C", str(main), "worktree", "add", "-b", "synthetic-branch", str(linked)],
+        check=True, capture_output=True,
+    )
+    assert run(git_dashboard.discover_repos(root)) == [
+        {"path": str(linked.resolve()), "name": linked.name}
+    ]
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # 2. discover_repos — skips non-git directories
 # ─────────────────────────────────────────────────────────────────────────────

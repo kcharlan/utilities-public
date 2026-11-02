@@ -2147,6 +2147,14 @@ cannot resolve HEAD to a commit. Read the symbolic HEAD for quick scans, as for
 default-branch fallback, and retain detached HEAD as unknown. Exercise empty
 repositories with real Git and an isolated database through both scan paths.
 
+### 2026-11-02 — Deduplicate Git worktrees by shared directory
+
+Linked worktrees have distinct top-level paths but share repository history.
+Group discovery candidates by their Git common directory, preferring the main
+checkout even when a linked worktree is encountered first. If the main checkout
+is outside the scan root, retain the first discovered linked worktree. Exercise
+both cases with real synthetic repositories.
+
 ## 2026-11-02: Restrict retention to owned files
 
 Model Sentinel's configurable report directory can contain unrelated files. A
