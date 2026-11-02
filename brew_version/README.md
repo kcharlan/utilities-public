@@ -228,7 +228,8 @@ watch changes made while the network is busy. A check with any unreachable looku
 does not advance the last successful check. Automatic failures retry no sooner
 than the chosen interval; reconnect retries an unreachable check promptly.
 Failed saves retain that interval floor across reconnects; manual checks can
-retry immediately. The next-check footer uses these same scheduler deadlines,
+retry immediately. A saved check or catalog time later than the current clock
+counts as due. The next-check footer uses these same scheduler deadlines,
 including failed attempts and saves. While offline it describes the reconnect
 deadline instead: reconnect can bypass an unreachable request's delay, but
 cannot bypass a failed save's interval floor.

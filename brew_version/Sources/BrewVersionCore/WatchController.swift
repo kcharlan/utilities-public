@@ -297,7 +297,7 @@ public enum AutomaticCheckSchedule: Equatable, Sendable {
         [lastFailedSave,
          reconnecting && retryWatchesOnReconnect ? nil : lastCheckAttempt,
          retryWatchesOnReconnect ? nil : state.lastCheck]
-            .compactMap { CheckSchedule.nextDue(lastCheck: $0, interval: state.interval) }.max()
+            .compactMap { CheckSchedule.nextDue(lastCheck: $0, interval: state.interval, now: now()) }.max()
     }
 
     private var automaticRequestsAllowed: Bool {
@@ -450,7 +450,10 @@ public enum AutomaticCheckSchedule: Equatable, Sendable {
     private func catalogRefreshDue(manual: Bool) -> Bool {
         if catalog == nil { return true }
         guard let fetched = state.lastCatalogFetch else { return true }
-        if manual { return now().timeIntervalSince(fetched) >= CheckInterval.manualCatalogFreshness }
+        if manual {
+            let current = now()
+            return fetched > current || current.timeIntervalSince(fetched) >= CheckInterval.manualCatalogFreshness
+        }
         return !launchCatalogRefreshDone || CheckSchedule.isDue(lastCheck: fetched, interval: state.catalogInterval, now: now())
     }
 

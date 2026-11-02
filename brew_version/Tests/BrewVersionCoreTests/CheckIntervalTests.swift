@@ -3,6 +3,11 @@ import Testing
 @testable import BrewVersionCore
 
 struct CheckIntervalTests {
+    @Test func futureLastCheckIsDue() {
+        let start = Date(timeIntervalSince1970: 100)
+        #expect(CheckSchedule.nextDue(lastCheck: start.addingTimeInterval(60), interval: .standard, now: start) == nil)
+        #expect(CheckSchedule.isDue(lastCheck: start.addingTimeInterval(60), interval: .standard, now: start))
+    }
     @Test func exposedBoundsAndValidationMessage() {
         #expect(CheckInterval.allowedMinutes == 10...1440)
         #expect(CheckInterval.validationMessage(locale: Locale(identifier: "en_US")) == "Enter 10 to 1,440 minutes.")
@@ -20,7 +25,7 @@ struct CheckIntervalTests {
             #expect(CheckInterval(minutes: minutes)?.label == label)
         }
         let start = Date(timeIntervalSince1970: 100)
-        #expect(CheckSchedule.nextDue(lastCheck: nil, interval: .standard) == nil)
+        #expect(CheckSchedule.nextDue(lastCheck: nil, interval: .standard, now: start) == nil)
         #expect(CheckSchedule.isDue(lastCheck: nil, interval: .standard, now: start))
         #expect(!CheckSchedule.isDue(lastCheck: start, interval: .standard, now: start.addingTimeInterval(1740)))
         #expect(CheckSchedule.isDue(lastCheck: start, interval: .standard, now: start.addingTimeInterval(1800)))

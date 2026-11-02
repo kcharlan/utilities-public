@@ -2014,3 +2014,11 @@ made after a document was opened. Record the file identity at open and after
 successful saves, reject conflicting in-place saves, and leave a Save As escape
 hatch for the unsaved edits. Tests that adjust the file's modification time as
 setup must reopen it before exercising the save contract.
+
+## 2026-11-02: Treat future saved check times as due
+
+A persisted success timestamp can be later than the current wall clock after a
+clock correction. Treat it as absent when computing the next check or catalog
+refresh; otherwise an automatic check or manual refresh can stall until the
+clock catches up. Exercise the actual controller requests and displayed deadline
+with an injected clock as well as the scheduling helper.

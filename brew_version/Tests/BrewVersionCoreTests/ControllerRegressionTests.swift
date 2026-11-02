@@ -7,6 +7,19 @@ import Testing
 }
 
 @MainActor struct ControllerRegressionTests {
+    @Test func futureLastCheckDoesNotStallAutomaticChecks() async throws {
+        let f = WatchFixture(); defer { f.clean() }
+        let clock = RetryClock()
+        var state = AppState.initial; state.watched = [baseline()]; state.lastCheck = clock.date.addingTimeInterval(86_400)
+        try f.store.save(state)
+        let transport = StubTransport([watchURL(): [watchResponse("2")]])
+        let c = WatchController(transport: transport, installed: nil, store: f.store, notifier: RecordingNotifier(), now: { clock.date })
+        #expect(c.nextAutomaticCheck == .ready)
+        await c.checkIfDue()
+        #expect(await transport.requests.count == 1)
+        #expect(c.state.lastCheck == clock.date)
+        #expect(c.nextAutomaticCheck == .scheduled(Date(timeIntervalSince1970: 1_001_800)))
+    }
     @Test func manualCheckBypassesOfflinePathWhileAutomaticCheckWaits() async throws {
         let f = WatchFixture(); defer { f.clean() }
         var state = AppState.initial; state.watched = [baseline()]; try f.store.save(state)

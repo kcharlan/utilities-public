@@ -12,6 +12,19 @@ private func repeatedCatalog(_ count: Int, cask: String = syntheticCaskList) -> 
 }
 
 @MainActor struct CatalogCadenceTests {
+    @Test func futureCatalogFetchDoesNotBlockManualRefresh() async throws {
+        let f = WatchFixture(); defer { f.clean() }
+        let directory = f.directory.appendingPathComponent("catalog"); _ = try await seedCatalog(directory)
+        let clock = CadenceClock()
+        var state = AppState.initial; state.lastCatalogFetch = clock.date.addingTimeInterval(86_400); try f.store.save(state)
+        let bulk = repeatedCatalog(1)
+        let c = WatchController(transport: StubTransport([:]), installed: nil, store: f.store, notifier: RecordingNotifier(),
+                                now: { clock.date }, catalogClient: CatalogClient(transport: bulk, cacheDirectory: directory),
+                                networkAvailable: false)
+        await c.refreshNow()
+        #expect(await bulk.requests.count == 2)
+        #expect(c.state.lastCatalogFetch == clock.date)
+    }
     @Test func savedStateWithoutNewSettingsLoadsWithDefaults() throws {
         let f = WatchFixture(); defer { f.clean() }
         var state = AppState.initial; state.catalogInterval = CheckInterval(minutes: 240)!; state.includeSelfUpdating = true
