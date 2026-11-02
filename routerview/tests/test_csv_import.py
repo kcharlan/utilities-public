@@ -88,6 +88,31 @@ def _csv(row: str) -> str:
     return _BASE_CSV_COLUMNS + "\n" + row + "\n"
 
 
+def test_csv_import_rejects_missing_required_columns(monkeypatch, tmp_path):
+    module = load_module(monkeypatch, tmp_path / "runtime_home")
+    client, db_path = build_client(module, tmp_path)
+    header = _BASE_CSV_COLUMNS.replace(",cost_total", "")
+    row = "fake-1,2024-01-01,fake,provider,key,app,10,20,0,0,0,0,0,100,stop,true,false,0,user,50"
+    response = client.post("/api/import/csv", files={"file": ("fake.csv", header + "\n" + row + "\n", "text/csv")})
+    assert response.status_code == 400
+    assert "cost_total" in response.json()["error"]
+    response = client.post("/api/import/csv", files={"file": ("fake.csv", "model_permaslug\nfake\n", "text/csv")})
+    assert response.status_code == 400
+    assert response.json()["error"] == "CSV is missing required columns: cost_total, created_at, generation_id"
+    with sqlite3.connect(db_path) as db:
+        assert db.execute("SELECT COUNT(*) FROM generations").fetchone()[0] == 0
+        assert db.execute("SELECT COUNT(*) FROM ingestion_log").fetchone()[0] == 0
+
+
+def test_csv_import_counts_blank_generation_id_as_skipped(monkeypatch, tmp_path):
+    module = load_module(monkeypatch, tmp_path / "runtime_home")
+    client, _ = build_client(module, tmp_path)
+    fields = ",2024-01-01,fake,provider,key,app,10,20,0,0,0.1,0,0,0,100,stop,true,false,0,user,50"
+    response = client.post("/api/import/csv", files={"file": ("fake.csv", _csv(fields + "\nfake-1" + fields), "text/csv")})
+    assert response.status_code == 200
+    assert response.json() == {"status": "ok", "inserted": 1, "skipped": 1}
+
+
 def test_csv_import_parses_naive_created_at_as_utc(monkeypatch, tmp_path):
     """OpenRouter exports naive timestamps in UTC. The server must store them
     verbatim as UTC, regardless of where the client lives."""

@@ -2249,3 +2249,10 @@ resolved even when the converter emits an unexpected prefix.
 Taking an absolute value can turn an unsupported positive withdrawal into an
 outgoing transfer. Reject the unexpected sign before normalization and test a
 later invalid row across a batch so no earlier outputs are committed.
+
+## 2026-11-02: Validate import headers before opening the database
+
+An absent CSV cost column was treated like an empty value, silently importing
+rows at zero cost. Reject missing required headers before acquiring a database
+connection, and test rollback with a failure on the second valid row so the
+first insert must actually be undone.
