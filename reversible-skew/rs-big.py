@@ -213,12 +213,17 @@ def inverse(infile, outfile, verbose=False, whole_file=False):
         while True:
             hdr = fin.read(8)
             if not hdr: break
+            if len(hdr) < 8:
+                raise EOFError(f"Expected 8 header bytes, got {len(hdr)}")
             idx += 1
             primary, payload = struct.unpack('>II', hdr)
             mode = 'RAW' if primary == SENTINEL else 'XFORM'
             if verbose: print(f"Block {idx}: {mode}, payload={payload}")
             if primary == SENTINEL:
-                fout.write(fin.read(payload))
+                data = fin.read(payload)
+                if len(data) != payload:
+                    raise EOFError(f"Expected {payload} raw bytes, got {len(data)}")
+                fout.write(data)
             else:
                 pairs = read_rle(fin, payload)
                 mtf = rle_decode_jit(pairs)

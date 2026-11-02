@@ -2177,3 +2177,9 @@ A backup alone does not make deleting a loaded job's plist safe when unloading
 fails. Keep the original plist and report the backup path, while allowing an
 already unloaded job to be deleted even if bootout fails. Exercise both paths
 using synthetic plists and a mocked unload operation.
+
+### 2026-11-02 — Reject incomplete block payloads before replacing output
+
+A short read can look like a successful RAW block and cause atomic output to
+replace a valid destination with truncated data. Check header and payload lengths
+before writing, and test both absent and existing destinations on failure.
