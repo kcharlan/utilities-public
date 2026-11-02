@@ -2121,3 +2121,9 @@ DataFrames inferred from empty row lists have no columns, so downstream filters
 and CSV readers can fail even when an empty result is valid. Declare the input
 and output schemas explicitly and exercise both empty workouts and absent metric
 records through the complete extraction pipeline.
+
+### 2026-11-02 — Reject XML values that disappear
+
+An empty list produces no XML elements, silently dropping its key. Reject it
+at serialization and cover both the serializer and the CLI error boundary;
+document other XML round-trip type losses separately.
