@@ -56,7 +56,7 @@ When Git status fails, the card shows a **status failed** badge with the error i
 
 **Not Checked** counts declarations whose outdated or vulnerability check is incomplete, including declarations that also have a vulnerability or update finding. Outdated totals include minor and major update severities. Card coverage dots explain unchecked counts and missing tools; the fleet Dependencies view shows the same coverage per repository.
 
-The **Scan Dir** browser can navigate local directories and register repositories without a command-line path. Discovery skips hidden, generated, virtual-environment, and dependency directories and does not descend into a repository after finding its `.git` entry.
+The **Scan Dir** browser can navigate local directories and register repositories without a command-line path. Discovery skips hidden, generated, virtual-environment, and dependency directories and does not descend into a repository after finding its `.git` entry. Within one discovery, linked worktrees are grouped by their shared Git directory; the main checkout is preferred when found, otherwise the first linked worktree is kept.
 
 ### Full scan
 
