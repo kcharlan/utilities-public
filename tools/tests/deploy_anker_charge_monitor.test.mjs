@@ -172,9 +172,10 @@ test('private scratch retains the exact indexed input modes under a restrictive 
 });
 
 test('canonical make install delegates to the root CLI without a separate release build',()=>{
-  const make=fs.readFileSync(new URL('../../anker_charge_monitor/Makefile',import.meta.url),'utf8');
-  assert.match(make,/install deploy:\n\tnode ..\/tools\/deploy_anker_charge_monitor\.mjs/);
-  assert.match(make,/"\/Applications\/Anker Charge Monitor.app\/Contents\/MacOS\/PrimeMonitor" --live-check/);
+  const project=fileURLToPath(new URL('../../anker_charge_monitor',import.meta.url));
+  const lines=target=>execFileSync('make',['-s','-n','-C',project,target],{encoding:'utf8'}).split('\n').map(line=>line.trim()).filter(Boolean);
+  assert.deepEqual(lines('install'),['node ../tools/deploy_anker_charge_monitor.mjs']);
+  assert.deepEqual(lines('live-check').map(line=>line.endsWith('--live-check')),[true]);
 });
 
 test('forward deployment prunes older backups while rollback and dry run preserve them', t => {

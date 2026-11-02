@@ -184,8 +184,8 @@ test('private scratch retains the exact indexed input modes under a restrictive 
 });
 
 test('canonical make install delegates to the root CLI without a separate release build or launchd',()=>{
-  const make=fs.readFileSync(new URL('../../telltale/Makefile',import.meta.url),'utf8');
-  assert.match(make,/^install deploy:\n\tnode ..\/tools\/deploy_telltale\.mjs\n(?!\t)/m);
+  const output=execFileSync('make',['-s','-n','-C',fileURLToPath(new URL('../../telltale',import.meta.url)),'install'],{encoding:'utf8'});
+  assert.deepEqual(output.split('\n').map(line=>line.trim()).filter(Boolean),['node ../tools/deploy_telltale.mjs']);
   for(const file of ['../../telltale/Makefile','../../telltale/tools/install.sh','../deploy_telltale.mjs']) assert.doesNotMatch(fs.readFileSync(new URL(file,import.meta.url),'utf8'),/\blaunchctl\b/,file);
 });
 

@@ -29,8 +29,6 @@ class Page:
         self.result = result
 
     def evaluate(self, *args):
-        if len(args) > 1:
-            return [token for token in self.result if token not in args[1]]
         return self.result
 
 
@@ -191,12 +189,6 @@ def test_compiles_cleanly_fails_on_invalid_escape_sequence(tmp_path):
         testkit.assert_launcher_compiles_cleanly(path)
 
 
-def test_classes_styled_reports_unstyled_tokens_and_honors_ignore():
-    with pytest.raises(AssertionError, match='missing'):
-        testkit.assert_classes_styled(Page(['missing']))
-    testkit.assert_classes_styled(Page(['missing']), ignore=['missing'])
-
-
 def test_exact_text_rejects_padding_that_normalized_matchers_hide():
     testkit.assert_exact_text(Page('Copy'), 'Copy')
     with pytest.raises(AssertionError, match="' Copy '"):
@@ -264,6 +256,7 @@ def test_classes_styled_does_not_confuse_class_name_prefixes():
 
     with pytest.raises(AssertionError, match='foo'):
         testkit.assert_classes_styled(JavaScriptPage())
+    testkit.assert_classes_styled(JavaScriptPage(), ignore=['foo'])
 
 
 def test_no_external_resources_allows_explicitly_allowed_timed_origin():
