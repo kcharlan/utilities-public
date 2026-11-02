@@ -230,6 +230,8 @@ Detection is **value-first, not key-first**. Any sufficiently long, opaque strin
 
 Multiple detectors on the same value are consolidated into a single finding with merged descriptions and the highest severity.
 
+When decoded base64 content contains a JSON object or array, detected findings are critical and target the whole encoded value for redaction.
+
 ### Filters
 
 Two dropdowns at the top of the Security tab:

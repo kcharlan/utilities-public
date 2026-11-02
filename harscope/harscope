@@ -703,6 +703,18 @@ class SecurityScanner:
                 try:
                     decoded = base64.b64decode(value[:self.MAX_SCAN_LEN]).decode('utf-8', errors='ignore')
                     if decoded and len(decoded) > 10:
+                        try:
+                            parsed = json.loads(decoded)
+                        except (json.JSONDecodeError, RecursionError):
+                            parsed = None
+                        if isinstance(parsed, (dict, list)):
+                            inner = SecurityScanner()
+                            inner._walk(parsed, path + '(base64)(parsed)', entry_index,
+                                        depth=depth + 1, segments=segments + [None])
+                            for finding in inner.findings:
+                                self._add_finding(entry_index, 'critical', finding['category'],
+                                                  path + '(base64)', finding['description'],
+                                                  value, segments)
                         for pattern, category, severity, desc_template in self.PATTERNS:
                             for match in pattern.finditer(decoded):
                                 self._add_finding(entry_index, severity, category, path + '(base64)',

@@ -108,6 +108,28 @@ async def test_unicode_filename_export_is_safe(client):
 
 
 @threaded
+async def test_base64_json_body_secret_is_not_exported(client):
+    import base64
+    source = capture('none')
+    encoded = base64.b64encode(json.dumps({'access_token': LONG_SECRET}).encode()).decode()
+    source['log']['entries'][0]['response']['content'] = {
+        'encoding': 'base64', 'mimeType': 'application/json', 'text': encoded,
+    }
+    await load_har(client, source)
+    security = await client.get('/api/security')
+    assert security.status_code == 200
+    bulk = await client.post('/api/security/bulk', json={'action': 'deselect', 'severity': 'warning'})
+    assert bulk.status_code == 200
+    response = await client.post('/api/export/har')
+    assert response.status_code == 200
+    assert LONG_SECRET.encode() not in response.content
+    assert base64.b64encode(LONG_SECRET.encode()) not in response.content
+    assert encoded.encode() not in response.content
+    assert any(f['severity'] == 'critical' and f['location'].endswith('(base64)')
+               for f in security.json()['findings'])
+
+
+@threaded
 async def test_secret_is_swept_from_base64_duplicate(client):
     import base64
     source = capture('new_password')
