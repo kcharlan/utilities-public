@@ -204,6 +204,7 @@ def transform(infile, outfile, block_size, max_run, verbose=False, whole_file=Fa
 
     pct = (passed / total * 100) if total else 0
     print(f"Transform done: {passed}/{total} blocks passthrough ({pct:.1f}%)")
+    return passed, total
 
 
 def inverse(infile, outfile, verbose=False, whole_file=False):
@@ -232,6 +233,30 @@ def inverse(infile, outfile, verbose=False, whole_file=False):
                 last  = mtf_decode(mtf_i)
                 orig  = bwt_inverse(last, primary)
                 fout.write(orig)
+
+
+def selftest():
+    unit = b"synthetic reversible skew line\n"
+    cases = {
+        "random": os.urandom(1 << 20),
+        "periodic": (unit * ((1 << 20) // len(unit) + 1))[:1 << 20],
+        "varied": b"".join(f"synthetic line {i:06d} value {i * 7 % 1000}\n".encode() for i in range(60000))[:1 << 20],
+    }
+    with tempfile.TemporaryDirectory() as d:
+        for name, data in cases.items():
+            src, enc, dec = (os.path.join(d, f"{name}.{ext}") for ext in ("in", "rsbwt", "out"))
+            with open(src, "wb") as f:
+                f.write(data)
+            passed, total = transform(src, enc, 64 * 1024, 255)
+            if name == "varied" and passed == total:
+                print("SELFTEST FAILED: varied (no block took the transformed path)")
+                sys.exit(1)
+            inverse(enc, dec)
+            with open(dec, "rb") as f:
+                if f.read() != data:
+                    print(f"SELFTEST FAILED: {name}")
+                    sys.exit(1)
+    print("SELFTEST PASSED!")
 
 
 # --- CLI ---
@@ -263,7 +288,7 @@ if __name__ == '__main__':
                    help='Show per-block debug info')
 
     # selftest
-    subs.add_parser('selftest', help='Round-trip test on 1MiB random data')
+    subs.add_parser('selftest', help='Round-trip test on random, periodic, and varied data')
 
     args = parser.parse_args()
     if args.cmd == 'transform':
@@ -274,20 +299,4 @@ if __name__ == '__main__':
         inverse(args.input, args.output,
                 verbose=args.verbose, whole_file=args.whole_file)
     else:
-        # selftest
-        print("Running self-test…")
-        import tempfile, random, os
-        data = bytes(random.getrandbits(8) for _ in range(1024*1024))
-        tmp = tempfile.NamedTemporaryFile(delete=False); tmp.write(data); tmp.close()
-        name = tmp.name
-        tname = name + '.rs'
-        oname = name + '.out'
-        transform(name, tname, block_size=64*1024, max_run=255, verbose=False)
-        inverse(tname, oname, verbose=False)
-        out = open(oname,'rb').read()
-        if out != data:
-            print("SELFTEST FAILED!"); sys.exit(1)
-        print("SELFTEST PASSED!")
-        for f in (name, tname, oname):
-            try: os.unlink(f)
-            except: pass
+        selftest()
