@@ -2,6 +2,8 @@ import sqlite3
 import sys
 from pathlib import Path
 
+import pytest
+
 REPO_ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(REPO_ROOT))
 
@@ -9,6 +11,10 @@ from tools.testkit import ASGISyncClient, load_launcher
 
 
 SCRIPT_PATH = Path(__file__).resolve().parents[1] / "routerview"
+TWO_ROW_CSV = """generation_id,created_at,model_permaslug,provider_name,api_key_name,app_name,tokens_prompt,tokens_completion,tokens_reasoning,tokens_cached,cost_total,cost_cache,cost_web_search,cost_file_processing,generation_time_ms,finish_reason_normalized,streamed,cancelled,num_search_results,user,time_to_first_token_ms
+gen-a,2026-04-13T10:00:00Z,openai/gpt-4o-mini,OpenAI,Primary,Test App,10,20,3,1,0.12,0.01,0.00,0.00,123,stop,true,false,0,user-1,50
+gen-b,2026-04-13T11:00:00Z,anthropic/claude-3.7-sonnet,Anthropic,Primary,Test App,15,25,4,2,0.34,0.02,0.00,0.00,234,stop,false,false,1,user-2,80
+"""
 
 
 def load_module(monkeypatch, runtime_home: Path):
@@ -27,21 +33,16 @@ def build_client(module, tmp_path: Path):
 def test_csv_import_reimport_counts_duplicates_as_skipped(monkeypatch, tmp_path):
     module = load_module(monkeypatch, tmp_path / "runtime_home")
     client, db_path = build_client(module, tmp_path)
-    csv_text = """generation_id,created_at,model_permaslug,provider_name,api_key_name,app_name,tokens_prompt,tokens_completion,tokens_reasoning,tokens_cached,cost_total,cost_cache,cost_web_search,cost_file_processing,generation_time_ms,finish_reason_normalized,streamed,cancelled,num_search_results,user,time_to_first_token_ms
-gen-a,2026-04-13T10:00:00Z,openai/gpt-4o-mini,OpenAI,Primary,Test App,10,20,3,1,0.12,0.01,0.00,0.00,123,stop,true,false,0,user-1,50
-gen-b,2026-04-13T11:00:00Z,anthropic/claude-3.7-sonnet,Anthropic,Primary,Test App,15,25,4,2,0.34,0.02,0.00,0.00,234,stop,false,false,1,user-2,80
-"""
-
     first = client.post(
         "/api/import/csv",
-        files={"file": ("openrouter_activity.csv", csv_text, "text/csv")},
+        files={"file": ("openrouter_activity.csv", TWO_ROW_CSV, "text/csv")},
     )
     assert first.status_code == 200
     assert first.json() == {"status": "ok", "inserted": 2, "skipped": 0}
 
     second = client.post(
         "/api/import/csv",
-        files={"file": ("openrouter_activity.csv", csv_text, "text/csv")},
+        files={"file": ("openrouter_activity.csv", TWO_ROW_CSV, "text/csv")},
     )
     assert second.status_code == 200
     assert second.json() == {"status": "ok", "inserted": 0, "skipped": 2}
@@ -52,6 +53,26 @@ gen-b,2026-04-13T11:00:00Z,anthropic/claude-3.7-sonnet,Anthropic,Primary,Test Ap
     finally:
         conn.close()
     assert total == 2
+
+
+def test_summary_totals_and_cache_hit_rate_from_imported_csv(monkeypatch, tmp_path):
+    module = load_module(monkeypatch, tmp_path / "runtime_home")
+    client, _ = build_client(module, tmp_path)
+    imported = client.post("/api/import/csv", files={"file": ("activity.csv", TWO_ROW_CSV, "text/csv")})
+    assert imported.status_code == 200
+
+    summary = client.get("/api/summary", params={"range": "all"})
+    assert summary.status_code == 200
+    assert summary.json()["request_count"] == 2
+    assert summary.json()["total_cost"] == pytest.approx(0.46)
+    assert summary.json()["total_tokens"] == 70
+    assert summary.json()["cache_hit_rate"] == pytest.approx(0.12)
+
+    filtered = client.get("/api/summary", params={"range": "all", "model": "gpt-4o-mini"})
+    assert filtered.status_code == 200
+    assert filtered.json()["request_count"] == 1
+    assert filtered.json()["total_cost"] == pytest.approx(0.12)
+    assert filtered.json()["cache_hit_rate"] == pytest.approx(0.1)
 
 
 _BASE_CSV_COLUMNS = (
