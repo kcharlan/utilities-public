@@ -2046,3 +2046,10 @@ recovery, and browser-card regressions cover these paths.
 Preserve the leading status columns of real porcelain output across subprocess
 helpers: stripping whitespace can turn a worktree change into a staged one.
 Exercise both deletion and type change through an actual quick scan.
+
+## 2026-11-02: Preserve alerts when report rendering fails
+
+Model Sentinel saves scan results before rendering reports, so a renderer exception
+could lose the change alert after the baseline had already advanced. Catch failures
+at the report boundary, redact credential values from the fallback, and apply both
+change and error notification policies to the recorded result summary.
