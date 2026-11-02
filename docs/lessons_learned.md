@@ -22,6 +22,14 @@ hide real trigger times. Group only entries differing in weekday, preserve the
 other entries separately, and cover month, day and both Sunday encodings with
 direct schedule tests alongside an API smoke test.
 
+## 2026-11-02: Verify converted links and their emitted targets together
+
+HTML-to-Markdown converters can discard both element IDs and fragment links.
+When combining pages, explicitly emit each page anchor and verify rewritten
+links against the resulting document, including pages without headings.
+Escape attribute values when emitting raw HTML, and parse the emitted IDs in
+tests so quotes and entity-like filenames cannot disguise malformed markup.
+
 ## 2026-11-02: Normalize distance records before aggregation
 
 An output column labelled kilometres can silently misstate mixed-unit records if

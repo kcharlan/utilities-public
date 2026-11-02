@@ -8,6 +8,7 @@
 # ///
 import argparse
 import glob
+import html
 import os
 import re
 import shutil
@@ -430,11 +431,7 @@ def process_page(
             print(f"  -> Warning: No content found in {page_relative_path}", file=sys.stderr)
             return None
 
-    # Add a unique ID to the first <h2> tag to act as an anchor for navigation
-    first_h2 = content_div.find("h2")
     page_anchor_id = f"page-{page_relative_path.replace('.html', '').replace('.', '-')}"
-    if first_h2:
-        first_h2['id'] = page_anchor_id
 
     heading_prefix = extract_heading_prefix(soup, content_div)
     apply_heading_numbering(content_div, heading_prefix)
@@ -468,7 +465,11 @@ def process_page(
 
     for link in content_div.find_all("a"):
         href = link.get("href")
-        if not href or href.startswith("http") or href.startswith("#"):
+        if not href or href.startswith("http"):
+            continue
+        if href.startswith("#"):
+            # html2text drops source IDs, so retain the previous plain-text output.
+            del link["href"]
             continue
 
         href_base = href.split("#")[0]
@@ -487,19 +488,18 @@ def process_page(
                 print(f"  -> Warning: Linked asset not found: {asset_source_path}", file=sys.stderr)
         
         elif href_base and href_base in all_page_paths:
-            anchor_target = f"#page-{href_base.replace('.html', '').replace('.', '-')}"
-            original_anchor = f"#{href.split('#')[1]}" if "#" in href else ""
-            link["href"] = f"{anchor_target}{original_anchor}"
+            link["href"] = f"#page-{href_base.replace('.html', '').replace('.', '-')}"
 
     converter = html2text.HTML2Text()
     converter.ignore_links = False
+    converter.skip_internal_links = False
     converter.body_width = 0
     
     # Convert the soup to string, then let html2text handle it.
     html_string = str(content_div)
     markdown = converter.handle(html_string).strip()
 
-    return markdown
+    return f'<a id="{html.escape(page_anchor_id, quote=True)}"></a>\n\n{markdown}'
 
 
 def main():
