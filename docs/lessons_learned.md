@@ -1962,13 +1962,6 @@ expressions as well as names; accepting arbitrary suffixes defers malformed inpu
 until dependency installation. Reject valid syntax outside the supported subset
 explicitly rather than guessing at it.
 
-### 2026-11-02 — Detect sensitive URL fragment parameters
-
-Scan fragment parameters as well as query parameters using the shared sensitive
-key vocabulary, and preserve names recognized by the prior matcher. Export
-regressions should include secrets too short for generic opaque-token detection;
-formats that omit a field cannot independently prove that field was redacted.
-
 ### 2026-10-30 — uv ignores dependency Python upper bounds
 
 uv intentionally ignores upper bounds in a dependency's `Requires-Python`
@@ -1993,3 +1986,10 @@ Image build cleanup must handle an unmatched glob or missing optional path witho
 forcing removal. Guard each fixed path or glob entry, including dangling symlinks,
 and propagate removal errors. Exercise the actual shell fragment against synthetic
 present, absent, linked and failing inputs so cleanup does not silently regress.
+
+### 2026-11-02 — Detect sensitive URL fragment parameters
+
+Scan fragment parameters as well as query parameters using the shared sensitive
+key vocabulary, and preserve names recognized by the prior matcher. Export
+regressions should include secrets too short for generic opaque-token detection;
+formats that omit a field cannot independently prove that field was redacted.
