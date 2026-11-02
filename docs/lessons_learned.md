@@ -1,5 +1,11 @@
 # Lessons learned
 
+## 2026-11-02: Handle decoding failures at the input boundary
+
+Parsing error handlers cannot catch invalid text encoding when a file is decoded
+before parsing. Exercise invalid bytes through the CLI and report decoding errors
+through the same structured input-error contract without creating output.
+
 ## 2026-11-02: Cover every launchd domain in target selection
 
 Apple and non-Apple daemons both use the system launchd domain. Exercise every
