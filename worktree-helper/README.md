@@ -2,6 +2,8 @@
 
 `worktree-helper` is a single-file Python utility for managing `git worktree` without having to remember the syntax. It uses only the Python standard library.
 
+Current version: 0.1.5.
+
 The executable itself is named `worktree`. It supports:
 
 - A keyboard-driven TUI when launched with no flags
@@ -216,7 +218,7 @@ Other create-related flags:
 --lock-reason TEXT
 ```
 
-The `--orphan` option appears in version 0.1.4's CLI and TUI, but its current validation conflicts with the required `--new-branch` or `--reset-branch` option. Orphan creation therefore does not currently complete; use `git worktree add --orphan` directly until that implementation is fixed.
+Use `--orphan --new-branch NAME` to create an unborn branch with no history; it cannot be combined with `--from`.
 
 ### Tests
 

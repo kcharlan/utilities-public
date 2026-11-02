@@ -2219,6 +2219,12 @@ and groups. Walk those containers in order and reuse the normal paragraph,
 table, and shape processing; strict-mode synthetic conversions catch silent
 text loss that a successful return code alone misses.
 
+### 2026-11-02 — Treat orphan creation as a branch modifier
+
+Git's worktree orphan option modifies a new or reset branch mode rather than
+replacing it. Validate incompatible start points separately and test the actual
+symbolic HEAD and missing commit in a synthetic repository.
+
 ### 2026-11-02 — Keep SQLite lock waits off the event loop
 
 Blocking SQLite operations inside async routes can stall unrelated requests for
