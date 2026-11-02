@@ -122,6 +122,23 @@ def test_scan_fleet_quick_valid_path_has_path_exists_true(test_app, tmp_path):
 
 # ── Fleet endpoint tests ─────────────────────────────────────────────────────
 
+def test_fleet_exposes_and_clears_quick_scan_error(test_app, tmp_path):
+    client, db_path = test_app
+    repo = _make_git_repo(tmp_path / "corrupt")
+    _insert_repo(db_path, "corrupt", str(repo))
+    (repo / ".git" / "index").write_bytes(b"synthetic corrupt index")
+    assert client.post("/api/fleet/refresh").status_code == 200
+    failed = client.get("/api/fleet").json()["repos"][0]
+    assert failed["quick_scan_error"]
+    assert failed["has_uncommitted"] is None
+    assert all(failed[key] is None for key in ("modified_count", "untracked_count", "staged_count"))
+    (repo / ".git" / "index").unlink()
+    subprocess.run(["git", "-C", str(repo), "reset"], check=True, capture_output=True)
+    assert client.post("/api/fleet/refresh").status_code == 200
+    restored = client.get("/api/fleet").json()["repos"][0]
+    assert restored["quick_scan_error"] is None
+    assert restored["has_uncommitted"] is False
+
 def test_fleet_endpoint_includes_path_exists(test_app, tmp_path):
     """GET /api/fleet — deleted-path repo appears with path_exists=false."""
     client, db_path = test_app
@@ -433,6 +450,17 @@ def test_migration_idempotent(tmp_path):
     git_dashboard.init_schema(db_path)
     git_dashboard.run_migrations(db_path)  # first run
     git_dashboard.run_migrations(db_path)  # second run — must not raise
+
+
+def test_migration_adds_quick_scan_error_to_existing_database(tmp_path):
+    db_path = tmp_path / "legacy.db"
+    git_dashboard.init_schema(db_path)
+    with sqlite3.connect(db_path) as conn:
+        conn.execute("ALTER TABLE working_state DROP COLUMN quick_scan_error")
+    git_dashboard.run_migrations(db_path)
+    with sqlite3.connect(db_path) as conn:
+        columns = {row[1] for row in conn.execute("PRAGMA table_info(working_state)")}
+    assert "quick_scan_error" in columns
 
 
 # ── HTML template tests ──────────────────────────────────────────────────────

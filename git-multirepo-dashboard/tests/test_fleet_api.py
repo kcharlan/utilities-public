@@ -344,7 +344,8 @@ def test_get_fleet_non_git_directory_does_not_crash(test_app, tmp_path):
     # path_exists=True because the directory still exists
     assert match["path_exists"] is True
 
-    # Git commands all failed → working-state fields are null/zero, not an exception
+    # A failed status is unknown, not a clean working tree.
     assert match["current_branch"] is None
     assert match["last_commit_hash"] is None
-    assert match["has_uncommitted"] is False
+    assert match["has_uncommitted"] is None
+    assert match["quick_scan_error"]
