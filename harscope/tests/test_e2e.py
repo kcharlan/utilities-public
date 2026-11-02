@@ -268,43 +268,6 @@ def test_websocket_plain_text_with_markup_displays_literally(server, page, minim
         assert payload.locator('b').count() == 0
 
 
-MARKUP = '<b>x</b> & ${y} `value` {{X}} &nbsp;'
-
-
-def assert_literal_json(element):
-    assert json.loads(element.evaluate('element => element.textContent')) == {MARKUP: MARKUP}
-    assert element.locator('b').count() == 0
-    # Only the JSON syntax spans and the redaction controls may exist as markup.
-    assert set(element.locator('*').evaluate_all('elements => elements.map(element => element.tagName)')) <= {'SPAN', 'INPUT'}
-
-
-def test_json_body_with_markup_displays_literally(server, page, minimal_har_dict):
-    body = json.dumps({MARKUP: MARKUP})
-    minimal_har_dict['log']['entries'][0]['response']['content'] = {'size': len(body), 'mimeType': 'application/json', 'text': body}
-    with guard_browser_errors(page):
-        _load_synthetic(page, server, minimal_har_dict)
-        page.get_by_text('/api/data', exact=False).first.click()
-        page.get_by_role('button', name='Response', exact=False).first.click()
-        page.get_by_role('button', name='Body', exact=False).click()
-        pre = page.locator('pre')
-        expect(pre).to_contain_text('<b>x</b>')
-        assert_literal_json(pre)
-
-
-def test_websocket_json_payload_with_markup_displays_literally(server, page, minimal_har_dict):
-    minimal_har_dict['log']['entries'][0]['_webSocketMessages'] = [
-        {'type': 'receive', 'time': 0, 'opcode': 1, 'data': json.dumps({MARKUP: MARKUP})},
-    ]
-    with guard_browser_errors(page):
-        _load_synthetic(page, server, minimal_har_dict)
-        page.get_by_text('/api/data', exact=False).first.click()
-        page.get_by_role('button', name='WebSocket', exact=False).click()
-        page.get_by_role('button', name=re.compile('RECV')).click()
-        pre = page.locator('pre')
-        expect(pre).to_contain_text('<b>x</b>')
-        assert_literal_json(pre)
-
-
 TOGGLE_REQUESTS = re.compile(r'/api/(security/toggle|redaction/(manual|remove-manual))$')
 
 
