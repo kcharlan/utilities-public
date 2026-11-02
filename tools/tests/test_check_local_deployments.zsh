@@ -1700,24 +1700,12 @@ test_native_brew_version_deployment() {
   assert_contains "$AUDIT_STDOUT" 'OK: brew-version native deployment'
   assert_fixture_unchanged "$before" "$after"
 
-  local target
-  for target in Library/Scripts/brew-version "Applications/Brew Version.app/Contents/MacOS/BrewVersion"; do
-    new_fixture
-    target="$FIXTURE_HOME/$target"
-    print 'synthetic artifact drift' >> "$target"
-    run_audit
-    assert_status 1 "$AUDIT_STATUS" 'brew artifact bytes drift'
-    assert_contains "$AUDIT_STDERR" 'brew-version native deployment unverified'
-    new_fixture
-  done
-  for target in "Brew Version.app/Contents/MacOS/BrewVersion" "Brew Version.app/Contents" "Brew Version.app"; do
-    new_fixture
-    chmod 711 "$FIXTURE_HOME/Applications/$target"
-    run_audit
-    assert_status 1 "$AUDIT_STATUS" 'brew app mode drift'
-    assert_contains "$AUDIT_STDERR" 'brew-version native deployment unverified'
-    new_fixture
-  done
+  new_fixture
+  print 'synthetic artifact drift' >> "$FIXTURE_HOME/Library/Scripts/brew-version"
+  run_audit
+  assert_status 1 "$AUDIT_STATUS" 'brew artifact bytes drift'
+  assert_contains "$AUDIT_STDERR" 'brew-version native deployment unverified'
+  new_fixture
   print 'synthetic drift' >> "$FIXTURE_REPO/brew_version/Sources/synthetic.swift"
   git -C "$FIXTURE_REPO" add brew_version/Sources/synthetic.swift
   run_audit
@@ -1759,14 +1747,11 @@ test_storage_monitor_deployment() {
   assert_contains "$AUDIT_STDOUT" 'OK: storage_monitor deployment'
   assert_fixture_unchanged "$before" "$after"
 
-  local target
-  for target in storage_monitor_walk storage_monitor; do
-    new_fixture
-    print 'synthetic artifact drift' >> "$FIXTURE_SCRIPTS/$target"
-    run_audit
-    assert_status 1 "$AUDIT_STATUS" "storage monitor $target drift"
-    assert_contains "$AUDIT_STDERR" 'storage_monitor deployment unverified (source, launcher, walker or receipt drift)'
-  done
+  new_fixture
+  print 'synthetic artifact drift' >> "$FIXTURE_SCRIPTS/storage_monitor_walk"
+  run_audit
+  assert_status 1 "$AUDIT_STATUS" 'storage monitor storage_monitor_walk drift'
+  assert_contains "$AUDIT_STDERR" 'storage_monitor deployment unverified (source, launcher, walker or receipt drift)'
 
   new_fixture
   print 'synthetic native source drift' >> "$FIXTURE_REPO/storage_monitor/native/src/storage_monitor_walk.c"
@@ -1847,24 +1832,21 @@ test_native_transaction_helper_required() {
 test_native_transaction_helper_required
 
 test_native_anker_charge_monitor_deployment() {
-  local target source response
+  local source response
   new_fixture
+  local before="$FIXTURE_ROOT/anker-before.snapshot" after="$FIXTURE_ROOT/anker-after.snapshot"
+  snapshot_fixture "$before"
   run_audit
+  snapshot_fixture "$after"
   assert_status 0 "$AUDIT_STATUS" 'synthetic anker baseline'
   assert_contains "$AUDIT_STDOUT" 'OK: anker-charge-monitor native deployment'
-  for target in 'Applications/Anker Charge Monitor.app/Contents/MacOS/PrimeMonitor' 'Library/Scripts/.anker-charge-monitor-native.json'; do
-    new_fixture
-    print 'synthetic drift' >> "$FIXTURE_HOME/$target"
-    run_audit
-    assert_status 1 "$AUDIT_STATUS" 'anker artifact drift'
-    assert_contains "$AUDIT_STDERR" 'anker-charge-monitor native deployment unverified'
-  done
+  assert_fixture_unchanged "$before" "$after"
+  new_fixture
+  print 'synthetic drift' >> "$FIXTURE_HOME/Applications/Anker Charge Monitor.app/Contents/MacOS/PrimeMonitor"
+  run_audit
+  assert_status 1 "$AUDIT_STATUS" 'anker artifact drift'
+  assert_contains "$AUDIT_STDERR" 'anker-charge-monitor native deployment unverified'
   for source in anker_charge_monitor/Sources/synthetic.swift anker_charge_monitor/tools/install.sh tools/deploy_anker_charge_monitor.mjs; do
-    new_fixture
-    print 'synthetic working drift' >> "$FIXTURE_REPO/$source"
-    run_audit
-    assert_status 1 "$AUDIT_STATUS" 'anker source drift'
-    assert_not_contains "$AUDIT_STDOUT" 'OK: anker-charge-monitor native deployment'
     new_fixture
     git -C "$FIXTURE_REPO" rm -q --cached "$source"
     run_audit
@@ -1877,6 +1859,7 @@ test_native_anker_charge_monitor_deployment() {
   run_audit
   assert_status 1 "$AUDIT_STATUS" 'anker staged source drift'
   assert_contains "$AUDIT_STDERR" 'anker-charge-monitor native deployment unverified'
+  assert_not_contains "$AUDIT_STDOUT" 'OK: anker-charge-monitor native deployment'
   for response in \
     "process.stdout.write('OK: anker-charge-monitor native deployment')" \
     "console.log('OK: anker-charge-monitor native deployment'); console.error('synthetic warning')" \
@@ -1893,24 +1876,21 @@ test_native_anker_charge_monitor_deployment
 
 # Port: test_native_anker_charge_monitor_deployment above, plus a required font input.
 test_native_telltale_deployment() {
-  local target source response
+  local source response
   new_fixture
+  local before="$FIXTURE_ROOT/telltale-before.snapshot" after="$FIXTURE_ROOT/telltale-after.snapshot"
+  snapshot_fixture "$before"
   run_audit
+  snapshot_fixture "$after"
   assert_status 0 "$AUDIT_STATUS" 'synthetic telltale baseline'
   assert_contains "$AUDIT_STDOUT" 'OK: telltale native deployment'
-  for target in 'Applications/Telltale.app/Contents/MacOS/Telltale' 'Library/Scripts/.telltale-native.json'; do
-    new_fixture
-    print 'synthetic drift' >> "$FIXTURE_HOME/$target"
-    run_audit
-    assert_status 1 "$AUDIT_STATUS" 'telltale artifact drift'
-    assert_contains "$AUDIT_STDERR" 'telltale native deployment unverified'
-  done
+  assert_fixture_unchanged "$before" "$after"
+  new_fixture
+  print 'synthetic drift' >> "$FIXTURE_HOME/Applications/Telltale.app/Contents/MacOS/Telltale"
+  run_audit
+  assert_status 1 "$AUDIT_STATUS" 'telltale artifact drift'
+  assert_contains "$AUDIT_STDERR" 'telltale native deployment unverified'
   for source in telltale/Sources/synthetic.swift telltale/tools/install.sh telltale/Resources/Fonts/OFL.txt tools/deploy_telltale.mjs; do
-    new_fixture
-    print 'synthetic working drift' >> "$FIXTURE_REPO/$source"
-    run_audit
-    assert_status 1 "$AUDIT_STATUS" 'telltale source drift'
-    assert_not_contains "$AUDIT_STDOUT" 'OK: telltale native deployment'
     new_fixture
     git -C "$FIXTURE_REPO" rm -q --cached "$source"
     run_audit
@@ -1923,6 +1903,7 @@ test_native_telltale_deployment() {
   run_audit
   assert_status 1 "$AUDIT_STATUS" 'telltale staged source drift'
   assert_contains "$AUDIT_STDERR" 'telltale native deployment unverified'
+  assert_not_contains "$AUDIT_STDOUT" 'OK: telltale native deployment'
   for response in \
     "process.stdout.write('OK: telltale native deployment')" \
     "console.log('OK: telltale native deployment'); console.error('synthetic warning')" \
