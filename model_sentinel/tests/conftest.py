@@ -1,10 +1,13 @@
 from __future__ import annotations
 
+import os
 import shutil
 import stat
 import sys
 import tempfile
+import time
 from collections.abc import Iterator
+from contextlib import contextmanager
 from pathlib import Path
 
 import pytest
@@ -13,6 +16,33 @@ import pytest
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
+
+
+@contextmanager
+def timezone(name: str) -> Iterator[None]:
+    previous = os.environ.get("TZ")
+    os.environ["TZ"] = name
+    time.tzset()
+    try:
+        yield
+    finally:
+        if previous is None:
+            os.environ.pop("TZ", None)
+        else:
+            os.environ["TZ"] = previous
+        time.tzset()
+
+
+@pytest.fixture
+def utc_timezone() -> Iterator[None]:
+    with timezone("UTC"):
+        yield
+
+
+@pytest.fixture
+def new_york_timezone() -> Iterator[None]:
+    with timezone("America/New_York"):
+        yield
 
 
 @pytest.fixture

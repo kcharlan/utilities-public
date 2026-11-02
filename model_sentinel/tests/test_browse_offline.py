@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 from html.parser import HTMLParser
 from importlib import resources
 from pathlib import PurePosixPath
@@ -1522,17 +1523,23 @@ if (rowRects[7].bottom > viewport.bottom) process.exit(3);
     assert 'tooltip.style.setProperty("--timeline-tooltip-row-height"' in plugin
 
 
+def test_local_day_from_epoch_uses_the_browser_calendar_day() -> None:
+    source = _read_asset("app.js")
+    function = source[source.index("function localDayFromEpoch("):source.index("function epochForDay(")]
+    program = function + '\nif (localDayFromEpoch(Date.UTC(2026, 2, 10, 3, 30) / 1000) !== "2026-03-09") process.exit(1);'
+    probe = subprocess.run(
+        ["node", "-e", program], env={**os.environ, "TZ": "America/New_York"},
+        capture_output=True, text=True,
+    )
+    assert probe.returncode == 0, probe.stderr
+
+
 def test_models_legend_reset_and_local_date_zoom_regressions() -> None:
     source = _read_asset("app.js")
 
     assert "record.u.setSeries(null, {focus: false})" in source
     assert "if (!focus)" in source
     assert source.index("if (!focus)") < source.index("record.u.setSeries(index, {focus: true})")
-    assert "function localDayFromEpoch(value)" in source
-    assert "date.getFullYear()" in source
-    assert "date.getMonth() + 1" in source
-    assert "date.getDate()" in source
-    assert "new Date(value * 1000).toISOString()" not in source
 
 
 def test_models_pointer_zoom_fallback_updates_hash_for_non_mouse_drags() -> None:

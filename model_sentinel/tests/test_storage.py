@@ -1,13 +1,11 @@
 import gzip
 import json
-import os
 import sqlite3
 from contextlib import closing
 from dataclasses import FrozenInstanceError, replace
 from datetime import date, datetime, time, timedelta
 from pathlib import Path
 from time import perf_counter
-import time as time_module
 from typing import Any
 
 import pytest
@@ -328,6 +326,22 @@ def _build_large_recent_changes_store(tmp_path: Path) -> Store:
     return store
 
 
+@pytest.mark.usefixtures("new_york_timezone")
+def test_previous_day_baseline_uses_local_calendar_day(tmp_path: Path) -> None:
+    store = Store(tmp_path / "sentinel.db")
+    store.initialize()
+    ids = []
+    for timestamp in ("2026-03-10T03:30:00+00:00", "2026-03-10T15:00:00+00:00"):
+        ids.append(store.create_scrape(
+            provider_id="openrouter", started_at=timestamp, completed_at=timestamp,
+            status="success", baseline_mode="previous", baseline_scrape_id=None,
+            saved_snapshot=True, model_count=1, error_message=None,
+        ))
+    assert store.get_previous_day_baseline("openrouter", current_date=date(2026, 3, 10)).scrape_id == ids[0]
+    assert store.get_baseline_for_date("openrouter", target_date=date(2026, 3, 9)).scrape_id == ids[0]
+
+
+@pytest.mark.usefixtures("utc_timezone")
 def test_store_saves_and_loads_baselines(tmp_path: Path) -> None:
     store = Store(tmp_path / "sentinel.db")
     store.initialize()
@@ -635,27 +649,18 @@ def test_legacy_storage_projections_ignore_malformed_snapshot_metadata(tmp_path:
     )
 
 
+@pytest.mark.usefixtures("utc_timezone")
 def test_legacy_json_renderers_are_byte_identical_with_malformed_metadata(tmp_path: Path) -> None:
     store = _build_legacy_metadata_fixture(tmp_path)
-    old_tz = os.environ.get("TZ")
-    os.environ["TZ"] = "UTC"
-    time_module.tzset()
-    try:
-        before_storage = _legacy_storage_projection(store)
-        before_history_json, before_changes_json = _legacy_json_projection(
-            store, before_storage
-        )
-        _corrupt_snapshot_metadata(store)
-        after_storage = _legacy_storage_projection(store)
-        after_history_json, after_changes_json = _legacy_json_projection(
-            store, after_storage
-        )
-    finally:
-        if old_tz is None:
-            os.environ.pop("TZ", None)
-        else:
-            os.environ["TZ"] = old_tz
-        time_module.tzset()
+    before_storage = _legacy_storage_projection(store)
+    before_history_json, before_changes_json = _legacy_json_projection(
+        store, before_storage
+    )
+    _corrupt_snapshot_metadata(store)
+    after_storage = _legacy_storage_projection(store)
+    after_history_json, after_changes_json = _legacy_json_projection(
+        store, after_storage
+    )
 
     assert after_storage == before_storage
     assert after_history_json == before_history_json
@@ -1322,6 +1327,7 @@ def _build_many_distinct_edge_store(tmp_path: Path, edge_count: int) -> Store:
 
 
 @pytest.mark.parametrize("edge_count", (500, 1_000, 2_000))
+@pytest.mark.usefixtures("utc_timezone")
 def test_selected_edge_fetch_is_portable_and_linear_in_possible_rows(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

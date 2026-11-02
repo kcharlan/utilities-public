@@ -1,8 +1,6 @@
 import json
-import os
 import re
 import sqlite3
-import time
 from dataclasses import replace
 from datetime import date
 from pathlib import Path
@@ -418,6 +416,7 @@ def test_visibility_of_guards_presence_rows() -> None:
     )
 
 
+@pytest.mark.usefixtures("utc_timezone")
 def test_bulk_groups_planned_fixture_list_changes_only(tmp_path: Path) -> None:
     database_path = tmp_path / "fixture.db"
     facts = build_fixture_db(database_path)
@@ -2520,6 +2519,7 @@ def test_history_report_applies_detail_policy() -> None:
     assert "squelched" in report
 
 
+@pytest.mark.usefixtures("utc_timezone")
 def test_ordinary_history_text_and_markdown_are_byte_stable_per_detail_mode() -> None:
     """Freeze the legacy history filter, including its field_changed quirk."""
     events = (
@@ -2537,32 +2537,22 @@ def test_ordinary_history_text_and_markdown_are_byte_stable_per_detail_mode() ->
         )
         for mode in ("default", "all", "squelched")
     }
-    old_tz = os.environ.get("TZ")
-    os.environ["TZ"] = "UTC"
-    time.tzset()
-    try:
-        reports = {
-            mode: {
-                format_name: render_history_report_with_profile(
-                    provider_id="synthprov",
-                    model_id="synth/model",
-                    format_name=format_name,
-                    first_seen="2026-07-01T00:00:00+00:00",
-                    last_seen="2026-07-25T12:00:00+00:00",
-                    events=events,
-                    profile=OPENROUTER_PROFILE,
-                    detail_policy=policy,
-                )
-                for format_name in ("text", "markdown")
-            }
-            for mode, policy in policies.items()
+    reports = {
+        mode: {
+            format_name: render_history_report_with_profile(
+                provider_id="synthprov",
+                model_id="synth/model",
+                format_name=format_name,
+                first_seen="2026-07-01T00:00:00+00:00",
+                last_seen="2026-07-25T12:00:00+00:00",
+                events=events,
+                profile=OPENROUTER_PROFILE,
+                detail_policy=policy,
+            )
+            for format_name in ("text", "markdown")
         }
-    finally:
-        if old_tz is None:
-            os.environ.pop("TZ", None)
-        else:
-            os.environ["TZ"] = old_tz
-        time.tzset()
+        for mode, policy in policies.items()
+    }
 
     assert reports["default"]["text"] == (
         "History for synthprov / synth/model\n"
@@ -2711,32 +2701,23 @@ def test_rich_ordinary_history_keeps_exact_legacy_projection(
     assert actual == expected
 
 
+@pytest.mark.usefixtures("utc_timezone")
 def test_legacy_history_json_projection_keeps_keys_values_and_event_order() -> None:
     events = (
         HistoryEvent("2026-07-25T09:00:00+00:00", "field_changed", "status", "old", "new"),
         HistoryEvent("2026-07-25T10:00:00+00:00", "added", None, None, {"id": "synthetic/model"}),
     )
-    old_tz = os.environ.get("TZ")
-    os.environ["TZ"] = "UTC"
-    time.tzset()
-    try:
-        payload = json.loads(
-            render_history_report_with_profile(
-                provider_id="synthprov",
-                model_id="synthetic/model",
-                format_name="json",
-                first_seen="2026-07-01T00:00:00+00:00",
-                last_seen="2026-07-25T10:00:00+00:00",
-                events=events,
-                profile=OPENROUTER_PROFILE,
-            )
+    payload = json.loads(
+        render_history_report_with_profile(
+            provider_id="synthprov",
+            model_id="synthetic/model",
+            format_name="json",
+            first_seen="2026-07-01T00:00:00+00:00",
+            last_seen="2026-07-25T10:00:00+00:00",
+            events=events,
+            profile=OPENROUTER_PROFILE,
         )
-    finally:
-        if old_tz is None:
-            os.environ.pop("TZ", None)
-        else:
-            os.environ["TZ"] = old_tz
-        time.tzset()
+    )
 
     assert tuple(payload) == (
         "events",

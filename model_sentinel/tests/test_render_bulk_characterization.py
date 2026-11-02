@@ -108,8 +108,8 @@ job), and the `squelched` detail mode.
 from __future__ import annotations
 
 import json
-import os
-import time
+
+import pytest
 
 from model_sentinel.models import FieldChange, ModelDelta, ProviderScanResult
 from model_sentinel.provider_profiles import OPENROUTER_PROFILE
@@ -119,14 +119,8 @@ from model_sentinel.reporting import (
     render_scan_report,
 )
 
-# Pin the process timezone to UTC before any golden constant below is defined,
-# for the same reason as test_render_characterization.py: render_scan_report()
-# formats timestamps through to_local_human()/to_local_iso(), which convert to
-# whatever the OS considers "local". Pinning here (which also overrides any
-# ambient `TZ=...`) lets the goldens hardcode literal timestamp strings instead
-# of recomputing them through the very helpers they are meant to pin.
-os.environ["TZ"] = "UTC"
-time.tzset()
+# Literal golden timestamps require UTC only while each test renders.
+pytestmark = pytest.mark.usefixtures("utc_timezone")
 
 GENERATED_AT = "2026-07-25T09:00:00+00:00"
 COMMAND = "scan"
