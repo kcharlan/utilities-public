@@ -94,4 +94,22 @@ printf '%s\n' 'workout_id,workout_start,workout_type,timestamp,heart_rate_bpm' >
 diff -u expected-summary.csv workout_summary.csv
 diff -u expected-detail.csv workout_heart_rate_detail.csv
 awk -F, 'NR==2 {if ($13 != "Incidental" || $14 != "") exit 1; found=1} END {if (!found || NR != 2) exit 1}' exercise_bouts.csv
+
+mkdir "$scratch_dir/bout-boundary"
+cd "$scratch_dir/bout-boundary"
+cat > export.xml <<'XML'
+<HealthData>
+<Workout workoutActivityType="INVENTED_WORKOUT" sourceName="SYNTHETIC_DEVICE" startDate="2001-01-02 10:00:00 -0500" endDate="2001-01-02 10:10:00 -0500" duration="10"/>
+<Record type="HKQuantityTypeIdentifierAppleExerciseTime" sourceName="SYNTHETIC_SOURCE" device="SYNTHETIC_DEVICE" unit="min" value="1" startDate="2001-01-01 10:00:00 -0500" endDate="2001-01-01 10:01:00 -0500"/>
+<Record type="HKQuantityTypeIdentifierAppleExerciseTime" sourceName="SYNTHETIC_SOURCE" device="SYNTHETIC_DEVICE" unit="min" value="1" startDate="2001-01-01 10:02:30 -0500" endDate="2001-01-01 10:03:30 -0500"/>
+<Record type="HKQuantityTypeIdentifierAppleExerciseTime" sourceName="SYNTHETIC_SOURCE" device="SYNTHETIC_DEVICE" unit="min" value="1" startDate="2001-01-01 10:05:01 -0500" endDate="2001-01-01 10:06:01 -0500"/>
+</HealthData>
+XML
+UV_PYTHON_DOWNLOADS=never "$project_dir/extract_workout_stats.py"
+UV_PYTHON_DOWNLOADS=never "$project_dir/exercise_bouts.py"
+awk -F, '
+    NR==2 {if ($1 != 0 || $2 != "2001-01-01 15:00:00+00:00" || $3 != "2001-01-01 15:03:30+00:00" || $4 != 2) exit 1}
+    NR==3 {if ($1 != 1 || $2 != "2001-01-01 15:05:01+00:00" || $3 != "2001-01-01 15:06:01+00:00" || $4 != 1) exit 1}
+    END {if (NR != 3) exit 1}
+' exercise_bouts.csv
 printf 'apple-health-extract extraction tests: PASS\n'
