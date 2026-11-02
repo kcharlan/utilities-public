@@ -1,5 +1,9 @@
 # Lessons learned
 
+## 2026-11-02: Scope shared Makefile self-tests to their caller
+
+A shared self-test that always exercises every consumer couples otherwise independent project suites. Accept explicit consumer selections, validate them before making scratch space, and retain the unscoped form for the fleet-wide check.
+
 ## Synthetic directory modes and umask
 
 When a test requires a specific directory mode, explicitly chmod the synthetic fixture and assert its precondition: mkdir’s requested mode is filtered by the caller’s umask. Preserve the post-operation mode assertion so rejection and non-mutation remain tested under restrictive umasks.

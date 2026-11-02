@@ -65,7 +65,7 @@ or through `BREW_VERSION_HARNESS_HOME`, a new path where a builder keeps its
 whole build for the caller to inspect and remove. The builders point SwiftPM's
 `TMPDIR` inside that home, and the integration tests check that nothing else
 lands beside it. The suite also runs the check's own self-test,
-`tools/tests/test_check_no_temp_leaks.sh`. Run one suite at a
+`tools/tests/test_check_no_temp_leaks.sh brew_version`, against this project's Makefile. Run one suite at a
 time: a concurrent run of this project's suite can trip the check.
 `make build` and `make release` run SwiftPM with `TMPDIR` in the ignored
 `.build/tmp/`, so its package lock files and `TemporaryDirectory.*` folders

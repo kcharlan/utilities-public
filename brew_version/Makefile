@@ -21,7 +21,7 @@ test:
 test-suite:
 	swift test
 	node --test Tests/ReleaseChecks/*.test.mjs
-	../tools/tests/test_check_no_temp_leaks.sh
+	../tools/tests/test_check_no_temp_leaks.sh brew_version
 
 clean:
 	rm -rf .build build
