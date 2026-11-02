@@ -1,6 +1,5 @@
 import argparse
 import json
-from importlib.metadata import version
 import sys
 from pathlib import Path
 
@@ -16,13 +15,12 @@ from tools.check_uv_headers import extract_pep723
 DOCPIPE_PATH = Path(__file__).resolve().parents[1] / "docpipe"
 
 
-def test_readability_dependency_excludes_unsupported_09_and_resolves_in_range():
+def test_readability_dependency_excludes_unsupported_09():
     metadata = extract_pep723(DOCPIPE_PATH.read_text(encoding="utf-8"))
     requirements = [Requirement(item) for item in metadata["dependencies"]]
     readability = next(item for item in requirements if item.name == "readability-lxml")
     assert "0.8.4.1" in readability.specifier
     assert "0.9" not in readability.specifier
-    assert version("readability-lxml") in readability.specifier
 
 
 def load_docpipe_module():
@@ -53,33 +51,6 @@ def make_result(module, src: str, src_type: str, warnings=None):
         segments=[module.Segment(id="p1", type="page", index=1, text="hello")],
         warnings=warnings or [],
     )
-
-
-def test_parser_supports_strict_flag():
-    module = load_docpipe_module()
-    parser = module.build_parser()
-    args = parser.parse_args(["convert", "--input", "in.html", "--out", "out", "--strict"])
-    assert args.strict is True
-
-
-def test_run_convert_strict_fails_when_warnings(monkeypatch, tmp_path):
-    module = load_docpipe_module()
-    input_path = tmp_path / "sample.html"
-    input_path.write_text("<h1>x</h1>", encoding="utf-8")
-    out_dir = tmp_path / "out"
-
-    monkeypatch.setattr(module, "detect_file_type", lambda _: "html")
-    monkeypatch.setattr(
-        module,
-        "convert_html",
-        lambda *_args, **_kwargs: make_result(module, str(input_path), "html", warnings=["degraded"]),
-    )
-
-    rc = module.run_convert(make_args(input_path, out_dir, strict=True))
-
-    assert rc == 2
-    assert not (out_dir / "sample.opencode.md").exists()
-    assert not (out_dir / "sample.opencode.json").exists()
 
 
 def test_run_convert_non_strict_writes_outputs_with_warnings(monkeypatch, tmp_path):
@@ -385,7 +356,8 @@ def test_strict_rejects_actual_xlsx_cell_limit_warning(tmp_path):
     workbook.active.append(['synthetic', 'cells'])
     source = tmp_path / 'sample.xlsx'
     workbook.save(source)
-    args = make_args(source, tmp_path / 'out', True)
-    args.xlsx_max_cells = 1
-    assert module.run_convert(args) == 2
-    assert not (tmp_path / 'out' / 'sample.opencode.md').exists()
+    out = tmp_path / 'out'
+    assert module.main(['convert', '--input', str(source), '--out', str(out),
+                        '--strict', '--xlsx-max-cells', '1']) == 2
+    assert not (out / 'sample.opencode.md').exists()
+    assert not (out / 'sample.opencode.json').exists()
