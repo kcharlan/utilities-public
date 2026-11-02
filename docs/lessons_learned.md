@@ -2219,3 +2219,14 @@ the full busy timeout. Run database work in worker threads and exercise a locked
 write through a real server with an independently timed status request. A SQLite
 connection context manager commits or rolls back but does not close the handle;
 close test fixture and readback connections explicitly.
+
+## Generated Markdown tables through HTML converters
+
+When an HTML-to-Markdown pipeline constructs table Markdown before calling the
+converter, preserve those blocks across conversion. HTML whitespace collapsing
+and `<br>` hard breaks can change empty-cell padding and table line endings;
+restore the surrounding block prefix on every line, and escape source
+backslashes before pipe delimiters. Check rendered cell values and quoted
+table structure as well as exact top-level lines. List markers belong only on
+the first line; indent continuation lines and ensure every placeholder is
+resolved even when the converter emits an unexpected prefix.

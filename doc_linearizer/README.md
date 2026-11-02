@@ -48,4 +48,4 @@ Supported linked asset extensions are `.json`, `.xml`, `.ttl`, `.csv`, `.xlsx`, 
 
 ## Validation
 
-From `doc_linearizer/`, run `bash tests/test_launcher.sh`, `bash tests/test_output_safety.sh`, and `bash tests/test_conversion.sh` using synthetic inputs.
+From `doc_linearizer/`, run `bash tests/test_launcher.sh`, `bash tests/test_output_safety.sh`, and `bash tests/test_conversion.sh` using synthetic inputs. The conversion test requires Ruby with the REXML library.

@@ -34,6 +34,17 @@ if run "$scratch_dir/empty" -o "$scratch_dir/output/guide.md"; then
 fi
 grep -Fq 'existing output' "$scratch_dir/output/guide.md"
 grep -Fq 'existing asset' "$scratch_dir/output/assets/keep.txt"
+
+# Failure after swapping assets restores the old assets and removes staging.
+mkdir -p "$scratch_dir/rollback/assets" "$scratch_dir/rollback/guide.md"
+printf 'existing asset\n' > "$scratch_dir/rollback/assets/keep.txt"
+if run "$scratch_dir/input" -o "$scratch_dir/rollback/guide.md"; then
+  printf 'expected directory output failure\n' >&2; exit 1
+fi
+test "$(cat "$scratch_dir/rollback/assets/keep.txt")" = 'existing asset'
+if find "$scratch_dir/rollback" -maxdepth 1 -name '.linearize-*' | grep -q .; then
+  printf 'staging directory remained after rollback\n' >&2; exit 1
+fi
 cat > "$scratch_dir/input/site/toc.html" <<'HTML'
 <div id="segment-content"><div class="col-12"><a href="missing.html">Missing</a></div></div>
 HTML

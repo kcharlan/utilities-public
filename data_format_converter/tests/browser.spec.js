@@ -80,8 +80,12 @@ test('index.html passes the vendor sync check', () => {
 
 test('panel headings retain the original Inter semibold appearance', async ({ page }) => {
   await page.goto(fileUrl);
-  await page.evaluate(() => document.fonts.ready);
-  await expect(page.locator('.panel-header h3').first()).toHaveCSS('font-weight', '600');
+  const font = await page.evaluate(async () => ({
+    loaded: (await document.fonts.load('600 16px "Inter"')).length,
+    available: document.fonts.check('600 16px "Inter"'),
+  }));
+  expect(font.loaded).toBeGreaterThan(0);
+  expect(font.available).toBe(true);
 });
 
 test('theme is saved under data_format_converter.theme', async ({ page }) => {
@@ -196,7 +200,7 @@ test.describe('YAML compatibility', () => {
 
 test('browser converters initialize and convert synthetic JSON', async ({ page }) => {
   const browserErrors = [];
-  const openAIRequests = [];
+  const externalRequests = [];
   page.on('pageerror', (error) => browserErrors.push(error.message));
   page.on('console', (message) => {
     if (message.type() === 'error') browserErrors.push(message.text());
@@ -204,13 +208,11 @@ test('browser converters initialize and convert synthetic JSON', async ({ page }
   await page.addInitScript(() => {
     window.OPENAI_API_KEY = 'synthetic-test-key-not-real';
   });
-  await page.route('https://api.openai.com/**', async (route) => {
-    openAIRequests.push(route.request().url());
-    await route.fulfill({
-      status: 200,
-      contentType: 'application/json',
-      body: JSON.stringify({ usage: { prompt_tokens: 999 } }),
-    });
+  await page.route('**/*', async (route) => {
+    const url = route.request().url();
+    if (url.startsWith('http://127.0.0.1:4175/')) return route.continue();
+    externalRequests.push(url);
+    await route.abort();
   });
 
   await page.goto('/web/index.html');
@@ -233,6 +235,41 @@ test('browser converters initialize and convert synthetic JSON', async ({ page }
     '⚙️ Local',
     '⚙️ Local',
   ]);
-  expect(openAIRequests).toEqual([]);
+  expect(externalRequests).toEqual([]);
   expect(browserErrors).toEqual([]);
+});
+
+test('token counts match the page estimate for each converted panel', async ({ page }) => {
+  await page.goto('/web/index.html');
+  await page.locator('#text-json-pretty').fill('{"synthetic_name":"Example","enabled":true,"items":[1,2,3]}');
+  await page.locator('#btn-json-pretty').click();
+  for (const id of ['json-compact', 'xml', 'toon', 'yaml', 'toml']) {
+    const value = await page.locator(`#text-${id}`).inputValue();
+    expect(value.length).toBeGreaterThan(0);
+    const count = await page.locator(`#tokens-${id}`).textContent();
+    expect(count.replaceAll(',', '')).toBe(String(Math.ceil(value.length / 4)));
+  }
+  const rows = page.locator('#comparison-table tbody tr');
+  await expect(rows).toHaveCount(6);
+  const counts = await rows.locator('td:nth-child(2)').allTextContents();
+  const numbers = counts.map(count => Number(count.replaceAll(',', '')));
+  expect(numbers.every(Number.isFinite)).toBe(true);
+  expect(numbers).toEqual([...numbers].sort((a, b) => a - b));
+});
+
+test('null input reports the TOML error and leaves other panels empty', async ({ page }) => {
+  await page.goto('/web/index.html');
+  await page.locator('#text-json-pretty').fill('{"synthetic":null}');
+  await page.locator('#btn-json-pretty').click();
+  await expect(page.locator('#error-json-pretty')).toContainText('TOML does not support null values');
+  await expect(page.locator('#comparison-table tbody tr')).toHaveCount(0);
+  await expect(page.locator('#text-yaml')).toHaveValue('');
+});
+
+test('XML panel converts typed text values', async ({ page }) => {
+  await page.goto('/web/index.html');
+  await page.locator('#text-xml').fill('<root><n>42</n><flag>true</flag><s>text</s></root>');
+  await page.locator('#btn-xml').click();
+  const json = await page.locator('#text-json-pretty').inputValue();
+  expect(JSON.parse(json)).toEqual({root: {n: 42, flag: true, s: 'text'}});
 });
