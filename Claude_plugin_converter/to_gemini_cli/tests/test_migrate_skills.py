@@ -65,7 +65,6 @@ class ConverterTests(unittest.TestCase):
             link = workspace / ".gemini" / "skills" / "contract-review"
             self.assertTrue(link.is_symlink())
             self.assertEqual(link.resolve(), skill_dir.resolve())
-            self.assertFalse((workspace / ".gemini" / "skills" / "legal:contract-review").exists())
 
             command = tomllib.loads(
                 (workspace / ".gemini" / "commands" / "legal" / "brief.toml").read_text(
@@ -74,6 +73,59 @@ class ConverterTests(unittest.TestCase):
             )
             self.assertEqual(command["description"], "Create a synthetic brief")
             self.assertEqual(command["prompt"], prompt)
+
+    def test_removes_legacy_link_only_when_it_points_to_the_same_skill(self):
+        for same_target in (True, False):
+            with self.subTest(same_target=same_target), tempfile.TemporaryDirectory() as tmp:
+                root = Path(tmp)
+                workspace = root / "workspace"
+                category = root / "legal"
+                workspace.mkdir()
+                skill_dir = self.make_skill(category, "contract-review", "contract-review")
+                other = root / "elsewhere" / "contract-review"
+                other.mkdir(parents=True)
+                legacy = workspace / ".gemini" / "skills" / "legal:contract-review"
+                legacy.parent.mkdir(parents=True)
+                legacy.symlink_to(skill_dir if same_target else other, target_is_directory=True)
+
+                result = self.run_converter(workspace, category)
+
+                self.assertEqual(result.returncode, 0, result.stderr or result.stdout)
+                if same_target:
+                    self.assertFalse(legacy.is_symlink())
+                    self.assertFalse(legacy.exists())
+                else:
+                    self.assertTrue(legacy.is_symlink())
+                    self.assertEqual(legacy.resolve(), other.resolve())
+
+    def test_rerun_is_idempotent_and_regenerates_commands(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            workspace = root / "workspace"
+            category = root / "legal"
+            workspace.mkdir()
+            skill_dir = self.make_skill(category, "contract-review", "contract-review")
+            commands = category / "commands"
+            commands.mkdir()
+            (commands / "brief.md").write_text(
+                "---\ndescription: Create a synthetic brief\n---\n\nSynthetic prompt.\n",
+                encoding="utf-8",
+            )
+
+            first = self.run_converter(workspace, category)
+            self.assertEqual(first.returncode, 0, first.stderr or first.stdout)
+            command_path = workspace / ".gemini" / "commands" / "legal" / "brief.toml"
+            command_path.write_text("synthetic edit", encoding="utf-8")
+
+            second = self.run_converter(workspace, category)
+
+            self.assertEqual(second.returncode, 0, second.stderr or second.stdout)
+            link = workspace / ".gemini" / "skills" / "contract-review"
+            self.assertTrue(link.is_symlink())
+            self.assertEqual(link.resolve(), skill_dir.resolve())
+            command = tomllib.loads(command_path.read_text(encoding="utf-8"))
+            self.assertEqual(command["description"], "Create a synthetic brief")
+            self.assertEqual(command["prompt"], "Synthetic prompt.")
 
     def test_rejects_destination_collision_without_deleting_it(self):
         with tempfile.TemporaryDirectory() as tmp:
