@@ -2,6 +2,8 @@
 
 Codex fork-chain cases check inherited usage is excluded regardless of discovery order.
 A Codex subagent case checks ordinal-owned suffix accounting and activity-based spawn linking.
+The synthetic four-turn Codex rollout checks dual-message merging, lifecycle
+statuses, structured-over-raw tool counts, and known-record diagnostics.
 
 Antigravity reader units and `test_antigravity.py` create only invented UUID
 databases/annotations in external private scratch. `fixtures/antigravity/`

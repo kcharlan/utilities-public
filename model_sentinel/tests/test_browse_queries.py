@@ -1,10 +1,8 @@
 from __future__ import annotations
 
 import json
-import os
 import sqlite3
-import time
-from datetime import date
+from datetime import UTC, date, datetime
 from pathlib import Path
 
 import pytest
@@ -12,6 +10,7 @@ import pytest
 from model_sentinel.browse import queries
 from model_sentinel.browse.readonly import DatabaseBusyError
 from model_sentinel.storage import Store
+from model_sentinel.models import ModelDelta
 from model_sentinel.time_utils import local_date_for
 from tests.browse_fixtures import build_fixture_db
 
@@ -40,43 +39,35 @@ def test_list_scrapes_orders_newest_first_and_reports_saved_status(tmp_path: Pat
     assert saved["saved"] is True
 
 
+@pytest.mark.usefixtures("new_york_timezone")
 def test_list_scrapes_uses_local_date_instead_of_utc_date(tmp_path: Path) -> None:
-    previous_tz = os.environ.get("TZ")
-    os.environ["TZ"] = "America/New_York"
-    time.tzset()
-    try:
-        database_path = tmp_path / "fixture.db"
-        build_fixture_db(database_path)
-        completed_at = "2026-08-19T00:30:00+00:00"
-        assert local_date_for(completed_at) != date.fromisoformat(completed_at[:10])
-        scrape_id = Store(database_path).create_scrape(
-            provider_id="example-provider",
-            started_at=completed_at,
-            completed_at=completed_at,
-            status="error",
-            baseline_mode="previous",
-            baseline_scrape_id=None,
-            saved_snapshot=False,
-            model_count=0,
-            error_message="Synthetic date-boundary failure",
+    database_path = tmp_path / "fixture.db"
+    build_fixture_db(database_path)
+    completed_at = "2026-08-19T00:30:00+00:00"
+    assert local_date_for(completed_at) != date.fromisoformat(completed_at[:10])
+    scrape_id = Store(database_path).create_scrape(
+        provider_id="example-provider",
+        started_at=completed_at,
+        completed_at=completed_at,
+        status="error",
+        baseline_mode="previous",
+        baseline_scrape_id=None,
+        saved_snapshot=False,
+        model_count=0,
+        error_message="Synthetic date-boundary failure",
+    )
+
+    with _connection(database_path) as connection:
+        row = next(
+            row
+            for row in queries.list_scrapes(connection)
+            if row["scrape_id"] == scrape_id
         )
 
-        with _connection(database_path) as connection:
-            row = next(
-                row
-                for row in queries.list_scrapes(connection)
-                if row["scrape_id"] == scrape_id
-            )
-
-        assert row["date"] == local_date_for(completed_at)
-    finally:
-        if previous_tz is None:
-            os.environ.pop("TZ", None)
-        else:
-            os.environ["TZ"] = previous_tz
-        time.tzset()
+    assert row["date"] == local_date_for(completed_at)
 
 
+@pytest.mark.usefixtures("utc_timezone")
 def test_date_span_covers_successful_saved_scrapes_only(tmp_path: Path) -> None:
     database_path = tmp_path / "fixture.db"
     facts = build_fixture_db(database_path)
@@ -97,6 +88,29 @@ def test_date_span_is_none_without_successful_saved_scrapes() -> None:
         assert queries.date_span(connection) is None
     finally:
         connection.close()
+
+
+@pytest.mark.usefixtures("new_york_timezone")
+def test_change_counts_filter_by_local_calendar_day(tmp_path: Path) -> None:
+    database_path = tmp_path / "fixture.db"
+    facts = build_fixture_db(database_path)
+    store = Store(database_path)
+    store.record_field_changes(
+        provider_id="example-provider", from_scrape_id=facts.scrape_ids[1],
+        to_scrape_id=facts.scrape_ids[2],
+        deltas=(ModelDelta(kind="added", provider_model_id="synthetic/boundary",
+                           display_name="Synthetic Boundary", field_changes=()),),
+        detected_at="2026-08-19T00:30:00+00:00",
+    )
+    with _connection(database_path) as connection:
+        def rows(day: date):
+            return queries.change_counts_by_date(
+                connection, provider_ids=["example-provider"], since=day, until=day
+            )
+
+        expected = datetime(2026, 8, 19, 0, 30, tzinfo=UTC)
+        assert any(datetime.fromisoformat(row["detected_at"]) == expected for row in rows(date(2026, 8, 18)))
+        assert all(datetime.fromisoformat(row["detected_at"]) != expected for row in rows(date(2026, 8, 19)))
 
 
 def test_change_counts_include_added_and_removed_local_dates(tmp_path: Path) -> None:
@@ -664,6 +678,7 @@ def test_host_rows_keep_observations_without_telemetry_and_do_not_carry_samples(
         assert all(row["uptime_1d"] is None for row in queries.capture_endpoint_rows(connection, capture_id=cid))
 
 
+@pytest.mark.usefixtures("utc_timezone")
 def test_host_changes_use_baseline_host_for_removal_and_target_host_for_other_changes(tmp_path):
     from tests.browse_fixtures import build_hosts_fixture_db
     path = tmp_path / "synthetic-hosts.db"

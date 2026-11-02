@@ -144,7 +144,7 @@ Primary-key fields are disabled in bulk edit mode. Tables without a primary key 
 
 The grid uses every component of a composite primary key to locate a row. If a key no longer identifies exactly one row, the update or deletion is rejected.
 
-The grid displays BLOB values as objects. Editing a BLOB cell replaces its value with text; use the SQL Console to write binary data. Unchanged BLOBs and other untouched values keep their SQLite storage types when saving a row. In API responses and JSON exports, integers outside JavaScript's safe range are strings and BLOBs are objects containing hexadecimal bytes, for example `{"$blob": "ff00"}`.
+The grid displays BLOB values as objects. Editing a BLOB cell replaces its value with text; use the SQL Console to write binary data. Unchanged BLOBs and other untouched values keep their SQLite storage types when saving a row. In API responses and JSON and CSV exports, integers outside JavaScript's safe range are strings and BLOBs are objects containing hexadecimal bytes, for example `{"$blob": "ff00"}`; CSV cells serialize those objects as JSON text.
 
 ### Add a Row
 
@@ -312,7 +312,7 @@ Buttons above the data grid handle import and export:
 
 | Format | Description |
 |--------|-------------|
-| **CSV** | Downloads all rows (not just the current page) as a CSV file |
+| **CSV** | Downloads all rows (not just the current page) as a CSV file; BLOB cells contain JSON objects with hexadecimal bytes |
 | **JSON** | Downloads all rows as a JSON array |
 | **SQL** | Exports the table schema as a `CREATE TABLE IF NOT EXISTS` DDL statement |
 

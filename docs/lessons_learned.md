@@ -1,5 +1,13 @@
 # Lessons learned
 
+## 2026-11-02: Drain request handlers before closing shared databases
+
+Stopping an HTTP accept loop does not finish daemon request threads. Model
+Sentinel's server must join its handlers before closing their SQLite connections;
+bound inactive socket reads so an incomplete local request cannot block shutdown
+forever. Coordinate an in-flight request and guard the close in a regression test
+so the unsafe ordering is detected without closing SQLite during a query.
+
 ## 2026-11-02: Guard branch resets against commit loss
 
 Before resetting a local branch, check whether its tip is an ancestor of the
@@ -65,6 +73,12 @@ RouterView CSV imports populate `tokens_prompt` but not `native_tokens_prompt`.
 Aggregating the latter made the cache hit rate zero even when imported rows had
 cached tokens. Exercise summary totals and filtered rates through a real CSV
 import so the aggregate uses the data actually stored by the active path.
+
+## 2026-11-02: Extend Excel tables when appending workbook rows
+
+Writing cells below an Excel table does not extend its range or filter. Exercise
+the shipped template through consecutive appends, and extend matching tables
+and their filters while preserving the workbook's formulas and lookup cells.
 
 ## 2026-10-31: Compare old and new in a browser when moving React code to Preact
 
@@ -2249,3 +2263,17 @@ resolved even when the converter emits an unexpected prefix.
 Taking an absolute value can turn an unsupported positive withdrawal into an
 outgoing transfer. Reject the unexpected sign before normalization and test a
 later invalid row across a batch so no earlier outputs are committed.
+
+## 2026-11-02: Validate import headers before opening the database
+
+An absent CSV cost column was treated like an empty value, silently importing
+rows at zero cost. Reject missing required headers before acquiring a database
+connection, and test rollback with a failure on the second valid row so the
+first insert must actually be undone.
+
+### 2026-11-02 — Encode SQLite BLOBs consistently across exports
+
+Passing SQLite bytes directly to a CSV writer produces a Python bytes
+representation instead of a portable encoding. Reuse the API's value encoder
+and serialize BLOB objects as JSON text in CSV cells; test both export formats
+with binary bytes, large integers, Unicode and nulls.

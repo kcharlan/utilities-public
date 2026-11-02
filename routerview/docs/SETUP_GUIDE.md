@@ -32,6 +32,7 @@ The dashboard embeds its JavaScript and CSS and does not require external browse
 4. Wait for the import result banner.
 
 Successful imports report both inserted and skipped rows.
+The CSV header must include `generation_id`, `created_at`, and `cost_total`; imports missing any of these columns are rejected.
 
 - New rows are inserted into `generations`
 - Duplicate `generation_id` rows are skipped

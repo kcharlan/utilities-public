@@ -5,6 +5,7 @@ import hashlib
 import http.client
 import json
 import re
+import socket
 import sqlite3
 import threading
 from concurrent.futures import ThreadPoolExecutor
@@ -58,6 +59,114 @@ def _request(
     result = response.status, dict(response.getheaders()), body
     connection.close()
     return result
+
+
+def test_server_close_drains_active_requests_before_database_close(tmp_path: Path, monkeypatch) -> None:
+    path = tmp_path / "fixture.db"
+    build_fixture_db(path)
+    db = open_readonly(path)
+    server = make_server(browse_context(db), port=0)
+    serving = threading.Thread(target=server.serve_forever)
+    serving.start()
+    entered = threading.Event()
+    release = threading.Event()
+    close_attempted = threading.Event()
+    request_finished = threading.Event()
+    violations = []
+    real_close = db.close_all
+
+    def blocked_meta(context, params):
+        connection = context.db.connection()
+        entered.set()
+        try:
+            if not release.wait(timeout=10):
+                raise TimeoutError("synthetic request was not released")
+            assert connection.execute("SELECT 1").fetchone()[0] == 1
+            return {"ok": True}
+        finally:
+            request_finished.set()
+
+    def guarded_close():
+        close_attempted.set()
+        if not request_finished.is_set():
+            # Never close a real connection while its request is active.
+            violations.append("database close overlapped an active request")
+            return
+        real_close()
+
+    monkeypatch.setattr(api, "meta", blocked_meta)
+    monkeypatch.setattr(db, "close_all", guarded_close)
+    try:
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            request = pool.submit(_request, server, "GET", "/api/meta")
+            try:
+                assert entered.wait(timeout=5)
+
+                def stop():
+                    server.shutdown()
+                    server.server_close()
+                    db.close_all()
+
+                stopping = pool.submit(stop)
+                closed_while_active = close_attempted.wait(timeout=1)
+            finally:
+                release.set()
+            assert request.result(timeout=5)[0] == 200
+            stopping.result(timeout=5)
+    finally:
+        release.set()
+        server.shutdown()
+        server.server_close()
+        serving.join(timeout=5)
+        real_close()
+    assert not serving.is_alive()
+    assert not closed_while_active
+    assert violations == []
+    assert close_attempted.is_set()
+
+
+def test_server_close_is_bounded_for_incomplete_request(tmp_path: Path, monkeypatch) -> None:
+    path = tmp_path / "fixture.db"
+    build_fixture_db(path)
+    db = open_readonly(path)
+    server = make_server(browse_context(db), port=0)
+    server.request_timeout = 0.1
+    entered = threading.Event()
+    original = server_module._BrowseHandler.handle_one_request
+
+    def tracked_request(handler):
+        entered.set()
+        original(handler)
+
+    monkeypatch.setattr(server_module._BrowseHandler, "handle_one_request", tracked_request)
+    serving = threading.Thread(target=server.serve_forever)
+    serving.start()
+    client = socket.create_connection(server.server_address, timeout=5)
+    client.sendall(b"GET /api/meta HTTP/1.0\r\n")
+    done = threading.Event()
+
+    def stop():
+        server.shutdown()
+        server.server_close()
+        done.set()
+
+    stopper = threading.Thread(target=stop)
+    try:
+        assert entered.wait(timeout=5)
+        stopper.start()
+        completed = done.wait(timeout=3)
+    finally:
+        client.close()
+        if stopper.ident is not None:
+            stopper.join(timeout=5)
+        else:
+            server.shutdown()
+            server.server_close()
+        serving.join(timeout=5)
+        db.close_all()
+    assert completed
+    assert not stopper.is_alive()
+    assert not serving.is_alive()
 
 
 def _request_without_host(server, target: str):

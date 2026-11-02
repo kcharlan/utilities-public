@@ -545,7 +545,11 @@ def export_data(table_name: str, fmt: str):
             output = io.StringIO()
             writer = csv.DictWriter(output, fieldnames=rows[0].keys())
             writer.writeheader()
-            writer.writerows(rows)
+            writer.writerows(
+                {key: json.dumps(value) if isinstance(value, dict) else value
+                 for key, value in json_row(row).items()}
+                for row in rows
+            )
             
             return StreamingResponse(
                 io.BytesIO(output.getvalue().encode()),
