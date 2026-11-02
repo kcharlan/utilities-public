@@ -4,7 +4,7 @@ real_home=$1
 shift
 project_dir=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd -P)
 test_scratch=$(mktemp -d /tmp/colophon-native-pytest.XXXXXX)
-trap 'test_status=$?; rm -r -- "$test_scratch"; exit "$test_status"' 0
+trap 'test_status=$?; rm -r -- "${test_scratch:?}" || { [ "$test_status" -ne 0 ] || test_status=1; }; exit "$test_status"' 0
 trap 'exit 130' INT
 trap 'exit 143' TERM
 mkdir "$test_scratch/home" "$test_scratch/runtime"

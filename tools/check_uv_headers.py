@@ -104,9 +104,15 @@ LAUNCHERS = [
 # Project-specific deferrals belong here with their reason, until validated.
 UNCAPPED_LAUNCHERS: tuple[str, ...] = ()
 
-# Explicit targets per launcher; do not scan sibling modules implicitly.
+# Additional targets not reached through statically named local imports.
 LAUNCHER_TARGETS: dict[str, tuple[str, ...]] = {
     "transcription/transcription": ("transcription/app.py", "transcription/transcribe.py", "transcription/transcription_state.py"),
+}
+
+# Explicit peer source root and imported module for a launcher that adds that
+# root to sys.path. The module and its import closure are checked, not exempted.
+LAUNCHER_PEER_MODULES: dict[str, tuple[str, str]] = {
+    "benchmark-llm/bench": ("cognitive_switchyard", "cognitive_switchyard.process_identity"),
 }
 
 NON_UV_PYTHON_ALLOWLIST: tuple[str, ...] = (
@@ -441,6 +447,101 @@ def missing_declared_imports(path: Path, text: str, dependencies: list[str]) -> 
     return sorted(missing)
 
 
+def check_import_graph(launcher: Path, dependencies: list[str]) -> list[str]:
+    """Follow statically named local modules and report parse and import errors."""
+    root = launcher.parent
+    declared = {normalize_distribution(dep) for dep in dependencies}
+    pending = [launcher]
+    seen: set[Path] = set()
+    problems: list[str] = []
+    peer = LAUNCHER_PEER_MODULES.get(launcher.relative_to(REPO_ROOT).as_posix())
+    peer_root = None
+    peer_name = None
+    if peer:
+        peer_path, peer_name = peer
+        peer_root = (REPO_ROOT / peer_path).resolve()
+        if (not peer_root.is_relative_to(REPO_ROOT.resolve()) or not peer_root.is_dir()
+                or not re.fullmatch(r'[A-Za-z_]\w*(?:\.[A-Za-z_]\w*)+', peer_name)):
+            return [f'invalid peer source root or module: {peer_path}, {peer_name}']
+
+    def module_file(base: Path, name: str, source_root: Path) -> Path | None:
+        candidate = base.joinpath(*name.split('.')) if name else base
+        for item in (candidate.with_suffix('.py'), candidate / '__init__.py'):
+            if item.is_file() and item.resolve().is_relative_to(source_root.resolve()):
+                return item
+        if candidate.is_dir() and candidate.resolve().is_relative_to(source_root.resolve()):
+            return candidate
+        return None
+
+    if peer_root:
+        target = module_file(peer_root, peer_name, peer_root)
+        if not target or not target.is_file():
+            return [f'peer module not found: {peer_name}']
+
+    while pending:
+        path = pending.pop()
+        if path in seen:
+            continue
+        seen.add(path)
+        try:
+            tree = ast.parse(path.read_text(encoding='utf-8'), filename=str(path))
+        except (OSError, UnicodeError, SyntaxError) as exc:
+            problems.append(f'could not parse {path.relative_to(REPO_ROOT)}: {exc}')
+            continue
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Import):
+                imports = [(0, alias.name, ()) for alias in node.names]
+            elif isinstance(node, ast.ImportFrom):
+                imports = [(node.level, node.module or '', tuple(alias.name for alias in node.names))]
+            else:
+                continue
+            for level, name, children in imports:
+                source_root = peer_root if peer_root and path.resolve().is_relative_to(peer_root) else root
+                base = path.parent
+                if level:
+                    for _ in range(level - 1):
+                        base = base.parent
+                else:
+                    base = source_root
+                    if source_root == root and name.partition('.')[0] == root.name and not module_file(root, name, root):
+                        base = root.parent
+                    if peer_root and source_root == root and name == peer_name:
+                        base = source_root = peer_root
+                target = module_file(base, name, source_root)
+                if target:
+                    if target.is_file():
+                        pending.append(target)
+                    target_dir = target if target.is_dir() else target.parent
+                    for parent in target_dir.parents:
+                        if parent == source_root.parent:
+                            break
+                        initializer = parent / '__init__.py'
+                        if initializer.is_file():
+                            if initializer.resolve().is_relative_to(source_root.resolve()):
+                                pending.append(initializer)
+                            else:
+                                problems.append(f'initializer escapes source root: {initializer.relative_to(REPO_ROOT)}')
+                    initializer = target_dir / '__init__.py'
+                    if initializer.is_file():
+                        if initializer.resolve().is_relative_to(source_root.resolve()):
+                            pending.append(initializer)
+                        else:
+                            problems.append(f'initializer escapes source root: {initializer.relative_to(REPO_ROOT)}')
+                    package = target_dir if target.is_dir() or target.name == '__init__.py' else None
+                    if package:
+                        pending.extend(child for name in children if name != '*'
+                                       if (child := module_file(package, name, source_root)) and child.is_file())
+                        if peer_root and source_root == peer_root and target.is_dir():
+                            for child_name in children:
+                                if child_name == '*' or not module_file(package, child_name, source_root):
+                                    problems.append(f'{path.relative_to(REPO_ROOT)}: unresolved namespace import: {name}.{child_name}')
+                elif not level and name:
+                    top = name.partition('.')[0]
+                    if (not module_file(base, top, source_root) or (peer_root and source_root == peer_root)) and top not in sys.stdlib_module_names and normalize_distribution(IMPORT_DISTRIBUTION_ALIASES.get(top, top)) not in declared:
+                        problems.append(f'{path.relative_to(REPO_ROOT)}: third-party imports missing from dependencies: {top}')
+    return problems
+
+
 def check_launcher_targets(rel_path: str, dependencies: list[str]) -> list[str]:
     problems = []
     for target in LAUNCHER_TARGETS.get(rel_path, ()):
@@ -540,12 +641,7 @@ def check_launcher(rel_path: str) -> list[str]:
         if not isinstance(deps, list):
             problems.append("PEP 723 block missing a 'dependencies' list")
         else:
-            missing_imports = missing_declared_imports(path, text, deps)
-            if missing_imports:
-                problems.append(
-                    "third-party imports missing from dependencies: "
-                    + ", ".join(missing_imports)
-                )
+            problems.extend(check_import_graph(path, deps))
             problems.extend(check_launcher_targets(rel_path, deps))
             problems.extend(check_dependency_manifest(rel_path, meta))
 

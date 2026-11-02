@@ -97,7 +97,7 @@ public struct Workload: Sendable, Equatable {
             let recent = automatic.filter { $0.at > window.start }
             let compact = supportedRules.contains(.compactions) ? CompactionReadout(
                 lastThreeHours: recent.count, blocked: recent.reduce(0) { $0 + ($1.duration ?? 0) },
-                latestPoint: median(automatic.suffix(5).map { Double($0.tokensBefore) }).map { Int($0) }) : nil
+                latestPoint: median(automatic.suffix(5).map { Double($0.tokensBefore) }).map { Int(exactly: $0.rounded(.towardZero)) ?? ($0 > 0 ? Int.max : Int.min) }) : nil
             return Workload(
                 window: window, usualActiveDays: days.count,
                 medianPrompt: measure(now: medianInput(current), perHour: medianInput),
@@ -122,13 +122,13 @@ public struct Workload: Sendable, Equatable {
     }
 
     private static func cachedShare(_ responses: [ResponseRecord]) -> Double? {
-        ratio(responses.reduce(0) { $0 + $1.cachedInputTokens }, responses.reduce(0) { $0 + $1.inputTokens })
+        ratio(responses.reduce(0.0) { $0 + Double($1.cachedInputTokens) }, responses.reduce(0.0) { $0 + Double($1.inputTokens) })
     }
 
     /// Over the responses that record reasoning tokens.
     private static func reasoningShare(_ responses: [ResponseRecord]) -> Double? {
         let recorded = responses.filter { $0.reasoningTokens != nil }
-        return ratio(recorded.reduce(0) { $0 + ($1.reasoningTokens ?? 0) }, recorded.reduce(0) { $0 + $1.outputTokens })
+        return ratio(recorded.reduce(0.0) { $0 + Double($1.reasoningTokens ?? 0) }, recorded.reduce(0.0) { $0 + Double($1.outputTokens) })
     }
 
     private static func subagentShare(_ responses: [ResponseRecord]) -> Double? {
@@ -154,6 +154,7 @@ public struct Workload: Sendable, Equatable {
     }
 
     private static func ratio(_ part: Int, _ whole: Int) -> Double? { whole > 0 ? Double(part) / Double(whole) : nil }
+    private static func ratio(_ part: Double, _ whole: Double) -> Double? { whole > 0 ? part / whole : nil }
 
     private static func mean(_ values: [Double?]) -> Double? {
         let known = values.compactMap { $0 }

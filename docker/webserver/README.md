@@ -170,7 +170,10 @@ Use the built-in control panel at `http://localhost:7711/configure` to create or
   repository.
 * **Host access:** Targets that use `http://localhost` or `http://127.0.0.1` automatically resolve to `host.docker.internal` so containers can proxy to apps running on your host OS. Override this mapping by setting `HOST_DOCKER_GATEWAY` on the `index` service if your Docker host exposes a different gateway name.
 * **Transparent proxying:** Common request bodies (including `application/x-www-form-urlencoded`) are streamed through without server-side parsing, preserving full POST/PUT behavior for upstream apps.
-* **Sticky routing for absolute paths:** When an app served from `/your-alias` makes follow-up requests to absolute paths (e.g., `/search`) while `Strip path` is enabled, the proxy remembers the client for a short window (5 minutes per IP+User-Agent) and continues routing those requests to the same upstream.
+* **Absolute paths:** Follow-up requests with a same-origin Referer under a
+  stripped-path alias route to that endpoint. Requests without that Referer
+  need the configured prefix; the proxy does not infer a route from client
+  identity, which could send cookies to a different application.
 * **Trust boundary:** The configuration API has no authentication. The default
   Nginx binding is loopback-only; do not expose the stack to an untrusted
   network without adding an access-control layer.
@@ -221,14 +224,14 @@ Simply place your HTML, CSS, JavaScript, images, and other static assets directl
 
 ### Routing regression checks
 
-Run `node --test docker/webserver/tests/nginx-routing.test.mjs` from the repository
+Run `node --test docker/webserver/tests/nginx-routing.test.mjs docker/webserver/tests/index-server.test.mjs` from the repository
 root with Docker running and locally available `nginx:stable-alpine` and
 `node:24-alpine` images. The test never pulls images. `NGINX_TEST_IMAGE` and
 `NGINX_TEST_NODE_IMAGE` can select compatible cached images (the Node image must
 provide the `node` executable). It starts real Nginx with this project's config,
-an external synthetic webroot and backend stubs on an isolated Docker network.
+an external synthetic webroot, backend fixtures and the real index on isolated Docker networks.
 It checks cache headers, static-first delivery, fallback, `/files`, `/configure`
-and both API routes, then removes its containers, network and temporary files.
+both API routes, proxy bodies and dynamic WebSocket upgrades, then removes its containers, networks and temporary files.
 It does not mount the live webroot or operational configuration.
 
 After an authorized live update, also run `docker compose exec web nginx -t`
@@ -252,7 +255,7 @@ or installed-application acceptance.
     *   Check the logs of the specific API service (`app_py` or `app_node`) for application-level errors.
 *   **Custom endpoint posts 404/Not found:**
     *   Ensure the endpoint in `/configure` is Enabled and uses the correct `Strip path` setting for your upstream.
-    *   If your upstream emits absolute paths (e.g., redirects or forms posting to `/search`), keep `Strip path` on; the proxy will use sticky routing to forward those to the same upstream.
+    *   If your upstream emits absolute paths (e.g., redirects or forms posting to `/search`), keep `Strip path` on and ensure requests carry a same-origin Referer under the endpoint's prefix. Without that Referer, requests must use the configured prefix.
     *   If your upstream runs on the host and your target uses `http://localhost:PORT`, set `HOST_DOCKER_GATEWAY` if `host.docker.internal` is not available on your platform.
 *   **Unsupported Media Type on form posts:** The proxy streams `application/x-www-form-urlencoded` bodies without parsing. If you still see 415 errors, clear caches and rebuild the `index` service to ensure it is up to date.
 

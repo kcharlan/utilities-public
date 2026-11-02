@@ -85,6 +85,10 @@ a log that shrinks at a completed-frame boundary after discovery. Discovery
 prefers a plain sibling and preserves compressed filename UUID/title
 fallbacks. CLI cases cover active/archived compressed logs, cold/warm/rebuild
 cache behavior, input preservation and nonfatal skipped-file diagnostics.
+Availability units also cover non-finite metadata output, bounded malformed-line
+recovery, FIFO discovery and nonblocking opens, short frozen snapshots and
+truncation after fingerprinting. OpenCode connection checks verify SQLite's
+defensive and untrusted-schema settings.
 
 Request-ledger cases cover chronological near-before-exact ownership, exact
 matching across boundaries, counter/history/restart rules, file-local replay,

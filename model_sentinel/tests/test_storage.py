@@ -740,7 +740,8 @@ def _build_comparison_event_store(tmp_path: Path) -> tuple[Store, dict[str, Any]
     provider = _provider("synthetic", "Synthetic Provider")
     store.upsert_provider_configs((provider,), updated_at="2026-08-20T00:00:00+00:00")
 
-    local_zone = datetime.now().astimezone().tzinfo
+    # Use the offset at the fixture date, not today's possibly different DST offset.
+    local_zone = datetime(2026, 8, 20, 12).astimezone().tzinfo
     assert local_zone is not None
     selected_date = date(2026, 8, 20)
     scrape_ids: list[int] = []

@@ -232,11 +232,16 @@ public struct WatchStore: Sendable {
     init(fileURL: URL, io: WatchStoreIO) { self.fileURL = fileURL; self.io = io }
 
     public func load() -> StoreLoad {
-        guard FileManager.default.fileExists(atPath: fileURL.path) else {
-            return StoreLoad(state: .initial, problem: nil, canSave: true)
+        let data: Data
+        do { data = try io.read(fileURL) }
+        catch {
+            if (error as? CocoaError)?.code == .fileReadNoSuchFile {
+                return StoreLoad(state: .initial, problem: nil, canSave: true)
+            }
+            return StoreLoad(state: .initial, problem: "Couldn't read saved state: \(error.localizedDescription)", canSave: false)
         }
         do {
-            let state = try JSONDecoder().decode(AppState.self, from: io.read(fileURL))
+            let state = try JSONDecoder().decode(AppState.self, from: data)
             guard state.schema == AppState.currentSchema,
                   Set(state.watched.map(\.name)).count == state.watched.count,
                   state.watched.allSatisfy({ entry in

@@ -1,5 +1,15 @@
 # Lessons Learned
 
+## Planner Fallbacks Must Retain Inputs
+
+- What went wrong: A matching plan file was treated as proof that a failed planner invocation had handled its input, although another invocation could have created it.
+- Pattern to follow instead: Retain the original input whenever planner output cannot be parsed, including when existing plan names match its prefix.
+
+## Process Groups and Inherited Pipes
+
+- What went wrong: Terminating a wrapper left descendants running and holding its output pipes open, so joining readers could stall the orchestrator.
+- Pattern to follow instead: Start subprocesses in their own process groups, terminate and escalate the group on timeout, and test cleanup with a synthetic signal-resistant descendant that inherits a pipe.
+
 ## DAG Geometry Must Follow Rendered Nodes
 
 - What went wrong: The replacement DAG treated an 80-pixel layout estimate as the rendered height, so wrapped titles displaced handles and invalidated fit, edge and selection geometry.
@@ -74,3 +84,13 @@
 - What went wrong: The Setup form prefilled verification interval 4, auto-fix enabled and 2 attempts, and always sent them, so a pack's own `verification.interval` and `auto_fix` settings never applied to UI-created sessions (the built-in `test-echo` pack's `auto_fix.enabled: false` was ignored).
 - Pattern that caused it: Hard-coding the backend's fallback values in the frontend draft instead of leaving override fields unset.
 - Pattern to follow instead: Start override fields blank, show the selected pack's value as the hint, and send a field only when the operator sets it, so the backend's pack-default merge stays the single source of defaults.
+
+## Worktree Cleanup Requires Server-Owned Authority
+
+- What went wrong: A session's client-provided environment could identify a directory for cleanup, and a worktree collision could remove a directory Git did not own.
+- Pattern that caused it: Treating a path string as proof of worktree ownership and force-deleting isolation branches regardless of merge state.
+- Pattern to follow instead: Record cleanup paths on the server, verify that Git lists the target as a secondary worktree before removal, and retain unmerged isolation branches for recovery.
+
+## Squash Conflicts Need Explicit Recovery
+
+- Git squash conflicts do not necessarily create `MERGE_HEAD`. Refuse dirty target trees, restore only the clean target on failure, and preserve the task branch and workspace for resolution; remove a registered worktree before deleting its branch.

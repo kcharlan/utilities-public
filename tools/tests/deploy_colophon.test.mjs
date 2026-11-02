@@ -3,11 +3,18 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import {spawnSync, execFileSync} from 'node:child_process';
+import {spawn, spawnSync, execFileSync} from 'node:child_process';
 import {fileURLToPath} from 'node:url';
 import {buildInput} from '../deploy_colophon.mjs';
 
 const script = fileURLToPath(new URL('../deploy_colophon.mjs', import.meta.url));
+const currentVersion = 'colophon 0.5.3';
+test('synthetic current release matches the Colophon CLI version', () => {
+  const source = fs.readFileSync(new URL('../../colophon/src/cli/args.c', import.meta.url), 'utf8');
+  const versions = [...source.matchAll(/puts\("(colophon \d+\.\d+\.\d+)"\)/g)];
+  assert.equal(versions.length, 1, 'expected one CLI version declaration');
+  assert.equal(versions[0][1], currentVersion);
+});
 test('native build inputs include vendored zstd and exclude unrelated vendor trees', () => {
   assert.equal(buildInput('colophon/vendor/zstd/common/xxhash.c'), true);
   assert.equal(buildInput('colophon/vendor/zstd/VERSION'), true);
@@ -22,17 +29,18 @@ function fixture(t, root = 'colophon') {
   function write(name, bytes) {
     const target = path.join(project, name); fs.mkdirSync(path.dirname(target), {recursive: true}); fs.writeFileSync(target, bytes);
   }
-  const git = (...args) => execFileSync('git', ['-C', repo, ...args], {stdio: 'pipe'});
+  const gitEnv = {GIT_CONFIG_COUNT:'2', GIT_CONFIG_KEY_0:'maintenance.auto', GIT_CONFIG_VALUE_0:'false', GIT_CONFIG_KEY_1:'gc.auto', GIT_CONFIG_VALUE_1:'0'};
+  const git = (...args) => execFileSync('git', ['-C', repo, ...args], {stdio: 'pipe', env:{...process.env, ...gitEnv}});
   function release(label, failInstalled = false) {
-    write('src/main.c', `#include <stdio.h>\n#include <string.h>\nint main(int argc, char **argv) { if (${failInstalled ? 1 : 0} && strstr(argv[0], "/Scripts/")) return 1; if (argc == 2 && !strcmp(argv[1], "--version")) { puts("colophon 0.5.2"); return 0; } if (argc == 2 && !strcmp(argv[1], "--help")) { puts("synthetic ${label}"); return 0; } return 2; }\n`);
+    write('src/main.c', `#include <stdio.h>\n#include <string.h>\nint main(int argc, char **argv) { if (${failInstalled ? 1 : 0} && strstr(argv[0], "/Scripts/")) return 1; if (argc == 2 && !strcmp(argv[1], "--version")) { puts("${currentVersion}"); return 0; } if (argc == 2 && !strcmp(argv[1], "--help")) { puts("synthetic ${label}"); return 0; } return 2; }\n`);
     git('add', '.');
   }
   write('Makefile', 'all: colophon\ncolophon: src/main.c\n\tclang -o colophon src/main.c\n');
   for (const name of ['assets/MANIFEST', 'tools/embed.pl', 'vendor/yyjson/yyjson.c', 'vendor/yyjson/yyjson.h', 'vendor/zstd/zstd.h', 'vendor/zstd/decompress/zstd_decompress.c']) write(name, 'synthetic unused build input\n');
-  git('init', '-q'); git('config', 'user.name', 'Synthetic Tester'); git('config', 'user.email', 'tester@example.invalid');
+  git('init', '-q', '-b', 'main'); git('config', 'user.name', 'Synthetic Tester'); git('config', 'user.email', 'tester@example.invalid');
   release('first'); git('commit', '-qm', 'synthetic baseline');
   const runWith = (installer, ...args) => spawnSync(process.execPath, [fs.realpathSync(installer), '--repo', repo, '--scripts-dir', scripts, ...args], {
-    encoding: 'utf8', env: {...process.env, HOME: home, TMPDIR: base, CPPFLAGS: '', CFLAGS: '', LDFLAGS: ''}
+    encoding: 'utf8', env: {...process.env, ...gitEnv, HOME: home, TMPDIR: base, CPPFLAGS: '', CFLAGS: '', LDFLAGS: ''}
   });
   const run = (...args) => runWith(script, ...args);
   return {base, repo, home, project, scripts, git, release, run, runWith, target: path.join(scripts, 'colophon'),
@@ -61,6 +69,7 @@ function preCutoverInstaller(f) {
   const installer = path.join(tools, 'deploy_colophon_native.mjs');
   fs.writeFileSync(installer, old);
   fs.copyFileSync(fileURLToPath(new URL('../deployment_files.mjs', import.meta.url)), path.join(tools, 'deployment_files.mjs'));
+  fs.copyFileSync(fileURLToPath(new URL('../transaction.mjs', import.meta.url)), path.join(tools, 'transaction.mjs'));
   return installer;
 }
 test('dry-run leaves source, destination and backup state untouched', t => {
@@ -191,4 +200,41 @@ test('forward deployment prunes older backups while rollback and dry run preserv
   for (const name of ['copy-old-a','copy-old-b','copy-old-c']) {const dir=path.join(root,name);if(!fs.existsSync(dir)){fs.mkdirSync(dir);fs.writeFileSync(path.join(dir,'payload'),'invented');}}
   const before=fs.readdirSync(root).sort(); succeeds(f.run('--rollback',saved));
   for(const name of before) assert.ok(fs.existsSync(path.join(root,name)),name);
+});
+test('rerunning a current release preserves its rollback backup', t => {
+  const f = fixture(t);
+  succeeds(f.run());
+  f.release('second'); succeeds(f.run());
+  const backups = path.join(f.home, '.utilities-deploy-backups/colophon-native');
+  const before = snapshot(backups);
+  succeeds(f.run());
+  assert.deepEqual(snapshot(backups), before);
+});
+test('forward deployment requires main while rollback remains available on another branch', t => {
+  const f=fixture(t); f.git('branch','-M','main'); succeeds(f.run());
+  f.release('second'); const deployed=f.run(); succeeds(deployed);
+  const saved=/rollback backup: (.+)/.exec(deployed.stdout)[1];
+  f.git('checkout','-b','synthetic-other');
+  const result=f.run(); assert.equal(result.status,1); assert.match(result.stderr,/require main/);
+  succeeds(f.run('--rollback',saved));
+});
+test('failed rollback restores the displaced release and reports its recovery backup', t => {
+  const f=fixture(t); succeeds(f.run()); f.release('second'); const result=f.run(); succeeds(result);
+  const saved=/rollback backup: (.+)/.exec(result.stdout)[1], before=fs.readFileSync(f.target), receipt=fs.readFileSync(f.receipt);
+  const hook=path.join(f.base,'synthetic-failure.cjs');
+  fs.writeFileSync(hook,`const fs=require('node:fs');const rename=fs.renameSync;let once=false;fs.renameSync=(a,b)=>{const result=rename(a,b);if(!once&&b===${JSON.stringify(fs.realpathSync(f.receipt))}){once=true;throw Error('synthetic rollback failure');}return result;};`);
+  const prior=process.env.NODE_OPTIONS; process.env.NODE_OPTIONS='--require='+JSON.stringify(hook);
+  try {const failed=f.run('--rollback',saved); assert.equal(failed.status,1); assert.match(failed.stderr,/synthetic rollback failure/); assert.match(failed.stdout,/Recovery backup:/);}
+  finally {if(prior===undefined)delete process.env.NODE_OPTIONS;else process.env.NODE_OPTIONS=prior;}
+  assert.deepEqual(fs.readFileSync(f.target),before); assert.deepEqual(fs.readFileSync(f.receipt),receipt);
+});
+test('SIGTERM during build removes scratch and leaves the installation untouched',async t=>{
+ const f=fixture(t), bin=path.join(f.base,'bin'), marker=path.join(f.base,'ready'); fs.mkdirSync(bin);
+ fs.writeFileSync(path.join(bin,'make'),'#!/bin/sh\nprintf ready > "$SYNTHETIC_BUILD_READY"\nsleep 1\nexec /usr/bin/make "$@"\n',{mode:0o755});
+ const child=spawn(process.execPath,[script,'--repo',f.repo,'--scripts-dir',f.scripts],{env:{...process.env,HOME:f.home,TMPDIR:f.base,PATH:bin+':'+process.env.PATH,SYNTHETIC_BUILD_READY:marker},stdio:['ignore','pipe','pipe']});
+ const exited=new Promise(resolve=>child.once('exit',(...args)=>resolve(args)));
+ for(let i=0;i<100&&!fs.existsSync(marker);i++)await new Promise(resolve=>setTimeout(resolve,20));
+ assert.ok(fs.existsSync(marker),'build did not start');child.kill('SIGTERM');
+ const [code,signal]=await exited;assert.ok(code!==0||signal);assert.equal(fs.existsSync(f.target),false);
+ assert.equal(fs.readdirSync(f.base).some(n=>n.startsWith('colophon-native-build-')),false);
 });

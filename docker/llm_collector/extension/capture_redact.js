@@ -25,7 +25,7 @@
   // Parameter, header and form-field names whose values are credentials or
   // session or account identifiers. `at` is Google's XSRF form token; `verify`
   // carries ChatGPT's WebSocket token; `oai-did` is its device id.
-  const SENSITIVE_NAME = /sid|session|token|auth|cookie|secret|passw|api[-_]?key|^key$|signature|^sig$|xsrf|csrf|credential|client-data|visitor|account[-_]?id|^oai-did$|^verify$/i;
+  const SENSITIVE_NAME = /sid|session|token|auth|cookie|secret|passw|api[-_]?key|(?:^|[-_])key$|signature|^sig$|xsrf|csrf|credential|client-data|visitor|(?:account|device|user)[-_]?id|jwt|^code$|^oai-did$|^verify$/i;
   function isSensitiveName(name) {
     return String(name).toLowerCase() === "at" || SENSITIVE_NAME.test(String(name));
   }
@@ -35,9 +35,13 @@
   const TEXT_PATTERNS = [
     [/("[^"]*(?:token|secret|passw|session|auth|cookie|api_?key)[^"]*"\s*:\s*")[^"]*(")/gi, `$1${REDACTED}$2`],
     // Also matches percent- and plus-encoded separators, as in URL parameters.
-    [/\b(Bearer|SAPISIDHASH|SAPISID1PHASH|SAPISID3PHASH)(\s+|%20|\+)[\w.~+\/=-]+/g, `$1$2${REDACTED}`],
-    [/\bya29\.[\w.-]+/g, REDACTED],
-    [/\bAIza[\w-]{35}/g, REDACTED]
+    [/\b(Bearer|Basic|SAPISIDHASH|SAPISID1PHASH|SAPISID3PHASH)(\s+|%20|\+)[\w.~+\/=-]+/gi, `$1$2${REDACTED}`],
+    [/\bya29\.[\w.-]+/gi, REDACTED],
+    [/\bAIza[\w-]{35}/gi, REDACTED],
+    [/\beyJ[\w-]+(?:\.[\w-]+)*/gi, REDACTED],
+    [/\bsk-[\w-]+/gi, REDACTED],
+    [/\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b/gi, REDACTED],
+    [/\b([\w.-]+)(\s*=\s*)("(?:[^"\\]|\\.)*"|'(?:[^'\\]|\\.)*'|[^\s;&,]+)/g, (match, name, separator) => isSensitiveName(name) ? name + separator + REDACTED : match]
   ];
   function scrubText(text) {
     let out = String(text);
@@ -107,10 +111,17 @@
     if (!value || typeof value !== "object" || s.active.has(value)) throw new Error("unsafe value");
     s.active.add(value);
     try {
-      if (Array.isArray(value)) return value.map(v => walk(v, s, depth + 1, layers));
+      if (Array.isArray(value)) {
+        if (value.length === 2 && typeof value[0] === 'string' && isSensitiveName(value[0])) {
+          return [walk(value[0], s, depth + 1, layers), REDACTED];
+        }
+        return value.map(v => walk(v, s, depth + 1, layers));
+      }
       const out = Object.create(null);
+      const namedSensitive = Object.entries(value).some(([name, v]) =>
+        /^(name|key)$/i.test(name) && typeof v === 'string' && isSensitiveName(v));
       for (const [name, v] of Object.entries(value)) {
-        out[name] = isSensitiveName(name) ? REDACTED
+        out[name] = isSensitiveName(name) || (namedSensitive && /^value$/i.test(name)) ? REDACTED
           : name.toLowerCase() === '$httpheaders' && typeof v === 'string'
             ? redactHeaderBlock(v, s, depth + 1, layers)
             : walk(v, s, depth + 1, layers);
@@ -205,7 +216,7 @@
       const value = eq < 0 ? null : decodeComponent(part.slice(eq + 1));
       if (eq < 0) return rawName;
       if (value === null || layers >= MAX_DECODING) return `${rawName}=${encodeURIComponent(OMITTED)}`;
-      const safe = name.toLowerCase() === '$httpheaders' || (/[\r\n]/.test(value) && HAS_HEADER_LINE.test(value))
+      const safe = name.toLowerCase() === '$httpheaders' || HAS_HEADER_LINE.test(value)
         ? redactHeaderBlock(value, s, depth + 1, layers + 1)
         : inspectText(value, s, depth + 1, layers + 1);
       return safe === value ? part : `${rawName}=${encodeURIComponent(safe)}`;

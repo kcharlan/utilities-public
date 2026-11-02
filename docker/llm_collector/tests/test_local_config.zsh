@@ -4,7 +4,13 @@ set -euo pipefail
 
 PROJECT_DIR="${0:A:h:h}"
 TEST_ROOT="$(mktemp -d)"
-trap 'rm -rf "$TEST_ROOT"' EXIT
+trap 'rm -r -- "${TEST_ROOT:?}"' EXIT
+
+# Source must be baked into a non-root image and not bind-mounted writable.
+grep -q '^COPY collector/ ' "$PROJECT_DIR/llm_collector_container/Dockerfile"
+grep -q '^USER ' "$PROJECT_DIR/llm_collector_container/Dockerfile"
+! grep -q '\.\.:/workspace/llm_collector' "$PROJECT_DIR/llm_collector_container/docker-compose.yml"
+grep -q '^!snapshots/rollup_snapshots\.py$' "$PROJECT_DIR/.dockerignore"
 
 mkdir -p "$TEST_ROOT/config/llm_collector" "$TEST_ROOT/state"
 cat >"$TEST_ROOT/config/llm_collector/secret.env" <<'EOF'
@@ -23,6 +29,24 @@ for shell_name in bash zsh; do
     test "$API_KEY" = "SYNTHETIC_TEST_KEY"  # pragma: allowlist secret
     test "$LLM_COLLECTOR_DATA_DIR" = "$XDG_STATE_HOME/llm_collector"
   ' shell-test "$PROJECT_DIR"
+done
+
+# Generated extension configuration contains the API key. Both first creation
+# and replacement of an existing permissive file must leave it private.
+mkdir -p "$TEST_ROOT/project/extension"
+cp "$PROJECT_DIR/setup.sh" "$PROJECT_DIR/local_config.sh" "$TEST_ROOT/project/"
+cat >"$TEST_ROOT/config/llm_collector/secret.env" <<EOF
+API_KEY=SYNTHETIC_TEST_KEY
+COLLECTOR_URL=http://127.0.0.1:9000
+LLM_COLLECTOR_DATA_DIR=$TEST_ROOT/state/llm_collector
+BUCKET_TIMEZONE=UTC
+EOF
+for existing in no yes; do
+  if [[ "$existing" = yes ]]; then
+    chmod 644 "$TEST_ROOT/project/extension/config.local.js"
+  fi
+  (umask 022; HOME="$TEST_ROOT/home" XDG_CONFIG_HOME="$TEST_ROOT/config" XDG_STATE_HOME="$TEST_ROOT/state" bash "$TEST_ROOT/project/setup.sh" --non-interactive >/dev/null)
+  [[ "$(stat -f '%Lp' "$TEST_ROOT/project/extension/config.local.js")" = 600 ]]
 done
 
 # Lifecycle scripts must run Compose from their own directory regardless of
@@ -52,6 +76,9 @@ for script_name in up.sh down.sh; do
       exit 1
     fi
   done <"$TEST_ROOT/docker.log"
+  if [[ "$script_name" = up.sh ]]; then
+    grep -Eq '^.+\|compose up -d --force-recreate$' "$TEST_ROOT/docker.log"
+  fi
 done
 
 print -- "llm_collector local_config shell tests: PASS"

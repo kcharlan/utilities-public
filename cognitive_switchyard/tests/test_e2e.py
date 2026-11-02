@@ -32,7 +32,7 @@ from textwrap import dedent
 
 import pytest
 
-pytest.importorskip("playwright")
+import playwright
 
 import uvicorn  # noqa: E402
 from playwright.sync_api import TimeoutError as PlaywrightTimeoutError  # noqa: E402
@@ -56,6 +56,11 @@ from cognitive_switchyard.state import initialize_state_store  # noqa: E402
 # ---------------------------------------------------------------------------
 
 SLOW_TIMEOUT = 15_000  # ms — generous timeout for CI
+
+
+@pytest.fixture(scope="session")
+def base_url(pytestconfig):
+    return pytestconfig.getoption("--base-url") or pytestconfig.getini("base_url") or None
 
 
 @pytest.fixture
@@ -500,6 +505,45 @@ def server_url(runtime_home):
     store = initialize_state_store(runtime_paths)
     app = create_app(store=store, runtime_paths=runtime_paths)
     yield from _serve_app(app)
+
+
+def test_wsproto_origin_and_reconnection(server_url):
+    host = server_url.removeprefix("http://")
+    port = int(host.rsplit(":", 1)[1])
+
+    def handshake(origin):
+        request = (
+            f"GET /ws HTTP/1.1\r\nHost: {host}\r\nUpgrade: websocket\r\n"
+            f"Connection: Upgrade\r\nSec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n"
+            f"Sec-WebSocket-Version: 13\r\nOrigin: {origin}\r\n\r\n"
+        )
+        with socket.create_connection(("127.0.0.1", port), timeout=5) as connection:
+            connection.sendall(request.encode('ascii'))
+            return connection.recv(4096).split(b'\r\n', 1)[0]
+
+    assert b' 101 ' in handshake(server_url)
+    assert b' 101 ' in handshake(server_url)
+    assert b' 403 ' in handshake('http://foreign.example')
+
+
+def test_browser_mutation_and_websocket_reconnection(fresh_server, page):
+    page.add_init_script("""(() => {
+        const Original = window.WebSocket;
+        window.testSockets = [];
+        window.WebSocket = class extends Original {
+            constructor(...args) { super(...args); window.testSockets.push(this); }
+        };
+    })()""")
+    page.goto(fresh_server['url'])
+    status = page.evaluate("""async () => (await fetch('/api/sessions', {
+        method: 'POST', headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({id: 'browser-reconnect', pack: 'claude-code'})
+    })).status""")
+    assert status == 201
+    page.reload()
+    page.wait_for_function("window.testSockets.length > 0 && window.testSockets.at(-1).readyState === 1")
+    page.evaluate("window.testSockets.at(-1).close()")
+    page.wait_for_function("window.testSockets.length > 1 && window.testSockets.at(-1).readyState === 1", timeout=SLOW_TIMEOUT)
 
 
 @pytest.fixture
@@ -987,13 +1031,14 @@ class TestIntakeManagement:
             });
         }""")
         _write_intake_plan(runtime_home, "intake-lock-001", "t001")
-        _write_intake_file(runtime_home, "intake-lock-001", "dummy.md", "# Dummy\n")
+        _write_intake_plan(runtime_home, "intake-lock-001", "t002")
 
         # Start session
-        page.evaluate("""async () => {
-            await fetch('/api/sessions/intake-lock-001/start', { method: 'POST' });
-        }""")
-        page.wait_for_timeout(1000)
+        status = page.evaluate("""async () =>
+            (await fetch('/api/sessions/intake-lock-001/start', { method: 'POST' })).status
+        """)
+        assert status == 202
+        _poll_session_status(page, "intake-lock-001", {"idle"})
 
         result = page.evaluate("""async () => {
             const resp = await fetch('/api/sessions/intake-lock-001/intake');
@@ -1074,7 +1119,10 @@ class TestPreflight:
 
         # The "Run Preflight" button should exist (may be in the setup view)
         preflight_btn = page.locator("button:has-text('Preflight')")
-        assert preflight_btn.count() > 0
+        assert preflight_btn.count() > 0, page.evaluate("""async () => JSON.stringify({
+            sessions: (await (await fetch('/api/sessions')).json()).sessions.map(s => [s.id, s.status]),
+            body: document.body.innerText.slice(0, 800)
+        })""")
 
 
 # ---------------------------------------------------------------------------
@@ -3142,9 +3190,10 @@ class TestElapsedTimers:
             const span = document.querySelector('[title="Current run time"]');
             return span ? span.textContent : null;
         }""")
-        assert run_timer_text is not None, (
-            "Run timer span not found. TopBar may not be rendering timers."
-        )
+        assert run_timer_text is not None, page.evaluate("""async () => JSON.stringify({
+            sessions: (await (await fetch('/api/sessions')).json()).sessions.map(s => [s.id, s.status]),
+            body: document.body.innerText.slice(0, 800)
+        })""")
         assert run_timer_text != "Run #1: 0s", (
             f"Run timer reset to '0s' after completion — lastRunElapsed capture is broken. "
             f"Got: {run_timer_text!r}"
@@ -3208,9 +3257,10 @@ class TestElapsedTimers:
                 inlineStyle: span.getAttribute('style') || ''
             };
         }""")
-        assert cumul_style is not None, (
-            "Cumulative timer span not found. TopBar may not be rendering timers."
-        )
+        assert cumul_style is not None, page.evaluate("""async () => JSON.stringify({
+            sessions: (await (await fetch('/api/sessions')).json()).sessions.map(s => [s.id, s.status]),
+            body: document.body.innerText.slice(0, 800)
+        })""")
         # Must NOT have the old muted class
         assert "muted" not in cumul_style["className"], (
             f"Cumulative timer still has 'muted' class: {cumul_style!r}. "

@@ -211,8 +211,79 @@ def test_inline_editor_takes_focus_when_opened(server, page):
 def open_synthetic_data(page, server, tmp_path, data):
     fixture = tmp_path / 'invented.json'
     fixture.write_text(json.dumps(data, ensure_ascii=False))
-    assert page.request.post(server + '/api/open', data={'path': str(fixture)}).ok
+    assert page.request.post(server + '/api/open', data={'path': str(fixture)}, headers={'Origin': server}).ok
     page.goto(server)
+
+
+def test_special_key_paths_can_be_edited_in_browser(server, page, tmp_path):
+    with guard_browser_errors(page):
+        open_synthetic_data(page, server, tmp_path, {'a.b': 'original', 'a': {'b': 'other'}})
+        node = page.locator('.graph-node').filter(has_text='a.b')
+        expect(node).to_be_visible()
+        node.dblclick()
+        field = page.locator('.modal-box input')
+        field.fill('changed')
+        page.locator('.modal-box').get_by_role('button', name='Save').click()
+        expect(node).to_contain_text('changed')
+        assert page.request.get(server + '/api/node', params={'path': json.dumps(['a.b'])}).json()['value'] == 'changed'
+        assert page.request.get(server + '/api/node', params={'path': json.dumps(['a', 'b'])}).json()['value'] == 'other'
+
+
+def test_empty_key_can_be_renamed_and_edited_in_browser(server, page, tmp_path):
+    with guard_browser_errors(page):
+        open_synthetic_data(page, server, tmp_path, {'': 'original'})
+        node = page.locator('.graph-node').filter(has_text='original')
+        expect(node).to_be_visible()
+        node.click(button='right')
+        page.get_by_text('Rename Key').click()
+        field = page.locator('.modal-box input')
+        expect(field).to_have_value('')
+        field.fill('x.y')
+        page.locator('.modal-box').get_by_role('button', name='Rename').click()
+        renamed = page.locator('.graph-node').filter(has_text='x.y')
+        expect(renamed).to_be_visible()
+        renamed.dblclick()
+        page.locator('.modal-box input').fill('changed')
+        page.locator('.modal-box').get_by_role('button', name='Save').click()
+        expect(renamed).to_contain_text('changed')
+        assert page.request.get(server + '/api/node', params={'path': json.dumps(['x.y'])}).json()['value'] == 'changed'
+
+
+def test_nested_special_paths_move_copy_paste_search_and_collapse(server, page, tmp_path):
+    with guard_browser_errors(page):
+        open_synthetic_data(page, server, tmp_path, {'a.b': {'/': ['first', 'second']}, 'a': {'b': 'untouched'}})
+        dotted = page.locator('.graph-node').filter(has_text='a.b')
+        dotted.click(button='right')
+        page.get_by_text('Expand All', exact=True).click()
+        first = page.locator('.graph-node').filter(has_text='first')
+        expect(first).to_be_visible()
+        first.click(button='right')
+        page.get_by_text('Move Down', exact=True).click()
+        expect(page.locator('.graph-node').filter(has_text='first').get_by_title('[1]')).to_be_visible()
+        assert page.request.get(server + '/api/node', params={'path': json.dumps(['a.b', '/', 1])}).json()['value'] == 'first'
+        page.locator('.graph-node').filter(has_text='first').click(button='right')
+        page.get_by_text('Copy Node', exact=True).click()
+        dotted.click(button='right')
+        page.get_by_text('Paste', exact=True).click()
+        expect(page.locator('.graph-node').filter(has_text='first')).to_have_count(2)
+        assert page.request.get(server + '/api/node', params={'path': json.dumps(['a.b', '1'])}).json()['value'] == 'first'
+        dotted.click(button='right')
+        page.get_by_text('Collapse All', exact=True).click()
+        expect(page.locator('.graph-node').filter(has_text='first')).to_have_count(0)
+        page.get_by_title('Search (Ctrl+F)').click()
+        page.get_by_placeholder('Search keys and values...').fill('second')
+        page.locator('.search-panel').get_by_text('second', exact=True).click()
+        expect(page.locator('.graph-node').filter(has_text='second')).to_be_visible()
+        assert page.request.get(server + '/api/node', params={'path': json.dumps(['a', 'b'])}).json()['value'] == 'untouched'
+
+
+def test_lossy_load_warning_remains_visible(server, page, tmp_path):
+    fixture = tmp_path / 'duplicates.json'
+    fixture.write_text('{"x": 1, "x": 2}')
+    with guard_browser_errors(page):
+        assert page.request.post(server + '/api/open', data={'path': str(fixture)}, headers={'Origin': server}).ok
+        page.goto(server)
+        expect(page.get_by_role('alert')).to_contain_text('duplicate keys')
 
 
 def test_values_with_markup_display_literally(server, page, tmp_path):
@@ -297,10 +368,10 @@ def test_add_child_boolean_saves_the_value_it_shows(server, page, tmp_path):
         expect(value.locator('option:checked')).to_have_text('true')
         modal.get_by_role('button', name='Add').click()
         expect(page.locator('.graph-node').filter(has_text='shown_default')).to_be_visible()
-        assert page.request.get(server + '/api/node', params={'path': 'shown_default'}).json()['value'] is True
+        assert page.request.get(server + '/api/node', params={'path': json.dumps(['shown_default'])}).json()['value'] is True
 
         modal, value = add_boolean_child(page, 'picked_false')
         value.select_option('false')
         modal.get_by_role('button', name='Add').click()
         expect(page.locator('.graph-node').filter(has_text='picked_false')).to_be_visible()
-        assert page.request.get(server + '/api/node', params={'path': 'picked_false'}).json()['value'] is False
+        assert page.request.get(server + '/api/node', params={'path': json.dumps(['picked_false'])}).json()['value'] is False

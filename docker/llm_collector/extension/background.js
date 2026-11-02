@@ -267,7 +267,10 @@ chrome.webRequest.onBeforeRequest.addListener(
       const u = new URL(d.url);
 
       if (deniedByHost(u)) { dbgPush("host-deny", d, u, "deny rule"); return; }
-      if (isGeminiChannel(u)) { countGeminiChannel(d, u); return; }
+      if (isGeminiChannel(u)) {
+        if (d.initiator === 'https://gemini.google.com') countGeminiChannel(d, u);
+        return;
+      }
       if (!allowedByHost(u)) { dbgPush("not-allowlisted", d, u, "no allow"); return; }
       if (getConfigError()) { dbgPush("config-missing", d, u, getConfigError()); return; }
       if (!passesDebounce(d, u)) { dbgPush("debounced", d, u, `window=${DEDUPE_WINDOW_MS}ms`); return; }
@@ -336,6 +339,9 @@ chrome.runtime.onMessage.addListener((m, s, send) => {
     return true;
   } else if (m && m.cmd === "clear_pending") {
     delivery.clearQueued().then(result => send({ok:true,...result}), error => send({ok:false,error:error.message}));
+    return true;
+  } else if (m && m.cmd === "recover_sequence") {
+    delivery.recoverSequence().then(() => send({ok:true}), error => send({ok:false,error:error.message}));
     return true;
   } else if (m && m.cmd === "get_capture") {
     globalThis.LLMCapture.settled().then(() => send({

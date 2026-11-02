@@ -2,18 +2,44 @@ from __future__ import annotations
 
 import json
 import os
+import select
 import signal
 import subprocess
+import sys
 import tempfile
 import time
 from pathlib import Path
 from typing import Any, Callable
+
+PROCESS_IDENTITY_ROOT = Path(__file__).resolve().parents[2] / "cognitive_switchyard"
+sys.path.insert(0, str(PROCESS_IDENTITY_ROOT))
+from cognitive_switchyard.process_identity import (
+    OwnedProcessGroup,
+    ProcessGroupInspectionError,
+    owned_group_members,
+    signal_owned_group,
+)
 
 from .metrics import normalize_metrics
 from .util import elapsed_milliseconds, iso_timestamp, utc_now
 
 CommandProgressCallback = Callable[[dict[str, Any]], None]
 _TAIL_LINE_LIMIT = 20
+
+
+def _stop_process_group(group: OwnedProcessGroup) -> None:
+    try:
+        signal_owned_group(group, signal.SIGTERM)
+        deadline = time.monotonic() + 5
+        while time.monotonic() < deadline:
+            if not any(state != 5 for _, _, state in owned_group_members(group)):
+                break
+            select.select([], [], [], 0.05)
+        signal_owned_group(group, signal.SIGKILL)
+    except (PermissionError, ProcessGroupInspectionError) as exc:
+        exc.add_note(f"Owned process group leader PID: {group.process.pid}")
+        raise
+    group.process.wait()
 
 
 def _load_metrics_payload(metrics_path: Path | None) -> tuple[dict[str, Any] | None, str | None]:
@@ -103,46 +129,45 @@ def run_command(
             stderr=stderr_handle,
             start_new_session=True,
         )
+        group = OwnedProcessGroup.capture(process)
 
         deadline = time.monotonic() + timeout_sec if timeout_sec is not None else None
         last_activity = time.monotonic()
         last_sizes = (0, 0)
 
-        while True:
-            exit_code = process.poll()
-            stdout_size = stdout_path.stat().st_size if stdout_path.exists() else 0
-            stderr_size = stderr_path.stat().st_size if stderr_path.exists() else 0
-            if (stdout_size, stderr_size) != last_sizes:
-                last_sizes = (stdout_size, stderr_size)
-                last_activity = time.monotonic()
-            now = time.monotonic()
-            if exit_code is not None:
-                break
-            if deadline is not None and now >= deadline:
-                timed_out = True
-                os.killpg(process.pid, signal.SIGTERM)
-                try:
-                    process.wait(timeout=5)
-                except subprocess.TimeoutExpired:
-                    os.killpg(process.pid, signal.SIGKILL)
-                    process.wait()
-                break
-            if inactivity_timeout_sec is not None and now - last_activity >= inactivity_timeout_sec:
-                inactivity_timed_out = True
-                os.killpg(process.pid, signal.SIGTERM)
-                try:
-                    process.wait(timeout=5)
-                except subprocess.TimeoutExpired:
-                    os.killpg(process.pid, signal.SIGKILL)
-                    process.wait()
-                break
-            time.sleep(0.25)
+        try:
+            while True:
+                exit_code = os.waitid(os.P_PID, process.pid, os.WEXITED | os.WNOHANG | os.WNOWAIT)
+                stdout_size = stdout_path.stat().st_size if stdout_path.exists() else 0
+                stderr_size = stderr_path.stat().st_size if stderr_path.exists() else 0
+                if (stdout_size, stderr_size) != last_sizes:
+                    last_sizes = (stdout_size, stderr_size)
+                    last_activity = time.monotonic()
+                now = time.monotonic()
+                if exit_code is not None:
+                    break
+                if deadline is not None and now >= deadline:
+                    timed_out = True
+                    break
+                if inactivity_timeout_sec is not None and now - last_activity >= inactivity_timeout_sec:
+                    inactivity_timed_out = True
+                    break
+                time.sleep(0.25)
+        except (PermissionError, ProcessGroupInspectionError):
+            raise
+        except BaseException:
+            _stop_process_group(group)
+            raise
+        if timed_out or inactivity_timed_out:
+            _stop_process_group(group)
+        else:
+            process.wait()
 
         completed = subprocess.CompletedProcess(
             command,
             process.returncode if process.returncode is not None else -signal.SIGTERM,
-            stdout_path.read_text(encoding="utf-8"),
-            stderr_path.read_text(encoding="utf-8"),
+            stdout_path.read_text(encoding="utf-8", errors="replace"),
+            stderr_path.read_text(encoding="utf-8", errors="replace"),
         )
 
     ended = utc_now()

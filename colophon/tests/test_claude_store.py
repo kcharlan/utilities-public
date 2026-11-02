@@ -535,3 +535,13 @@ def test_dangling_symlink_root_requires_selected_unchanged_accessible_locator(tm
         assert {p: p.read_bytes() for p in store_records(run, 'cache-claude')} == saved
     finally:
         config.chmod(0o700)
+
+
+def test_unchanged_claude_cache_preserves_mtime(tmp_path):
+    run = NativeRun(tmp_path)
+    run.claude_session()
+    assert run.build().returncode == 0
+    cached, = store_records(run, "cache-claude")
+    before = cached.stat().st_mtime_ns
+    assert run.build().returncode == 0
+    assert cached.stat().st_mtime_ns == before

@@ -13,6 +13,7 @@ _logger = logging.getLogger(__name__)
 from .hook_runner import HookNotFoundError, run_pack_hook
 from .models import PackManifest, RecoveryResult
 from .parsers import ArtifactParseError, parse_status_sidecar
+from .process_identity import process_identity
 from .state import StateStore
 
 
@@ -29,19 +30,28 @@ def recover_execution_session(
     preserved_done: list[str] = []
     reverted_ready: list[str] = []
     warnings: list[str] = []
+    protected_slots: set[int] = set()
 
     for worker_dir in sorted(path for path in session_paths.workers.iterdir() if path.is_dir()):
         if not worker_dir.name.isdigit():
             continue
         slot_number = int(worker_dir.name)
         metadata = store.read_worker_recovery_metadata(session_id, slot_number=slot_number)
+        autofix_task_id = session.runtime_state.auto_fix_task_id
+        if (session.runtime_state.auto_fix_context == "task_failure" and metadata is not None
+                and metadata.task_id == autofix_task_id):
+            # This workspace belongs to the interrupted auto-fix, not an orphan.
+            # A non-null PID remains untrusted and must not be signalled here.
+            protected_slots.add(slot_number)
+            if metadata.pid is None:
+                task = store.get_task(session_id, metadata.task_id)
+                if task.status == "active":
+                    store.project_task(session_id, task.task_id, status="ready")
+            continue
         for plan_path in sorted(worker_dir.glob("*.plan.md")):
             task_id = plan_path.name.removesuffix(".plan.md")
-            workspace_path = (
-                metadata.workspace_path
-                if metadata is not None and metadata.task_id == task_id
-                else session_paths.root
-            )
+            matching_metadata = metadata if metadata is not None and metadata.task_id == task_id else None
+            workspace_path = matching_metadata.workspace_path if matching_metadata is not None else None
             status, warning = _classify_worker_result(
                 plan_path,
                 sidecar_format=pack_manifest.status.sidecar_format,
@@ -57,14 +67,14 @@ def recover_execution_session(
                 )
 
             if status == "done":
-                if not _run_isolate_end(
+                if (workspace_path is None and pack_manifest.isolation.type != "none") or (workspace_path is not None and not _run_isolate_end(
                     pack_manifest=pack_manifest,
                     slot_number=slot_number,
                     task_id=task_id,
                     workspace_path=workspace_path,
                     final_status="done",
                     env=env,
-                ):
+                )):
                     warning = f"Recovery isolate_end failed while preserving completed task {task_id}."
                     warnings.append(warning)
                     store.append_event(
@@ -74,6 +84,14 @@ def recover_execution_session(
                         task_id=task_id,
                         message=warning,
                     )
+                    store.project_task(session_id, task_id, status="blocked", timestamp=_timestamp())
+                    protected_slots.add(slot_number)
+                    if matching_metadata is not None:
+                        try:
+                            store.clear_worker_recovery_metadata(session_id, slot_number=slot_number)
+                        except Exception:
+                            _logger.warning("Failed to clear recovery metadata for blocked slot %d", slot_number)
+                    continue
                 store.project_task(
                     session_id,
                     task_id,
@@ -84,16 +102,23 @@ def recover_execution_session(
                 # Clear metadata only after project_task has committed. Wrap in
                 # try/except so a failure to clear does not abort the recovery
                 # loop — the orphaned metadata will be cleaned up on the next pass. F-7 fix.
-                try:
-                    store.clear_worker_recovery_metadata(session_id, slot_number=slot_number)
-                except Exception:
-                    _logger.warning("Failed to clear recovery metadata for slot %d; will be cleaned up on next recovery", slot_number)
+                if matching_metadata is not None:
+                    try:
+                        store.clear_worker_recovery_metadata(session_id, slot_number=slot_number)
+                    except Exception:
+                        _logger.warning("Failed to clear recovery metadata for slot %d; will be cleaned up on next recovery", slot_number)
                 continue
 
-            if metadata is not None and metadata.pid is not None:
-                _terminate_pid(metadata.pid, kill_grace_period=kill_grace_period)
+            if matching_metadata is not None and matching_metadata.pid is not None:
+                if not _terminate_pid(matching_metadata.pid, identity=matching_metadata.process_identity, kill_grace_period=kill_grace_period):
+                    warning = f"Recovery could not verify or terminate the worker process identity for task {task_id}; workspace and metadata preserved."
+                    warnings.append(warning)
+                    store.append_event(session_id, timestamp=_timestamp(), event_type="session.recovery_warning", task_id=task_id, message=warning)
+                    store.project_task(session_id, task_id, status="blocked", timestamp=_timestamp())
+                    protected_slots.add(slot_number)
+                    continue
 
-            isolate_end_ok = _run_isolate_end(
+            isolate_end_ok = workspace_path is None or _run_isolate_end(
                 pack_manifest=pack_manifest,
                 slot_number=slot_number,
                 task_id=task_id,
@@ -124,10 +149,11 @@ def recover_execution_session(
             )
             reverted_ready.append(task_id)
             # F-7 fix: clear metadata only after project_task has committed.
-            try:
-                store.clear_worker_recovery_metadata(session_id, slot_number=slot_number)
-            except Exception:
-                _logger.warning("Failed to clear recovery metadata for slot %d; will be cleaned up on next recovery", slot_number)
+            if matching_metadata is not None:
+                try:
+                    store.clear_worker_recovery_metadata(session_id, slot_number=slot_number)
+                except Exception:
+                    _logger.warning("Failed to clear recovery metadata for slot %d; will be cleaned up on next recovery", slot_number)
 
     orphan_warnings = cleanup_orphaned_workspaces(
         session_paths=session_paths,
@@ -135,6 +161,7 @@ def recover_execution_session(
         env=env,
         store=store,
         session_id=session_id,
+        protected_slots=protected_slots,
     )
     warnings.extend(orphan_warnings)
 
@@ -158,6 +185,7 @@ def cleanup_orphaned_workspaces(
     env: Mapping[str, str] | None,
     store: StateStore,
     session_id: str,
+    protected_slots: set[int] | None = None,
 ) -> list[str]:
     """Clean up workspaces whose recovery metadata survived but had no plan file.
 
@@ -183,6 +211,8 @@ def cleanup_orphaned_workspaces(
         if not worker_dir.name.isdigit():
             continue
         slot_number = int(worker_dir.name)
+        if protected_slots and slot_number in protected_slots:
+            continue
         metadata = store.read_worker_recovery_metadata(session_id, slot_number=slot_number)
         if metadata is None:
             continue
@@ -192,8 +222,24 @@ def cleanup_orphaned_workspaces(
         workspace_path = metadata.workspace_path
         task_id = metadata.task_id
 
+        # A blocked task can deliberately retain its workspace and metadata for
+        # manual recovery. Do not reclassify it as an orphan on the next run.
+        try:
+            task = store.get_task(session_id, task_id)
+        except KeyError:
+            task = None
+        if task is not None and task.status == "blocked":
+            warning = f"Recovery left blocked task {task_id}'s workspace and metadata for manual handling."
+            warnings.append(warning)
+            store.append_event(session_id, timestamp=_timestamp(), event_type="session.recovery_warning", task_id=task_id, message=warning)
+            continue
+
         if metadata.pid is not None:
-            _terminate_pid(metadata.pid, kill_grace_period=5.0)
+            if not _terminate_pid(metadata.pid, identity=metadata.process_identity, kill_grace_period=5.0):
+                warning = f"Recovery could not verify or terminate the worker process identity for task {task_id}; workspace and metadata preserved."
+                warnings.append(warning)
+                store.append_event(session_id, timestamp=_timestamp(), event_type="session.recovery_warning", task_id=task_id, message=warning)
+                continue
 
         isolate_end_ok = _run_isolate_end(
             pack_manifest=pack_manifest,
@@ -275,27 +321,32 @@ def _delete_worker_sidecar_if_present(plan_path: Path) -> None:
         status_path.unlink()
 
 
-def _terminate_pid(pid: int, *, kill_grace_period: float) -> None:
+def _terminate_pid(pid: int, *, identity: str | None, kill_grace_period: float) -> bool:
     if not _pid_is_running(pid):
-        return
+        return True
+    if identity is None or process_identity(pid) != identity:
+        return False
     try:
         os.kill(pid, signal.SIGTERM)
     except OSError:
-        return
+        return not _pid_is_running(pid)
     deadline = time.monotonic() + kill_grace_period
     while time.monotonic() < deadline:
         if not _pid_is_running(pid):
-            return
+            return True
         time.sleep(0.02)
+    if process_identity(pid) != identity:
+        return False
     try:
         os.kill(pid, signal.SIGKILL)
     except OSError:
-        return
+        return not _pid_is_running(pid)
     deadline = time.monotonic() + kill_grace_period
     while time.monotonic() < deadline:
         if not _pid_is_running(pid):
-            return
+            return True
         time.sleep(0.02)
+    return not _pid_is_running(pid)
 
 
 def _pid_is_running(pid: int) -> bool:
@@ -307,8 +358,11 @@ def _pid_is_running(pid: int) -> bool:
         pass
     try:
         os.kill(pid, 0)
-    except OSError:
+    except ProcessLookupError:
         return False
+    except OSError:
+        # Permission or other errors do not establish that the PID is absent.
+        return True
     return True
 
 
@@ -318,9 +372,11 @@ def _cleanup_workspace_after_failed_isolate_end(
     workspace_path: Path,
     task_id: str,
 ) -> str:
-    resolved_root = session_root.resolve()
+    resolved_root = (session_root / "workers").resolve()
     resolved_workspace = workspace_path.resolve()
-    if resolved_workspace == resolved_root or not resolved_workspace.is_relative_to(resolved_root):
+    if (not resolved_workspace.is_relative_to(resolved_root)
+            or len(resolved_workspace.relative_to(resolved_root).parts) < 2
+            or not resolved_workspace.relative_to(resolved_root).parts[0].isdigit()):
         return (
             f"Recovery cleanup for {task_id} could not run isolate_end and left non-session workspace "
             f"{resolved_workspace} in place."

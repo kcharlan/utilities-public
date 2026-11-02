@@ -16,11 +16,17 @@ package_dir="$snapshot_home/package"
 build_tmp="$snapshot_home/tmp"
 finish() {
   local code=$?
+  trap - EXIT
   if $owned; then
-    if (( code )); then rm -rf -- "$snapshot_home"
-    else rm -rf -- "$package_dir" "$build_tmp" "$snapshot_home"/fixture-*(N); fi
+    local cleanup_target
+    local -a cleanup_paths
+    if (( code )); then cleanup_paths=("$snapshot_home"); else cleanup_paths=("$package_dir" "$build_tmp" "$snapshot_home"/fixture-*(N)); fi
+    for cleanup_target in "${cleanup_paths[@]}"; do
+      [[ -e "$cleanup_target" || -L "$cleanup_target" ]] || continue
+      rm -r -- "${cleanup_target:?}" || { print -u2 -- "Cannot remove $cleanup_target"; (( code )) || code=1; }
+    done
   fi
-  return $code
+  exit $code
 }
 trap finish EXIT
 trap 'exit 130' INT

@@ -289,11 +289,14 @@ def test_environment_removes_python_overrides_but_retains_application_settings(t
     monkeypatch.setenv('PYTHONPATH', '/synthetic/path')
     monkeypatch.setenv('PYTHONHOME', '/synthetic/home')
     monkeypatch.setenv('PYTHONUSERBASE', '/synthetic/userbase')
+    monkeypatch.setenv('PYTEST_ADDOPTS', '--collect-only')
+    monkeypatch.setenv('PYTEST_PLUGINS', 'synthetic_plugin')
     monkeypatch.setenv('STORAGE_MONITOR_WALKER', '/synthetic/walker')
     monkeypatch.setenv('PLAYWRIGHT_BROWSERS_PATH', '/synthetic/browsers')
     monkeypatch.setenv('UV_CACHE_DIR', '/synthetic/cache')
     env = runner.clean_environment()
     assert not {'VIRTUAL_ENV', 'PYTHONPATH', 'PYTHONHOME', 'PYTHONUSERBASE'} & env.keys()
+    assert not any(key.startswith('PYTEST_') for key in env)
     assert env['PATH'] == '/usr/bin'
     assert env['STORAGE_MONITOR_WALKER'] == '/synthetic/walker'
     assert env['PLAYWRIGHT_BROWSERS_PATH'] == '/synthetic/browsers'

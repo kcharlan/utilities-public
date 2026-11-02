@@ -108,7 +108,7 @@ def test_app_loads_without_browser_errors_and_opens_security(server, page):
         app_shell = page.locator("#root > div").first
         expect(app_shell).to_be_visible()
         page.wait_for_function(
-            "getComputedStyle(document.querySelector('#root > div')).color === 'rgb(26, 26, 26)'"
+            "() => getComputedStyle(document.querySelector('#root > div')).color === 'rgb(26, 26, 26)'"
         )
         assert app_shell.evaluate("element => getComputedStyle(element).color") == "rgb(26, 26, 26)"
         assert 'DM Sans' in app_shell.evaluate("element => getComputedStyle(element).fontFamily")
@@ -121,7 +121,7 @@ def test_app_loads_without_browser_errors_and_opens_security(server, page):
             "element => getComputedStyle(element).backgroundColor"
         )
         page.get_by_title("Toggle theme").click()
-        page.wait_for_function("document.documentElement.classList.contains('dark')")
+        page.wait_for_function("() => document.documentElement.classList.contains('dark')")
         assert page.evaluate("document.documentElement.classList.contains('dark')")
         assert app_shell.evaluate("""element => {
             const probe = document.createElement('span');
@@ -161,7 +161,7 @@ def test_page_loads_offline(server, browser):
 def _load_synthetic(page, server, har):
     result = page.request.post(server + '/api/open-content', data={
         'content': json.dumps(har), 'filename': 'synthetic.har',
-    })
+    }, headers={'Origin': server})
     assert result.ok
     page.goto(server, wait_until='domcontentloaded')
     expect(page.get_by_placeholder('Search URLs...')).to_be_visible()
@@ -230,7 +230,7 @@ def test_sequence_wheel_and_pointer_pan(server, page, minimal_har_dict):
         page.keyboard.down('Control')
         page.mouse.wheel(0, -80)
         page.keyboard.up('Control')
-        page.wait_for_function('window.wheelPrevented === true')
+        page.wait_for_function('() => window.wheelPrevented === true')
         expect(scene).not_to_have_attribute('style', before)
         before = scene.get_attribute('style')
         box = canvas.bounding_box()

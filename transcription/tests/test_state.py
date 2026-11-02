@@ -156,6 +156,8 @@ def test_readme_migration_block(sources, overrides, tmp_path, monkeypatch):
         monkeypatch.setenv("CUMULATIVE_JSON_PATH", "relative/counter.json")
         monkeypatch.setenv("LIFETIME_TXT_PATH", "~/outside/lifetime.txt")
         (tmp_path / "outside").mkdir(mode=0o755)
+        (tmp_path / "outside").chmod(0o755)
+        assert (tmp_path / "outside").stat().st_mode & 0o777 == 0o755
     legacy = tmp_path / "transcription"
     legacy.mkdir()
     names = ("session_backup.json", "transcription_odometer.txt")
@@ -177,6 +179,28 @@ def test_readme_migration_block(sources, overrides, tmp_path, monkeypatch):
             assert not destination.exists()
     if overrides:
         assert (tmp_path / "outside").stat().st_mode & 0o777 == 0o755
+
+
+def test_migration_preserves_source_when_publication_fails(tmp_path, monkeypatch):
+    monkeypatch.setenv("HOME", str(tmp_path))
+    legacy = tmp_path / "transcription"
+    legacy.mkdir()
+    source = legacy / "session_backup.json"
+    source.write_bytes(b"synthetic source")
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir()
+    fake_ln = fake_bin / "ln"
+    fake_ln.write_text("#!/bin/sh\nexit 1\n")
+    fake_ln.chmod(0o755)
+    monkeypatch.setenv("PATH", f"{fake_bin}:{os.environ['PATH']}")
+    readme = (Path(__file__).parents[1] / "README.md").read_text()
+    section = readme.split("## Manual counter migration", 1)[1]
+    script = section.split("```bash\n", 1)[1].split("```", 1)[0]
+    result = subprocess.run(["bash", "-c", script], capture_output=True, text=True)
+    assert result.returncode != 0
+    assert source.read_bytes() == b"synthetic source"
+    assert not state.cumulative_path().exists()
+    assert not list(state.cumulative_path().parent.glob(".counter-migration.*"))
 
 
 def test_migration_never_overwrites_existing_or_dangling_entries(tmp_path, monkeypatch):

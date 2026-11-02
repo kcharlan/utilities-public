@@ -572,11 +572,25 @@ def trailing_payments(
     )
 
 
-def typical_payments_per_year(payments: Sequence[DividendPayment]) -> int:
+def typical_payments_per_year(
+    payments: Sequence[DividendPayment], *, window_start: date | None = None,
+    window_end: date | None = None,
+) -> int:
     if not payments:
         raise MarketDataError("cannot infer payment frequency without dividend payments")
     annual_counts = Counter(payment.payment_date.year for payment in payments)
-    inferred = int(round(median(annual_counts.values())))
+    if window_start is None or window_end is None:
+        inferred = int(round(median(annual_counts.values())))
+    else:
+        complete_counts = [count for year, count in annual_counts.items()
+                           if window_start <= date(year, 1, 1)
+                           and date(year, 12, 31) <= window_end]
+        if complete_counts:
+            inferred = int(round(median(complete_counts)))
+        else:
+            dates = sorted({payment.payment_date for payment in payments})
+            intervals = [(right - left).days for left, right in zip(dates, dates[1:])]
+            inferred = max(1, round(365.2425 / median(intervals))) if intervals else 1
     if inferred <= 0:
         raise MarketDataError("could not infer a positive dividend payment frequency")
     return inferred
@@ -638,7 +652,10 @@ def simulate(settings: Settings, *, as_of: date) -> tuple[list[HoldingSimulation
                 f"no dividend payments found for {holding.symbol} in the trailing "
                 f"{settings.history_years} years"
             )
-        payments_per_year = typical_payments_per_year(payments)
+        payments_per_year = typical_payments_per_year(
+            payments, window_start=_calendar_years_before(as_of, settings.history_years),
+            window_end=as_of,
+        )
         per_share = bootstrap_annual_income(
             np.asarray([payment.amount for payment in payments], dtype=float),
             payments_per_year=payments_per_year,

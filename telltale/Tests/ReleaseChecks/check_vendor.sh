@@ -15,7 +15,16 @@ fail() { echo "check_vendor: $*" >&2; failures=$((failures + 1)); }
 
 listed=$(mktemp "${TMPDIR:-/tmp}/telltale-vendor-listed.XXXXXX")
 actual=$(mktemp "${TMPDIR:-/tmp}/telltale-vendor-actual.XXXXXX")
-trap 'rm -f "$listed" "$actual"' EXIT
+cleanup() {
+    local code=$? path
+    trap - EXIT
+    for path in "$listed" "$actual"; do
+        [ -e "$path" ] || [ -L "$path" ] || continue
+        rm -- "${path:?}" || { [ "$code" -ne 0 ] || code=1; }
+    done
+    exit "$code"
+}
+trap cleanup EXIT
 
 checked=0
 while IFS= read -r line; do

@@ -80,7 +80,7 @@ def build_parser() -> argparse.ArgumentParser:
         "serve",
         help="Start the FastAPI backend for local monitoring and control.",
     )
-    serve_parser.add_argument("--host", default="127.0.0.1")
+    serve_parser.add_argument("--host", choices=("127.0.0.1",), default="127.0.0.1")
     serve_parser.add_argument("--port", type=int, default=8100)
     serve_parser.set_defaults(handler=handle_serve)
     return parser

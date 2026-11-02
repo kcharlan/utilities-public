@@ -11,7 +11,7 @@ set -euo pipefail
 # Configuration & Defaults
 # ------------------------------------------------------------------------------
 SCRIPT_NAME="media-dater"
-VERSION="1.0.0"
+VERSION="1.0.1"
 
 # Defaults
 VERBOSE=false
@@ -20,6 +20,7 @@ RECURSIVE=false
 PREFIX="IMG_"
 EXTENSIONS="" # Empty means all
 TARGET_DIR=""
+argfile=""
 
 # ------------------------------------------------------------------------------
 # Helpers
@@ -28,6 +29,15 @@ TARGET_DIR=""
 die() {
     echo "Error: $1" >&2
     exit 1
+}
+
+cleanup_argfile() {
+    local exit_code=$?
+    trap - EXIT
+    if [[ -n "$argfile" && ( -e "$argfile" || -L "$argfile" ) ]]; then
+        rm -- "${argfile:?}" || { echo "Error: could not remove temporary file: $argfile" >&2; [[ "$exit_code" -ne 0 ]] || exit_code=1; }
+    fi
+    exit "$exit_code"
 }
 
 log() {
@@ -178,11 +188,10 @@ main() {
     # 2. Filter Files
     # We create a temporary file to hold the list of files to process.
     # We use mktemp for safety.
-    local argfile
     argfile=$(mktemp) || die "Could not create temporary file."
     
     # Ensure cleanup on exit
-    trap "rm -f \"$argfile\"" EXIT
+    trap cleanup_argfile EXIT
 
     local count=0
     local skipped=0
@@ -205,11 +214,11 @@ main() {
             if [[ "$VERBOSE" == "true" ]]; then
                 echo "[SKIP] $filename (Already matches pattern)"
             fi
-            ((skipped++))
+            ((skipped+=1))
         else
             # Add to list for processing
             echo "$file" >> "$argfile"
-            ((count++))
+            ((count+=1))
         fi
     done < <("${find_cmd[@]}" -print0)
 
@@ -225,6 +234,7 @@ main() {
         echo ""
         echo "[DRY-RUN] The following command would be executed:"
         echo "exiftool \\"
+        echo "  -api QuickTimeUTC=1 \\"
         echo "  '-filename<CreateDate' \\"
         echo "  -d '${PREFIX}%Y%m%d_%H%M%S_%%%-02.c.%%e' \\"
         echo "  -@ list_of_${count}_files.txt"
@@ -238,6 +248,7 @@ main() {
         # %%%-02.c creates a counter if filenames collide (duplicate second)
         # %%e preserves the original extension
         exiftool \
+            -api QuickTimeUTC=1 \
             '-filename<CreateDate' \
             -d "${PREFIX}%Y%m%d_%H%M%S_%%%-02.c.%%e" \
             -@ "$argfile"

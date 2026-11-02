@@ -310,7 +310,10 @@ def test_recover_done_worker_supports_json_status_sidecar(tmp_path: Path) -> Non
 
     workspace_path = runtime_paths.session_paths(session.id).root / "workspace" / "111"
     workspace_path.mkdir(parents=True, exist_ok=True)
-    pack_root = _write_pack(tmp_path, name="json-recovery-pack", sidecar_format="json")
+    pack_root = _write_pack(
+        tmp_path, name="json-recovery-pack", sidecar_format="json",
+        isolate_end="#!/usr/bin/env python3\npass\n",
+    )
     status_path = _status_path(active_task.plan_path)
     status_path.write_text(
         '{"status":"done","commits":"abc1234","tests_ran":"targeted","test_result":"pass"}',
@@ -703,7 +706,7 @@ def test_restart_from_verifying_or_auto_fixing_replays_verification_without_dupl
     assert [event.task_id for event in events if event.event_type == "task.completed"] == ["302"]
 
 
-def test_restart_from_auto_fixing_task_failure_replays_verification_and_keeps_task_context(
+def test_restart_from_auto_fixing_task_failure_pauses_without_verified_fixer_identity(
     tmp_path: Path,
 ) -> None:
     from cognitive_switchyard.models import FixerAttemptResult
@@ -797,21 +800,13 @@ def test_restart_from_auto_fixing_task_failure_replays_verification_and_keeps_ta
 
     completed_events = [event.task_id for event in store.list_events(session.id) if event.event_type == "task.completed"]
 
-    assert result.session_status == "idle"
-    assert store.get_task(session.id, "401").status == "done"
-    assert store.get_task(session.id, "402").status == "done"
-    assert fixer_contexts == [
-        (
-            "task_failure",
-            "401",
-            2,
-            "Previous fixer summary:\nAttempted fix one.\n\n"
-            "Try a DIFFERENT approach. The previous fixer's changes are already committed.",
-            "verification-fail\n",
-        ),
-    ]
-    assert trace_path.read_text(encoding="utf-8").splitlines() == ["run:402"]
-    assert completed_events == ["401", "402"]
+    assert result.session_status == "paused"
+    assert store.get_task(session.id, "401").status == "ready"
+    assert store.get_task(session.id, "402").status == "ready"
+    assert fixer_contexts == []
+    assert not trace_path.exists()
+    assert completed_events == []
+    assert store.get_session(session.id).runtime_state.auto_fix_task_id == "401"
 
 
 def test_cleanup_orphaned_workspaces_removes_workspace_when_plan_file_missing(tmp_path: Path) -> None:
@@ -920,7 +915,7 @@ def test_cleanup_orphaned_workspaces_falls_back_to_rmtree_when_isolate_end_fails
     )
     store.update_session_status(session.id, status="running")
 
-    workspace_path = runtime_paths.session_paths(session.id).root / "workspace" / "601"
+    workspace_path = runtime_paths.session_paths(session.id).workers / "0" / "workspace"
     workspace_path.mkdir(parents=True, exist_ok=True)
     (workspace_path / "leftover.txt").write_text("data\n", encoding="utf-8")
 
@@ -1041,3 +1036,263 @@ def test_f7_recovery_continues_when_metadata_clear_fails(
     assert "f7-task" in result.preserved_done_task_ids
     task = store.get_task("session-f7", "f7-task")
     assert task.status == "done"
+
+
+def test_recovery_does_not_complete_when_isolate_end_fails(tmp_path: Path) -> None:
+    from cognitive_switchyard.recovery import recover_execution_session
+
+    store, paths = _build_store(tmp_path)
+    session = store.create_session(session_id='failed-hook', name='Failed hook', pack='failed-hook', created_at='2026-03-09T10:00:00Z')
+    _register_task(store, session_id=session.id, task_id='101')
+    task = store.project_task(session.id, '101', status='active', worker_slot=0)
+    _status_path(task.plan_path).write_text('STATUS: done\nCOMMITS: abc123\nTESTS_RAN: full\nTEST_RESULT: pass\n')
+    workspace = paths.session_paths(session.id).workers / '0' / 'workspace'
+    workspace.mkdir(parents=True)
+    store.write_worker_recovery_metadata(session.id, slot_number=0, task_id='101', workspace_path=workspace, pid=None)
+    pack = _write_pack(tmp_path, name='failed-hook', isolate_end='#!/usr/bin/env python3\nraise SystemExit(1)\n')
+    result = recover_execution_session(store=store, session_id=session.id, pack_manifest=load_pack_manifest(pack))
+    assert '101' not in result.preserved_done_task_ids
+    assert store.get_task(session.id, '101').status == 'blocked'
+    assert workspace.exists()
+
+
+def test_recovery_missing_metadata_does_not_call_isolate_end(tmp_path: Path) -> None:
+    from cognitive_switchyard.recovery import recover_execution_session
+
+    store, paths = _build_store(tmp_path)
+    session = store.create_session(session_id='missing-meta', name='Missing metadata', pack='missing-meta', created_at='2026-03-09T10:00:00Z')
+    _register_task(store, session_id=session.id, task_id='101')
+    store.project_task(session.id, '101', status='active', worker_slot=0)
+    marker = tmp_path / 'called'
+    pack = _write_pack(tmp_path, name='missing-meta', isolate_end=f'#!/usr/bin/env python3\nfrom pathlib import Path\nPath({str(marker)!r}).touch()\n')
+    recover_execution_session(store=store, session_id=session.id, pack_manifest=load_pack_manifest(pack))
+    assert paths.session_paths(session.id).root.exists()
+    assert not marker.exists()
+
+
+def test_recovery_does_not_signal_unrelated_reused_pid(tmp_path: Path) -> None:
+    import json
+    from cognitive_switchyard.recovery import recover_execution_session
+
+    store, paths = _build_store(tmp_path)
+    session = store.create_session(session_id='stale-pid', name='Stale PID', pack='stale-pid', created_at='2026-03-09T10:00:00Z')
+    _register_task(store, session_id=session.id, task_id='101')
+    store.project_task(session.id, '101', status='active', worker_slot=0)
+    marker = tmp_path / 'hook-called'
+    pack = _write_pack(tmp_path, name='stale-pid', isolate_end=f'#!/usr/bin/env python3\nfrom pathlib import Path\nPath({str(marker)!r}).touch()\n')
+    workspace = paths.session_paths(session.id).workers / '0' / 'workspace'
+    workspace.mkdir(parents=True)
+    original = subprocess.Popen(['sleep', '60'])
+    unrelated = subprocess.Popen(['sleep', '60'])
+    try:
+        store.write_worker_recovery_metadata(session.id, slot_number=0, task_id='101', workspace_path=workspace, pid=original.pid)
+        metadata_path = paths.session_paths(session.id).worker_recovery_path(0)
+        metadata = json.loads(metadata_path.read_text())
+        metadata['pid'] = unrelated.pid
+        metadata_path.write_text(json.dumps(metadata))
+        result = recover_execution_session(store=store, session_id=session.id, pack_manifest=load_pack_manifest(pack), kill_grace_period=0.1)
+        assert unrelated.poll() is None
+        assert store.get_task(session.id, '101').status == 'blocked'
+        assert workspace.exists() and metadata_path.exists()
+        assert not marker.exists()
+        assert any('identity' in warning for warning in result.warnings)
+        unrelated.terminate()
+        unrelated.wait(timeout=3)
+        recover_execution_session(store=store, session_id=session.id, pack_manifest=load_pack_manifest(pack), kill_grace_period=0.1)
+        assert workspace.exists() and metadata_path.exists()
+        assert not marker.exists()
+    finally:
+        for process in (original, unrelated):
+            if process.poll() is None:
+                process.terminate()
+            process.wait(timeout=3)
+
+
+def test_recovery_does_not_signal_legacy_pid_without_identity(tmp_path: Path) -> None:
+    import json
+    from cognitive_switchyard.recovery import recover_execution_session
+
+    store, paths = _build_store(tmp_path)
+    session = store.create_session(session_id='legacy-pid', name='Legacy PID', pack='legacy-pid', created_at='2026-03-09T10:00:00Z')
+    _register_task(store, session_id=session.id, task_id='101')
+    store.project_task(session.id, '101', status='active', worker_slot=0)
+    pack = _write_pack(tmp_path, name='legacy-pid', isolate_end='#!/usr/bin/env python3\npass\n')
+    workspace = paths.session_paths(session.id).workers / '0' / 'workspace'
+    workspace.mkdir(parents=True)
+    process = subprocess.Popen(['sleep', '60'])
+    try:
+        store.write_worker_recovery_metadata(session.id, slot_number=0, task_id='101', workspace_path=workspace, pid=process.pid)
+        metadata_path = paths.session_paths(session.id).worker_recovery_path(0)
+        metadata = json.loads(metadata_path.read_text())
+        metadata.pop('process_identity', None)
+        metadata_path.write_text(json.dumps(metadata))
+        result = recover_execution_session(store=store, session_id=session.id, pack_manifest=load_pack_manifest(pack), kill_grace_period=0.1)
+        assert process.poll() is None
+        assert any('identity' in warning for warning in result.warnings)
+        assert store.get_task(session.id, '101').status == 'blocked'
+        assert workspace.exists() and metadata_path.exists()
+    finally:
+        if process.poll() is None:
+            process.terminate()
+        process.wait(timeout=3)
+
+
+def test_recovery_rechecks_identity_before_escalating() -> None:
+    from cognitive_switchyard import recovery
+
+    with unittest.mock.patch.object(recovery, '_pid_is_running', return_value=True), \
+         unittest.mock.patch.object(recovery, 'process_identity', side_effect=['original', 'replacement']), \
+         unittest.mock.patch.object(recovery.os, 'kill') as signal_process:
+        assert not recovery._terminate_pid(12345, identity='original', kill_grace_period=0)
+    signal_process.assert_called_once_with(12345, recovery.signal.SIGTERM)
+
+
+def test_done_without_metadata_is_blocked_and_preserves_session(tmp_path: Path) -> None:
+    from cognitive_switchyard.recovery import recover_execution_session
+
+    store, paths = _build_store(tmp_path)
+    session = store.create_session(session_id='done-no-meta', name='Missing metadata', pack='done-no-meta', created_at='2026-03-09T10:00:00Z')
+    _register_task(store, session_id=session.id, task_id='101')
+    task = store.project_task(session.id, '101', status='active', worker_slot=0)
+    _status_path(task.plan_path).write_text('STATUS: done\nCOMMITS: abc123\nTESTS_RAN: full\nTEST_RESULT: pass\n')
+    marker = tmp_path / 'called'
+    pack = _write_pack(tmp_path, name='done-no-meta', isolate_end=f'#!/usr/bin/env python3\nfrom pathlib import Path\nPath({str(marker)!r}).touch()\n')
+    result = recover_execution_session(store=store, session_id=session.id, pack_manifest=load_pack_manifest(pack))
+    assert not result.preserved_done_task_ids
+    assert store.get_task(session.id, '101').status == 'blocked'
+    assert paths.session_paths(session.id).root.exists()
+    assert not marker.exists()
+
+
+def test_pid_permission_error_is_not_treated_as_absence() -> None:
+    from cognitive_switchyard import recovery
+
+    with unittest.mock.patch.object(recovery.os, 'waitpid', side_effect=ChildProcessError), \
+         unittest.mock.patch.object(recovery.os, 'kill', side_effect=PermissionError):
+        assert recovery._pid_is_running(12345)
+
+
+def test_failed_orphan_cleanup_preserves_workspace_outside_workers(tmp_path: Path) -> None:
+    from cognitive_switchyard.recovery import recover_execution_session
+
+    store, paths = _build_store(tmp_path)
+    session = store.create_session(session_id='outside-workers', name='Outside workers', pack='outside-workers', created_at='2026-03-09T10:00:00Z')
+    workspace = paths.session_paths(session.id).root / 'workspace'
+    workspace.mkdir(parents=True)
+    (workspace / 'keep').write_text('safe')
+    pack = _write_pack(tmp_path, name='outside-workers', isolate_end='#!/usr/bin/env python3\nraise SystemExit(1)\n')
+    store.write_worker_recovery_metadata(session.id, slot_number=0, task_id='101', workspace_path=workspace, pid=None)
+    result = recover_execution_session(store=store, session_id=session.id, pack_manifest=load_pack_manifest(pack))
+    assert (workspace / 'keep').read_text() == 'safe'
+    assert any('left non-session workspace' in warning for warning in result.warnings)
+
+
+def test_recovery_protects_autofix_workspace_checkpoint(tmp_path: Path) -> None:
+    from cognitive_switchyard.recovery import recover_execution_session
+    store, paths = _build_store(tmp_path)
+    store.create_session(session_id="synthetic", name="Synthetic", pack="test", created_at="2026-01-01T00:00:00Z")
+    _register_task(store, session_id="synthetic", task_id="001")
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    marker = workspace / "unmerged"
+    marker.write_text("synthetic work")
+    store.write_worker_recovery_metadata("synthetic", slot_number=0, task_id="001", workspace_path=workspace, pid=None)
+    store.write_session_runtime_state("synthetic", verification_pending=True, auto_fix_context="task_failure", auto_fix_task_id="001", auto_fix_attempt=1)
+    store.update_session_status("synthetic", status="verifying")
+    hook_marker = tmp_path / "cleanup-called"
+    pack = load_pack_manifest(_write_pack(tmp_path, name="protected-pack", isolate_end=f"#!/bin/sh\ntouch '{hook_marker}'\n"))
+    recover_execution_session(store=store, session_id="synthetic", pack_manifest=pack)
+    assert marker.read_text() == "synthetic work"
+    assert not hook_marker.exists()
+    assert store.read_worker_recovery_metadata("synthetic", slot_number=0).workspace_path == workspace
+
+
+def test_recovered_isolated_autofix_verifies_workspace_before_merge(tmp_path: Path) -> None:
+    from cognitive_switchyard.orchestrator import execute_session
+    store, paths = _build_store(tmp_path)
+    store.create_session(session_id="synthetic", name="Synthetic", pack="test", created_at="2026-01-01T00:00:00Z")
+    _register_task(store, session_id="synthetic", task_id="001")
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    (workspace / "synthetic-work").write_text("work")
+    merge_marker = tmp_path / "merged"
+    store.write_worker_recovery_metadata("synthetic", slot_number=0, task_id="001", workspace_path=workspace, pid=None)
+    store.write_session_runtime_state("synthetic", verification_pending=True, auto_fix_context="task_failure", auto_fix_task_id="001", auto_fix_attempt=1)
+    store.update_session_status("synthetic", status="verifying", started_at="2026-01-01T00:00:00Z")
+    pack = load_pack_manifest(_write_pack(tmp_path, name="reverify-pack", verification_enabled=True, verification_command="test -f synthetic-work", auto_fix_enabled=True, isolate_end=f"#!/bin/sh\nprintf '%s' \"$4\" > '{merge_marker}'\n"))
+    result = execute_session(store=store, session_id="synthetic", pack_manifest=pack, fixer_executor=lambda _: None, poll_interval=0.01)
+    assert result.session_status == "idle"
+    assert store.get_task("synthetic", "001").status == "done"
+    assert merge_marker.read_text() == "done"
+    assert store.read_worker_recovery_metadata("synthetic", slot_number=0) is None
+
+
+def test_recovered_inflight_fixer_with_unknown_identity_pauses(tmp_path: Path) -> None:
+    from cognitive_switchyard.orchestrator import execute_session
+    store, _ = _build_store(tmp_path)
+    store.create_session(session_id="synthetic", name="Synthetic", pack="test", created_at="2026-01-01T00:00:00Z")
+    _register_task(store, session_id="synthetic", task_id="001")
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    (workspace / "work").write_text("synthetic")
+    store.write_worker_recovery_metadata("synthetic", slot_number=0, task_id="001", workspace_path=workspace, pid=None)
+    store.write_session_runtime_state("synthetic", verification_pending=True, auto_fix_context="task_failure", auto_fix_task_id="001", auto_fix_attempt=1)
+    store.update_session_status("synthetic", status="auto_fixing", started_at="2026-01-01T00:00:00Z")
+    pack = load_pack_manifest(_write_pack(tmp_path, name="unknown-fixer", verification_enabled=True, verification_command="true", auto_fix_enabled=True, isolate_end="#!/bin/sh\nexit 0\n"))
+    result = execute_session(store=store, session_id="synthetic", pack_manifest=pack, fixer_executor=lambda _: (_ for _ in ()).throw(AssertionError("duplicate fixer")), poll_interval=0.01)
+    assert result.session_status == "paused"
+    assert (workspace / "work").read_text() == "synthetic"
+    assert store.read_worker_recovery_metadata("synthetic", slot_number=0) is not None
+    store.update_session_status("synthetic", status="running")
+    result = execute_session(store=store, session_id="synthetic", pack_manifest=pack, fixer_executor=lambda _: (_ for _ in ()).throw(AssertionError("duplicate fixer")), poll_interval=0.01)
+    assert result.session_status == "paused"
+    assert store.get_task("synthetic", "001").status == "ready"
+
+
+def test_recovered_autofix_retries_in_original_workspace(tmp_path: Path) -> None:
+    from functools import partial
+    from cognitive_switchyard.models import FixerAttemptResult
+    from cognitive_switchyard.orchestrator import execute_session
+    store, _ = _build_store(tmp_path)
+    store.create_session(session_id="synthetic", name="Synthetic", pack="test", created_at="2026-01-01T00:00:00Z")
+    _register_task(store, session_id="synthetic", task_id="001")
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    marker = tmp_path / "merged"
+    store.write_worker_recovery_metadata("synthetic", slot_number=0, task_id="001", workspace_path=workspace, pid=None)
+    store.write_session_runtime_state("synthetic", verification_pending=True, auto_fix_context="task_failure", auto_fix_task_id="001", auto_fix_attempt=1)
+    store.update_session_status("synthetic", status="verifying", started_at="2026-01-01T00:00:00Z")
+    pack = load_pack_manifest(_write_pack(tmp_path, name="retry-workspace", verification_enabled=True, verification_command="test -f fixed", auto_fix_enabled=True, isolate_end=f"#!/bin/sh\nprintf '%s' \"$4\" > '{marker}'\n"))
+    def fixer(context, *, session_root):
+        assert session_root == workspace
+        assert context.attempt == 2
+        (session_root / "fixed").write_text("synthetic")
+        return FixerAttemptResult(success=True, summary="fixed")
+    result = execute_session(store=store, session_id="synthetic", pack_manifest=pack, fixer_executor=partial(fixer, session_root=tmp_path), poll_interval=0.01)
+    assert result.session_status == "idle"
+    assert store.get_task("synthetic", "001").status == "done"
+    assert marker.read_text() == "done"
+
+
+def test_recovered_autofix_pause_stops_execution_and_preserves_workspace(tmp_path: Path) -> None:
+    from cognitive_switchyard.models import FixerAttemptResult
+    from cognitive_switchyard.orchestrator import execute_session
+    store, _ = _build_store(tmp_path)
+    store.create_session(session_id="synthetic", name="Synthetic", pack="test", created_at="2026-01-01T00:00:00Z")
+    _register_task(store, session_id="synthetic", task_id="001")
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    marker = tmp_path / "merged"
+    store.write_worker_recovery_metadata("synthetic", slot_number=0, task_id="001", workspace_path=workspace, pid=None)
+    store.write_session_runtime_state("synthetic", verification_pending=True, auto_fix_context="task_failure", auto_fix_task_id="001", auto_fix_attempt=1)
+    store.update_session_status("synthetic", status="verifying", started_at="2026-01-01T00:00:00Z")
+    pack = load_pack_manifest(_write_pack(tmp_path, name="retry-paused", verification_enabled=True, verification_command="false", auto_fix_enabled=True, isolate_end=f"#!/bin/sh\ntouch '{marker}'\n"))
+    def fixer(_):
+        store.update_session_status("synthetic", status="paused")
+        return FixerAttemptResult(success=False, summary="stopped")
+    result = execute_session(store=store, session_id="synthetic", pack_manifest=pack, fixer_executor=fixer, poll_interval=0.01)
+    assert result.session_status == "paused"
+    assert store.get_task("synthetic", "001").status == "ready"
+    assert store.get_session("synthetic").runtime_state.auto_fix_task_id == "001"
+    assert store.read_worker_recovery_metadata("synthetic", slot_number=0).workspace_path == workspace
+    assert not marker.exists()

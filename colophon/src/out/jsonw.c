@@ -36,7 +36,7 @@ void jsonw_i128(JsonWriter *w,__int128 value) {
     jsonw_bytes(w,buffer+position,end-position);
 }
 void jsonw_double(JsonWriter *w,double v){
-    if(!isfinite(v)){w->error=err_make(ERR_INVALID,"non-finite output number");return;}
+    if(!isfinite(v)){jsonw_raw(w,"null");return;}
     yyjson_val number={0};yyjson_set_real(&number,v);char b[64];char *end=yyjson_write_number(&number,b);
     if(!end){w->error=err_make(ERR_INVALID,"number output failed");return;}jsonw_bytes(w,b,(size_t)(end-b));
 }

@@ -147,6 +147,9 @@ celerybeat.pid
 
 # Environments
 .env
+.env.local
+*.pem
+*.db
 .envrc
 .venv
 env/
@@ -242,6 +245,8 @@ etf_montecarlo/results/
 abacus usage/abacus_usage_*.csv
 abacus usage/abacus_usage_*.json
 docker/llm_collector/MY_API_KEY.txt
+/docker/actual-data/server-files/
+/docker/actual-data/user-files/
 docker/llm_collector/state.json
 docker/n8n-poc/config
 docker/n8n-poc/database.sqlite*

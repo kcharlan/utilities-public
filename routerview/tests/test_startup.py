@@ -153,6 +153,8 @@ def test_runtime_home_symlink_is_rejected_without_chmodding_target(
 ):
     target = tmp_path / "target-runtime"
     target.mkdir(mode=0o755)
+    target.chmod(0o755)
+    assert stat.S_IMODE(target.stat().st_mode) == 0o755
     runtime_link = tmp_path / "runtime-link"
     runtime_link.symlink_to(target, target_is_directory=True)
     monkeypatch.setenv("ROUTERVIEW_HOME", str(runtime_link))

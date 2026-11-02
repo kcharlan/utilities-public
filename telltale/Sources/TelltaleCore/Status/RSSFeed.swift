@@ -1,5 +1,11 @@
 import Foundation
 
+public enum StatusLink {
+    public static func isSafe(_ url: URL) -> Bool {
+        url.scheme?.lowercased() == "https" && url.host?.isEmpty == false
+    }
+}
+
 public enum RSSFeed {
     public static func items(_ data: Data) throws -> [RSSItem] {
         let reader = RSSReader()
@@ -55,7 +61,8 @@ final class RSSReader: NSObject, XMLParserDelegate {
         depth -= 1
         if elementName == "item" {
             inItem = false
-            if let title, let link, let url = URL(string: link), let published, let date = Self.rfc822(published) {
+            if let title, let link, let url = URL(string: link), StatusLink.isSafe(url),
+               let published, let date = Self.rfc822(published) {
                 items.append(RSSItem(title: title, link: url, publishedAt: date))
             }
         } else if field == elementName {

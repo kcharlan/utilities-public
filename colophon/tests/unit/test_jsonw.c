@@ -23,7 +23,7 @@ TEST(jsonw_shortest_and_nonfinite) {
     JsonWriter w={0};jsonw_double(&w,1.001);
     ASSERT_STREQ("1.001",w.data);jsonw_free(&w);
     jsonw_double(&w,-0.0);ASSERT_STREQ("-0.0",w.data);jsonw_free(&w);
-    jsonw_double(&w,INFINITY);ASSERT_EQ(ERR_INVALID,w.error.code);jsonw_free(&w);
+    jsonw_double(&w,INFINITY);ASSERT_EQ(ERR_OK,w.error.code);ASSERT_STREQ("null",w.data);jsonw_free(&w);
 }
 TEST(jsonw_tree_order_types_and_escaping) {
     JsonRead r=json_read(STR_LIT("{\"s\":\"<\\u00e9\\ud83d\\ude00\\u0000\",\"n\":1.0,\"a\":[null,false,2]}"),BYTES,JSON_CONSTANTS_REJECT,"test.writer");

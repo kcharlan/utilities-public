@@ -645,7 +645,6 @@ run_agent_exec() {
     cli_effort="$effort"
     cli_args=(
       exec
-      --dangerously-bypass-approvals-and-sandbox
       --skip-git-repo-check
       --color never
       --json
@@ -678,9 +677,7 @@ run_agent_exec() {
       --verbose
       --output-format stream-json
       --input-format text
-      --dangerously-skip-permissions
       --add-dir "$ROOT_DIR"
-      --permission-mode bypassPermissions
       --no-session-persistence
     )
     if [[ -n "$cli_effort" ]]; then

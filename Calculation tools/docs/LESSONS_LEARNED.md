@@ -1,5 +1,8 @@
 # Drawdown UI lessons learned
 
+- **Payoff timing must match the balance date.** A remaining balance measured just after a payment accrues vendor interest until any later payoff date; discount the accrued payoff at that later date. A debt paid on the final permitted iteration is a successful payoff, not a limit error.
+- **A numerical solver needs a valid bracket.** A grid point with the smallest sampled residual is not an IRR when the root was not bracketed; report no solution instead.
+
 - **Script extraction is position-sensitive.** `tests/helpers/load_drawdown.js` and `tests/drawdown_dates.test.js` each extract the first bare `<script>`. Keep the application as the single classic inline script; a new earlier bare script would feed the loaders the wrong code.
 - **`init()` has a sentinel ordering constraint.** `tests/drawdown_dates.test.js` expects the date stamp lookup first and its sentinel failure from the existing input listener loop. Put new DOM wiring after that loop.
 - **SVG color sources have different precedence.** CSS rules override SVG presentation attributes such as `stroke`, but not an inline `style` declaration. Keep theme-controlled colors in CSS.

@@ -359,3 +359,31 @@ import TelltaleTestSupport
         }
     }
 }
+
+@Suite struct ZstdLimitsTests {
+    @Test func rejectsOversizedLinesEvenWhenSkipped() throws {
+        let scratch = try ZstdReaderTests.Scratch()
+        defer { scratch.cleanup() }
+        let bytes = Data(repeating: 120, count: 4 * 1024 * 1024 + 1)
+        let file = try scratch.write(StoredZstdFrame.encode(bytes, blockSize: StoredZstdFrame.maxBlockSize))
+        for skip in [0, 1] {
+            #expect(throws: ZstdError.self) {
+                try ZstdReader.lines(of: file, expectedSize: try Data(contentsOf: file).count, startingAfterLine: skip) { _, _ in }
+            }
+        }
+    }
+    @Test func rejectsExcessTotalOutputAcrossFrames() throws {
+        let scratch = try ZstdReaderTests.Scratch()
+        defer { scratch.cleanup() }
+        let line = Data(repeating: 120, count: 1023) + Data([10])
+        var block = Data()
+        for _ in 0..<1024 { block.append(line) }
+        let frame = StoredZstdFrame.encode(block, blockSize: StoredZstdFrame.maxBlockSize)
+        var data = Data()
+        for _ in 0..<65 { data.append(frame) }
+        let file = try scratch.write(data)
+        #expect(throws: ZstdError.self) {
+            try ZstdReader.lines(of: file, expectedSize: data.count, startingAfterLine: Int.max) { _, _ in }
+        }
+    }
+}

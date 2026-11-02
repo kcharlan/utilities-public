@@ -39,7 +39,7 @@ def test_scan_protocol_error_persists_safe_failure_and_preserves_cache(tmp_path,
     before = cache.read_bytes(), cache.stat().st_mtime_ns
     report = home / "reports" / "synthetic_protocol_failure.txt"
     response = synthetic_protocol_response(failure, encoding(secret))
-    with synthetic_provider_server(home, raw_response=response) as authorizations:
+    with synthetic_provider_server(home, raw_response=response, env=environment) as authorizations:
         result = subprocess.run(
             command + ["scan", "--save", "--no-notify", "--output", str(report)],
             env=environment, capture_output=True, text=True, timeout=30, check=False,
@@ -185,7 +185,7 @@ def test_scan_http_error_does_not_persist_encoded_credential(tmp_path, monkeypat
     before = cache.read_bytes(), cache.stat().st_mtime_ns
     def hostile(*args, **kwargs):
         raise HTTPError("http://127.0.0.1:1/models", 401, encoding(secret), {}, io.BytesIO(encoding(secret).encode()))
-    monkeypatch.setattr(providers, "urlopen", hostile)
+    monkeypatch.setattr(providers, "_open_catalog", hostile)
     report = home / "reports" / "synthetic_failure.txt"
     assert cli.main(["scan", "--save", "--no-notify", "--output", str(report)]) == 1
     output = capsys.readouterr()

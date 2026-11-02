@@ -425,8 +425,8 @@
       totalPaid = Math.round((totalPaid + payment)*100)/100;
       month++;
       rows.push({month,startBal,interest,principal:principalPaid,payment,endBal:balance});
-      if (month>=maxMonths){ alert('Exceeded iteration limit; check inputs.'); return; }
     }
+    if (balance > 0.005){ alert('Exceeded iteration limit; check inputs.'); return; }
 
     // Summary
     $('debtMonths').textContent = month + (month===1?' month':' months');

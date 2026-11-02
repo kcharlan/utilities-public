@@ -1,7 +1,7 @@
 import Foundation
 import Testing
 import TelltaleCore
-import TelltaleStatuspage
+@testable import TelltaleStatuspage
 
 actor Transport: HTTPTransport {
     let bodies: [String: Data]
@@ -95,5 +95,17 @@ actor Transport: HTTPTransport {
     @Test func htmlErrorPageMarksUnavailable() async throws {
         let page = try fixture("error_page.html"); let t = Transport([summary: page, "/history.rss": page])
         await #expect(throws: (any Error).self) { try await source(t).fetch(known: []) }
+    }
+}
+
+@Suite struct StatuspageLinkSafetyTests {
+    @Test func rejectsUnsafeIncidentLinks() throws {
+        let data = try Data(contentsOf: Bundle.module.resourceURL!.appending(path: "Fixtures/incident_detail.json"))
+        let original = try #require(String(data: data, encoding: .utf8))
+        for link in ["file:///tmp/fake", "https:///fake"] {
+            let modified = original.replacingOccurrences(of: "https://status.example.com/incidents/fake-incident", with: link)
+            let envelope = try StatuspageDecoding.decode(Envelope.self, Data(modified.utf8))
+            #expect(throws: StatusError.self) { try StatuspageDecoding.record(envelope.incident, source: "fake") }
+        }
     }
 }

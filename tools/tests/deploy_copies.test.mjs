@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import {spawnSync,execFileSync} from 'node:child_process';
+import {spawn,spawnSync,execFileSync} from 'node:child_process';
 import {fileURLToPath} from 'node:url';
 import {hashInventory} from '../deployment_files.mjs';
 const root=path.resolve(path.dirname(fileURLToPath(import.meta.url)),'../..');
@@ -11,7 +11,7 @@ function fixture(t) {
  const base=fs.mkdtempSync(path.join(os.tmpdir(),'copy-deploy-test-')); t.after(()=>fs.rmSync(base,{recursive:true,force:true}));
  const repo=path.join(base,'repo'), home=path.join(base,'home'), scripts=path.join(home,'scripts'), local=path.join(home,'local');
  fs.mkdirSync(path.join(repo,'tools'),{recursive:true}); fs.mkdirSync(home);
- for (const n of ['deploy_copies.mjs','deployment_files.mjs']) fs.copyFileSync(path.join(root,'tools',n),path.join(repo,'tools',n));
+ for (const n of ['deploy_copies.mjs','deployment_files.mjs','transaction.mjs']) fs.copyFileSync(path.join(root,'tools',n),path.join(repo,'tools',n));
  fs.mkdirSync(path.join(repo,'project')); fs.writeFileSync(path.join(repo,'project','file'),'new');
  fs.writeFileSync(path.join(repo,'tools','deployment_copies.json'),JSON.stringify({scripts:[],projects:[{name:'project'}]}));
  const git=(...a)=>execFileSync('git',['-C',repo,...a],{stdio:'pipe'});
@@ -189,4 +189,26 @@ test('script rollback remains bound to target after manifest source moves',t=>{
 test('cleanup failure restores activation and reports retained backup',t=>{
  const f=fixture(t),hook=path.join(f.base,'cleanup.cjs');fs.writeFileSync(hook,`const fs=require('fs');const orig=fs.rmdirSync;fs.rmdirSync=function(p,...args){if(String(p).endsWith('/local/project')){const e=Error('synthetic cleanup failure');e.code='EACCES';throw e;}return orig.call(this,p,...args);};`);
  const r=f.runEnv({NODE_OPTIONS:`--require=${hook}`});assert.notEqual(r.status,0);assert.match(r.stderr,/Cleanup failed.*synthetic cleanup failure.*Recovery backup:/);assert.equal(fs.existsSync(path.join(f.local,'project/file')),false);
+});
+test('rollback remains available on another branch with dirty deployment inputs',t=>{
+ const f=fixture(t); assert.equal(f.run().status,0);
+ fs.writeFileSync(path.join(f.repo,'project/file'),'updated');f.git('add','.');f.git('commit','-m','update');
+ const deployed=f.run(), saved=deployed.stdout.match(/Recovery backup: (.+)/)[1]; assert.equal(deployed.status,0,deployed.stderr);
+ f.git('checkout','-b','synthetic-other'); fs.writeFileSync(path.join(f.repo,'project/file'),'dirty');
+ fs.writeFileSync(path.join(f.repo,'tools/deployment_copies.json'),'damaged');
+ const restored=f.run('--rollback',saved); assert.equal(restored.status,0,restored.stderr); assert.equal(fs.readFileSync(path.join(f.local,'project/file'),'utf8'),'new');
+});
+test('SIGTERM during smoke restores the previous files and removes scratch',async t=>{
+ const f=fixture(t); assert.equal(f.run().status,0);
+ const marker=path.join(f.base,'smoke-ready'), target=path.join(f.local,'project/file');
+ fs.writeFileSync(path.join(f.repo,'project/file'),'updated');
+ fs.writeFileSync(path.join(f.repo,'project/run'),'#!/bin/sh\nprintf ready > "$SYNTHETIC_SMOKE_READY"\nsleep 1\n',{mode:0o755});
+ fs.writeFileSync(path.join(f.repo,'tools/deployment_copies.json'),JSON.stringify({scripts:[],projects:[{name:'project',entrypoint:'run',smoke:['--help']}]}));
+ f.git('add','.');f.git('commit','-m','synthetic smoke');
+ const child=spawn(process.execPath,[path.join(f.repo,'tools/deploy_copies.mjs'),'--repo',f.repo,'--scripts-dir',f.scripts,'--local-root',f.local],{env:{...process.env,HOME:f.home,TMPDIR:f.base,SYNTHETIC_SMOKE_READY:marker},stdio:['ignore','pipe','pipe']});
+ const exited=new Promise(resolve=>child.once('exit',(...args)=>resolve(args)));
+ for(let i=0;i<100&&!fs.existsSync(marker);i++)await new Promise(resolve=>setTimeout(resolve,20));
+ assert.ok(fs.existsSync(marker),'smoke did not start');child.kill('SIGTERM');
+ const [code,signal]=await exited;assert.ok(code!==0||signal);assert.equal(fs.readFileSync(target,'utf8'),'new');
+ assert.equal(fs.existsSync(path.join(f.local,'project/run')),false);assert.equal(fs.readdirSync(f.base).some(n=>n.startsWith('copy-smoke-')),false);
 });

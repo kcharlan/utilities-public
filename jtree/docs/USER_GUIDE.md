@@ -271,7 +271,7 @@ Right-click any node to open the context menu. Available options depend on the n
 | **Add Child** | Add a new child node |
 | **Copy Node** | Copy entire subtree to clipboard |
 | **Paste** | Paste from clipboard |
-| **Copy Path** | Copy jtree's dot-separated node path to clipboard |
+| **Copy Path** | Copy the node's JSON-array path to the clipboard |
 
 ### Leaf Nodes
 
@@ -280,7 +280,7 @@ Right-click any node to open the context menu. Available options depend on the n
 | **Edit Value** | Edit the scalar value |
 | **Copy Node** | Copy to clipboard |
 | **Copy Value** | Copy the scalar value to clipboard |
-| **Copy Path** | Copy jtree's dot-separated node path to clipboard |
+| **Copy Path** | Copy the node's JSON-array path to the clipboard |
 
 ### Array Items (additional)
 
@@ -332,7 +332,9 @@ All exports capture the current visible graph (expanded nodes, lanes, edges, and
 
 ### Path Limitation
 
-jtree identifies nodes with dot-separated paths. Object keys containing literal periods therefore cannot be navigated or edited reliably.
+jtree identifies nodes with JSON-array paths, with strings for object keys and numbers for array indices. A key containing a period is distinct from a nested path. Loading warns when duplicate keys or number precision may change on save; non-finite numbers and invalid Unicode are rejected.
+
+Server saves replace the destination atomically. On macOS, file mode, ownership, ACLs and accessible extended attributes are copied and verified before replacement; a save fails if they cannot be preserved or the destination has multiple hard links. macOS manages `com.apple.provenance` independently.
 
 ---
 

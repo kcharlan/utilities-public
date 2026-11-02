@@ -179,6 +179,7 @@ function renderStatus(data = {}) {
   details.appendChild(detailRow('Sequence',seq));
   details.appendChild(detailRow('Client',client_id,'',true));
   $('forcePush').disabled = pendingCount === 0 || data.available === false;
+  $('recoverSequence').disabled = !data.recoveryAvailable || data.available === false;
   $('reset').disabled = queued === 0 || data.available === false;
   renderCaptureState(data);
   $('captureToggle').disabled = false;
@@ -225,7 +226,7 @@ function renderUnavailableStatus() {
   $('persistenceStatus').className = 'v bad';
   $('deliveryState').textContent = 'Unavailable';
   $('deliveryState').className = 'state bad';
-  for (const id of ['captureToggle', 'clearCapture', 'forcePush', 'reset', 'export']) $(id).disabled = true;
+  for (const id of ['captureToggle', 'clearCapture', 'forcePush', 'recoverSequence', 'reset', 'export']) $(id).disabled = true;
   $('registerHeading').textContent = 'Extension not responding';
   $('registerTotal').textContent = '';
   const register = $('register');
@@ -337,6 +338,15 @@ function bindAppearance() {
 
 document.addEventListener("DOMContentLoaded", () => {
   bindAppearance();
+  bind("recoverSequence", "click", async () => {
+    if (!window.confirm("Start a new delivery identity? The outstanding batch may already have been counted if the collector lost its receipt.")) return;
+    try {
+      const response = await sendMessageWithTimeout({cmd:"recover_sequence"}, 2000);
+      if (response.ok !== true) throw new Error(response.error || "recovery rejected");
+      setNotice("Delivery identity recovered. Use Send now to submit the outstanding batch.", "success");
+    } catch (e) { setNotice(`Recovery failed: ${e.message}`, "error"); }
+    refresh({showChecking:false});
+  });
   bind("reset", "click", async () => {
     setNotice("Clearing pending data…");
     try {

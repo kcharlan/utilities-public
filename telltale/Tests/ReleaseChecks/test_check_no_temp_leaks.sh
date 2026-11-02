@@ -7,7 +7,7 @@ root=$(cd "$(dirname "$0")/../.." && pwd)
 checker="$root/tools/check_no_temp_leaks.sh"
 scratch=$(mktemp -d "${TMPDIR:-/tmp}/telltale-leak-test.XXXXXX")
 chmod 700 "$scratch"
-trap 'rm -rf "$scratch"' EXIT
+trap 'code=$?; rm -r -- "${scratch:?}" || { [ "$code" -ne 0 ] || code=1; }; exit "$code"' EXIT
 fake="$scratch/tmp"
 mkdir "$fake" "$scratch/darwin"
 export OUTER="$fake" DARWIN="$scratch/darwin" TELLTALE_DARWIN_TEMP_DIR="$scratch/darwin"
@@ -19,6 +19,29 @@ expect_leak() {
 }
 
 expect_pass true
+expect_pass sh -c 'r=${TMPDIR%/}; rmdir -- "${r:?}"'
+if TMPDIR="$fake" "$checker" sh -c 'r=${TMPDIR%/}; rmdir -- "${r:?}"; exit 7' > "$scratch/out.log" 2>&1; then
+    echo 'FAIL: missing run directory hid child failure'; exit 1
+else
+    [ "$?" -eq 7 ] || { echo 'FAIL: missing run directory changed child failure'; exit 1; }
+fi
+! grep -q 'cannot remove private run directory' "$scratch/out.log" || { echo 'FAIL: absent directory reported as cleanup failure'; exit 1; }
+# A synthetic shell function fails the removal without attempting an OS deletion.
+for child_exit in 0 7; do
+    : > "$scratch/attempts"
+    export FAIL_RECORD="$scratch/attempts" RUN_RECORD="$scratch/run-path" CHILD_EXIT="$child_exit"
+    result=0
+    ( rm() { printf 'attempt\n' >> "$FAIL_RECORD"; return 88; }; export -f rm
+      TMPDIR="$fake" "$checker" sh -c 'printf %s "${TMPDIR%/}" > "$RUN_RECORD"; exit "$CHILD_EXIT"'
+    ) > "$scratch/out.log" 2>&1 || result=$?
+    expected=$child_exit; [ "$expected" -ne 0 ] || expected=1
+    [ "$result" -eq "$expected" ] || { echo 'FAIL: cleanup status'; exit 1; }
+    [ "$(wc -l < "$FAIL_RECORD" | tr -d ' ')" = 1 ] || { echo 'FAIL: cleanup was retried'; exit 1; }
+    grep -q 'cannot remove private run directory' "$scratch/out.log" || { echo 'FAIL: cleanup error not reported'; exit 1; }
+    retained=$(cat "$RUN_RECORD")
+    [ -d "$retained" ] || { echo 'FAIL: failed cleanup did not retain directory'; exit 1; }
+    rm -r -- "${retained:?}"
+done
 # The command runs with a private TMPDIR, removed afterwards with whatever the toolchain left.
 expect_pass sh -c 'case "$TMPDIR" in "$OUTER"/telltale-run.*) mkdir "$TMPDIR/TemporaryDirectory.AbCdEf" ;; *) exit 1 ;; esac'
 [ -z "$(ls -A "$fake")" ] || { echo "FAIL: the private TMPDIR was not removed"; ls -A "$fake"; exit 1; }
@@ -47,7 +70,10 @@ if TMPDIR="$fake" "$checker" > /dev/null 2>&1; then echo "FAIL: no command accep
 expect_leak _private_var_project_telltale_.build.lock sh -c ': > "$OUTER/_private_var_project_telltale_.build.lock"'
 expect_leak _Users_someone_telltale_telltale_.build_workspace-state.json.lock \
     sh -c ': > "$DARWIN/_Users_someone_telltale_telltale_.build_workspace-state.json.lock"'
-rm -f "$fake"/*.lock "$DARWIN"/*.lock
+for path in "$fake"/*.lock "$DARWIN"/*.lock; do
+    [ -e "$path" ] || [ -L "$path" ] || continue
+    rm -- "${path:?}"
+done
 # Inside the private TMPDIR, the lock files of the package being built in the working directory are
 # the toolchain's own; another Telltale package's lock still is a leak.
 mkdir "$scratch/telltale"
@@ -78,7 +104,10 @@ expect_swept() {
     [ -f "$DARWIN/TemporaryDirectory.before1/.keep-directory" ] && [ -f "$DARWIN/TemporaryDirectory.new2/other" ] &&
         [ -s "$DARWIN/TemporaryDirectory.new3/.keep-directory" ] || { echo "FAIL: sweep changed a kept directory"; exit 1; }
     grep -qF '  TemporaryDirectory.new2' "$scratch/out.log" || { echo "FAIL: kept new marker not named"; cat "$scratch/out.log"; exit 1; }
-    rm -rf "$DARWIN"/TemporaryDirectory.new* "$DARWIN"/other-tool.new6
+    for path in "$DARWIN"/TemporaryDirectory.new* "$DARWIN"/other-tool.new6; do
+        [ -e "$path" ] || [ -L "$path" ] || continue
+        rm -r -- "${path:?}"
+    done
 }
 expect_pass bash "$scratch/compile.sh"
 expect_swept

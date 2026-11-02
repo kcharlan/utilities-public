@@ -16,6 +16,15 @@ test('aggregate form, Unicode body and raw inspection are bounded before retenti
   assert.equal(r.redactHeaders([{ name: 'X-Synthetic', value: 'x'.repeat(9000) }])[0].value, '<omitted>');
 });
 
+for (const [input, expected] of [
+  ['{"key":"SYNTHETIC_SECRET","value":"visible"}', '{"key":"REDACTED","value":"REDACTED"}'],
+  ['{"name":"Authorization","key":"SYNTHETIC_TOKEN","value":"SYNTHETIC_VALUE"}', '{"name":"Authorization","key":"REDACTED","value":"REDACTED"}']
+]) {
+  test(`sensitive key payload remains redacted with a value sibling: ${input}`, () => {
+    assert.equal(redactBody({raw:[{bytes:new TextEncoder().encode(input).buffer}]}).text, expected);
+  });
+}
+
 test('restored body strings and debug paths obey byte budgets', () => {
   const r = context.LLMCaptureRedact;
   const safe = r.sanitizeDiagnosticRecord('capture', { body: { text: '界'.repeat(15000) } });
@@ -286,4 +295,35 @@ test("only live sanitized body prefixes retain truncated JSON prompt content", (
   assert.ok(!admitted.body.text.includes('SYNTHETIC_SID'));
   const restored = context.LLMCaptureRedact.sanitizeDiagnosticRecord('capture', { body: plain(body) });
   assert.equal(restored.body.text, '<omitted>');
+});
+
+test('redacts credential values in named records, tuples, headers and unstructured text', () => {
+  const cases = [
+    ['{"name":"Authorization","value":"SYNTHETIC_VALUE","other":"visible"}', '{"name":"Authorization","value":"REDACTED","other":"visible"}'],
+    ['{"key":"device_id","value":{"nested":"SYNTHETIC_VALUE"}}', '{"key":"REDACTED","value":"REDACTED"}'],
+    ['{"key":"SYNTHETIC_SECRET"}', '{"key":"REDACTED"}'],
+    ['{"name":"Authorization","key":"SYNTHETIC_VALUE","value":"SYNTHETIC_VALUE"}', '{"name":"Authorization","key":"REDACTED","value":"REDACTED"}'],
+    ['["user_id","SYNTHETIC_VALUE"]', '["user_id","REDACTED"]'],
+    ['["label","visible"]', '["label","visible"]'],
+    ['prefix device_id=SYNTHETIC_VALUE; next=visible', 'prefix device_id=REDACTED; next=visible'],
+    ['prefix device_id = "SYNTHETIC VALUE"; next=visible', 'prefix device_id = REDACTED; next=visible'],
+    ['Bearer SYNTHETIC_VALUE', 'Bearer REDACTED'],
+    ['bEaReR SYNTHETIC_VALUE', 'bEaReR REDACTED'],
+    ['Basic SYNTHETIC_VALUE', 'Basic REDACTED'],
+    ['eyJhbGciOiJub25lIn0.eyJzdWIiOiJzeW50aGV0aWMifQ.signature', 'REDACTED'],
+    ['eyJSYNTHETIC_VALUE', 'REDACTED'],
+    ['sk-SYNTHETIC_VALUE', 'REDACTED'],
+    ['synthetic@example.invalid', 'REDACTED']
+  ];
+  for (const [input, expected] of cases) {
+    const body = redactBody({raw:[{bytes:new TextEncoder().encode(input).buffer}]});
+    assert.equal(body.text, expected, input);
+  }
+  for (const name of ['device_id','userId','jwt','client-key','client_key','code']) {
+    assert.equal(redactHeaders([{name,value:'SYNTHETIC_VALUE'}])[0].value,'REDACTED',name);
+  }
+  const header = encodeURIComponent('X-Device-Id: SYNTHETIC_VALUE');
+  assert.equal(redactUrl(`https://example.invalid/?headers=${header}`), 'https://example.invalid/?headers=X-Device-Id%3A%20REDACTED');
+  const nested = encodeURIComponent('https://example.invalid/?code=SYNTHETIC_VALUE');
+  assert.equal(redactUrl(`https://example.invalid/?next=${nested}`), 'https://example.invalid/?next=https%3A%2F%2Fexample.invalid%2F%3Fcode%3DREDACTED');
 });

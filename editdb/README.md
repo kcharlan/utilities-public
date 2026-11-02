@@ -20,6 +20,9 @@ different port with:
 ./editdb data.sqlite --port 9000
 ```
 
+If the preferred port is busy, EditDB tries the next 19 ports. Pass `--port 0`
+to choose an available port automatically.
+
 To invoke EditDB from elsewhere, symlink `editdb/editdb` into a directory on
 your `PATH`.
 
@@ -51,18 +54,17 @@ launcher dependencies have been resolved.
 See [docs/USER_GUIDE.md](docs/USER_GUIDE.md) for detailed operation and
 current limitations.
 
-## Important schema-editor limitation
+## Schema changes
 
-Back up the database before applying schema-editor changes. The current
-shadow-table migration rebuilds columns from their names and declared types.
+Back up the database before applying schema-editor changes. Rename, add and
+delete use SQLite's native column alterations, which can reject changes that
+conflict with dependent schema objects. Changing a declared type rebuilds the
+table, preserving its constraints, indexes, triggers and dependent views. The
+whole migration runs in a transaction and rolls back on failure. Some unusual
+table definitions may be rejected when they cannot be rewritten safely.
+
 The type list offers `TEXT`, `INTEGER`, `REAL` and `BLOB`, plus the column's
-existing declared type when it is something else. It does **not** preserve
-primary keys, `AUTOINCREMENT`, `NOT NULL`, default values, unique or check
-constraints, foreign-key declarations, indexes, or triggers.
-
-The rebuild and data copy are transactional, and source-column mappings are
-validated, but those safeguards do not preserve omitted schema objects. Use
-the SQL console or another SQLite migration tool when those objects matter.
+existing declared type when it is something else.
 
 ## Security and limits
 
@@ -80,9 +82,12 @@ the SQL console or another SQLite migration tool when those objects matter.
 CSV imports commit every 1,000 rows. If a later batch fails, rows from earlier
 committed batches remain in the database.
 
-The grid only recognizes the first component of a composite primary key when
-locating rows. Use the SQL console or another SQLite client to update or delete
-rows in tables with composite primary keys.
+The grid uses all components of a composite primary key to locate a row. An
+update or deletion is rejected if its key no longer identifies exactly one row.
+In API responses and JSON exports, integers outside JavaScript's safe integer
+range are strings; BLOBs are objects such as `{"$blob": "ff00"}` containing
+hexadecimal bytes. The grid displays a BLOB as an object. Editing its cell
+replaces the BLOB with text; use the SQL console to write binary values.
 
 ## Architecture
 

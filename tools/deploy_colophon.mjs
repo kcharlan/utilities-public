@@ -5,7 +5,8 @@ import path from 'node:path';
 import {execFileSync} from 'node:child_process';
 import {fileURLToPath} from 'node:url';
 import {regular, inspectAncestors, externalDirectory, sha, exists, atomicFile, parseIndexSnapshot,
-  parseStagedListing, normalizeEntries, hashInventory, pruneBackups} from './deployment_files.mjs';
+  parseStagedListing, normalizeEntries, hashInventory, pruneBackups, requireMain, restoreWithRecovery} from './deployment_files.mjs';
+import {runTransaction} from './transaction.mjs';
 
 export const buildInput = name => name === 'colophon/Makefile' ||
   /^colophon\/(src|assets|vendor\/(yyjson|zstd))\//.test(name) || name === 'colophon/tools/embed.pl';
@@ -37,7 +38,7 @@ function readReceipt(file) {
 }
 function diagnostic(binary) {
   const version = execFileSync(binary, ['--version'], {encoding: 'utf8', timeout: 10000}).trim();
-  if (version !== 'colophon 0.5.2') throw new Error('Native version activation check failed');
+  if (version !== 'colophon 0.5.3') throw new Error('Native version activation check failed');
   execFileSync(binary, ['--help'], {stdio: 'pipe', timeout: 10000});
 }
 function backup(scripts, home, repo) {
@@ -79,7 +80,7 @@ function restore(value, scripts) {
   if (value.receipt) atomicFile(receipt, value.receipt, 0o600, '.colophon-stage-');
   else if (exists(receipt)) fs.unlinkSync(receipt);
 }
-export function main(argv = process.argv.slice(2)) {
+export async function main(argv = process.argv.slice(2)) {
   let repo = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
   let scripts = path.resolve(process.env.UTILITIES_SCRIPTS_DIR || path.join(os.homedir(), 'Library/Scripts'));
   let audit = false, dry = false, snapshot, rollback;
@@ -97,7 +98,13 @@ export function main(argv = process.argv.slice(2)) {
   repo = fs.realpathSync(repo); scripts = externalDirectory(scripts, repo);
   const target = path.join(scripts, 'colophon'), receipt = receiptPath(scripts);
   if (exists(target)) regular(target); if (exists(receipt)) regular(receipt);
-  if (rollback) { const saved = readBackup(rollback); fs.mkdirSync(scripts, {recursive: true}); backup(scripts, os.homedir(), repo); restore(saved, scripts); console.log('Native deployment rollback restored'); return; }
+  if (rollback) {
+    const saved = readBackup(rollback); fs.mkdirSync(scripts, {recursive: true});
+    const recovery = backup(scripts, os.homedir(), repo); console.log('Recovery backup: ' + recovery);
+    restoreWithRecovery(() => restore(saved, scripts), () => restore(readBackup(recovery), scripts), recovery);
+    console.log('Native deployment rollback restored'); return;
+  }
+  if (!audit && !dry) requireMain(repo);
   const inventory = sourceInventory(repo, snapshot, !audit);
   if (audit) {
     const value = readReceipt(receipt);
@@ -106,9 +113,18 @@ export function main(argv = process.argv.slice(2)) {
     console.log('OK: colophon native deployment'); return;
   }
   if (dry) { console.log('Dry run: validated tracked native build inputs; no files changed'); return; }
-  const scratch = fs.mkdtempSync(path.join(os.tmpdir(), 'colophon-native-build-'));
-  let saved;
   try {
+    const value = readReceipt(receipt);
+    if (value.sourceHash === inventory.sourceHash && (regular(target).mode & 0o7777) === value.mode && sha(fs.readFileSync(target)) === value.binaryHash) {
+      diagnostic(target);
+      console.log('Native Colophon already current; nothing changed'); return;
+    }
+  } catch { /* A missing or invalid installation requires a fresh build. */ }
+  let saved, scratch;
+  await runTransaction({name:'Colophon', admit:()=>{}, isCurrent:()=>false,
+    build:registerCleanup=>{
+    scratch = fs.mkdtempSync(path.join(os.tmpdir(), 'colophon-native-build-'));
+    registerCleanup(()=>fs.rmSync(scratch, {recursive:true, force:true}));
     for (const entry of inventory.entries) {
       const file = path.join(scratch, entry.name); fs.mkdirSync(path.dirname(file), {recursive: true}); fs.writeFileSync(file, entry.bytes, {mode: entry.permissions});
     }
@@ -119,16 +135,20 @@ export function main(argv = process.argv.slice(2)) {
     const bytes = fs.readFileSync(built);
     if (![0xfeedfacf, 0xfeedface, 0xcafebabe, 0xbebafeca].includes(bytes.readUInt32LE(0))) throw new Error('Expected a native Mach-O executable');
     if (sourceInventory(repo, undefined, true).sourceHash !== inventory.sourceHash) throw new Error('Native inputs changed during build');
-    fs.mkdirSync(scripts, {recursive: true, mode: 0o755});
-    saved = backup(scripts, os.homedir(), repo);
-    try {
+    return {value:bytes};
+    },
+    install:(bytes,registerRecovery)=>{
+      fs.mkdirSync(scripts, {recursive: true, mode: 0o755});
+      saved = backup(scripts, os.homedir(), repo);
+      console.log('Recovery backup: '+saved);
+      registerRecovery(()=>restore(readBackup(saved), scripts));
       atomicFile(target, bytes, 0o755, '.colophon-stage-'); diagnostic(target);
       atomicFile(receipt, Buffer.from(JSON.stringify({schema: 1, sourceHash: inventory.sourceHash, binaryHash: sha(bytes), mode: 0o755}) + '\n'), 0o600, '.colophon-stage-');
-    } catch (error) { restore(readBackup(saved), scripts); throw error; }
-    console.log('Native Colophon deployed; rollback backup: ' + saved);
-  } finally { fs.rmSync(scratch, {recursive: true, force: true}); }
+    }, verify:()=>{}
+  });
+  console.log('Native Colophon deployed; rollback backup: ' + saved);
   if (saved) pruneBackups(path.dirname(saved));
 }
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
-  try { main(); } catch (error) { console.error('Colophon native deployment failed: ' + error.message); process.exitCode = 1; }
+  main().catch(error => { console.error('Colophon native deployment failed: ' + error.message); process.exitCode = 1; });
 }

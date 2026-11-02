@@ -14,7 +14,7 @@ services:
       - "${WEBROOT_PATH:?Set WEBROOT_PATH in docker/webserver/.env}:/usr/share/nginx/html:ro"
       - ./nginx/default.conf:/etc/nginx/conf.d/default.conf:ro
     healthcheck:
-      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1/"]
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "--header=Host: 127.0.0.1:7711", "http://127.0.0.1/"]
       interval: 30s
       timeout: 3s
       retries: 3
@@ -33,7 +33,7 @@ services:
       - "${WEBROOT_PATH:?Set WEBROOT_PATH in docker/webserver/.env}/.webserver:/mnt/config"
     expose: ["3000"]
     healthcheck:
-      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3000/configure/api/endpoints').then(r => { if (!r.ok) process.exit(1) }).catch(() => process.exit(1))"]
+      test: ["CMD", "node", "-e", "require('node:http').get('http://127.0.0.1:3000/configure/api/endpoints', { headers: { host: '127.0.0.1:' + (process.env.PUBLIC_PORT || '7711') } }, r => { r.resume(); if (r.statusCode !== 200) process.exit(1) }).on('error', () => process.exit(1))"]
       interval: 30s
       timeout: 3s
       retries: 3

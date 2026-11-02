@@ -4,7 +4,7 @@ real_home=$1
 unit_binary=$2
 project_dir=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd -P)
 unit_scratch=$(mktemp -d /tmp/colophon-native-unit.XXXXXX)
-trap 'unit_status=$?; rm -r -- "$unit_scratch"; exit "$unit_status"' 0
+trap 'unit_status=$?; rm -r -- "${unit_scratch:?}" || { [ "$unit_status" -ne 0 ] || unit_status=1; }; exit "$unit_status"' 0
 trap 'exit 130' INT
 trap 'exit 143' TERM
 mkdir -p /private/tmp/colophon-native-canary "$unit_scratch/home" "$unit_scratch/runtime"

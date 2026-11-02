@@ -171,7 +171,9 @@ extension Store {
 
     public func usageLimit(provider: ProviderID) throws -> UsageLimitSnapshot? {
         try query("SELECT at, used_percent, window_minutes, resets_at FROM usage_limits WHERE provider = ?", [.text(provider.rawValue)]) { row in
-            UsageLimitSnapshot(provider: provider, at: row.date(0), usedPercent: row.double(1), windowMinutes: row.int(2), resetsAt: row.optionalDate(3))
+            let value = row.double(1)
+            return UsageLimitSnapshot(provider: provider, at: row.date(0), usedPercent: value.isFinite ? min(100, max(0, value)) : 0,
+                                      windowMinutes: row.int(2), resetsAt: row.optionalDate(3))
         }.first
     }
 

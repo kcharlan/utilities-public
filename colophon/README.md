@@ -50,7 +50,7 @@ Version 0.5.1 reads OpenCode 2.1 messages, which keep their id and type only in
 database columns. Earlier releases rejected every such message as malformed and
 fell back to unattributed session totals dated at each session's start.
 
-Version 0.5.2 offers a copied Continue in CLI command for eligible live
+Version 0.5.3 offers a copied Continue in CLI command for eligible live
 OpenCode primary sessions with absolute working-directory and database paths.
 
 The page's All/Codex/Claude/OpenCode/Antigravity switch preserves filters and uses green/blue/violet/pink

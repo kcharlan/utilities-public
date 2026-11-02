@@ -9,6 +9,7 @@ if ! load_llm_collector_env || [ -z "${API_KEY:-}" ]; then
 fi
 
 mkdir -p "$LLM_COLLECTOR_DATA_DIR"
+export LLM_COLLECTOR_UID="$(id -u)" LLM_COLLECTOR_GID="$(id -g)"
 cd "$SCRIPT_DIR"
 docker compose build --pull
-docker compose up -d
+docker compose up -d --force-recreate

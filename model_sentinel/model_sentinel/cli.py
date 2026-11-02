@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import logging
 import os
+import sqlite3
 import sys
 from dataclasses import dataclass, replace
 from datetime import datetime, timedelta
@@ -489,6 +490,8 @@ def run_scan(*, args: argparse.Namespace, loaded, store: Store, logger: logging.
             baseline_models = {}
             if baseline:
                 baseline_models = store.load_saved_models(baseline.scrape_id)
+                if baseline_models and not normalized_models:
+                    raise ValueError("Provider returned an empty catalog after a non-empty baseline")
                 added, removed, changed = compare_models(
                     baseline_models=baseline_models,
                     current_models=current_map,
@@ -511,16 +514,9 @@ def run_scan(*, args: argparse.Namespace, loaded, store: Store, logger: logging.
                 saved_snapshot=bool(args.save),
                 model_count=len(normalized_models),
                 error_message=None,
+                snapshot_models=normalized_models if args.save else None,
+                deltas=added + removed + changed if args.save else (),
             )
-            if args.save:
-                store.save_snapshot_models(scrape_id=scrape_id, provider_id=provider.provider_id, models=normalized_models)
-                store.record_field_changes(
-                    provider_id=provider.provider_id,
-                    from_scrape_id=baseline.scrape_id if baseline else None,
-                    to_scrape_id=scrape_id,
-                    deltas=added + removed + changed,
-                    detected_at=completed.isoformat(),
-                )
             endpoint_capture = None
             if args.save and profile.endpoint_capture:
                 # Archive processing is independent of new capture and cannot
@@ -601,7 +597,7 @@ def run_scan(*, args: argparse.Namespace, loaded, store: Store, logger: logging.
                         profile=profile,
                     )
                 )
-        except (ProviderFetchError, ValueError) as exc:
+        except (ProviderFetchError, ValueError, OverflowError, sqlite3.Error) as exc:
             message = redact_credential_values(str(exc), snapshot.values)
             completed = _now()
             scrape_id = store.create_scrape(

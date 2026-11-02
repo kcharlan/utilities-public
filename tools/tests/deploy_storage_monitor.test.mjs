@@ -24,7 +24,7 @@ function fixture(t) {
     git('add', '.');
   }
   write('native/Makefile', 'all: $(BUILD_DIR)/storage_monitor_walk\n$(BUILD_DIR)/storage_monitor_walk: src/storage_monitor_walk.c\n\tmkdir -p $(BUILD_DIR)\n\t$(CC) $(CPPFLAGS) $(CFLAGS) src/storage_monitor_walk.c $(LDFLAGS) -o $@\n');
-  git('init', '-q'); launcher(); release();
+  git('init', '-q', '-b', 'main'); launcher(); release();
   const runEnv = (env, ...args) => spawnSync(process.execPath, [script, '--repo', repo, '--scripts-dir', scripts, ...args], {
     encoding: 'utf8', env: {...process.env, HOME: home, TMPDIR: base, ...env}
   });
@@ -146,4 +146,17 @@ test('forward deployment prunes older backups while rollback and dry run preserv
   for (const name of ['copy-old-a','copy-old-b','copy-old-c']) {const dir=path.join(root,name);if(!fs.existsSync(dir)){fs.mkdirSync(dir);fs.writeFileSync(path.join(dir,'payload'),'invented');}}
   const before=fs.readdirSync(root).sort(); succeeds(f.run('--rollback',saved));
   for(const name of before) assert.ok(fs.existsSync(path.join(root,name)),name);
+});
+test('forward deployment refuses a non-main branch before touching destinations', t => {
+  const f=fixture(t); f.git('branch','-M','synthetic-other');
+  const result=f.run(); assert.equal(result.status,1); assert.match(result.stderr,/require main/); assert.equal(fs.existsSync(f.scripts),false);
+});
+test('failed rollback restores the displaced files and reports its recovery backup', t => {
+  const f=fixture(t); succeeds(f.run()); f.release('second'); const result=f.run(); succeeds(result);
+  const saved=/rollback backup: (.+)/.exec(result.stdout)[1], before=f.deployed();
+  const hook=path.join(f.base,'synthetic-failure.cjs');
+  const receipt=fs.realpathSync(path.join(f.scripts,'.storage_monitor.json'));
+  fs.writeFileSync(hook,`const fs=require('node:fs');const rename=fs.renameSync;let once=false;fs.renameSync=(a,b)=>{const result=rename(a,b);if(!once&&b===${JSON.stringify(receipt)}){once=true;throw Error('synthetic rollback failure');}return result;};`);
+  const failed=f.runEnv({NODE_OPTIONS:'--require='+JSON.stringify(hook)},'--rollback',saved);
+  assert.equal(failed.status,1); assert.match(failed.stderr,/synthetic rollback failure/); assert.match(failed.stdout,/Recovery backup:/); assert.deepEqual(f.deployed(),before);
 });

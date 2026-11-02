@@ -4,6 +4,7 @@ import json
 import logging
 import os
 import re
+import signal
 import subprocess
 import threading
 import time
@@ -15,8 +16,12 @@ _logger = logging.getLogger(__name__)
 
 _CLI_MAX_RETRIES = 3
 _CLI_BACKOFF_BASE = 5  # seconds: 5, 10, 20
+PROCESS_TIMEOUT_SECONDS = 3600
+PROCESS_LOG_CAP_BYTES = 1024 * 1024
+_PROCESS_KILL_GRACE_SECONDS = 0.5
 
 from .models import FixerAttemptResult, FixerContext, PackManifest
+from .process_identity import OwnedProcessGroup, owned_group_members, signal_owned_group
 
 
 _SENSITIVE_PATTERNS = [
@@ -92,6 +97,7 @@ class ClaudeCliRuntime:
         intake_path: Path,
         intake_text: str,
         session_root: Path,
+        deadline: float | None = None,
         **_: object,
     ) -> str:
         planning_task_id = f"__planner_{intake_path.stem}__"
@@ -102,6 +108,7 @@ class ClaudeCliRuntime:
             intake_text=intake_text,
             session_root=session_root,
             planning_task_id=planning_task_id,
+            deadline=deadline,
         )
 
     def resolver_agent(
@@ -154,6 +161,7 @@ class ClaudeCliRuntime:
         intake_text: str,
         session_root: Path,
         planning_task_id: str | None = None,
+        deadline: float | None = None,
     ) -> str:
         return self._run_phase(
             phase="planning",
@@ -168,6 +176,7 @@ class ClaudeCliRuntime:
                 "--- END INTAKE ---\n"
             ),
             task_id_override=planning_task_id,
+            deadline=deadline,
         )
 
     def _run_phase(
@@ -179,9 +188,12 @@ class ClaudeCliRuntime:
         session_root: Path,
         input_text: str,
         task_id_override: str | None = None,
+        deadline: float | None = None,
     ) -> str:
         last_error: ClaudeCliRuntimeError | None = None
         for attempt in range(1, _CLI_MAX_RETRIES + 1):
+            if deadline is not None and time.monotonic() >= deadline:
+                raise last_error or ClaudeCliRuntimeError(phase=phase, message="Session deadline exceeded", command=(), exit_code=124)
             try:
                 return self._run_phase_once(
                     phase=phase,
@@ -191,12 +203,13 @@ class ClaudeCliRuntime:
                     input_text=input_text,
                     task_id_override=task_id_override,
                     attempt=attempt,
+                    deadline=deadline,
                 )
             except ClaudeCliRuntimeError as exc:
                 last_error = exc
                 # Don't retry if the CLI ran successfully but produced
                 # empty/unparseable output — that won't improve on retry.
-                if exc.exit_code == 0:
+                if exc.exit_code == 0 or (deadline is not None and time.monotonic() >= deadline):
                     raise
                 if attempt < _CLI_MAX_RETRIES:
                     backoff = _CLI_BACKOFF_BASE * (2 ** (attempt - 1))
@@ -210,7 +223,7 @@ class ClaudeCliRuntime:
                             effective_task_id,
                             f"[{phase}] CLI failed (exit {exc.exit_code}), retry {attempt + 1}/{_CLI_MAX_RETRIES} in {backoff}s...",
                         )
-                    time.sleep(backoff)
+                    time.sleep(min(backoff, max(0, deadline - time.monotonic())) if deadline is not None else backoff)
         # All retries exhausted
         assert last_error is not None
         raise last_error
@@ -225,31 +238,33 @@ class ClaudeCliRuntime:
         input_text: str,
         task_id_override: str | None = None,
         attempt: int = 1,
+        deadline: float | None = None,
     ) -> str:
         effective_task_id = task_id_override or phase
         prompt_text = _load_prompt_bundle(prompt_path)
+        full_prompt = f"{prompt_text}\n\n{input_text}"
         command = [
             self.command,
-            "--dangerously-skip-permissions",
             "--model",
             model,
             "--output-format",
             "stream-json",
             "--verbose",
             "-p",
-            prompt_text,
         ]
         attempt_label = f" (attempt {attempt}/{_CLI_MAX_RETRIES})" if attempt > 1 else ""
         if self._output_line_callback is not None:
             self._output_line_callback(effective_task_id, f"[{phase}] Launching Claude CLI ({model}){attempt_label}...")
             if self._has_injected_runner:
-                completed = self._subprocess_runner(command=command, cwd=session_root, input_text=input_text)
+                options = {"deadline": deadline} if deadline is not None else {}
+                completed = self._subprocess_runner(command=command, cwd=session_root, input_text=full_prompt, **options)
             else:
                 completed = _streaming_subprocess_runner(
                     command=command,
                     cwd=session_root,
-                    input_text=input_text,
+                    input_text=full_prompt,
                     line_callback=_make_detail_extracting_callback(effective_task_id, self._output_line_callback),
+                    **({"deadline": deadline} if deadline is not None else {}),
                 )
             self._output_line_callback(
                 effective_task_id,
@@ -259,7 +274,8 @@ class ClaudeCliRuntime:
             completed = self._subprocess_runner(
                 command=command,
                 cwd=session_root,
-                input_text=input_text,
+                input_text=full_prompt,
+                **({"deadline": deadline} if deadline is not None else {}),
             )
         if completed.returncode != 0:
             stderr = completed.stderr or ""
@@ -318,6 +334,7 @@ class CodexCliRuntime:
         intake_text: str,
         session_root: Path,
         reasoning_effort: str | None = None,
+        deadline: float | None = None,
         **_: object,
     ) -> str:
         planning_task_id = f"__planner_{intake_path.stem}__"
@@ -329,6 +346,7 @@ class CodexCliRuntime:
             session_root=session_root,
             planning_task_id=planning_task_id,
             reasoning_effort=reasoning_effort,
+            deadline=deadline,
         )
 
     def resolver_agent(
@@ -393,6 +411,7 @@ class CodexCliRuntime:
         session_root: Path,
         planning_task_id: str | None = None,
         reasoning_effort: str | None = None,
+        deadline: float | None = None,
     ) -> str:
         return self._run_phase(
             phase="planning",
@@ -408,6 +427,7 @@ class CodexCliRuntime:
             ),
             task_id_override=planning_task_id,
             reasoning_effort=reasoning_effort,
+            deadline=deadline,
         )
 
     def _run_phase(
@@ -420,9 +440,12 @@ class CodexCliRuntime:
         input_text: str,
         task_id_override: str | None = None,
         reasoning_effort: str | None = None,
+        deadline: float | None = None,
     ) -> str:
         last_error: CodexCliRuntimeError | None = None
         for attempt in range(1, _CLI_MAX_RETRIES + 1):
+            if deadline is not None and time.monotonic() >= deadline:
+                raise last_error or CodexCliRuntimeError(phase=phase, message="Session deadline exceeded", command=(), exit_code=124)
             try:
                 return self._run_phase_once(
                     phase=phase,
@@ -433,10 +456,11 @@ class CodexCliRuntime:
                     task_id_override=task_id_override,
                     attempt=attempt,
                     reasoning_effort=reasoning_effort,
+                    deadline=deadline,
                 )
             except CodexCliRuntimeError as exc:
                 last_error = exc
-                if exc.exit_code == 0:
+                if exc.exit_code == 0 or (deadline is not None and time.monotonic() >= deadline):
                     raise
                 if attempt < _CLI_MAX_RETRIES:
                     backoff = _CLI_BACKOFF_BASE * (2 ** (attempt - 1))
@@ -450,7 +474,7 @@ class CodexCliRuntime:
                             effective_task_id,
                             f"[{phase}] CLI failed (exit {exc.exit_code}), retry {attempt + 1}/{_CLI_MAX_RETRIES} in {backoff}s...",
                         )
-                    time.sleep(backoff)
+                    time.sleep(min(backoff, max(0, deadline - time.monotonic())) if deadline is not None else backoff)
         assert last_error is not None
         raise last_error
 
@@ -465,6 +489,7 @@ class CodexCliRuntime:
         task_id_override: str | None = None,
         attempt: int = 1,
         reasoning_effort: str | None = None,
+        deadline: float | None = None,
     ) -> str:
         effective_task_id = task_id_override or phase
         prompt_text = _load_prompt_bundle(prompt_path)
@@ -472,7 +497,6 @@ class CodexCliRuntime:
         command = [
             self.command,
             "exec",
-            "--dangerously-bypass-approvals-and-sandbox",
             "--json",
             "-m",
             model,
@@ -483,22 +507,24 @@ class CodexCliRuntime:
             command.extend(["-c", f'model_reasoning_effort="{reasoning_effort}"'])
         if phase in {"planning", "resolution"}:
             command.extend(["-c", 'model_reasoning_summary="detailed"'])
-        command.append(full_prompt)
+        command.append("-")
         attempt_label = f" (attempt {attempt}/{_CLI_MAX_RETRIES})" if attempt > 1 else ""
         if self._output_line_callback is not None:
             self._output_line_callback(effective_task_id, f"[{phase}] Launching Codex CLI ({model}){attempt_label}...")
             if self._has_injected_runner:
-                completed = self._subprocess_runner(command=command, cwd=session_root, input_text="")
+                options = {"deadline": deadline} if deadline is not None else {}
+                completed = self._subprocess_runner(command=command, cwd=session_root, input_text=full_prompt, **options)
             else:
                 completed = _streaming_subprocess_runner(
                     command=command,
                     cwd=session_root,
-                    input_text="",
+                    input_text=full_prompt,
                     line_callback=_make_detail_extracting_callback(
                         effective_task_id,
                         self._output_line_callback,
                         detail_extractor=_extract_detail_from_codex_json,
                     ),
+                    **({"deadline": deadline} if deadline is not None else {}),
                 )
             self._output_line_callback(
                 effective_task_id,
@@ -508,7 +534,8 @@ class CodexCliRuntime:
             completed = self._subprocess_runner(
                 command=command,
                 cwd=session_root,
-                input_text="",
+                input_text=full_prompt,
+                **({"deadline": deadline} if deadline is not None else {}),
             )
         if completed.returncode != 0:
             stderr = completed.stderr or ""
@@ -679,19 +706,14 @@ def _default_subprocess_runner(
     command: list[str],
     cwd: Path,
     input_text: str,
+    deadline: float | None = None,
 ) -> subprocess.CompletedProcess[str]:
     # Strip CLAUDECODE env var so child Claude CLI sessions don't refuse to
     # launch when the orchestrator itself is running inside Claude Code.
     env = {k: v for k, v in os.environ.items() if k != "CLAUDECODE"}
-    return subprocess.run(
-        command,
-        cwd=cwd,
-        input=input_text,
-        text=True,
-        capture_output=True,
-        check=False,
-        env=env,
-    )
+    options = {"deadline": deadline} if deadline is not None else {}
+    return _run_bounded_process(command, cwd=cwd, env=env, input_text=input_text,
+                                fail_on_stdout_truncation=True, **options)
 
 
 def _streaming_subprocess_runner(
@@ -700,61 +722,112 @@ def _streaming_subprocess_runner(
     cwd: Path,
     input_text: str,
     line_callback: Callable[[str], None],
+    deadline: float | None = None,
 ) -> subprocess.CompletedProcess[str]:
     """Run a subprocess while streaming stdout lines through a callback.
 
-    Returns a CompletedProcess with the full captured stdout/stderr, compatible
-    with the non-streaming runner.
+    Returns a CompletedProcess with bounded stdout/stderr tails, compatible with
+    the non-streaming runner.
     """
     env = {k: v for k, v in os.environ.items() if k != "CLAUDECODE"}
-    proc = subprocess.Popen(
-        command,
-        cwd=cwd,
-        stdin=subprocess.PIPE,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        text=True,
-        bufsize=1,
-        env=env,
-    )
-    stdout_lines: list[str] = []
-    stderr_lines: list[str] = []
+    options = {"deadline": deadline} if deadline is not None else {}
+    return _run_bounded_process(command, cwd=cwd, env=env, input_text=input_text,
+                                line_callback=line_callback, fail_on_stdout_truncation=True, **options)
 
-    def _read_stderr():
-        assert proc.stderr is not None
-        for raw_line in iter(proc.stderr.readline, ""):
-            stderr_lines.append(raw_line)
-        proc.stderr.close()
 
-    stderr_thread = threading.Thread(target=_read_stderr, daemon=True)
-    stderr_thread.start()
+def _decode_capture(data: bytes) -> str:
+    decoded = data.decode("utf-8", errors="replace").encode("utf-8")
+    return decoded[-PROCESS_LOG_CAP_BYTES:].decode("utf-8", errors="ignore")
 
-    # Write input and close stdin
-    assert proc.stdin is not None
-    try:
-        proc.stdin.write(input_text)
-        proc.stdin.close()
-    except BrokenPipeError:
-        pass
 
-    # Read stdout line-by-line, streaming to callback
-    assert proc.stdout is not None
-    for raw_line in iter(proc.stdout.readline, ""):
-        stdout_lines.append(raw_line)
+def _run_bounded_process(command, *, cwd, env, input_text="", line_callback=None, shell=False,
+                         merge_stderr=False, fail_on_stdout_truncation=False, deadline=None):
+    """Capture bounded output and stop the entire process group on timeout."""
+    if deadline is not None and time.monotonic() >= deadline:
+        return subprocess.CompletedProcess(command, 124, "", "Process timed out before launch")
+    proc = subprocess.Popen(command, cwd=cwd, env=env, shell=shell, start_new_session=True,
+                            stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+                            stderr=subprocess.STDOUT if merge_stderr else subprocess.PIPE)
+    group = OwnedProcessGroup.capture(proc)
+    captures = [bytearray(), bytearray()]
+    was_truncated = [False, False]
+
+    def read_stream(stream, capture, callback, index):
+        pending = b""
+        truncated = False
         try:
-            line_callback(raw_line.rstrip("\r\n"))
-        except Exception:
-            pass  # callback errors must not crash the subprocess runner
-    proc.stdout.close()
+            while chunk := os.read(stream.fileno(), 8192):
+                capture.extend(chunk)
+                if len(capture) > PROCESS_LOG_CAP_BYTES:
+                    del capture[:-PROCESS_LOG_CAP_BYTES]
+                    was_truncated[index] = True
+                    if not truncated:
+                        _logger.warning("Process output truncated to retain recent output")
+                        truncated = True
+                if callback is not None:
+                    pending += chunk
+                    while b"\n" in pending:
+                        line, pending = pending.split(b"\n", 1)
+                        try:
+                            callback(line.decode("utf-8", errors="replace").rstrip("\r"))
+                        except Exception:
+                            pass
+                    pending = pending[-PROCESS_LOG_CAP_BYTES:]
+            if pending and callback is not None:
+                try:
+                    callback(pending.decode("utf-8", errors="replace"))
+                except Exception:
+                    pass
+        finally:
+            stream.close()
 
-    stderr_thread.join(timeout=5.0)
-    proc.wait()
-    return subprocess.CompletedProcess(
-        args=command,
-        returncode=proc.returncode,
-        stdout="".join(stdout_lines),
-        stderr="".join(stderr_lines),
-    )
+    def write_input():
+        try:
+            with proc.stdin:
+                proc.stdin.write(input_text.encode("utf-8"))
+        except (BrokenPipeError, OSError, ValueError):
+            pass
+
+    readers = [threading.Thread(target=read_stream, args=(proc.stdout, captures[0], line_callback, 0), daemon=True)]
+    if proc.stderr is not None:
+        readers.append(threading.Thread(target=read_stream, args=(proc.stderr, captures[1], None, 1), daemon=True))
+    def stop_process():
+        signal_owned_group(group, signal.SIGTERM)
+        time.sleep(_PROCESS_KILL_GRACE_SECONDS)
+        signal_owned_group(group, signal.SIGKILL)
+        proc.wait()
+        for thread in readers:
+            if thread.ident is not None:
+                thread.join(timeout=1)
+
+    try:
+        for thread in readers:
+            thread.start()
+        writer = threading.Thread(target=write_input, daemon=True)
+        writer.start()
+        deadline = min(time.monotonic() + PROCESS_TIMEOUT_SECONDS, deadline) if deadline is not None else time.monotonic() + PROCESS_TIMEOUT_SECONDS
+        timed_out = True
+        while time.monotonic() < deadline:
+            if not any(thread.is_alive() for thread in readers):
+                members = owned_group_members(group)
+                if any(pid == proc.pid and state == 5 for pid, _, state in members):
+                    signal_owned_group(group, signal.SIGKILL)
+                    proc.wait()
+                    timed_out = False
+                    break
+            time.sleep(0.01)
+    except (KeyboardInterrupt, SystemExit):
+        stop_process()
+        raise
+    if timed_out:
+        stop_process()
+        return subprocess.CompletedProcess(command, 124, _decode_capture(captures[0]),
+                                           _decode_capture(captures[1] + b"\nProcess timed out"))
+    if fail_on_stdout_truncation and was_truncated[0]:
+        return subprocess.CompletedProcess(command, proc.returncode or 125, _decode_capture(captures[0]),
+                                           _decode_capture(captures[1] + b"\nAgent output truncated"))
+    return subprocess.CompletedProcess(command, proc.returncode, _decode_capture(captures[0]),
+                                       _decode_capture(captures[1]))
 
 
 def _format_fixer_context(context: FixerContext) -> str:

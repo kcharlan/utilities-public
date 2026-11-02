@@ -101,3 +101,16 @@ import TelltaleCore
         #expect(invented.updatedAt == nil)
     }
 }
+
+@Suite struct StatusLinkSafetyTests {
+    @Test func rssRejectsUnsafeAndHostlessLinks() throws {
+        let xml = """
+        <rss><channel>
+        <item><title>Unsafe</title><link>file:///tmp/fake</link><pubDate>Wed, 01 Jan 2025 00:00:00 GMT</pubDate></item>
+        <item><title>Hostless</title><link>https:///fake</link><pubDate>Wed, 01 Jan 2025 00:00:00 GMT</pubDate></item>
+        <item><title>Safe</title><link>https://status.example.com/fake</link><pubDate>Wed, 01 Jan 2025 00:00:00 GMT</pubDate></item>
+        </channel></rss>
+        """
+        #expect(try RSSFeed.items(Data(xml.utf8)).map(\.title) == ["Safe"])
+    }
+}

@@ -90,8 +90,33 @@ import TelltaleTestSupport
 
 private let notLoaded = "Telltale's collector isn't loaded. Open the Collector view to turn it back on."
 private let recovered = "Telltale's collector is running again."
+private func waitForLock(_ semaphore: DispatchSemaphore) -> Bool { semaphore.wait(timeout: .now() + 3) == .success }
 
 @MainActor @Suite struct CollectorMonitorTests {
+    @Test func databaseWriteDoesNotBlockMainActor() async throws {
+        try await withMonitor { h in
+            try h.store.set(.collectorEnabled, false)
+            let locked = DispatchSemaphore(value: 0)
+            let url = h.paths.database
+            let writer = Task.detached {
+                let store = try Store.open(url, mode: .readWriteExisting)
+                try store.transaction {
+                    locked.signal()
+                    Thread.sleep(forTimeInterval: 1.5)
+                }
+            }
+            let acquired = await Task.detached { waitForLock(locked) }.value
+            #expect(acquired)
+            guard acquired else { try await writer.value; return }
+            let monitor = h.monitor()
+            let started = Date()
+            let check = Task { await monitor.check() }
+            try await Task.sleep(for: .milliseconds(200))
+            #expect(Date().timeIntervalSince(started) < 1.0)
+            try await writer.value
+            _ = await check.value
+        }
+    }
     @Test func collectorAcknowledgementClearsWhenHealthy() async throws {
         try await withMonitor { h in
             let acknowledgement = CollectorAcknowledgement(at: h.now, keys: ["collector"])
@@ -104,7 +129,7 @@ private let recovered = "Telltale's collector is running again."
             #expect(repair.lamp == .red && repair.problems.isEmpty)
             #expect(try h.store.value(.collectorAcknowledgement) == acknowledgement)
             try DashboardWorld.exec(h.paths.database, "INSERT INTO source_state (source, state_json, updated_at) VALUES ('synthetic', 'not json', 0)")
-            #expect(await h.tick(monitor) == nil)
+            #expect(await h.tick(monitor)?.lamp == .red)
             #expect(try h.store.value(.collectorAcknowledgement) == acknowledgement)
             try DashboardWorld.exec(h.paths.database, "DELETE FROM source_state WHERE source = 'synthetic'")
             let plist = h.paths.launchAgents.appending(path: "local.utilities.telltale.collector.plist")
@@ -116,6 +141,36 @@ private let recovered = "Telltale's collector is running again."
             try h.store.set(.collectorEnabled, false)
             #expect(await h.tick(monitor)?.lamp == .unlit)
             #expect(try h.store.value(.collectorAcknowledgement) == nil)
+        }
+    }
+    @Test func unreadableDatabaseIsReportedAndNotified() async throws {
+        try await withMonitor { h in
+            h.setLoaded(true)
+            let monitor = h.monitor()
+            try DashboardWorld.exec(h.paths.database, "INSERT INTO source_state (source, state_json, updated_at) VALUES ('synthetic', 'not json', 0)")
+            let first = try #require(await h.tick(monitor))
+            #expect(first.lamp == .red)
+            #expect(first.notice != nil)
+            _ = await h.tick(monitor)
+            #expect(h.service.posted.count == 1)
+            _ = await h.tick(monitor)
+            #expect(h.service.posted.count == 1)
+        }
+    }
+    @Test func unreadableDatabaseAfterRecoveryStartsNewEpisode() async throws {
+        try await withMonitor { h in
+            try h.recordRun(at: h.now, .succeeded)
+            let monitor = h.monitor()
+            h.setLoaded(false)
+            _ = await h.tick(monitor)
+            _ = await h.tick(monitor)
+            h.setLoaded(true)
+            _ = await h.tick(monitor)
+            #expect(h.service.posted.count == 2)
+            try DashboardWorld.exec(h.paths.database, "INSERT INTO source_state (source, state_json, updated_at) VALUES ('synthetic', 'not json', 0)")
+            _ = await h.tick(monitor)
+            _ = await h.tick(monitor)
+            #expect(h.service.posted.count == 3)
         }
     }
     @Test func checksEveryMinute() {
@@ -293,6 +348,25 @@ private let recovered = "Telltale's collector is running again."
             #expect(h.service.posted.isEmpty)
             await h.tick(monitor)
             #expect(h.bodies == [notLoaded])
+        }
+    }
+
+    @Test func unreadableChecksAcrossSleepsDoNotConfirmAnEpisode() async throws {
+        try await withMonitor { h in
+            try h.recordRun(at: h.now, .succeeded)
+            h.setLoaded(true)
+            let monitor = h.monitor()
+            await h.tick(monitor) // Initialize the sleep clock with a readable database.
+            try DashboardWorld.exec(h.paths.database, "INSERT INTO source_state (source, state_json, updated_at) VALUES ('synthetic', 'not json', 0)")
+            await h.tick(monitor)
+            h.sleep(hours: 1)
+            await monitor.check()
+            #expect(h.service.posted.isEmpty)
+            h.sleep(hours: 1)
+            await monitor.check()
+            #expect(h.service.posted.isEmpty)
+            await h.tick(monitor)
+            #expect(h.service.posted.count == 1)
         }
     }
 

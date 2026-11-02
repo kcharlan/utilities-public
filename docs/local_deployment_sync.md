@@ -27,14 +27,15 @@ The audit contract is:
 - One validated stage-0 Git-index snapshot defines current source for direct
   mappings, maintained top-level projects, the Time Machine Snapshot Monitor
   tree, Model Sentinel, and tracked repository `.gitignore` files. Staged
-  additions are included; untracked files are excluded.
+  additions are included; untracked files are excluded. Working-tree bytes
+  must hash to the indexed blob before a source can pass.
 - Current direct and maintained-project files are compared byte-for-byte.
   Their complete numeric permission modes must also match, including setuid,
   setgid, and sticky bits as well as ordinary read/write/execute bits.
 - An indexed source missing from the working tree, a staged deletion, an
   unmerged entry, a sparse-directory entry, a symlink, a submodule, or another
   unsupported indexed type fails as incomplete source state instead of being
-  silently skipped.
+  silently skipped. A maintained project with no indexed files also fails.
 - Model Sentinel must be a regular non-symlink file with its owner-execute bit
   set and must be executable by the audit process. The audit checks the exact
   executable preamble, bidirectional archive inventory, entry types,
@@ -354,7 +355,7 @@ signing, executing the app, querying credentials or writing source/deployment.
 It prints exactly `OK: anker-charge-monitor native deployment`. Dry-run validates
 the admitted inputs without writing or querying signing identities.
 
-The project shell installer remains the one owner of app activation: it copies
+For forward deployment the project shell installer owns app activation: it copies
 into a private stage on the apps volume, validates, displaces the previous
 whole bundle and renames the candidate. The root CLI adds private independent
 backups and receipt publication/recovery. Backups under
@@ -363,6 +364,8 @@ under its original name, receipt bytes/mode and checked metadata. Containers
 are 0700, receipt/metadata files 0600, and app modes are retained. Saved app
 hashes and receipt bytes are re-read before activation. Readers of the previous
 executable remain valid; installers never quit or launch the app.
+For rollback, the root CLI stages the verified backup on the apps volume and
+displaces the current bundle, including a damaged installation.
 
 Activation, receipt publication, rollback and cleanup failures return nonzero
 and restore the previous app/receipt, including an initially absent app.
@@ -445,7 +448,7 @@ and prints exactly
 `OK: telltale native deployment`. Dry-run validates the admitted inputs without
 writing or querying signing identities.
 
-`telltale/tools/install.sh` remains the one owner of app activation: it copies
+For forward deployment `telltale/tools/install.sh` owns app activation: it copies
 into a private stage on the apps volume, validates, displaces the previous whole
 bundle and renames the candidate. The root CLI adds private independent backups
 under `~/.utilities-deploy-backups/telltale/copy-*` (0700 containers, 0600
@@ -454,6 +457,8 @@ Activation, receipt publication, rollback and cleanup failures return nonzero
 and restore the previous app and receipt, including an initially absent app.
 Readers of the previous executable remain valid; the deployer never quits or
 launches the app.
+For rollback, the root CLI stages the verified backup on the apps volume and
+displaces the current bundle, including a damaged installation.
 
 The deployer never runs `launchctl` and never writes `~/Library/LaunchAgents`,
 `~/Library/Application Support/Telltale` or `~/Library/Logs/Telltale`. The
@@ -744,6 +749,17 @@ Validate Compose configuration before starting. Rebuild/start only the projects 
 
 `docker/propagate-updates.zsh deploy` applies these rules to `~/docker`: it copies only committed tracked files, backs up replaced files under `~/.utilities-deploy-backups/docker-<timestamp>/`, reruns `update.sh` only for stacks that were running, and verifies they are running again. Its `refresh` phase updates and audits the Docker lockfiles beforehand. See [docker/README.md](../docker/README.md#propagating-dependency-updates).
 
+Each managed deployment snapshots its executed helpers, Compose and build inputs,
+and read-only runtime code in a persistent private committed-source bundle.
+Configuration and writable volumes remain at their deployed paths. Pruning
+retains the current bundle and prior or current referenced bundles plus five other
+verified unused bundles; unknown, in-progress, failed, linked or altered bundles
+are retained. The concurrency guarantee covers managed propagation only.
+Bundle paths are internal; independent manual cache users must pass
+`deploy --keep-source-bundles` on every deploy because inspecting references
+cannot be atomic with an external Docker create. Container rollback does not
+restore database migrations.
+
 After a successful deploy that creates a backup, it keeps the two newest eligible
 Docker backup directories by modification time, with descending name as the
 tie-break. Failed, unchanged and dry runs leave backups untouched.
@@ -753,6 +769,12 @@ tie-break. Failed, unchanged and dry runs leave backups untouched.
 Deployment snapshots live under `~/.utilities-deploy-backups/`. They may contain old operational source or private local configuration and must never be copied into this public repository. Keep the directory at `0700` and backup files at `0600`.
 
 Restore a copy-deployer backup with `node tools/deploy_copies.mjs --rollback BACKUP`. Hand-made backups have no `state.json` and cannot be used with this command.
+Rollback can run from another branch or with dirty build inputs; it uses the
+committed manifest and validates the backup before changing destinations.
+Forward deployment with the native and copy deployers requires `main`.
+During the protected build and activation phases, SIGINT or SIGTERM waits for
+an active synchronous child to finish, cleans scratch, and restores an
+installation already changed.
 
 Market Atlas moves the entire prior app into a new private backup container,
 without normalizing the saved tree or promising exact metadata restoration.

@@ -31,19 +31,29 @@ lim_bytes=$(to_bytes "$limit_str")
 # Total pages
 pages=$(qpdf --show-npages "$in")
 
+# Every possible chunk name must be safe before any output is published.
+for (( chunk = 1; chunk <= pages; chunk++ )); do
+  final="${prefix}_$chunk.pdf"
+  if [[ "$in" -ef "$final" ]]; then
+    echo "Output would overwrite input: $final" >&2
+    exit 1
+  fi
+done
+
 start=1
 chunk=1
 
-tmpdir=$(mktemp -d)
-trap 'rm -rf "$tmpdir"' EXIT
+tmpdir=$(mktemp -d "${prefix:h}/.pdf-split.XXXXXX")
+preserve_tmp=0
+trap '(( preserve_tmp )) || rm -r -- "${tmpdir:?}"' EXIT
 
 while (( start <= pages )); do
   end=$start
   while :; do
     test_out="$tmpdir/test.pdf"
     # Build a candidate chunk [start..end]
-    qpdf --empty --pages "$in" "$start-$end" -- "$test_out" >/dev/null 2>&1 || true
-    size=$(stat -f%z "$test_out" 2>/dev/null || echo 0)
+    qpdf --empty --pages "$in" "$start-$end" -- "$test_out" >/dev/null 2>&1
+    size=$(stat -f%z "$test_out")
 
     if (( size > lim_bytes )); then
       if (( end == start )); then
@@ -61,8 +71,61 @@ while (( start <= pages )); do
   done
 
   final="${prefix}_$chunk.pdf"
-  qpdf --empty --pages "$in" "$start-$end" -- "$final"
-  echo "Wrote $final (pages $start-$end)"
+  qpdf --empty --pages "$in" "$start-$end" -- "$tmpdir/chunk_$chunk.pdf"
   (( chunk++ ))
   (( start = end + 1 ))
+done
+
+for (( n = 1; n < chunk; n++ )); do
+  final="${prefix}_$n.pdf"
+  if [[ -d "$final" && ! -L "$final" ]]; then
+    echo "Output is a directory: $final" >&2
+    exit 1
+  fi
+done
+
+typeset -a saved published
+rollback() {
+  local i final failed=0
+  for (( i = $1; i >= 1; i-- )); do
+    final="${prefix}_$i.pdf"
+    if (( saved[i] )); then
+      if ! mv -f -- "$tmpdir/backup_$i" "$final"; then
+        echo "Could not restore $final from $tmpdir/backup_$i" >&2
+        failed=1
+      fi
+    elif (( published[i] )); then
+      if ! rm -- "$final"; then
+        echo "Could not remove newly published $final" >&2
+        failed=1
+      fi
+    fi
+  done
+  if (( failed )); then
+    preserve_tmp=1
+    echo "Rollback incomplete; recovery files retained in $tmpdir" >&2
+  fi
+}
+
+for (( n = 1; n < chunk; n++ )); do
+  final="${prefix}_$n.pdf"
+  saved[n]=0
+  published[n]=0
+  if [[ -e "$final" || -L "$final" ]]; then
+    if ! mv -- "$final" "$tmpdir/backup_$n"; then
+      echo "Could not save existing output: $final" >&2
+      rollback "$n"
+      exit 1
+    fi
+    saved[n]=1
+  fi
+  if ! mv -- "$tmpdir/chunk_$n.pdf" "$final"; then
+    echo "Could not publish: $final" >&2
+    rollback "$n"
+    exit 1
+  fi
+  published[n]=1
+done
+for (( n = 1; n < chunk; n++ )); do
+  echo "Wrote ${prefix}_$n.pdf"
 done

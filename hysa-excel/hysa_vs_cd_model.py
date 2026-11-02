@@ -481,7 +481,7 @@ def build_workbook(values: OrderedDict[str, float], output_path: Path) -> None:
         rate_frequency_cell = input_cell("Rate Change Frequency (months)")
         cd_sensitivity_cell = input_cell("CD Sensitivity")
         duration_cell = input_cell("Total Duration (months)")
-        duration = int(values["Total Duration (months)"])
+        duration = MAX_DURATION_MONTHS
 
         balance_headers = ["Month", "HYSA Rate", "HYSA"]
         for rate_label, balance_label, _ in CD_TERMS:
@@ -569,7 +569,8 @@ def build_workbook(values: OrderedDict[str, float], output_path: Path) -> None:
             output_sheet.write_formula(
                 strategy_index + 1,
                 1,
-                f"='Monthly Balances'!{balance_column}{duration + 1}",
+                f"=INDEX('Monthly Balances'!{balance_column}:{balance_column},"
+                f"'Inputs'!{duration_cell}+1)",
                 balance_format,
             )
             output_sheet.write_formula(

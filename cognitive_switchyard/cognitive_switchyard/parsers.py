@@ -20,6 +20,7 @@ from .models import (
 _LEADING_COMMENT_RE = re.compile(r"\A\s*<!--.*?-->\s*\n?", re.DOTALL)
 _FRONT_MATTER_RE = re.compile(r"\A---\n(.*?)\n---\n?", re.DOTALL)
 _CODE_FENCE_RE = re.compile(r"```\w*\s*\n(.*?)\n\s*```", re.DOTALL)
+_PLAN_ID_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9_-]*\Z")
 
 
 class ArtifactParseError(ValueError):
@@ -34,7 +35,7 @@ def parse_task_plan(text: str, *, source: Path | None = None) -> TaskPlan:
     metadata, body, title = _parse_plan_document(text, source=source)
 
     return TaskPlan(
-        task_id=_required_string(metadata, "PLAN_ID", artifact_type="plan", source=source),
+        task_id=_plan_id(metadata, source),
         title=title,
         depends_on=_parse_id_list(metadata.get("DEPENDS_ON", "none"), field="DEPENDS_ON", source=source),
         anti_affinity=_parse_id_list(
@@ -59,7 +60,7 @@ def parse_staged_task_plan(text: str, *, source: Path | None = None) -> StagedTa
         for key, value in metadata.items()
     }
     return StagedTaskPlan(
-        task_id=_required_string(normalized_metadata, "PLAN_ID", artifact_type="plan", source=source),
+        task_id=_plan_id(normalized_metadata, source),
         title=title,
         metadata=normalized_metadata,
         declared_depends_on=_parse_id_list(
@@ -74,6 +75,13 @@ def parse_staged_task_plan(text: str, *, source: Path | None = None) -> StagedTa
         ),
         body=body,
     )
+
+
+def _plan_id(metadata: dict, source: Path | None) -> str:
+    value = _required_string(metadata, "PLAN_ID", artifact_type="plan", source=source)
+    if not _PLAN_ID_RE.fullmatch(value):
+        raise ArtifactParseError("plan", "invalid PLAN_ID", source)
+    return value
 
 
 def parse_status_sidecar(

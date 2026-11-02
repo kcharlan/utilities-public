@@ -10,9 +10,9 @@ set -x
 
 # Claude Code commands — defined here because .zshrc functions aren't
 # available in non-interactive script shells.
-cc-opus()  { claude --dangerously-skip-permissions --model opus "$@"; }
-cc-sonnet(){ claude --dangerously-skip-permissions --model sonnet "$@"; }
-cc-fixer() { claude --dangerously-skip-permissions --model "$FIXER_MODEL" "$@"; }
+cc-opus()  { claude --model opus "$@"; }
+cc-sonnet(){ claude --model sonnet "$@"; }
+cc-fixer() { claude --model "$FIXER_MODEL" "$@"; }
 
 # =============================================================================
 # Agent Pipeline Orchestrator — Constraint-Aware Plan Dispatch
@@ -112,22 +112,20 @@ log "Operating on branch: $current_branch"
 # ---------------------------------------------------------------------------
 
 recover_from_crash() {
+  local needs_recovery=false
   log "Checking for leftover state from prior run..."
 
   mkdir -p "$READY_DIR"
 
-  # Move any plans in workers/ back to ready/ BEFORE touching worktrees.
-  # Discard any partial work — plans will be re-executed from scratch.
+  # Preserve interrupted plans and their worktrees for manual recovery.
   if [ -d "$WORKERS_DIR" ]; then
     for slot_dir in "$WORKERS_DIR"/*/; do
       [ -d "$slot_dir" ] || continue
       for plan in "$slot_dir"*.plan.md; do
         [ -f "$plan" ] || continue
-        log "  Returning $(basename "$plan") to ready/"
-        mv "$plan" "$READY_DIR/"
+        log "  Preserving interrupted plan $(basename "$plan")"
+        needs_recovery=true
       done
-      # Clean up status and log files from prior run
-      rm -f "$slot_dir"*.status "$slot_dir"*.log 2>/dev/null || true
     done
   fi
 
@@ -140,11 +138,8 @@ recover_from_crash() {
       # Extract the branch name from git worktree list
       local wt_branch
       wt_branch=$(git worktree list --porcelain | grep -A2 "$wt" | grep 'branch' | sed 's|.*refs/heads/||' || true)
-      log "  Removing leftover worktree: $wt_name (branch: ${wt_branch:-unknown})"
-      git worktree remove --force "$wt" 2>/dev/null || rm -rf "$wt"
-      if [ -n "$wt_branch" ]; then
-        git branch -D "$wt_branch" 2>/dev/null || true
-      fi
+      log "  Preserving leftover worktree: $wt_name (branch: ${wt_branch:-unknown})"
+      needs_recovery=true
     done
   fi
 
@@ -154,10 +149,10 @@ recover_from_crash() {
     log "  WARNING: Uncommitted changes detected in working tree (not touching them)"
   fi
 
-  # Clean up fixer logs from prior run
-  rm -f "$SCRIPT_DIR/execution/"*_fix_attempt_*.log 2>/dev/null || true
-  rm -f "$SCRIPT_DIR/execution/"*test_fix*.log 2>/dev/null || true
-
+  if $needs_recovery; then
+    log "  Resolve preserved work before restarting."
+    return 1
+  fi
   log "Recovery complete."
 }
 
@@ -409,7 +404,6 @@ instructions. Your plan is in task_orch/execution/workers/$slot/. Plan: $plan_ba
   (
     cd "$worktree_path"
     cc-sonnet -p "$worker_prompt" \
-      --allowedTools "Edit,Read,Write,Bash,Glob,Grep" \
       2>&1 | tee "$WORKERS_DIR/$slot/$log_name"
   ) &
   local pid=$!
@@ -551,7 +545,6 @@ Begin."
   (
     cd "$working_dir"
     cc-fixer -p "$fixer_prompt" \
-      --allowedTools "Edit,Read,Write,Bash,Glob,Grep" \
       2>&1 | tee "$log_file"
   )
   local fixer_exit=$?
@@ -666,6 +659,7 @@ handle_worker_completion() {
   if [ -n "$status_file" ] && grep -qi '^STATUS:[[:space:]]*done\|^DONE$' "$status_file" 2>/dev/null; then
     plan_done=true
   fi
+  [ "${2:-}" = repaired ] && plan_done=true
 
   if $plan_done; then
     log "Plan $plan_id succeeded. Merging branch $branch_name..."
@@ -694,6 +688,7 @@ handle_worker_completion() {
       log "!! Merge conflict for plan $plan_id. Aborting merge."
       git merge --abort 2>/dev/null || true
       move_plan_to_blocked "$slot" "merge conflict"
+      plan_done=false
     fi
   else
     log "!! Plan $plan_id failed -- attempting auto-fix..."
@@ -729,8 +724,10 @@ handle_worker_completion() {
         fi
       done
 
-      # Set flag so the merge/cleanup logic runs
-      plan_done=true
+      # Re-enter completion so the repaired branch is merged before cleanup.
+      handle_worker_completion "$slot" repaired
+      rm -f "$error_ctx"
+      return
     else
       log "!! Auto-fix FAILED for plan $plan_id after $MAX_FIX_ATTEMPTS attempts"
       move_plan_to_blocked "$slot" "plan $plan_id failed (auto-fix exhausted)"
@@ -746,8 +743,11 @@ handle_worker_completion() {
   # Clean up worktree and branch — only on success.
   # On failure, preserve the worktree so work can be recovered.
   if $plan_done; then
-    git worktree remove --force "$worktree_path" 2>/dev/null || rm -rf "$worktree_path"
-    git branch -D "$branch_name" 2>/dev/null || true
+    if git worktree remove "$worktree_path"; then
+      git branch -d "$branch_name" 2>/dev/null || true
+    else
+      log "  Preserving worktree at $worktree_path for recovery"
+    fi
   else
     log "  Preserving worktree at $worktree_path (branch: $branch_name) for recovery"
   fi

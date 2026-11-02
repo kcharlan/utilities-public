@@ -412,11 +412,24 @@ struct PortControlGenerations: Hashable, Sendable {
         let delivery = UUID(); deliveryGeneration = delivery
         let stream = await backend.subscribeToEvents()
         guard valid(expected), deliveryGeneration == delivery else { return false }
-        forwarder = Task { [weak self] in
-            for await event in stream {
-                guard !Task.isCancelled else { return }
-                guard let self, self.running, self.deliveryGeneration == delivery else { return }
-                self.receive(event)
+        forwarder = Task { [weak self, backend] in
+            var current = stream
+            while !Task.isCancelled {
+                do {
+                    for try await event in current {
+                        guard !Task.isCancelled else { return }
+                        guard let self, self.running, self.deliveryGeneration == delivery else { return }
+                        self.receive(event)
+                    }
+                    return
+                } catch {
+                    guard let self, self.valid(expected), self.deliveryGeneration == delivery else { return }
+                    self.portLinkLost(); self.connected = false; self.poll?.cancel(); self.poll = nil
+                    self.refreshing = false; self.refreshDeadline = nil
+                    if self.terminal == nil { self.status = .error(self.presentationProblem ?? "Event delivery overflow; reconnecting.") }
+                    current = await backend.resumeEvents()
+                    guard self.valid(expected), self.deliveryGeneration == delivery else { return }
+                }
             }
         }
         return true

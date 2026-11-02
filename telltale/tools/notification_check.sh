@@ -25,8 +25,11 @@ work=$(mktemp -d "${TMPDIR:-/tmp}/telltale-notification-check.XXXXXX")
 chmod 700 "$work"
 domain="gui/$(id -u)"
 cleanup() {
+    local code=$?
+    trap - EXIT
     launchctl bootout "$domain/$label" >/dev/null 2>&1 || true
-    rm -rf "$work"
+    rm -r -- "${work:?}" || { [ "$code" -ne 0 ] || code=1; }
+    exit "$code"
 }
 trap cleanup EXIT
 

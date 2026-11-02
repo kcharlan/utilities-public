@@ -40,6 +40,10 @@ The script prints discovery and per-page progress. On success it creates:
 - The requested Markdown file, containing the converted pages separated by horizontal rules.
 - `<output directory>/assets/`, containing copied local images and supported linked assets.
 
-The assets directory is deleted and recreated on every run. Do not use an existing `assets/` directory beside the output for unrelated files. Copied assets are flattened to their base filenames, so source files with the same name can overwrite one another.
+The assets directory is replaced on a successful run. Do not use an existing `assets/` directory beside the output for unrelated files. Output and assets must be outside the input site, and output must not alias a source file. Copied assets are flattened to their base filenames, so source files with the same name can overwrite one another.
 
-Supported linked asset extensions are `.json`, `.xml`, `.ttl`, `.csv`, `.xlsx`, `.zip`, `.tgz`, `.png`, `.jpg`, `.jpeg`, and `.gif`. Local `<img>` sources are also copied regardless of extension. Remote URLs are not copied, and embedded `data:` images are removed as decorative.
+Supported linked asset extensions are `.json`, `.xml`, `.ttl`, `.csv`, `.xlsx`, `.zip`, `.tgz`, `.png`, `.jpg`, `.jpeg`, and `.gif`. Local `<img>` sources are also copied regardless of extension. Only files within the site are copied, including when references use symbolic links. Remote URLs are not copied, and embedded `data:` images are removed as decorative.
+
+## Validation
+
+From `doc_linearizer/`, run `bash tests/test_launcher.sh` and `bash tests/test_output_safety.sh` using synthetic inputs.

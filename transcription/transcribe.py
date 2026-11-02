@@ -369,6 +369,7 @@ if transcribe_btn:
         except OSError as error:
             st.error(f"Could not save uploads: {error}")
         else:
+            st.session_state['transcription_batch'] = st.session_state.get('transcription_batch', 0) + 1
             st.session_state['current_session_seconds'] = 0.0
             st.session_state['transcriptions'] = []
             st.session_state['raw_texts'] = []
@@ -469,7 +470,7 @@ if 'raw_texts' in st.session_state and st.session_state['raw_texts']:
             raw_text = st.text_area(
                 label="Raw Transcript",
                 value=st.session_state['raw_texts'][idx],
-                key=f"raw_{idx}",
+                key=f"raw_{st.session_state.get('transcription_batch', 0)}_{idx}",
                 height=200,
                 help="✏️ You can edit this transcript before processing"
             )
@@ -479,7 +480,7 @@ if 'raw_texts' in st.session_state and st.session_state['raw_texts']:
             st.write("")  # Spacing
             if st.button(
                 "✨ Process Text",
-                key=f"process_{idx}",
+                key=f"process_{st.session_state.get('transcription_batch', 0)}_{idx}",
                 help="Apply divider words to split the transcript"
             ):
                 processed = process_text_with_dividers(raw_text, divider_words)
@@ -490,7 +491,7 @@ if 'raw_texts' in st.session_state and st.session_state['raw_texts']:
             st.text_area(
                 label="Processed Output",
                 value=st.session_state['processed_texts'][idx],
-                key=f"processed_{idx}",
+                key=f"processed_{st.session_state.get('transcription_batch', 0)}_{idx}",
                 height=200,
                 help="📝 Final processed transcript with dividers applied"
             )

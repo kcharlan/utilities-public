@@ -95,7 +95,7 @@ _LAST_LINE_COUNT=0
 SAMPLER_PID=$!
 
 CLAUDE_EXIT=0
-claude --dangerously-skip-permissions --model "$MODEL" --output-format stream-json --verbose -p "$PROMPT" <"$PLAN_PATH" >"$CLAUDE_OUTPUT_FILE" 2>&1 || CLAUDE_EXIT=$?
+claude --model "$MODEL" --output-format stream-json --verbose -p "$PROMPT" <"$PLAN_PATH" >"$CLAUDE_OUTPUT_FILE" 2>&1 || CLAUDE_EXIT=$?
 
 # Signal the sampler to stop via stop-file, then escalate if needed
 touch "$SAMPLER_STOP_FILE"

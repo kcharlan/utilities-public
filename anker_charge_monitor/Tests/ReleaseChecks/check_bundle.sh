@@ -13,7 +13,7 @@ chmod 700 "$scratch"
 # scratch there, removed with this one.
 snapshot_scratch=$(mktemp -d "$(getconf DARWIN_USER_TEMP_DIR)prime-bundle-snapshots.XXXXXX")
 chmod 700 "$snapshot_scratch"
-trap 'code=$?; if [ "$code" != 0 ]; then tail -20 "$scratch"/*.log 2>/dev/null || true; fi; rm -rf "$scratch" "$snapshot_scratch"' EXIT
+trap 'code=$?; if [ "$code" != 0 ]; then tail -20 "$scratch"/*.log 2>/dev/null || true; fi; for path in "$scratch" "$snapshot_scratch"; do if [ -e "$path" ] || [ -L "$path" ]; then rm -r -- "${path:?}" || { [ "$code" -ne 0 ] || code=1; }; fi; done; exit "$code"' EXIT
 mkdir -p "$scratch/project" "$scratch/bin" "$scratch/home"
 for item in Package.swift Makefile Sources Resources tools Tests; do cp -Rp "$root/$item" "$scratch/project/"; done
 # The Makefile's harness targets use the repository's shared leak check, found at ../tools/.
@@ -54,8 +54,9 @@ if [[ "$*" = *--sign* ]]; then
  [[ "$*" = *'--sign AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA --timestamp=none'* ]] || exit 91
 fi
 if [[ "$*" = *--verify* && "${!#}" = "$PRIME_MONITOR_APPS_DIR/Anker Charge Monitor.app" && -e "$PRIME_MONITOR_TEST_FAILURE" && -e "$PRIME_MONITOR_TEST_ACTIVATED" ]]; then
- rm "$PRIME_MONITOR_TEST_FAILURE" "$PRIME_MONITOR_TEST_ACTIVATED"; exit 92
+ rm -- "${PRIME_MONITOR_TEST_FAILURE:?}" "${PRIME_MONITOR_TEST_ACTIVATED:?}"; exit 92
 fi
+if [[ "$*" = *--verify* && "${!#}" = "$PRIME_MONITOR_APPS_DIR/Anker Charge Monitor.app" && "${SYNTHETIC_FAIL_POST_ACTIVATION:-0}" = 1 && -e "$PRIME_MONITOR_TEST_ACTIVATED" ]]; then exit 92; fi
 MOCK
 cat > "$scratch/bin/pgrep" <<'MOCK'
 #!/bin/bash
@@ -63,12 +64,13 @@ exit "${SYNTHETIC_RUNNING:-1}"
 MOCK
 cat > "$scratch/bin/mv" <<'MOCK'
 #!/bin/bash
+if [[ "${SYNTHETIC_FAIL_STAGE_MOVE:-0}" = 1 && "$1" = *'.prime-monitor-stage-'*'/Anker Charge Monitor.app' ]]; then exit 91; fi
 /bin/mv "$@" || exit
 if [[ "$1" = *'.prime-monitor-stage-'*'/Anker Charge Monitor.app' && "${!#}" = "$PRIME_MONITOR_APPS_DIR/Anker Charge Monitor.app" ]]; then
  touch "$PRIME_MONITOR_TEST_ACTIVATED"
 fi
 if [ "${!#}" = "$PRIME_MONITOR_APPS_DIR/Anker Charge Monitor.app" ] && [ -e "$PRIME_MONITOR_TEST_CORRUPT" ]; then
- rm "$PRIME_MONITOR_TEST_CORRUPT"
+ rm -- "${PRIME_MONITOR_TEST_CORRUPT:?}"
  /usr/libexec/PlistBuddy -c 'Set :CFBundleIdentifier synthetic.invalid' "${!#}/Contents/Info.plist"
 fi
 MOCK
@@ -117,7 +119,7 @@ vtool -show-build "$exe" | rg -q '\bminos 27\.0\b'
 cmp "$root/Resources/device_catalog.json" "$app/Contents/Resources/device_catalog.json"
 # Keep an open reader of the prior executable: release must replace, not truncate.
 printf 'synthetic prior executable\n' > "$scratch/prior"
-rm "$exe"; cp "$scratch/prior" "$exe"; chmod 755 "$exe"
+rm -- "${exe:?}"; cp "$scratch/prior" "$exe"; chmod 755 "$exe"
 printf 'stale\n' > "$app/Contents/Resources/synthetic-stale.txt"
 exec 9< "$exe"
 old_inode=$(stat -f %i "$exe")
@@ -128,11 +130,16 @@ cmp "$root/Resources/device_catalog.json" "$app/Contents/Resources/device_catalo
 cat <&9 > "$scratch/held"; cmp "$scratch/prior" "$scratch/held"; exec 9<&-
 # Successful activation, failed activation recovery, and notice preserve old readers.
 tools/install.sh "$app" > "$scratch/install.log"
-rm -f "$PRIME_MONITOR_TEST_ACTIVATED"
+if [ -e "$PRIME_MONITOR_TEST_ACTIVATED" ] || [ -L "$PRIME_MONITOR_TEST_ACTIVATED" ]; then rm -- "${PRIME_MONITOR_TEST_ACTIVATED:?}"; fi
 installed="$PRIME_MONITOR_APPS_DIR/Anker Charge Monitor.app"
 printf 'prior installed executable\n' > "$scratch/installed-prior"
-rm "$installed/Contents/MacOS/PrimeMonitor"; cp "$scratch/installed-prior" "$installed/Contents/MacOS/PrimeMonitor"; chmod 755 "$installed/Contents/MacOS/PrimeMonitor"
+installed_exe="$installed/Contents/MacOS/PrimeMonitor"
+rm -- "${installed_exe:?}"; cp "$scratch/installed-prior" "$installed_exe"; chmod 755 "$installed_exe"
 exec 8< "$installed/Contents/MacOS/PrimeMonitor"
+prior_inode=$(stat -f %i "$installed")
+if SYNTHETIC_FAIL_STAGE_MOVE=1 tools/install.sh "$app" > "$scratch/move-fail.log" 2>&1; then echo 'FAIL: failed activation move accepted'; exit 1; fi
+[ "$(stat -f %i "$installed")" = "$prior_inode" ]
+cmp "$scratch/installed-prior" "$installed_exe"
 touch "$PRIME_MONITOR_TEST_FAILURE"
 if tools/install.sh "$app" > "$scratch/recover.log" 2>&1; then echo 'FAIL: activation failure accepted'; exit 1; fi
 rg -q 'previous app restored' "$scratch/recover.log"
@@ -145,8 +152,78 @@ rg -q 'Quit and reopen Anker Charge Monitor' "$scratch/running.log"
 cmp "$exe" "$installed/Contents/MacOS/PrimeMonitor"
 cat <&8 > "$scratch/held-installed"; cmp "$scratch/installed-prior" "$scratch/held-installed"; exec 8<&-
 [ -z "$(find "$PRIME_MONITOR_APPS_DIR" -name '.prime-monitor-stage-*' -print)" ]
+# The injected function records a synthetic failure without attempting OS removal.
+if [ -e "$PRIME_MONITOR_TEST_ACTIVATED" ]; then rm -- "${PRIME_MONITOR_TEST_ACTIVATED:?}"; fi
+prior_inode=$(stat -f %i "$installed")
+: > "$scratch/remove-attempts"
+export REMOVE_ATTEMPTS="$scratch/remove-attempts"
+if ( rm() { printf 'attempt\n' >> "$REMOVE_ATTEMPTS"; return 91; }; export -f rm
+     SYNTHETIC_FAIL_POST_ACTIVATION=1 tools/install.sh "$app" > "$scratch/remove-fail.log" 2>&1
+); then echo 'FAIL: target cleanup failure accepted'; exit 1; fi
+[ "$(wc -l < "$REMOVE_ATTEMPTS" | tr -d ' ')" = 1 ]
+rg -q 'Activation cleanup failed; preserve' "$scratch/remove-fail.log"
+stage=$(find "$PRIME_MONITOR_APPS_DIR" -maxdepth 1 -name '.prime-monitor-stage-*' -type d -print)
+[ -n "$stage" ] && [ "$(stat -f %i "$stage/displaced-app")" = "$prior_inode" ]
+rm -r -- "${installed:?}"
+mv "$stage/displaced-app" "$installed"
+rm -r -- "${stage:?}"
+: > "$scratch/remove-attempts"
+if ( rm() { printf 'attempt\n' >> "$REMOVE_ATTEMPTS"; return 91; }; export -f rm
+     tools/install.sh "$app" > "$scratch/stage-fail.log" 2>&1
+); then echo 'FAIL: stage cleanup failure accepted'; exit 1; fi
+[ "$(wc -l < "$REMOVE_ATTEMPTS" | tr -d ' ')" = 1 ]
+rg -q 'Cannot remove stage:' "$scratch/stage-fail.log"
+cmp "$exe" "$installed_exe"
+stage=$(find "$PRIME_MONITOR_APPS_DIR" -maxdepth 1 -name '.prime-monitor-stage-*' -type d -print)
+[ -n "$stage" ]
+rm -r -- "${stage:?}"
 rg -q -- '--force --sign AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA --timestamp=none' "$SYNTHETIC_SIGN_LOG"
 rg -q -- '--verify --strict' "$SYNTHETIC_SIGN_LOG"
+# Exercise the actual EXIT function with a synthetic failing rm and owned paths.
+awk '/^finish\(\) \{$/{copy=1; count++} copy {print} copy && /^}$/{copy=0} END {if (count != 1) exit 1}' Tests/Snapshots/build.sh > "$scratch/finish.zsh"
+cat >> "$scratch/finish.zsh" <<'SH'
+owned=true
+snapshot_home=$TEST_HOME
+package_dir=$TEST_HOME/package
+rm() { print attempt >> "$TEST_ATTEMPTS"; return 91; }
+trap finish EXIT
+exit "$TEST_EXIT"
+SH
+for original in 0 7; do
+  test_home="$scratch/cleanup-home-$original"
+  mkdir -p "$test_home/package" "$test_home/tmp"
+  attempts="$scratch/cleanup-attempts-$original"
+  code=0
+  TEST_HOME="$test_home" TEST_ATTEMPTS="$attempts" TEST_EXIT="$original" zsh "$scratch/finish.zsh" > "$scratch/cleanup.log" 2>&1 || code=$?
+  expected=$original; [ "$expected" -ne 0 ] || expected=1
+  [ "$code" -eq "$expected" ] || { echo "FAIL: cleanup exited $code, expected $expected"; exit 1; }
+  count=2; [ "$original" -eq 0 ] || count=1
+  [ "$(wc -l < "$attempts" | tr -d ' ')" = "$count" ]
+  rg -q 'Cannot remove' "$scratch/cleanup.log"
+  [ -d "$test_home" ]
+done
+# Exercise the same extracted EXIT function with the real rm on owned paths.
+awk '/^finish\(\) \{$/{copy=1; count++} copy {print} copy && /^}$/{copy=0} END {if (count != 1) exit 1}' Tests/Snapshots/build.sh > "$scratch/finish-real.zsh"
+cat >> "$scratch/finish-real.zsh" <<'SH'
+owned=true
+snapshot_home=$TEST_HOME
+package_dir=$TEST_HOME/package
+trap finish EXIT
+exit "$TEST_EXIT"
+SH
+for original in 0 7; do
+  test_home="$scratch/real-cleanup-home-$original"
+  mkdir -p "$test_home/package" "$test_home/tmp"
+  printf synthetic > "$test_home/retained.png"
+  code=0
+  TEST_HOME="$test_home" TEST_EXIT="$original" zsh "$scratch/finish-real.zsh" > "$scratch/real-cleanup.log" 2>&1 || code=$?
+  [ "$code" -eq "$original" ] || { echo "FAIL: real cleanup exited $code, expected $original"; cat "$scratch/real-cleanup.log"; exit 1; }
+  if [ "$original" -eq 0 ]; then
+    [ ! -e "$test_home/package" ] && [ ! -e "$test_home/tmp" ] && [ "$(cat "$test_home/retained.png")" = synthetic ]
+  else
+    [ ! -e "$test_home" ]
+  fi
+done
 # Port: BV release.test.mjs, "maintained snapshot builder uses the same supported
 # runtime", 579ebb7. This invokes the public target once as part of the full gate,
 # in a caller-owned home inside the snapshot scratch so the trap removes it with the rest.

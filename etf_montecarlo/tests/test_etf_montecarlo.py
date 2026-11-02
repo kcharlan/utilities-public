@@ -269,6 +269,8 @@ def test_default_runtime_home_symlink_is_rejected(
     module = load_module()
     target = tmp_path / "target-runtime"
     target.mkdir(mode=0o755)
+    target.chmod(0o755)
+    assert stat.S_IMODE(target.stat().st_mode) == 0o755
     runtime_link = tmp_path / "runtime-link"
     runtime_link.symlink_to(target, target_is_directory=True)
     monkeypatch.setenv("ETF_MONTECARLO_HOME", str(runtime_link))
@@ -303,6 +305,8 @@ def test_config_path_with_symlinked_ancestor_is_rejected_without_touching_target
     target_root = tmp_path / "target-root"
     target_parent = target_root / "private"
     target_parent.mkdir(parents=True, mode=0o755)
+    target_parent.chmod(0o755)
+    assert stat.S_IMODE(target_parent.stat().st_mode) == 0o755
     ancestor_link = tmp_path / "ancestor-link"
     ancestor_link.symlink_to(target_root, target_is_directory=True)
     config_path = ancestor_link / "private" / "config.json"
@@ -417,6 +421,8 @@ def test_output_path_with_symlinked_ancestor_is_rejected_before_finance_access(
     config_path = tmp_path / "private" / "config.json"
     target_parent = tmp_path / "target-results"
     target_parent.mkdir(mode=0o755)
+    target_parent.chmod(0o755)
+    assert stat.S_IMODE(target_parent.stat().st_mode) == 0o755
     ancestor_link = tmp_path / "results-link"
     ancestor_link.symlink_to(target_parent, target_is_directory=True)
     output_path = ancestor_link / "results.csv"
@@ -484,6 +490,40 @@ def test_typical_payments_per_year_uses_median_annual_count() -> None:
     )
 
     assert module.typical_payments_per_year(payments) == 4
+
+
+def test_partial_calendar_years_infer_quarterly_frequency() -> None:
+    module = load_module()
+    payments = tuple(module.DividendPayment(date(2030, month, 1), 1.0) for month in (4, 7, 10)) + (
+        module.DividendPayment(date(2031, 1, 1), 1.0),
+    )
+    assert module.typical_payments_per_year(
+        payments, window_start=date(2030, 2, 1), window_end=date(2031, 2, 1)
+    ) == 4
+
+
+def test_complete_year_excludes_partial_year_counts() -> None:
+    module = load_module()
+    payments = tuple(
+        module.DividendPayment(date(year, month, 1), 1.0)
+        for year, months in ((2030, (10,)), (2031, (1, 4, 7, 10)), (2032, (1,)))
+        for month in months
+    )
+    assert module.typical_payments_per_year(
+        payments, window_start=date(2030, 9, 1), window_end=date(2032, 2, 1)
+    ) == 4
+
+
+def test_simulation_uses_window_aware_frequency(monkeypatch: pytest.MonkeyPatch) -> None:
+    module = load_module()
+    payments = tuple(module.DividendPayment(date(2030, month, 1), 1.0) for month in (4, 7, 10)) + (
+        module.DividendPayment(date(2031, 1, 1), 1.0),
+    )
+    monkeypatch.setattr(module, "fetch_dividend_history", lambda symbol: module.DividendHistory(symbol, payments))
+    settings = module.Settings((module.Holding("TEST0000", 1),), 1, 5, 0, None)
+    simulations, _ = module.simulate(settings, as_of=date(2031, 2, 1))
+    assert simulations[0].payments_per_year == 4
+    assert (simulations[0].per_share_samples == 4.0).all()
 
 
 def test_empirical_dividend_bootstrap_is_deterministic() -> None:

@@ -235,3 +235,10 @@ private struct AppCollisionNaming: ModelNaming {
         #expect(panel.confirmation?.text.contains("Example (1.0)") == true)
     }
 }
+
+@Suite struct ExtremeDashboardFormatTests {
+    @Test func extremeNumbersDoNotCrash() {
+        #expect(!DashboardFormat.whole(1e100).isEmpty)
+        #expect(!DashboardFormat.percent(1e100).isEmpty)
+    }
+}

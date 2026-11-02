@@ -19,7 +19,7 @@ HARSCOPE="$SCRIPT_DIR/../harscope"
 HAR_FILE="${1:?Usage: $0 <har_file> [port]}"
 PORT="${2:-8299}"
 BASE="http://127.0.0.1:$PORT"
-TMPDIR="$(mktemp -d)"
+test_tmpdir="$(mktemp -d "${TMPDIR:-/tmp}/harscope-test-XXXXXX")"
 PASS=0
 FAIL=0
 SERVER_PID=""
@@ -32,7 +32,7 @@ cleanup() {
         kill "$SERVER_PID" 2>/dev/null || true
         wait "$SERVER_PID" 2>/dev/null || true
     fi
-    rm -rf "$TMPDIR"
+    rm -r -- "${test_tmpdir:?}"
 }
 trap cleanup EXIT
 
@@ -45,7 +45,7 @@ check() {
 
 # --- Start server ---
 echo "Starting harscope on port $PORT..."
-"$HARSCOPE" --port "$PORT" > "$TMPDIR/server.log" 2>&1 &
+UTILITIES_TESTING=1 "$HARSCOPE" --port "$PORT" > "$test_tmpdir/server.log" 2>&1 &
 SERVER_PID=$!
 
 # Wait for server to be ready
@@ -56,13 +56,13 @@ done
 
 if ! curl -s "$BASE/api/status" > /dev/null 2>&1; then
     echo "ERROR: Server failed to start. Log:"
-    cat "$TMPDIR/server.log"
+    cat "$test_tmpdir/server.log"
     exit 1
 fi
 
 # --- Load HAR file ---
 echo "Loading $HAR_FILE..."
-LOAD_RESULT=$(curl -s -X POST "$BASE/api/open" \
+LOAD_RESULT=$(curl -s -H "Origin: $BASE" -X POST "$BASE/api/open" \
     -H "Content-Type: application/json" \
     -d "{\"path\": \"$HAR_FILE\"}")
 ENTRY_COUNT=$(echo "$LOAD_RESULT" | python3 -c "import json,sys; print(json.load(sys.stdin)['entryCount'])")
@@ -70,7 +70,7 @@ echo "Loaded $ENTRY_COUNT entries"
 echo ""
 
 # --- Gather findings info ---
-SECURITY_JSON="$TMPDIR/security.json"
+SECURITY_JSON="$test_tmpdir/security.json"
 curl -s "$BASE/api/security" > "$SECURITY_JSON"
 FINDING_COUNT=$(python3 -c "import json; print(len(json.load(open('$SECURITY_JSON'))['findings']))")
 echo "Security scan found $FINDING_COUNT findings"
@@ -85,22 +85,22 @@ fi
 # TEST 1: All auto-detected findings redacted in export
 # ============================================================
 echo "=== TEST 1: All auto-detected findings redacted in export ==="
-curl -s -X POST "$BASE/api/export/har" -o "$TMPDIR/sanitized.har"
+curl -s -H "Origin: $BASE" -X POST "$BASE/api/export/har" -o "$test_tmpdir/sanitized.har"
 
 T1_RESULT=$(python3 "$SCRIPT_DIR/verify_redaction.py" \
-    "$SECURITY_JSON" "$TMPDIR/sanitized.har" "all_redacted")
+    "$SECURITY_JSON" "$test_tmpdir/sanitized.har" "all_redacted")
 check "All findings redacted" "PASS" "$T1_RESULT"
 
 # ============================================================
 # TEST 2: EDL export + CLI validation
 # ============================================================
 echo "=== TEST 2: EDL export + CLI validation ==="
-curl -s -X POST "$BASE/api/export/edl" -o "$TMPDIR/sanitized.edl.json"
+curl -s -H "Origin: $BASE" -X POST "$BASE/api/export/edl" -o "$test_tmpdir/sanitized.edl.json"
 
-EDL_COUNT=$(python3 -c "import json; print(len(json.load(open('$TMPDIR/sanitized.edl.json'))['decisions']))")
+EDL_COUNT=$(python3 -c "import json; print(len(json.load(open('$test_tmpdir/sanitized.edl.json'))['decisions']))")
 echo "  EDL has $EDL_COUNT decisions"
 
-VALIDATE_OUTPUT=$("$HARSCOPE" --validate "$TMPDIR/sanitized.har" --edl "$TMPDIR/sanitized.edl.json" 2>&1)
+VALIDATE_OUTPUT=$("$HARSCOPE" --validate "$test_tmpdir/sanitized.har" --edl "$test_tmpdir/sanitized.edl.json" 2>&1)
 if echo "$VALIDATE_OUTPUT" | grep -q "RESULT: VALID"; then
     pass "EDL validation"
 else
@@ -116,7 +116,7 @@ echo "=== TEST 3: Toggle finding to KEEP ==="
 # Pick the first finding
 FIRST_ID=$(python3 -c "import json; print(json.load(open('$SECURITY_JSON'))['findings'][0]['id'])")
 
-curl -s -X POST "$BASE/api/security/toggle" \
+curl -s -H "Origin: $BASE" -X POST "$BASE/api/security/toggle" \
     -H "Content-Type: application/json" -d "{\"id\": $FIRST_ID}" > /dev/null
 
 # Verify it's toggled off
@@ -129,13 +129,13 @@ print('off' if not f['redact'] else 'on')
 check "Finding $FIRST_ID toggled to keep" "off" "$TOGGLED"
 
 # Export and verify that value is NOT redacted
-curl -s -X POST "$BASE/api/export/har" -o "$TMPDIR/kept.har"
+curl -s -H "Origin: $BASE" -X POST "$BASE/api/export/har" -o "$test_tmpdir/kept.har"
 T3_RESULT=$(python3 "$SCRIPT_DIR/verify_redaction.py" \
-    "$SECURITY_JSON" "$TMPDIR/kept.har" "check_kept" "$FIRST_ID")
+    "$SECURITY_JSON" "$test_tmpdir/kept.har" "check_kept" "$FIRST_ID")
 check "Kept finding value preserved in export" "PASS" "$T3_RESULT"
 
 # Toggle back
-curl -s -X POST "$BASE/api/security/toggle" \
+curl -s -H "Origin: $BASE" -X POST "$BASE/api/security/toggle" \
     -H "Content-Type: application/json" -d "{\"id\": $FIRST_ID}" > /dev/null
 
 # ============================================================
@@ -157,25 +157,25 @@ else
     echo "  Target: entry[$MANUAL_ENTRY] key=$MANUAL_KEY"
 
     # Add manual redaction
-    curl -s -X POST "$BASE/api/redaction/manual" \
+    curl -s -H "Origin: $BASE" -X POST "$BASE/api/redaction/manual" \
         -H "Content-Type: application/json" \
         -d "{\"entryIndex\": $MANUAL_ENTRY, \"location\": \"$MANUAL_LOC\", \"value\": \"$MANUAL_VAL\"}" > /dev/null
 
     # Export and verify redacted
-    curl -s -X POST "$BASE/api/export/har" -o "$TMPDIR/manual.har"
+    curl -s -H "Origin: $BASE" -X POST "$BASE/api/export/har" -o "$test_tmpdir/manual.har"
     T4A_RESULT=$(python3 "$SCRIPT_DIR/verify_redaction.py" \
-        "$SECURITY_JSON" "$TMPDIR/manual.har" "check_manual" "$MANUAL_ENTRY" "$MANUAL_KEY")
+        "$SECURITY_JSON" "$test_tmpdir/manual.har" "check_manual" "$MANUAL_ENTRY" "$MANUAL_KEY")
     check "Manual redaction applied" "PASS" "$T4A_RESULT"
 
     # Remove manual redaction
-    curl -s -X POST "$BASE/api/redaction/remove-manual" \
+    curl -s -H "Origin: $BASE" -X POST "$BASE/api/redaction/remove-manual" \
         -H "Content-Type: application/json" \
         -d "{\"entryIndex\": $MANUAL_ENTRY, \"location\": \"$MANUAL_LOC\"}" > /dev/null
 
     # Export and verify NOT redacted
-    curl -s -X POST "$BASE/api/export/har" -o "$TMPDIR/unmanual.har"
+    curl -s -H "Origin: $BASE" -X POST "$BASE/api/export/har" -o "$test_tmpdir/unmanual.har"
     T4B_RESULT=$(python3 "$SCRIPT_DIR/verify_redaction.py" \
-        "$SECURITY_JSON" "$TMPDIR/unmanual.har" "check_manual_removed" "$MANUAL_ENTRY" "$MANUAL_KEY")
+        "$SECURITY_JSON" "$test_tmpdir/unmanual.har" "check_manual_removed" "$MANUAL_ENTRY" "$MANUAL_KEY")
     check "Manual redaction removed" "PASS" "$T4B_RESULT"
 fi
 
@@ -194,7 +194,7 @@ print('yes' if 'warning' in sevs and 'critical' in sevs else 'no')
 if [ "$HAS_BOTH" = "no" ]; then
     echo "  SKIP: HAR does not have both warning and critical findings"
 else
-    curl -s -X POST "$BASE/api/security/bulk" \
+    curl -s -H "Origin: $BASE" -X POST "$BASE/api/security/bulk" \
         -H "Content-Type: application/json" \
         -d '{"action": "deselect", "severity": "warning"}' > /dev/null
 
@@ -208,13 +208,13 @@ print('PASS' if w_on == 0 and c_off == 0 else 'FAIL')
     check "Warnings deselected, criticals kept" "PASS" "$BULK_CHECK"
 
     # Export and spot-check
-    curl -s -X POST "$BASE/api/export/har" -o "$TMPDIR/bulk.har"
+    curl -s -H "Origin: $BASE" -X POST "$BASE/api/export/har" -o "$test_tmpdir/bulk.har"
     T5_RESULT=$(python3 "$SCRIPT_DIR/verify_redaction.py" \
-        "$SECURITY_JSON" "$TMPDIR/bulk.har" "check_bulk")
+        "$SECURITY_JSON" "$test_tmpdir/bulk.har" "check_bulk")
     check "Export respects bulk toggle" "PASS" "$T5_RESULT"
 
     # Restore
-    curl -s -X POST "$BASE/api/security/bulk" \
+    curl -s -H "Origin: $BASE" -X POST "$BASE/api/security/bulk" \
         -H "Content-Type: application/json" \
         -d '{"action": "select"}' > /dev/null
 fi
@@ -225,20 +225,20 @@ fi
 echo "=== TEST 6: Mixed EDL round-trip ==="
 
 # Toggle first finding to KEEP
-curl -s -X POST "$BASE/api/security/toggle" \
+curl -s -H "Origin: $BASE" -X POST "$BASE/api/security/toggle" \
     -H "Content-Type: application/json" -d "{\"id\": $FIRST_ID}" > /dev/null
 
 # Add a manual redaction (reuse from test 4 if available)
 if [ -n "$MANUAL_LOC" ] && [ "$MANUAL_LOC" != "NONE" ]; then
-    curl -s -X POST "$BASE/api/redaction/manual" \
+    curl -s -H "Origin: $BASE" -X POST "$BASE/api/redaction/manual" \
         -H "Content-Type: application/json" \
         -d "{\"entryIndex\": $MANUAL_ENTRY, \"location\": \"$MANUAL_LOC\", \"value\": \"$MANUAL_VAL\"}" > /dev/null
 fi
 
-curl -s -X POST "$BASE/api/export/har" -o "$TMPDIR/mixed.har"
-curl -s -X POST "$BASE/api/export/edl" -o "$TMPDIR/mixed.edl.json"
+curl -s -H "Origin: $BASE" -X POST "$BASE/api/export/har" -o "$test_tmpdir/mixed.har"
+curl -s -H "Origin: $BASE" -X POST "$BASE/api/export/edl" -o "$test_tmpdir/mixed.edl.json"
 
-MIXED_VALIDATE=$("$HARSCOPE" --validate "$TMPDIR/mixed.har" --edl "$TMPDIR/mixed.edl.json" 2>&1)
+MIXED_VALIDATE=$("$HARSCOPE" --validate "$test_tmpdir/mixed.har" --edl "$test_tmpdir/mixed.edl.json" 2>&1)
 if echo "$MIXED_VALIDATE" | grep -q "RESULT: VALID"; then
     pass "Mixed EDL validation"
 else
@@ -249,17 +249,17 @@ fi
 # Check EDL has keep and possibly manual decisions
 MIXED_EDL_CHECK=$(python3 -c "
 import json
-edl = json.load(open('$TMPDIR/mixed.edl.json'))
+edl = json.load(open('$test_tmpdir/mixed.edl.json'))
 keeps = sum(1 for d in edl['decisions'] if d['action'] == 'keep')
 print('PASS' if keeps > 0 else 'FAIL')
 ")
 check "EDL contains keep decisions" "PASS" "$MIXED_EDL_CHECK"
 
 # Cleanup
-curl -s -X POST "$BASE/api/security/toggle" \
+curl -s -H "Origin: $BASE" -X POST "$BASE/api/security/toggle" \
     -H "Content-Type: application/json" -d "{\"id\": $FIRST_ID}" > /dev/null
 if [ -n "$MANUAL_LOC" ] && [ "$MANUAL_LOC" != "NONE" ]; then
-    curl -s -X POST "$BASE/api/redaction/remove-manual" \
+    curl -s -H "Origin: $BASE" -X POST "$BASE/api/redaction/remove-manual" \
         -H "Content-Type: application/json" \
         -d "{\"entryIndex\": $MANUAL_ENTRY, \"location\": \"$MANUAL_LOC\"}" > /dev/null
 fi
@@ -270,16 +270,16 @@ fi
 echo "=== TEST 7: Reset and reapply ==="
 
 # Create mixed state
-curl -s -X POST "$BASE/api/security/toggle" \
+curl -s -H "Origin: $BASE" -X POST "$BASE/api/security/toggle" \
     -H "Content-Type: application/json" -d "{\"id\": $FIRST_ID}" > /dev/null
 if [ -n "$MANUAL_LOC" ] && [ "$MANUAL_LOC" != "NONE" ]; then
-    curl -s -X POST "$BASE/api/redaction/manual" \
+    curl -s -H "Origin: $BASE" -X POST "$BASE/api/redaction/manual" \
         -H "Content-Type: application/json" \
         -d "{\"entryIndex\": $MANUAL_ENTRY, \"location\": \"$MANUAL_LOC\", \"value\": \"$MANUAL_VAL\"}" > /dev/null
 fi
 
 # Reset
-curl -s -X POST "$BASE/api/redaction/reset" > /dev/null
+curl -s -H "Origin: $BASE" -X POST "$BASE/api/redaction/reset" > /dev/null
 
 RESET_CHECK=$(curl -s "$BASE/api/security" | python3 -c "
 import json, sys
@@ -292,7 +292,7 @@ print('PASS' if all_on and no_manual else 'FAIL')
 check "Reset restores defaults" "PASS" "$RESET_CHECK"
 
 # Reapply
-curl -s -X POST "$BASE/api/redaction/reapply-auto" > /dev/null
+curl -s -H "Origin: $BASE" -X POST "$BASE/api/redaction/reapply-auto" > /dev/null
 
 REAPPLY_CHECK=$(curl -s "$BASE/api/security" | python3 -c "
 import json, sys
@@ -308,10 +308,10 @@ check "Reapply restores all auto redactions" "PASS" "$REAPPLY_CHECK"
 # ============================================================
 echo "=== TEST 8: Full round-trip ==="
 
-curl -s -X POST "$BASE/api/export/har" -o "$TMPDIR/final.har"
-curl -s -X POST "$BASE/api/export/edl" -o "$TMPDIR/final.edl.json"
+curl -s -H "Origin: $BASE" -X POST "$BASE/api/export/har" -o "$test_tmpdir/final.har"
+curl -s -H "Origin: $BASE" -X POST "$BASE/api/export/edl" -o "$test_tmpdir/final.edl.json"
 
-FINAL_VALIDATE=$("$HARSCOPE" --validate "$TMPDIR/final.har" --edl "$TMPDIR/final.edl.json" 2>&1)
+FINAL_VALIDATE=$("$HARSCOPE" --validate "$test_tmpdir/final.har" --edl "$test_tmpdir/final.edl.json" 2>&1)
 if echo "$FINAL_VALIDATE" | grep -q "RESULT: VALID"; then
     pass "Final EDL validation"
 else
@@ -320,9 +320,9 @@ else
 fi
 
 # Reload sanitized HAR and rescan
-curl -s -X POST "$BASE/api/open" \
+curl -s -H "Origin: $BASE" -X POST "$BASE/api/open" \
     -H "Content-Type: application/json" \
-    -d "{\"path\": \"$TMPDIR/final.har\"}" > /dev/null
+    -d "{\"path\": \"$test_tmpdir/final.har\"}" > /dev/null
 
 RESCAN_COUNT=$(curl -s "$BASE/api/security" | python3 -c "
 import json, sys; print(len(json.load(sys.stdin)['findings']))

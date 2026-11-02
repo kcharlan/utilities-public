@@ -76,7 +76,7 @@ for receipts, rebuilds, backups, rollback, and fleet audits.
 On first run, uv resolves FastAPI and uvicorn into its shared cache, so that invocation may briefly use the network. Storage Monitor then:
 
 1. creates its runtime directory and SQLite index;
-2. stops a prior Storage Monitor process recorded in that runtime directory, if one is still running;
+2. acquires an exclusive instance lock for that runtime directory, reporting an error if another instance holds it;
 3. starts a scan;
 4. binds to `127.0.0.1`, preferring port 8473 and trying the next 19 ports if necessary; and
 5. opens the dashboard in the default browser.
@@ -136,7 +136,7 @@ Runtime files live under `~/.storage_monitor/` by default. Set `STORAGE_MONITOR_
 - `history/` — timestamped JSON reports. These files are not automatically pruned.
 - `action_log.jsonl` — append-only records of cleanup actions and their results.
 - `last_port` — the port selected by the most recent launch.
-- `pid` — the current process ID, used to replace a prior instance on the next launch.
+- `pid` — an instance lock file containing the process ID. A second instance using the same runtime home exits without signalling the first.
 
 ## Validation
 

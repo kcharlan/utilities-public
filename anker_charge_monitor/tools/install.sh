@@ -50,7 +50,14 @@ fi
 stage=$(mktemp -d "$apps/.prime-monitor-stage-XXXXXX")
 chmod 700 "$stage"
 preserve_stage=0
-cleanup() { if [ "$preserve_stage" = 0 ]; then rm -rf "$stage"; fi; }
+cleanup() {
+    local incoming=$?
+    trap - EXIT
+    if [ "$preserve_stage" = 0 ] && { [ -e "$stage" ] || [ -L "$stage" ]; }; then
+        rm -r -- "${stage:?}" || { printf 'Cannot remove stage: %s\n' "$stage" >&2; [ "$incoming" -ne 0 ] || incoming=1; }
+    fi
+    exit "$incoming"
+}
 trap cleanup EXIT
 cp -Rp "$source_app" "$stage/Anker Charge Monitor.app"
 diff -rq "$source_app" "$stage/Anker Charge Monitor.app" >/dev/null
@@ -73,12 +80,19 @@ activate() {
 }
 if ! activate; then
     if [ -e "$stage/displaced-app" ]; then
-        rm -rf "$target"
+        if { [ -e "$target" ] || [ -L "$target" ]; } && ! rm -r -- "${target:?}"; then
+            preserve_stage=1
+            printf 'Activation cleanup failed; preserve %s and %s\n' "$stage" "$backup" >&2; exit 1
+        fi
         if ! mv "$stage/displaced-app" "$previous"; then
             preserve_stage=1
             printf 'Activation and recovery failed; preserve %s and %s\n' "$stage" "$backup" >&2; exit 1
         fi
-    elif [ "$had_previous" = 0 ]; then rm -rf "$target"
+    elif [ "$had_previous" = 0 ] && { [ -e "$target" ] || [ -L "$target" ]; }; then
+        if ! rm -r -- "${target:?}"; then
+            preserve_stage=1
+            printf 'Activation cleanup failed; preserve %s and %s\n' "$stage" "$backup" >&2; exit 1
+        fi
     fi
     echo 'Activation failed; previous app restored (or absent installation preserved).' >&2
     exit 1

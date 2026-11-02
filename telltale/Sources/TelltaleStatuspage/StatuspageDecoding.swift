@@ -34,7 +34,7 @@ enum StatuspageDecoding {
     }
     static func record(_ incident: Incident, source: String) throws -> IncidentRecord {
         guard let created = ISO8601Time.date(incident.created_at), let updated = ISO8601Time.date(incident.updated_at),
-              let link = URL(string: incident.shortlink), link.scheme != nil else { throw StatusError.unexpectedPayload("invalid incident fields") }
+              let link = URL(string: incident.shortlink), StatusLink.isSafe(link) else { throw StatusError.unexpectedPayload("invalid incident fields") }
         let updates = try (incident.incident_updates ?? []).map { update -> (Date, Update) in
             guard let date = ISO8601Time.date(update.created_at) else { throw StatusError.unexpectedPayload("invalid update date") }
             return (date, update)

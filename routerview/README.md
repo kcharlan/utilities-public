@@ -25,12 +25,11 @@ ln -s "$(pwd)/routerview" /usr/local/bin/routerview
 ## CLI
 
 ```text
-routerview [-p <port>] [--db <path_to_db>] [--host <bind_host>] [--debug]
+routerview [-p <port>] [--db <path_to_db>] [--debug]
 ```
 
 - `-p`, `--port` preferred local port, default `8100`
 - `--db` SQLite database path, default `~/.routerview/routerview.db`
-- `--host` bind address, default `127.0.0.1`
 - `--debug` verbose server logging
 
 ## Current Workflow
@@ -82,7 +81,7 @@ RouterView stores runtime state under `~/.routerview/` by default. Set `ROUTERVI
 
 - `routerview.db` SQLite database, unless `--db` selects another path
 - `last_port` last port selected at startup
-- `backups/` point-in-time SQLite backups created before timestamp rebuilds
+- `backups/` point-in-time SQLite backups created before purges and timestamp rebuilds
 
 The runtime directory and its subdirectories use owner-only permissions (`0700`); the database, SQLite sidecars, port file, backup files, and other mutable runtime files use `0600`. RouterView hardens existing more-permissive state on startup and refuses symbolic links inside the runtime tree rather than following or changing their targets.
 

@@ -150,8 +150,7 @@ def generate_csv_from_json(json_file_path, output_csv_file_path):
             if split_acct_id_key in txn:
                 split_acct_id = txn[split_acct_id_key]
                 if not split_acct_id or split_acct_id not in resolved_accounts_map:
-                    i += 1
-                    continue
+                    raise ValueError(f"Split {i} refers to an unknown account")
                 
                 split_account_details = resolved_accounts_map[split_acct_id]
 
@@ -161,9 +160,8 @@ def generate_csv_from_json(json_file_path, output_csv_file_path):
                 try:
                     samt_cents = int(samt_cents_str)
                     pamt_cents = int(pamt_cents_str)
-                except ValueError:
-                    i += 1
-                    continue
+                except (ValueError, TypeError) as exc:
+                    raise ValueError(f"Split {i} has an invalid amount") from exc
                 
                 split_memo_raw = txn.get(f"{i}.desc_user", None)
                 split_memo_cleaned = split_memo_raw.replace(",", "") if split_memo_raw else ""
@@ -247,4 +245,7 @@ if __name__ == '__main__':
     parser.add_argument('--input', default='md-all-data.json', help='Input JSON file path.')
     parser.add_argument('--output', default='output_with_types_v4.csv', help='Output CSV file path.')
     args = parser.parse_args()
-    generate_csv_from_json(args.input, args.output)
+    try:
+        generate_csv_from_json(args.input, args.output)
+    except ValueError as exc:
+        parser.exit(1, f"Error: {exc}\n")

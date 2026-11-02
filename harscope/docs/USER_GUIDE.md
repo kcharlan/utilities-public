@@ -319,7 +319,11 @@ An **Edit Decision List** (`.edl.json`) is a companion file to a sanitized HAR. 
 - **Audit** exactly what was redacted and what was kept
 - **Automate** redaction workflows in CI/CD pipelines
 
-Always export an EDL alongside your sanitized HAR.
+Keep the EDL for validation. Share it with the sanitized HAR only after checking
+that it contains no sensitive values or identifying context.
+Selected values are also removed from other data values. If a selected value
+appears in an object key, export is refused to avoid changing the HAR's
+structure. Review the selection and capture before trying again.
 
 ### GUI Validation Workflow
 

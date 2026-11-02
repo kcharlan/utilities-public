@@ -73,6 +73,10 @@ EOF
 }
 
 write_extension_config() {
+  umask 077
+  if [ -e "$EXTENSION_CONFIG_PATH" ]; then
+    chmod 600 "$EXTENSION_CONFIG_PATH"
+  fi
   cat > "$EXTENSION_CONFIG_PATH" <<EOF
 globalThis.LLM_USAGE_CONFIG = {
   collectorUrl: "$(js_escape "$COLLECTOR_URL")",

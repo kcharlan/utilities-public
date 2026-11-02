@@ -12,11 +12,11 @@ Python setup requires only [uv](https://docs.astral.sh/uv/) (`brew install uv`) 
 
 ### Optional (Homebrew)
 
-These are external CLI tools that docpipe shells out to. If missing, docpipe warns at runtime and skips the affected backend — it does not crash.
+These are external CLI tools that docpipe shells out to. A missing optional fallback or image renderer produces a warning; PDF conversion fails if `pdftotext` is missing.
 
 | Tool | Install command | What it enables |
 |------|----------------|-----------------|
-| **poppler** | `brew install poppler` | PDF text extraction (`pdftotext`) and optional page-to-image rendering (`pdftoppm`). docpipe also checks for `pdfinfo`, but v0.1.1 does not emit its metadata. **Required for useful PDF output.** |
+| **poppler** | `brew install poppler` | PDF text extraction (`pdftotext`) and optional page-to-image rendering (`pdftoppm`). docpipe also checks for `pdfinfo`, but v0.1.2 does not emit its metadata. **Required for PDF conversion.** |
 | **pandoc** | `brew install pandoc` | Fallback HTML→Markdown conversion. Primary path uses the Python `markdownify` library (auto-installed), so Pandoc is only needed if markdownify fails on a particular HTML file. Also used as DOCX fallback if `python-docx` errors. |
 
 Install both in one shot:
@@ -182,7 +182,10 @@ docpipe includes a custom tool definition for [OpenCode](https://opencode.ai) so
 
 Unit tests cover CLI parser + strict-mode behavior.
 
+Office archives are limited to 200 MB of declared expanded content. PDF page renders are generated in a fresh temporary directory so a rerun cannot attach pages left by an earlier conversion.
+
 ```bash
 cd /path/to/utilities-public
 UV_PYTHON_DOWNLOADS=never tools/run_project_tests.py docpipe
+node --test docpipe/tests/test_wrapper.mjs
 ```

@@ -9,14 +9,15 @@ import path from 'node:path';
 import {execFileSync} from 'node:child_process';
 import {fileURLToPath} from 'node:url';
 import {regular, inspectAncestors, externalDirectory, sha, exists, atomicFile, parseIndexSnapshot,
-  parseStagedListing, normalizeEntries, hashInventory, cleanupDirectories, finishCleanup, pruneBackups} from './deployment_files.mjs';
-import {appTreeHash,makeRelease} from './deploy_brew_version.mjs';
+  parseStagedListing, normalizeEntries, hashInventory, cleanupDirectories, finishCleanup, pruneBackups, requireMain} from './deployment_files.mjs';
+import {appTreeHash,makeRelease,replaceAppFromBackup} from './deploy_brew_version.mjs';
+import {runTransaction} from './transaction.mjs';
 
 const project='telltale', appName='Telltale.app', executable='Telltale';
 // Separately maintained statement of spec section 3; deploy_telltale.test.mjs compares it to
 // TelltaleRelease and Resources/Info.plist.
 export const contract=Object.freeze({CFBundleName:'Telltale',CFBundleDisplayName:'Telltale',CFBundleIdentifier:'local.utilities.telltale',CFBundleExecutable:executable,LSMinimumSystemVersion:'27.0',LSUIElement:true,CFBundlePackageType:'APPL'});
-const helpers=['tools/deploy_telltale.mjs','tools/deployment_files.mjs','tools/deploy_brew_version.mjs'];
+const helpers=['tools/deploy_telltale.mjs','tools/deployment_files.mjs','tools/deploy_brew_version.mjs','tools/transaction.mjs'];
 // The Makefile's release recipe copies Resources/Info.plist, the two fonts and OFL.txt into the
 // bundle; install.sh and resolve_signing_identity.sh sign and activate it.
 export const requiredInputs=Object.freeze(['Package.swift','Makefile','Resources/Info.plist',
@@ -111,13 +112,13 @@ function restore(repo,value,apps,receipt,saved,identity) {
   if(!value.app) {
     if(current) {const stage=fs.mkdtempSync(path.join(apps,'.telltale-remove-'));fs.renameSync(current,path.join(stage,'displaced-app'));finishCleanup(null,cleanupDirectories([stage]),'Restoration cleanup failed',saved);}
   } else {
-    installer(repo,value.app,apps,saved,identity,true);
+    replaceAppFromBackup(value.app,path.join(apps,value.state.name),apps,saved);
     if(appTreeHash(path.join(apps,value.state.name))!==value.state.appTreeHash) throw Error('Restored app hash mismatch');
   }
   if(value.receipt) atomicFile(receipt,value.receipt,value.state.receipt.mode,'.telltale-receipt-');
   else if(exists(receipt)) fs.unlinkSync(receipt);
 }
-export function main(argv=process.argv.slice(2)) {
+export async function main(argv=process.argv.slice(2)) {
   let repo=path.resolve(path.dirname(fileURLToPath(import.meta.url)),'..'),scripts=path.resolve(process.env.UTILITIES_SCRIPTS_DIR||path.join(os.homedir(),'Library/Scripts')),apps=path.resolve(process.env.UTILITIES_APPS_DIR||'/Applications');
   let dry=false,audit=false,rebuild=false,snapshot,rollback;
   for(let i=0;i<argv.length;i++) {
@@ -130,48 +131,42 @@ export function main(argv=process.argv.slice(2)) {
   if(Number(dry)+Number(audit)+Number(Boolean(rollback))>1 || (snapshot&&!audit) || (rebuild&&(audit||rollback))) throw Error('Incompatible deployment options');
   repo=fs.realpathSync(repo);scripts=externalDirectory(scripts,repo);apps=externalDirectory(apps,repo);
   const receipt=path.join(scripts,'.telltale-native.json'),app=path.join(apps,appName);
-  const inputs=sourceInventory(repo,snapshot),expectation=expected(inputs);
-  if(audit) {if(installed(apps)!==app)throw Error('Canonical app missing');verify(inputs,expectation,app,receipt);console.log('OK: telltale native deployment');return;}
-  if(dry) {console.log('Dry run: validated tracked app build inputs; no files changed');return;}
-  // Resolve the exact certificate before compiling or creating any deployment paths.
-  const identity=execFileSync('bash',['-s','--',process.env.SIGN_IDENTITY??'CodexBar Local'],{input:inputs.entries.find(e=>e.name===project+'/tools/resolve_signing_identity.sh').bytes,encoding:'utf8',stdio:'pipe',timeout:10000}).trim();
-  if(!/^[A-F0-9]{40}$/.test(identity)) throw Error('Invalid signing identity resolver result');
-  const previous=installed(apps);if(previous) validate(previous,null,identity);
-  if(exists(receipt)) regular(receipt);
-  if(!rollback&&!rebuild) {try {const r=verify(inputs,expectation,app,receipt);if(r.signingIdentity===identity){validate(app,expectation,identity);console.log('Telltale already current; nothing changed');return;}}catch{}}
-  const restored=rollback?readBackup(externalDirectory(rollback,repo)):null;
-  if(restored?.app) {validate(restored.app,null,identity);if(restored.receipt){const r=readReceipt(path.join(rollback,'receipt.json'));if(r.appTreeHash!==restored.state.appTreeHash)throw Error('Backup receipt/app provenance mismatch');}}
-  const scratch=rollback?null:fs.mkdtempSync(path.join(os.tmpdir(),'telltale-build-'));
-  let saved,primary,activated=false;const cleanupErrors=[];
-  try {
-    if(!rollback) {
-      for(const entry of inputs.entries) {const file=path.join(scratch,entry.name);fs.mkdirSync(path.dirname(file),{recursive:true});fs.writeFileSync(file,entry.bytes,{mode:entry.permissions});fs.chmodSync(file,entry.permissions);}
-      makeRelease(scratch,project,{SIGN_IDENTITY:identity});
-      validate(path.join(scratch,project,'build/release',appName),expectation,identity);
-      if(sourceInventory(repo).sourceHash!==inputs.sourceHash)throw Error('App inputs changed during build');
-    }
-    fs.mkdirSync(scripts,{recursive:true,mode:0o755});fs.mkdirSync(apps,{recursive:true,mode:0o755});
-    saved=backup(previous,receipt,repo);console.log('Recovery backup: '+saved);
-    if(rollback) restore(repo,restored,apps,receipt,saved,identity);
-    else {
-      const built=path.join(scratch,project,'build/release',appName),hash=appTreeHash(built);
-      installer(scratch,built,apps,saved,identity);activated=true;
-      validate(app,expectation,identity);
-      atomicFile(receipt,Buffer.from(JSON.stringify({schema:1,sourceHash:inputs.sourceHash,version:expectation.CFBundleShortVersionString,appTreeHash:hash,signingIdentity:identity})+'\n'),0o600,'.telltale-receipt-');
-      verify(inputs,expectation,app,receipt);
-    }
-    activated=true;
-  } catch(error) {primary=error;}
-  finally {if(scratch)cleanupErrors.push(...cleanupDirectories([scratch]));}
-  if(saved&&(primary||cleanupErrors.length)) {
-    try {restore(repo,readBackup(saved),apps,receipt,saved,identity);}
-    catch(error){primary=new AggregateError([...(primary?[primary]:[]),error],(primary?.message||'Cleanup failed')+'; restoration failed: '+error.message);}
-    finishCleanup(primary,cleanupErrors,'Deployment cleanup failed; previous deployment restored',saved);
+  if(audit||dry) {
+    const inputs=sourceInventory(repo,snapshot),expectation=expected(inputs);
+    if(audit) {if(installed(apps)!==app)throw Error('Canonical app missing');verify(inputs,expectation,app,receipt);console.log('OK: telltale native deployment');}
+    else console.log('Dry run: validated tracked app build inputs; no files changed');
+    return;
   }
-  finishCleanup(primary,cleanupErrors,'Deployment cleanup failed',saved);
-  if(activated && !rollback && saved) pruneBackups(path.dirname(saved));
-  if(activated) console.log('Telltale '+(rollback?'rollback restored':'deployed')+'; rollback backup: '+saved+'\nQuit and reopen Telltale when convenient; the current process remains running.');
+  let inputs,expectation,identity,previous,saved,scratch;
+  const resolveIdentity=bytes=>{
+    const value=execFileSync('bash',['-s','--',process.env.SIGN_IDENTITY??'CodexBar Local'],{input:bytes,encoding:'utf8',stdio:'pipe',timeout:10000}).trim();
+    if(!/^[A-F0-9]{40}$/.test(value)) throw Error('Invalid signing identity resolver result');
+    return value;
+  };
+  const result=await runTransaction({name:'Telltale',
+    recovery:rollback?()=>{
+      identity=resolveIdentity(execFileSync('git',['-C',repo,'show','HEAD:'+project+'/tools/resolve_signing_identity.sh'],{timeout:10000}));
+      const restored=readBackup(externalDirectory(rollback,repo));
+      if(restored.app) {validate(restored.app,null,identity);if(restored.receipt){const r=readReceipt(path.join(rollback,'receipt.json'));if(r.appTreeHash!==restored.state.appTreeHash)throw Error('Backup receipt/app provenance mismatch');}}
+      previous=installed(apps); if(exists(receipt)) regular(receipt);
+      fs.mkdirSync(scripts,{recursive:true,mode:0o755});fs.mkdirSync(apps,{recursive:true,mode:0o755});
+      saved=backup(previous,receipt,repo);console.log('Recovery backup: '+saved);
+      try {restore(repo,restored,apps,receipt,saved,identity);}
+      catch(error) {try {restore(repo,readBackup(saved),apps,receipt,saved,identity);} catch(restoration) {throw new AggregateError([error,restoration],error.message+'; restoration failed: '+restoration.message);} throw error;}
+      return saved;
+    }:null,
+    admit:()=>{requireMain(repo);inputs=sourceInventory(repo);expectation=expected(inputs);identity=resolveIdentity(inputs.entries.find(e=>e.name===project+'/tools/resolve_signing_identity.sh').bytes);previous=installed(apps);if(previous)validate(previous,null,identity);if(exists(receipt))regular(receipt);},
+    isCurrent:()=>{if(!rebuild)try {const r=verify(inputs,expectation,app,receipt);if(r.signingIdentity===identity){validate(app,expectation,identity);console.log('Telltale already current; nothing changed');return true;}}catch{} return false;},
+    build:registerCleanup=>{scratch=fs.mkdtempSync(path.join(os.tmpdir(),'telltale-build-'));registerCleanup(()=>finishCleanup(null,cleanupDirectories([scratch]),'Deployment cleanup failed',saved));
+      for(const entry of inputs.entries) {const file=path.join(scratch,entry.name);fs.mkdirSync(path.dirname(file),{recursive:true});fs.writeFileSync(file,entry.bytes,{mode:entry.permissions});fs.chmodSync(file,entry.permissions);}
+      makeRelease(scratch,project,{SIGN_IDENTITY:identity});const built=path.join(scratch,project,'build/release',appName);validate(built,expectation,identity);if(sourceInventory(repo).sourceHash!==inputs.sourceHash)throw Error('App inputs changed during build');return {value:built};},
+    install:(built,registerRecovery)=>{fs.mkdirSync(scripts,{recursive:true,mode:0o755});fs.mkdirSync(apps,{recursive:true,mode:0o755});saved=backup(previous,receipt,repo);console.log('Recovery backup: '+saved);registerRecovery(()=>restore(repo,readBackup(saved),apps,receipt,saved,identity));
+      const hash=appTreeHash(built);installer(scratch,built,apps,saved,identity);validate(app,expectation,identity);atomicFile(receipt,Buffer.from(JSON.stringify({schema:1,sourceHash:inputs.sourceHash,version:expectation.CFBundleShortVersionString,appTreeHash:hash,signingIdentity:identity})+'\n'),0o600,'.telltale-receipt-');return saved;},
+    verify:()=>verify(inputs,expectation,app,receipt)
+  });
+  if(result&&!rollback)pruneBackups(path.dirname(result));
+  if(result)console.log('Telltale '+(rollback?'rollback restored':'deployed')+'; rollback backup: '+result+'\nQuit and reopen Telltale when convenient; the current process remains running.');
 }
 if(process.argv[1]&&path.resolve(process.argv[1])===fileURLToPath(import.meta.url)) {
-  try {main();}catch(error){console.error('Telltale deployment failed: '+error.message);process.exitCode=1;}
+  main().catch(error=>{console.error('Telltale deployment failed: '+error.message);process.exitCode=1;});
 }

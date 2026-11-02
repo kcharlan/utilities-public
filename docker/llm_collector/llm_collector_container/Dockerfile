@@ -15,23 +15,12 @@ COPY collector/requirements.txt /tmp/collector-requirements.txt
 RUN python -m pip install --no-cache-dir -r /tmp/collector-requirements.txt && \
     rm -f /tmp/collector-requirements.txt
 
-# Create a workspace where your host folder will be mounted
 WORKDIR /workspace/llm_collector
+COPY collector/ ./collector/
+COPY snapshots/rollup_snapshots.py ./snapshots/rollup_snapshots.py
+USER 1000:1000
 
 # Expose the app port (informational)
 EXPOSE 9000
 
-# Default command assumes:
-#  - your host volume is mounted at /workspace/llm_collector
-#  - Python module path is the repo root, with app at collector/collector.py exposing `app`
-CMD ["/bin/sh", "-lc", "\
-    mkdir -p snapshots; \
-    exec gunicorn \
-      --chdir /workspace/llm_collector \
-      --workers 1 \
-      --bind 0.0.0.0:9000 \
-      --timeout 120 \
-      --access-logfile - \
-      --error-logfile - \
-      collector.collector:app \
-  "]
+CMD ["gunicorn", "--workers", "1", "--bind", "0.0.0.0:9000", "--timeout", "120", "--access-logfile", "-", "--error-logfile", "-", "collector.collector:app"]

@@ -40,7 +40,7 @@ function fixture(t) {
   const darwin=fakeDarwinTemp(base,bin);
   const write=(n,b)=>{const p=path.join(project,n);fs.mkdirSync(path.dirname(p),{recursive:true});fs.writeFileSync(p,b);};
   const git=(...a)=>execFileSync('git',['-C',repo,...a],{stdio:'pipe'});
-  git('init','-q');git('config','user.name','Synthetic Tester');git('config','user.email','tester@example.invalid');
+  git('init','-q','-b','main');git('config','user.name','Synthetic Tester');git('config','user.email','tester@example.invalid');
   write('Package.swift','// synthetic package\n');write('Resources/Info.plist',plist);write('Tests/BrewVersionCLITests/Fixtures/expected-help.txt',help);
   write('Makefile',`release:\n\tclang Sources/main.c -o synthetic-command\n\tmkdir -p 'build/release/Brew Version.app/Contents/MacOS' 'build/release/Brew Version.app/Contents/Resources'\n\tcp synthetic-command build/release/brew-version\n\tcp synthetic-command 'build/release/Brew Version.app/Contents/MacOS/BrewVersion'\n\tcp Resources/Info.plist 'build/release/Brew Version.app/Contents/Info.plist'\n\tcp Sources/main.c 'build/release/Brew Version.app/Contents/Resources/synthetic.txt'\n\tchmod 751 'build/release/Brew Version.app'\n\tchmod 711 'build/release/Brew Version.app/Contents/Resources'\n\tchmod 640 'build/release/Brew Version.app/Contents/Resources/synthetic.txt'\n\tcodesign --force --sign - --timestamp=none build/release/brew-version\n\tcodesign --force --sign - --timestamp=none 'build/release/Brew Version.app'\n\trm -rf "$$SYNTHETIC_EXPECTED_RELEASE/Brew Version.app"\n\tcp -pR build/release/. "$$SYNTHETIC_EXPECTED_RELEASE/"\n`);
   function release(label,fail=false,stderrFlag='',installedOnly=false) {
@@ -329,4 +329,8 @@ test('forward deployment prunes older backups while rollback and dry run preserv
   for (const name of ['copy-old-a','copy-old-b','copy-old-c']) {const dir=path.join(root,name);if(!fs.existsSync(dir)){fs.mkdirSync(dir);fs.writeFileSync(path.join(dir,'payload'),'invented');}}
   const before=fs.readdirSync(root).sort(); succeeds(f.run('--rollback',saved));
   for(const name of before) assert.ok(fs.existsSync(path.join(root,name)),name);
+});
+test('forward deployment refuses a non-main branch before touching destinations', t => {
+  const f=fixture(t); f.git('checkout','-b','synthetic-other');
+  const result=f.run(); assert.equal(result.status,1); assert.match(result.stderr,/require main/); assert.equal(fs.existsSync(f.target),false);
 });

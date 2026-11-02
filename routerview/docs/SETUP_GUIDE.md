@@ -22,7 +22,7 @@ If port `8100` is busy, RouterView automatically picks the next free port and pr
 
 Set `ROUTERVIEW_HOME` before launch to use a runtime directory other than `~/.routerview/`. Use `--db` to select a different SQLite database path.
 
-The dashboard embeds its JavaScript and CSS and does not require external browser requests. RouterView has no authentication; keep the default `127.0.0.1` bind address unless you intentionally want to expose it to a trusted network.
+The dashboard embeds its JavaScript and CSS and does not require external browser requests. RouterView has no authentication and binds to `127.0.0.1` only.
 
 ## Importing OpenRouter Data
 

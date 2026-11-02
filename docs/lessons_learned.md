@@ -1,5 +1,17 @@
 # Lessons learned
 
+## Synthetic directory modes and umask
+
+When a test requires a specific directory mode, explicitly chmod the synthetic fixture and assert its precondition: mkdir’s requested mode is filtered by the caller’s umask. Preserve the post-operation mode assertion so rejection and non-mutation remain tested under restrictive umasks.
+
+## Cleanup traps and temporary paths
+
+Keep a temporary path available for the lifetime of its EXIT trap and refer to it as data from a cleanup function. Interpolating a path into trap source breaks when its directory contains shell quoting characters. Preserve the original exit status, report cleanup failure, and make only one removal attempt.
+
+In Zsh, returning a failure from an EXIT trap does not replace the original successful exit status. Disable the trap and explicitly exit with the captured primary status or a cleanup-only failure status.
+
+Zsh's `path` array is tied to `PATH`; using `local path` for a cleanup loop can make external commands unavailable. Use a non-special variable name and exercise the real command lookup in a synthetic regression, including both successful and failed primary operations.
+
 ## 2026-10-31: Compare old and new in a browser when moving React code to Preact
 
 The offline port merged with every suite green; side-by-side browser comparison
@@ -1782,6 +1794,129 @@ such as `-k counter` and `--basetemp <path>` must not be mistaken for paths.
 Use pytest's parsed argument source to supply a project default, while retaining
 explicit paths and node IDs. `transcription/tests/test_launcher.py` checks this
 from synthetic caller directories with sentinel tests.
+
+### 2026-11-01 — Integration repair lessons
+
+Pure ASGI guards must handle WebSockets as well as HTTP. A raw WebSocket probe
+returns on accept or close and cancels the remaining task, since an accepted
+application may stay open indefinitely. When browser tests leave an event loop
+on the test thread, run synchronous asyncio probes in a separate thread and
+still exercise real mutation and WebSocket paths.
+
+Compare each generated output with every source by file identity (`-ef` in
+shell), including links and batch inputs. Stage output before publication,
+propagate failures, and restore prior destinations after a multi-file failure;
+report retained backups if rollback fails. Resolve asset references within the
+permitted source root.
+
+For process timeouts retain the spawned group leader unreaped while inspecting
+and cleaning descendants. Skip exited or zombie members and signal only
+revalidated live members; inspection or signaling denial fails closed without a
+second cleanup attempt. Nested validators clean their child on outer SIGTERM and
+restore signal handlers. Descendants can inherit pipes, so clean the group before
+joining readers and test a signal-resistant descendant.
+
+Historical local dates need the timezone offset at the event, not today's
+offset. Normalize offset-bearing time-series timestamps to instants before
+matching, while retaining local timezone interpretation for legacy naive input.
+When testing QuickTime conversion, write the QuickTime CreateDate specifically:
+an unqualified ExifTool assignment can create an overriding XMP value. Under
+Bash errexit, use an increment whose return status is successful at zero.
+
+Reject redirects and require HTTPS before attaching provider credentials; test
+credential-bearing paths with synthetic TLS. Escape backslashes before quotes
+when embedding notification text in AppleScript. Propagate notification errors
+to status and logs. Capture mount enumeration status before filtering: an empty
+result and failed observation differ. Bound status and repair commands and test
+timeouts and direct-child cleanup with synthetic tools and homes.
+
+Reject empty, future-dated or disproportionately small backup exports before
+pruning older copies. For remote workbook edits, fetch the version before the
+content, condition writes on it, refetch and reapply on conflict, bound retries,
+and retain pending edits on failure. Do not upload unconditionally without a
+version. Test suspicious backup and conflicting write paths with synthetic data.
+
+SQLite connection context managers do not close connections. Close explicitly
+before byte comparisons; delayed WAL checkpointing can otherwise change files
+later. Preserve complete primary keys, large values, hidden rowids and sequence
+high-water marks during edits and rebuilds. Start transactions before DDL,
+check affected row counts and test rollback after an earlier schema change.
+
+Audit GET helpers for lazy initialization and caching as well as obvious
+writes. Initialize runtime state at startup and make reads tolerate missing
+files. Rendered HTML must escape unmatched text and attributes, and exported
+redaction must be checked after decoding CSV and HTML. Preserve machine paths
+as structured values rather than reconstructing them from display labels.
+
+Preserve workspace and worker identity through interrupted recovery. Refuse a
+dirty target, preserve conflicts for manual resolution and remove registered
+worktrees before branches. An operator pause or abort is distinct from success
+and failure. Explicit repository environment paths must follow the task
+workspace, not merely a changed working directory. Use path-limited commits
+when staging selected paths so unrelated staged changes cannot enter them.
+
+A discovery snapshot is not proof that a later file read succeeds: validate
+the opened descriptor, frozen length and fingerprint, bound malformed-record
+recovery, and treat per-file size failures as unreadable input. Apply limits
+during file and network reads. A read error does not prove corruption; retain
+state and block writes until retry. Run expensive refresh work off the UI
+thread only when due.
+
+For deployment, compare working bytes with the indexed blob before trusting
+them; reject empty projects and malformed generated markers. Validate a saved
+application independently before rollback, and defer interruption until a
+synchronous child returns and restoration is complete. Snapshot every executed
+helper, Compose/build input and read-only runtime file; preserve deployed
+configuration and writable volumes. Retain bundles referenced by running or
+stopped containers and skip pruning when inspection fails.
+
+Reverse proxies must preserve the external Host including port, including in
+health checks. Match reserved routes before fallback, and do not infer an
+upstream from shared client IP and User-Agent. Validate an extension request's
+initiator and redact sibling name/value records and tuples. Quarantine invalid
+persistent state without automatically restarting empty; preserve batches when
+delivery receipts may be lost and require explicit duplicate-aware recovery.
+
+Streaming adapters must inspect upstream status before headers, keep usage
+request-local and report later stream errors. Test concurrent completions and
+split markers. When upstream cache fetches fail, propagate the error instead of
+caching an empty success, then test both retry and a valid empty result. A
+finite SSE queue wait needs heartbeats for healthy slow work and must close
+orphaned or completed streams.
+
+For local health monitors, update cached notices after successful writes and
+continue sampling sleep on failed reads. A backward clock requires retaining
+recorded grid points and clearing future-derived episode or streak state while
+preserving valid open episodes. Compare normalized rule models before and after
+warning-only validation and exercise synthetic suspicious and bundled rules.
+
+Infer payment cadence without treating partial calendar years as complete, or
+use payment spacing. Workbook duration edits require formulas over the supported
+horizon and summary references to the edited duration. Test cross-filesystem
+temporary output replacement rather than assuming rename works.
+
+On macOS, `shutil.copystat` may not preserve ACLs or extended attributes.
+Verify required security metadata when atomically replacing a file, account for
+OS-managed provenance, and restore the post-write modification time when native
+metadata copying would replace it with the old destination's time.
+
+Persist an aggregate snapshot and its progress marker in one transaction after
+successful commands. Incremental same-day replacement can discard earlier
+contributions. When a field remains editable during save, wait for a successful
+write response and editing to end before asserting database state.
+
+Budget YAML aliases and merges before downstream serializers expand them, and
+exercise recursive and bounded cases in each implementation. Restrictive CSPs
+can require browser wait predicates as functions instead of strings. When a
+runner appends arguments to multiple categories, use a precise `-k` expression
+for focused tests rather than appending unit paths to a browser category.
+When a synthetic deployment fixture copies the current source `Info.plist`,
+keep its receipt and expected version aligned with that plist after a release
+bump; otherwise the fixture represents an impossible mixed-version bundle.
+For compiled CLIs, check the deployer's expected version even when the deployer
+lives outside the project directory, and bind the current synthetic fixture to
+the CLI source version. Two matching stale strings can otherwise hide rejection
+of the current release.
 
 ### 2026-10-31 — Exercise the deployed scheduled command
 

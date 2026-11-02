@@ -12,7 +12,9 @@ import os
 import re
 import shutil
 import sys
+import tempfile
 from typing import List, Optional, Set
+from urllib.parse import unquote, urlsplit
 
 import html2text
 from bs4 import BeautifulSoup, NavigableString
@@ -393,6 +395,18 @@ def replace_table_with_markdown(table, markdown: str, root_soup: BeautifulSoup):
     table.replace_with(wrapper)
 
 
+def site_path(site_dir: str, page_dir: str, reference: str) -> Optional[str]:
+    """Resolve a local reference only when its target stays inside the site."""
+    url = urlsplit(reference)
+    if url.scheme or url.netloc or not url.path or os.path.isabs(unquote(url.path)):
+        return None
+    root = os.path.realpath(site_dir)
+    path = os.path.realpath(os.path.join(page_dir, unquote(url.path)))
+    if os.path.commonpath((root, path)) != root:
+        return None
+    return path
+
+
 def process_page(
     page_relative_path: str, site_dir: str, assets_dir: str, all_page_paths: Set[str], title_map: dict
 ) -> Optional[str]:
@@ -400,13 +414,14 @@ def process_page(
     Processes a single HTML file: extracts content, handles assets, rewrites links,
     and converts to Markdown.
     """
-    full_path = os.path.join(site_dir, page_relative_path)
+    full_path = site_path(site_dir, site_dir, page_relative_path)
+    if not full_path:
+        raise ValueError(f"Invalid page path: {page_relative_path}")
     try:
         with open(full_path, "r", encoding="utf-8") as f:
             soup = BeautifulSoup(f.read(), "html.parser")
     except FileNotFoundError:
-        print(f"  -> Warning: File not found: {full_path}", file=sys.stderr)
-        return None
+        raise ValueError(f"File not found: {full_path}") from None
 
     content_div = soup.select_one("#segment-content .col-12")
     if not content_div:
@@ -439,11 +454,13 @@ def process_page(
         if not src or src.startswith("http") or src.startswith("data:"):
             continue
         
-        asset_source_path = os.path.normpath(os.path.join(os.path.dirname(full_path), src))
-        asset_filename = os.path.basename(src)
+        asset_source_path = site_path(site_dir, os.path.dirname(full_path), src)
+        if not asset_source_path:
+            continue
+        asset_filename = os.path.basename(asset_source_path)
         asset_dest_path = os.path.join(assets_dir, asset_filename)
 
-        if os.path.exists(asset_source_path):
+        if os.path.isfile(asset_source_path):
             shutil.copy(asset_source_path, asset_dest_path)
             img["src"] = os.path.join(assets_dir_name, asset_filename)
         else:
@@ -457,11 +474,13 @@ def process_page(
         href_base = href.split("#")[0]
 
         if any(href_base.endswith(ext) for ext in asset_extensions):
-            asset_source_path = os.path.normpath(os.path.join(os.path.dirname(full_path), href_base))
-            asset_filename = os.path.basename(href_base)
+            asset_source_path = site_path(site_dir, os.path.dirname(full_path), href_base)
+            if not asset_source_path:
+                continue
+            asset_filename = os.path.basename(asset_source_path)
             asset_dest_path = os.path.join(assets_dir, asset_filename)
 
-            if os.path.exists(asset_source_path):
+            if os.path.isfile(asset_source_path):
                 shutil.copy(asset_source_path, asset_dest_path)
                 link["href"] = os.path.join(assets_dir_name, asset_filename)
             else:
@@ -499,33 +518,59 @@ def main():
 
     output_dir = os.path.dirname(output_file) or "."
     assets_dir = os.path.join(output_dir, "assets")
-    if os.path.exists(assets_dir):
-        shutil.rmtree(assets_dir)
-    os.makedirs(assets_dir, exist_ok=True)
-    print(f"Assets will be copied to: {assets_dir}")
+    site_real = os.path.realpath(site_dir)
+    output_real = os.path.realpath(output_file)
+    assets_real = os.path.realpath(assets_dir)
+    if (os.path.commonpath((site_real, output_real)) == site_real or
+            os.path.commonpath((site_real, assets_real)) in (site_real, assets_real) or
+            os.path.commonpath((assets_real, output_real)) == assets_real):
+        sys.exit("Error: Output and assets must not overlap the input site or each other.")
+    if os.path.exists(output_file):
+        for root, _, files in os.walk(site_dir):
+            for name in files:
+                source = os.path.join(root, name)
+                if os.path.exists(source) and os.path.samefile(output_file, source):
+                    sys.exit("Error: Output aliases an input file.")
 
     pages_to_process, title_map = discover_html_files_from_toc(site_dir)
     if not pages_to_process:
         print("Error: No .html files found to process.", file=sys.stderr)
         sys.exit(1)
         
-    all_pages_set = set(pages_to_process)
-    print(f"Discovered {len(pages_to_process)} HTML pages to process.")
-
-    all_markdown_parts = []
-    for page_path in pages_to_process:
-        print(f"Processing: {page_path}")
-        markdown_content = process_page(page_path, site_dir, assets_dir, all_pages_set, title_map)
-        
-        if markdown_content:
-            all_markdown_parts.append(markdown_content)
-
     try:
-        with open(output_file, "w", encoding="utf-8") as f:
-            f.write("\n\n---\n\n".join(all_markdown_parts))
+        os.makedirs(output_dir, exist_ok=True)
+        with tempfile.TemporaryDirectory(prefix=".linearize-", dir=output_dir) as staging:
+            staged_assets = os.path.join(staging, "assets")
+            os.mkdir(staged_assets)
+            all_markdown_parts = []
+            all_pages_set = set(pages_to_process)
+            print(f"Discovered {len(pages_to_process)} HTML pages to process.")
+            for page_path in pages_to_process:
+                print(f"Processing: {page_path}")
+                markdown_content = process_page(page_path, site_dir, staged_assets, all_pages_set, title_map)
+                if markdown_content:
+                    all_markdown_parts.append(markdown_content)
+            if not all_markdown_parts:
+                raise ValueError("No page content found to process.")
+            staged_output = os.path.join(staging, "output.md")
+            with open(staged_output, "w", encoding="utf-8") as f:
+                f.write("\n\n---\n\n".join(all_markdown_parts))
+            backup = os.path.join(staging, "previous-assets")
+            had_assets = os.path.lexists(assets_dir)
+            if had_assets:
+                os.replace(assets_dir, backup)
+            try:
+                os.replace(staged_assets, assets_dir)
+                os.replace(staged_output, output_file)
+            except OSError:
+                if os.path.isdir(assets_dir):
+                    shutil.rmtree(assets_dir)
+                if had_assets:
+                    os.replace(backup, assets_dir)
+                raise
         print(f"\nSuccessfully created '{output_file}'")
-    except IOError as e:
-        print(f"\nError writing to output file: {e}", file=sys.stderr)
+    except (OSError, ValueError) as e:
+        print(f"\nError processing documentation: {e}", file=sys.stderr)
         sys.exit(1)
 
 

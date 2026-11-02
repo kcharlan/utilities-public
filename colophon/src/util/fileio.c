@@ -12,28 +12,34 @@
 #include <sys/stat.h>
 #include <unistd.h>
 
-Err file_read_all(const char *path, char **bytes, size_t *length) {
+Err file_read_limited(const char *path, size_t limit, char **bytes, size_t *length) {
     char text[256];
     int fd=open(path,O_RDONLY);
     if(fd<0) return err_make(ERR_IO,"open failed: %s",err_system(errno,text));
-    size_t capacity=8192, used=0; char *buffer=malloc(capacity);
+    size_t capacity=8192, used=0; if(limit<SIZE_MAX-1 && capacity>limit+2)capacity=limit+2; char *buffer=malloc(capacity);
     if(!buffer){close(fd);return err_make(ERR_NOMEM,"file buffer allocation failed");}
     Err error=ERR_SUCCESS;
     for(;;) {
         if(used==capacity-1) {
+            if(used>limit){errno=EFBIG;error=err_make(ERR_IO,"file too large");break;}
             if(capacity>SIZE_MAX/2){error=err_make(ERR_NOMEM,"file too large");break;}
-            char *grown=realloc(buffer,capacity*2);
+            size_t next=capacity*2;if(limit<SIZE_MAX-1 && next>limit+2)next=limit+2;
+            char *grown=realloc(buffer,next);
             if(!grown){error=err_make(ERR_NOMEM,"file buffer allocation failed");break;}
-            buffer=grown; capacity*=2;
+            buffer=grown; capacity=next;
         }
         ssize_t n=read(fd,buffer+used,capacity-used-1);
         if(n<0){if(errno==EINTR)continue;error=err_make(ERR_IO,"read failed: %s",err_system(errno,text));break;}
         if(n==0)break;
         used+=(size_t)n;
+        if(used>limit){errno=EFBIG;error=err_make(ERR_IO,"file too large");break;}
     }
     if(close(fd) && error.code==ERR_OK)error=err_make(ERR_IO,"close failed: %s",err_system(errno,text));
     if(error.code!=ERR_OK){free(buffer);return error;}
     buffer[used]=0; *bytes=buffer; *length=used; return ERR_SUCCESS;
+}
+Err file_read_all(const char *path, char **bytes, size_t *length) {
+    return file_read_limited(path, SIZE_MAX, bytes, length);
 }
 static Err user_home(const char *name, char **output, bool *missing) {
     *missing=false;

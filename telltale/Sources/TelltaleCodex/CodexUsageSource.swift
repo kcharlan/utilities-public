@@ -145,7 +145,8 @@ public struct CodexUsageSource: UsageSource {
         let logsOutcome = Self.run("Codex connection log") {
             if let cleanupError { throw cleanupError }
             guard let logsURL else { return (events: [ConnectionEventRecord](), maxID: previous?.logsAfterID ?? 0, oldestRetained: Optional<Date>.none) }
-            return try RetryLogSource.read(codexHome: codexHome, afterID: previous?.logsAfterID ?? 0,
+            let afterID = previous?.logsReadFile == logsURL.lastPathComponent ? (previous?.logsAfterID ?? 0) : 0
+            return try RetryLogSource.read(codexHome: codexHome, afterID: afterID,
                 busyTimeout: busyTimeout, snapshot: logsRequest, selectedURL: logsURL)
         }
         switch logsOutcome {

@@ -21,8 +21,14 @@ Repair:
 - Refuses to run when Time Machine is active or its status is unknown.
 - Re-enumerates current mounts rather than trusting saved paths.
 - Uses only a normal `diskutil unmount`.
-- Never forces an unmount, deletes a snapshot, kills a process, changes
+- Never forces an unmount, deletes a snapshot, kills an unrelated process, changes
   Time Machine settings, or invokes `sudo`.
+
+Status and unmount commands are limited to 30 seconds each. A timed-out
+command is stopped; unknown status prevents repair. Failed mount enumeration
+and notification delivery are logged and cause a dependency error. `--status`
+also returns a dependency error when Time Machine status is unknown, so the
+installer's status check fails instead of accepting an indeterminate result.
 
 ## Requirements
 

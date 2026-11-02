@@ -56,7 +56,7 @@ Compares the present value of vendor financing at each possible payoff month wit
 - Charts each month's savings as a percentage of the savings at the end of the term.
 - Exports both tables as CSV and the chart as PNG.
 
-"Savings" means `vendor price - present value of the financing scenario`; negative values are displayed as zero. The model assumes the remaining loan balance is paid as a lump sum after the selected number of payments. It does not include payoff penalties, transaction fees, taxes, or other financing charges. Chart.js is embedded, so chart rendering works offline.
+"Savings" means `vendor price - present value of the financing scenario`; negative values are displayed as zero. The model assumes the remaining loan balance is paid as a lump sum after the selected number of payments. Immediate timing uses an annuity-due payment, with the first payment at time zero and no interest before it. End timing pays the remaining balance one month after the selected payment, including interest accrued until that payoff. It does not include payoff penalties, transaction fees, taxes, or other financing charges. Chart.js is embedded, so chart rendering works offline.
 
 ### `lump_sum_calculator.html`
 

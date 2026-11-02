@@ -5304,6 +5304,36 @@ def test_tp_link_history_query_flags_follow_first_and_exact_duplicate_paths(
     assert duplicate["router_activity"]["behavior_history_queried"] is False
 
 
+def test_database_and_reports_are_private_with_permissive_umask(tmp_path: Path) -> None:
+    db_path = tmp_path / "synthetic.db"
+    report_dir = tmp_path / "reports"
+    previous = os.umask(0)
+    try:
+        store = analyzer.StateStore(db_path)
+        try:
+            seed_epoch(store)
+        finally:
+            store.close()
+        log_path = tmp_path / "synthetic.log"
+        log_path.write_text(tp_link_synthetic_snapshot([
+            "2042-06-15 11:59:00 service[42]: <6> 2001 Routine health success",
+        ]), encoding="utf-8")
+        assert analyzer.main([
+            str(log_path), "--db", str(db_path), "--format", "tp-link-archer",
+            "--report", "text,markdown,html,json", "--report-dir", str(report_dir),
+        ]) == 0
+        paths = [db_path, *(report_dir / f"synthetic.report.{ext}" for ext in ("txt", "md", "html", "json"))]
+        assert all(stat_module.S_IMODE(path.stat().st_mode) == 0o600 for path in paths)
+        json_path = report_dir / "synthetic.report.json"
+        json_path.write_text("stale" * 100_000, encoding="utf-8")
+        json_path.chmod(0o666)
+        analyzer.emit_report_outputs(operational_tp_link_report(), ["json"], log_path, report_dir)
+        assert stat_module.S_IMODE(json_path.stat().st_mode) == 0o600
+        json.loads(json_path.read_text(encoding="utf-8"))
+    finally:
+        os.umask(previous)
+
+
 def test_tp_link_cli_writes_consistent_markdown_html_and_json_reports(
     tmp_path: Path,
     capsys: pytest.CaptureFixture[str],
@@ -5414,7 +5444,7 @@ def test_cli_version_and_help_describe_supported_router_contracts(
 ) -> None:
     with pytest.raises(SystemExit):
         analyzer.parse_args(["--version"])
-    assert capsys.readouterr().out.strip() == "router-log-analyzer 0.5.1"
+    assert capsys.readouterr().out.strip() == "router-log-analyzer 0.5.2"
 
     with pytest.raises(SystemExit):
         analyzer.parse_args(["--help"])

@@ -126,6 +126,14 @@ public struct EpisodeMachine: Codable, Sendable, Equatable, Hashable {
         return wasOpen
     }
 
+    /// A clock rollback invalidates in-progress streaks, but not an established episode.
+    mutating func discardStreaks() {
+        triggerStreak = 0
+        firstTrue = nil
+        redStreak = 0
+        clearStreak = 0
+    }
+
     private mutating func reset() {
         isOpen = false
         severity = nil

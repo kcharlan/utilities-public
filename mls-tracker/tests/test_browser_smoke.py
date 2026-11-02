@@ -388,7 +388,7 @@ def test_refresh_and_page_stay_responsive_during_a_slow_fetch(monkeypatch):
         data_request.start()
         try:
             assert started.wait(10)
-            refresh = urllib.request.Request(f"{url}/api/refresh", method="POST")
+            refresh = urllib.request.Request(f"{url}/api/refresh", method="POST", headers={"Origin": url})
             assert timed(refresh) < 2
             assert timed(f"{url}/") < 2
         finally:

@@ -67,6 +67,9 @@ use the optional upstream `pkcs12` field.
 `cmd/anker_power/A2345/<SYNTHETIC_SN>/#`. Commands publish to the latter prefix's
 `req` topic. Device messages may be interleaved while waiting for SUBACK; process
 them while requiring the matching control acknowledgment before connected state.
+The app accepts up to 256 KiB MQTT remaining length and buffers up to 32 packets
+each in the network stream and processing inbox. An oversized packet or queue
+overflow closes the connection and enters the reconnect backoff.
 
 ## 4. Envelope
 

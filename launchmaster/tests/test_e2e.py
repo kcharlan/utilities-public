@@ -75,7 +75,7 @@ def _put_settings(server, updates):
     request = urllib.request.Request(
         f"{server}/api/settings",
         data=json.dumps(updates).encode(),
-        headers={"Content-Type": "application/json"},
+        headers={"Content-Type": "application/json", "Origin": server},
         method="PUT",
     )
     with urllib.request.urlopen(request):
@@ -118,7 +118,7 @@ class TestSyntheticHarness:
         settings_request = urllib.request.Request(
             f"{server}/api/settings",
             data=json.dumps({"poll_interval": 1}).encode(),
-            headers={"Content-Type": "application/json"},
+            headers={"Content-Type": "application/json", "Origin": server},
             method="PUT",
         )
         urllib.request.urlopen(settings_request).close()
@@ -989,6 +989,16 @@ class TestCreateJobModal:
 # ═══════════════════════════════════════════════════════════════════════════════
 
 class TestSettingsModal:
+    def test_same_origin_settings_save(self, server, page, restore_settings):
+        page.goto(server, wait_until="networkidle")
+        page.locator(".topbar-right .icon-btn").last.click()
+        modal = page.locator(".modal")
+        modal.locator("input[type='number']").fill("7")
+        modal.get_by_role("button", name="Save & Close").click()
+        expect(page.locator(".toast.success")).to_contain_text("Settings saved")
+        with urllib.request.urlopen(f"{server}/api/settings") as response:
+            assert json.load(response)["poll_interval"] == 7
+
     def test_poll_interval_is_saved_as_number(self, server, page):
         request_bodies = []
 
@@ -1352,6 +1362,27 @@ class TestWebSocket:
         # The dot should not have 'disconnected' class
         ws_dot = page.locator(".ws-dot")
         expect(ws_dot).not_to_have_class(re.compile(r"disconnected"))
+
+    def test_websocket_reconnects(self, server, page):
+        page.add_init_script("""(() => {
+            const NativeWebSocket = window.WebSocket;
+            window.testSockets = [];
+            window.WebSocket = class extends NativeWebSocket {
+                constructor(...args) {
+                    super(...args);
+                    window.testSockets.push(this);
+                }
+            };
+        })();""")
+        page.goto(server, wait_until="networkidle")
+        ws_status = page.locator(".topbar-ws-status")
+        expect(ws_status).to_contain_text("Live")
+        page.wait_for_function("window.testSockets.length === 1 && window.testSockets[0].readyState === WebSocket.OPEN")
+        page.evaluate("window.testSockets[0].close()")
+        expect(ws_status).not_to_contain_text("Live")
+        page.wait_for_function("window.testSockets.length >= 2 && window.testSockets[1].readyState === WebSocket.OPEN")
+        expect(ws_status).to_contain_text("Live")
+        expect(page.locator(".ws-dot")).not_to_have_class(re.compile(r"disconnected"))
 
 
 # ═══════════════════════════════════════════════════════════════════════════════

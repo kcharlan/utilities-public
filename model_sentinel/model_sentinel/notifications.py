@@ -53,11 +53,11 @@ def send_notification(
 
 
 def _send_plain_notification(*, title: str, message: str, sound_name: str | None) -> None:
-    escaped_title = title.replace('"', '\\"')
-    escaped_message = message.replace('"', '\\"')
+    escaped_title = title.replace('\\', '\\\\').replace('"', '\\"')
+    escaped_message = message.replace('\\', '\\\\').replace('"', '\\"')
     script = f'display notification "{escaped_message}" with title "{escaped_title}"'
     if sound_name:
-        escaped_sound_name = sound_name.replace('"', '\\"')
+        escaped_sound_name = sound_name.replace('\\', '\\\\').replace('"', '\\"')
         script += f' sound name "{escaped_sound_name}"'
     subprocess.run(["osascript", "-e", script], check=False, capture_output=True)
 

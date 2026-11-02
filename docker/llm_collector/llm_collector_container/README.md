@@ -13,9 +13,8 @@ Python dependencies are installed at image build time from `collector/requiremen
 Before running the container, initialize the external configuration; normal setup does not require editing `docker-compose.yml`:
 
 1.  Run `../setup.sh` first. It writes `~/.config/llm_collector/secret.env` and generates `extension/config.local.js`.
-2. The project directory is bind-mounted read-write at
-   `/workspace/llm_collector` so the container runs the host copy of the
-   collector code.
+2. Collector code is copied into the image at build time; the project
+   directory is not bind-mounted into the container.
 3. Runtime data is separately bind-mounted from the external
    `LLM_COLLECTOR_DATA_DIR` defined in
    `~/.config/llm_collector/secret.env`.

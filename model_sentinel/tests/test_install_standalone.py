@@ -235,7 +235,7 @@ def test_installed_credentials_refresh_and_scan_without_checkout(tmp_path: Path)
     mount.unlink()
     assert stat.S_IMODE(home.stat().st_mode) == 0o700
     assert stat.S_IMODE((home / "credentials.env").stat().st_mode) == 0o600
-    with synthetic_provider_server(home) as authorizations:
+    with synthetic_provider_server(home, env=env) as authorizations:
         health = _run_command([str(target), "healthcheck"], env, tmp_path)
         assert health.returncode == 0, health.stdout + health.stderr
         scanned = _run_command([str(target), "scan", "--save", "--no-notify"], env, tmp_path)

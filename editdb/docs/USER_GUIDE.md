@@ -82,7 +82,7 @@ An Airtable-style grid with sticky headers. Each column header shows:
 
 | Indicator | Icon | Meaning |
 |-----------|------|---------|
-| **Primary key** | Key (amber) | This column is the primary key. For a composite key, only its first component is marked |
+| **Primary key** | Key (amber) | This column is part of the primary key; every component of a composite key is marked |
 | **Foreign key** | Link (blue) | This column references another table |
 | **Type** | Text label | Column type: TEXT, INTEGER, REAL, or BLOB |
 
@@ -142,7 +142,9 @@ Click the **pencil icon** on the left side of a row to enter bulk edit mode. All
 
 Primary-key fields are disabled in bulk edit mode. Tables without a primary key can be browsed and appended to, but EditDB cannot update or delete their rows through the grid.
 
-The grid does not fully support composite primary keys: it uses only the first key component to locate a row. Updating or deleting through the grid could therefore affect multiple rows that share that value. Use the SQL Console or another SQLite client for those tables.
+The grid uses every component of a composite primary key to locate a row. If a key no longer identifies exactly one row, the update or deletion is rejected.
+
+The grid displays BLOB values as objects. Editing a BLOB cell replaces its value with text; use the SQL Console to write binary data. Unchanged BLOBs and other untouched values keep their SQLite storage types when saving a row. In API responses and JSON exports, integers outside JavaScript's safe range are strings and BLOBs are objects containing hexadecimal bytes, for example `{"$blob": "ff00"}`.
 
 ### Add a Row
 
@@ -213,14 +215,9 @@ Click the delete button on a column card. The card turns red with reduced opacit
 
 ### Applying Changes
 
-Click the green **Apply Changes** button. A confirmation dialog appears before the migration runs. EditDB uses a shadow-table migration pattern behind the scenes:
+Click the green **Apply Changes** button. A confirmation dialog appears before the migration runs. Renames, additions and deletions use SQLite's native column alterations. A type change rebuilds the table while retaining its constraints, indexes, triggers and dependent views. The transaction rolls back if a change fails; SQLite may reject changes that conflict with dependent schema objects or definitions that cannot be safely rewritten.
 
-1. Creates a new table with the updated schema
-2. Copies data from the old table (preserving values for renamed columns, discarding deleted columns)
-3. Drops the old table and renames the new one
-4. All wrapped in a transaction — if anything fails, it rolls back completely
-
-> **Back up the database before applying schema changes.** The current editor rebuilds only column names and the selected declared types. It does not preserve primary keys, `AUTOINCREMENT`, `NOT NULL`, default values, unique or check constraints, foreign-key declarations, indexes, or triggers. Use the SQL Console or another SQLite migration tool when those schema objects must be retained.
+> **Back up the database before applying schema changes.** A type change copies the table and may change how SQLite stores its values.
 
 ---
 

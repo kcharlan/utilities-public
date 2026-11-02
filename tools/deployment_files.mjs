@@ -4,6 +4,17 @@ import crypto from 'node:crypto';
 import {execFileSync} from 'node:child_process';
 
 export const sha = bytes => crypto.createHash('sha256').update(bytes).digest('hex');
+export function requireMain(repo) {
+  if (execFileSync('git', ['-C', repo, 'branch', '--show-current'], {encoding:'utf8'}).trim() !== 'main') throw new Error('Deployments require main');
+}
+export function restoreWithRecovery(operation, recovery, backup) {
+  try { return operation(); }
+  catch (error) {
+    try { recovery(); }
+    catch (restoreError) { throw new AggregateError([error, restoreError], error.message + '; restoration failed: ' + restoreError.message + '; Recovery backup: ' + backup); }
+    throw error;
+  }
+}
 export function exists(file) { try { fs.lstatSync(file); return true; } catch (e) { if (e.code === 'ENOENT') return false; throw e; } }
 
 export function cleanupDirectories(directories) {

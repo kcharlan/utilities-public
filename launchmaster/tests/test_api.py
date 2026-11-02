@@ -17,7 +17,7 @@ import pytest
 
 def test_synthetic_server_denies_native_mutations(server_url):
     request = urllib.request.Request(
-        f"{server_url}/api/jobs/com.example.synthetic-idle/stop", method="POST"
+        f"{server_url}/api/jobs/com.example.synthetic-idle/stop", headers={"Origin": server_url}, method="POST"
     )
     with pytest.raises(urllib.error.HTTPError) as error:
         urllib.request.urlopen(request)
@@ -252,7 +252,7 @@ class TestSettings:
         req = urllib.request.Request(
             f"{server_url}/api/settings",
             data=json.dumps(new_settings).encode(),
-            headers={"Content-Type": "application/json"},
+            headers={"Content-Type": "application/json", "Origin": server_url},
             method="PUT",
         )
         resp = urllib.request.urlopen(req)
@@ -269,7 +269,7 @@ class TestSettings:
         req2 = urllib.request.Request(
             f"{server_url}/api/settings",
             data=json.dumps(reset).encode(),
-            headers={"Content-Type": "application/json"},
+            headers={"Content-Type": "application/json", "Origin": server_url},
             method="PUT",
         )
         urllib.request.urlopen(req2)

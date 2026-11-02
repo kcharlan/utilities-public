@@ -26,7 +26,7 @@ import threading
 import time
 import urllib.error
 import urllib.request
-from calendar import monthcalendar
+from calendar import monthcalendar, monthrange
 from dataclasses import dataclass
 from datetime import date as date_type
 from datetime import datetime, timedelta, timezone
@@ -39,7 +39,7 @@ import uvicorn
 from fastapi import FastAPI, File, Query, Request, UploadFile
 from fastapi.responses import HTMLResponse, JSONResponse, StreamingResponse
 
-VERSION = "1.1.1"
+VERSION = "1.1.2"
 PRIVATE_DIRECTORY_MODE = 0o700
 PRIVATE_FILE_MODE = 0o600
 
@@ -76,8 +76,6 @@ def parse_args():
                         help=f"SQLite database path (default: {DB_DEFAULT})")
     parser.add_argument("--debug", action="store_true",
                         help="Enable debug logging")
-    parser.add_argument("--host", type=str, default="127.0.0.1",
-                        help="Bind address (default: 127.0.0.1)")
     return parser.parse_args()
 
 
@@ -340,8 +338,16 @@ CREATE TABLE IF NOT EXISTS saved_views (
 
 
 # === ASYNC DB HELPERS ===
-async def get_db() -> aiosqlite.Connection:
+async def get_db(*, readonly: bool = False) -> aiosqlite.Connection:
     database_path = Path(_db_path)
+    if readonly:
+        state = _path_status(database_path)
+        if state is not None and not stat.S_ISREG(state.st_mode):
+            raise RuntimeError(f"SQLite database is not a regular file: {database_path}")
+        db = await aiosqlite.connect(database_path.absolute().as_uri() + "?mode=ro", uri=True)
+        db.row_factory = aiosqlite.Row
+        await db.execute("PRAGMA busy_timeout=5000")
+        return db
     prepare_private_file(database_path, "SQLite database")
     db = await aiosqlite.connect(_db_path)
     db.row_factory = aiosqlite.Row
@@ -678,6 +684,13 @@ def _get_tz(tz_str: str):
         return timezone.utc
 
 
+def _local_timestamp(value: str, tz) -> str:
+    dt = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    return dt.astimezone(tz).strftime("%Y-%m-%d %H:%M:%S")
+
+
 _GEN_ID_EPOCH_RE = re.compile(r"^gen-(\d{10})-")
 _EXPLICIT_TZ_RE = re.compile(r"(Z|[+-]\d{2}:?\d{2})$")
 _EPOCH_MIN = 1577836800  # 2020-01-01 UTC
@@ -815,9 +828,9 @@ def _end_of_year(dt_local: datetime) -> datetime:
 
 
 def _prev_month(dt_local: datetime) -> datetime:
-    if dt_local.month == 1:
-        return dt_local.replace(year=dt_local.year - 1, month=12)
-    return dt_local.replace(month=dt_local.month - 1)
+    year = dt_local.year - (dt_local.month == 1)
+    month = 12 if dt_local.month == 1 else dt_local.month - 1
+    return dt_local.replace(year=year, month=month, day=min(dt_local.day, monthrange(year, month)[1]))
 
 
 def parse_time_range(range_p: str, from_p: str, to_p: str, tz_p: str) -> Tuple[Optional[str], Optional[str]]:
@@ -875,7 +888,7 @@ def parse_time_range(range_p: str, from_p: str, to_p: str, tz_p: str) -> Tuple[O
         start = _start_of_year(now_local)
         end = now_local
     elif rng == "last_year":
-        prev_year = now_local.replace(year=now_local.year - 1)
+        prev_year = _start_of_year(now_local).replace(year=now_local.year - 1)
         start = _start_of_year(prev_year)
         end = _end_of_year(prev_year)
     elif rng == "last_1h":
@@ -1243,7 +1256,38 @@ def get_anomalies(gen: dict) -> list:
     return flags
 
 
+# local-server-guard:begin
+class LocalOriginGuard:
+    """Reject foreign Host on every request, and foreign Origin on state changes."""
+
+    def __init__(self, app):
+        self.app = app
+
+    async def __call__(self, scope, receive, send):
+        if scope["type"] not in ("http", "websocket"):
+            await self.app(scope, receive, send)
+            return
+        server = scope.get("server")
+        port = server[1] if server and len(server) > 1 else None
+        allowed = {f"127.0.0.1:{port}", f"localhost:{port}"}
+        headers = [(k.lower(), v.decode("latin-1")) for k, v in scope.get("headers", [])]
+        hosts = [v for k, v in headers if k == b"host"]
+        origins = [v for k, v in headers if k == b"origin"]
+        ok = type(port) is int and 1 <= port <= 65535 and len(hosts) == 1 and hosts[0] in allowed
+        if ok and (scope["type"] == "websocket" or scope["method"] not in ("GET", "HEAD")):
+            ok = len(origins) == 1 and origins[0] == f"http://{hosts[0]}"
+        if ok:
+            await self.app(scope, receive, send)
+        elif scope["type"] == "websocket":
+            await receive()
+            await send({"type": "websocket.close", "code": 1008})
+        else:
+            await send({"type": "http.response.start", "status": 403,
+                        "headers": [(b"content-type", b"text/plain")]})
+            await send({"type": "http.response.body", "body": b"Forbidden"})
+# local-server-guard:end
 app = FastAPI(title="RouterView", version=VERSION)
+app.add_middleware(LocalOriginGuard)
 
 
 # === PERCENTILE QUERY HELPER ===
@@ -1354,7 +1398,7 @@ async def get_summary(
     from_s, to_s = parse_time_range(range, from_, to, tz)
     extra_where, params = build_where_clause(model, provider, api_key, origin, finish_reason)
 
-    db = await get_db()
+    db = await get_db(readonly=True)
     try:
         primary = await _run_summary_query(db, from_s, to_s, extra_where, params)
         primary["from"] = from_s
@@ -1411,10 +1455,7 @@ async def get_timeseries(
 
     # Compute UTC offset for the user's timezone so bucket labels are in local time
     _tz = _get_tz(tz)
-    _now_local = datetime.now(timezone.utc).astimezone(_tz)
-    _utc_offset_s = int(_tz.utcoffset(_now_local.replace(tzinfo=None)).total_seconds())
-    _offset_str = f"{_utc_offset_s:+d} seconds" if _utc_offset_s else ""
-    _local = f"datetime(created_at, '{_offset_str}')" if _utc_offset_s else "created_at"
+    _local = "local_timestamp(created_at)"
     bucket_expr = {
         "minute": f"strftime('%Y-%m-%dT%H:%M', {_local})",
         "hour":   f"strftime('%Y-%m-%dT%H:00', {_local})",
@@ -1437,8 +1478,9 @@ async def get_timeseries(
         "none":     None,
     }.get(group_by)
 
-    db = await get_db()
+    db = await get_db(readonly=True)
     try:
+        await db.create_function("local_timestamp", 1, lambda value: _local_timestamp(value, _tz))
         async def fetch_series(f_s, t_s):
             where = "WHERE 1=1"
             w_p = []
@@ -1616,7 +1658,7 @@ async def get_generations(
         term = f"%{search}%"
         w_p += [term] * 7
 
-    db = await get_db()
+    db = await get_db(readonly=True)
     try:
         cur = await db.execute(f"SELECT COUNT(*) FROM generations {where}", w_p)
         total = (await cur.fetchone())[0]
@@ -1647,7 +1689,7 @@ async def get_generations(
 # === DIMENSIONS ENDPOINT ===
 @app.get("/api/dimensions")
 async def get_dimensions():
-    db = await get_db()
+    db = await get_db(readonly=True)
     try:
         async def fetch(sql, *args):
             cur = await db.execute(sql, args)
@@ -1681,7 +1723,7 @@ async def get_dimensions():
 # === HEALTH ENDPOINT ===
 @app.get("/api/health")
 async def health():
-    db = await get_db()
+    db = await get_db(readonly=True)
     try:
         cur = await db.execute("SELECT COUNT(*) FROM generations")
         total = (await cur.fetchone())[0]
@@ -1736,7 +1778,7 @@ async def get_breakdown(
     where += f" {extra_where}"
     w_p = w_p + params
 
-    db = await get_db()
+    db = await get_db(readonly=True)
     try:
         cur = await db.execute(f"""
             SELECT COALESCE({dim_col}, 'unknown') as dimension,
@@ -1786,13 +1828,11 @@ async def get_heatmap(
     w_p = w_p + params
 
     _tz = _get_tz(tz)
-    _now_local = datetime.now(timezone.utc).astimezone(_tz)
-    _utc_offset_s = int(_tz.utcoffset(_now_local.replace(tzinfo=None)).total_seconds())
-    _offset_str = f"{_utc_offset_s:+d} seconds" if _utc_offset_s else ""
-    _local = f"datetime(created_at, '{_offset_str}')" if _utc_offset_s else "created_at"
+    _local = "local_timestamp(created_at)"
 
-    db = await get_db()
+    db = await get_db(readonly=True)
     try:
+        await db.create_function("local_timestamp", 1, lambda value: _local_timestamp(value, _tz))
         cur = await db.execute(f"""
             SELECT CAST(strftime('%w', {_local}) AS INTEGER) as dow,
                    CAST(strftime('%H', {_local}) AS INTEGER) as hour,
@@ -1837,7 +1877,7 @@ async def export_csv(
     where += f" {extra_where}"
     w_p = w_p + params
 
-    db = await get_db()
+    db = await get_db(readonly=True)
     output = io.StringIO()
     try:
         writer = csv.writer(output)
@@ -1851,6 +1891,13 @@ async def export_csv(
                 writer.writerow(rows[0].keys())
                 for r in rows:
                     writer.writerow(list(r))
+
+        elif view == "timeseries":
+            data = await get_timeseries(range, from_, to, tz, model, provider, api_key,
+                                        origin, finish_reason, bucket, metric, group_by, None)
+            writer.writerow(["bucket"] + [series["name"] for series in data["series"]])
+            for index, label in enumerate(data["buckets"]):
+                writer.writerow([label] + [series["data"][index] for series in data["series"]])
 
         elif view == "summary":
             summary = await _run_summary_query(db, from_s, to_s, extra_where, params)
@@ -1887,7 +1934,7 @@ async def export_csv(
 # === SETTINGS ENDPOINTS ===
 @app.get("/api/settings")
 async def get_settings():
-    db = await get_db()
+    db = await get_db(readonly=True)
     try:
         cur = await db.execute("SELECT key, value FROM settings")
         rows = await cur.fetchall()
@@ -1916,6 +1963,10 @@ async def update_settings(request: Request):
 async def purge_data(before: str = Query(...)):
     db = await get_db()
     try:
+        # Hold SQLite's cross-process writer lock until the snapshot and delete
+        # both finish. The snapshot uses a separate read connection.
+        await db.execute("BEGIN IMMEDIATE")
+        _snapshot_db_to_backups(_db_path)
         result = await db.execute("DELETE FROM generations WHERE created_date < ?", (before,))
         deleted = result.rowcount
         await db.execute("DELETE FROM daily_summaries WHERE date < ?", (before,))
@@ -2005,6 +2056,8 @@ async def import_csv(file: UploadFile = File(...)):
                     inserted += 1
                 else:
                     skipped += 1
+            except sqlite3.Error:
+                raise
             except Exception:
                 logger.debug("CSV import row error", exc_info=True)
                 skipped += 1
@@ -2039,7 +2092,7 @@ def _snapshot_db_to_backups(db_path: str) -> str:
     """Write a point-in-time consistent SQLite backup to ~/.routerview/backups/."""
     backups_dir = RUNTIME_PATHS.home / "backups"
     secure_private_directory(backups_dir)
-    ts = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    ts = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S%fZ")
     dest = backups_dir / f"routerview-{ts}.db"
     prepare_private_file(dest, "SQLite backup")
     src_conn = sqlite3.connect(db_path)
@@ -2119,7 +2172,7 @@ async def rebuild_timestamps_endpoint(confirm: bool = Query(False)):
 # === SAVED VIEWS ENDPOINTS ===
 @app.get("/api/views")
 async def list_views():
-    db = await get_db()
+    db = await get_db(readonly=True)
     try:
         cur = await db.execute("SELECT id, name, config, created_at, updated_at FROM saved_views ORDER BY name")
         rows = await cur.fetchall()
@@ -4974,7 +5027,7 @@ def find_open_port(preferred: int, max_attempts: int = 20) -> int:
     for port in range(preferred, preferred + max_attempts):
         try:
             s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-            s.bind(("", port))
+            s.bind(("127.0.0.1", port))
             s.close()
             return port
         except OSError:
@@ -5024,7 +5077,7 @@ def main():
     announce_resolved_port(args.port, port)
     write_private_text(RUNTIME_PATHS.port_file, str(port))
 
-    url = f"http://{args.host}:{port}"
+    url = f"http://127.0.0.1:{port}"
     print(f"RouterView running at {url}")
 
     if not testing_mode_enabled():
@@ -5038,7 +5091,7 @@ def main():
     signal.signal(signal.SIGTERM, _cleanup)
 
     try:
-        uvicorn.run(app, host=args.host, port=port,
+        uvicorn.run(app, host="127.0.0.1", port=port,
                     log_level="debug" if args.debug else "warning")
     finally:
         _cleanup()

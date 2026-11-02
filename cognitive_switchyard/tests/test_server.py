@@ -13,7 +13,7 @@ from textwrap import dedent
 
 import pytest
 import starlette.testclient as starlette_testclient
-from fastapi.testclient import TestClient
+from fastapi.testclient import TestClient as StarletteClient
 from starlette.exceptions import StarletteDeprecationWarning
 
 from cognitive_switchyard.config import GlobalConfig, build_runtime_paths, write_global_config
@@ -21,6 +21,11 @@ from cognitive_switchyard.models import BackendRuntimeEvent, PackManifest, TaskP
 from cognitive_switchyard.pack_loader import load_pack_manifest
 from cognitive_switchyard.server import create_app
 from cognitive_switchyard.state import StateStore, initialize_state_store
+
+
+class TestClient(StarletteClient):
+    def __init__(self, app):
+        super().__init__(app, base_url="http://127.0.0.1:8000", headers={"Origin": "http://127.0.0.1:8000"})
 
 
 def _build_store(tmp_path: Path) -> tuple[StateStore, object]:
@@ -522,7 +527,7 @@ def test_create_session_accepts_session_overrides_and_returns_effective_runtime_
                     "auto_fix_enabled": True,
                     "auto_fix_max_attempts": 4,
                     "poll_interval": 0.25,
-                    "environment": {"API_MODE": "setup", "TRACE_TOKEN": "abc123"},
+                    "environment": {"COGNITIVE_SWITCHYARD_PROJECT_DIR": "synthetic-project"},
                 },
             },
         )
@@ -538,7 +543,7 @@ def test_create_session_accepts_session_overrides_and_returns_effective_runtime_
             "auto_fix_enabled": True,
             "auto_fix_max_attempts": 4,
             "poll_interval": 0.25,
-            "environment": {"API_MODE": "setup", "TRACE_TOKEN": "abc123"},
+            "environment": {"COGNITIVE_SWITCHYARD_PROJECT_DIR": "synthetic-project"},
         }
         assert payload["effective_runtime_config"] == {
             "planner_count": 2,
@@ -547,12 +552,12 @@ def test_create_session_accepts_session_overrides_and_returns_effective_runtime_
             "timeouts": {"task_idle": 25, "task_max": 90, "session_max": 600},
             "auto_fix": {"enabled": True, "max_attempts": 4},
             "poll_interval": 0.25,
-            "environment": {"API_MODE": "setup", "TRACE_TOKEN": "abc123"},
+            "environment": {"COGNITIVE_SWITCHYARD_PROJECT_DIR": "synthetic-project"},
         }
         assert json.loads(store.get_session("session-11c-create").config_json or "{}") == payload["config"]
 
 
-def test_create_session_succeeds_when_pack_directory_is_missing(
+def test_existing_session_serializes_when_pack_directory_is_missing(
     tmp_path: Path,
 ) -> None:
     """Regression: _serialize_session must not crash if the pack dir is absent."""
@@ -567,8 +572,9 @@ def test_create_session_succeeds_when_pack_directory_is_missing(
             "/api/sessions",
             json={"id": "missing-pack-session", "pack": "nonexistent-pack"},
         )
-        assert response.status_code == 201
-        payload = response.json()["session"]
+        assert response.status_code == 400
+        store.create_session(session_id="missing-pack-session", name="Missing", pack="nonexistent-pack", created_at="2026-01-01T00:00:00Z")
+        payload = client.get("/api/sessions/missing-pack-session").json()["session"]
         assert payload["id"] == "missing-pack-session"
         assert payload["pack"] == "nonexistent-pack"
         # effective_runtime_config should be empty dict fallback, not a crash
@@ -1420,6 +1426,7 @@ def test_dashboard_payload_includes_configured_idle_workers_and_latest_runtime_p
         status="running",
         started_at=_timestamp_offset(seconds=-120),
     )
+    store.write_session_runtime_state(session.id, active_clock_version=1)
     _register_task(store, session.id, task_id="002", title="Active task")
     store.project_task(
         session.id,
@@ -1537,7 +1544,7 @@ def test_state_update_snapshot_after_runtime_events_preserves_worker_card_fields
     )
     with TestClient(app) as client:
 
-        with client.websocket_connect("/ws") as websocket:
+        with client.websocket_connect("ws://127.0.0.1:8000/ws") as websocket:
             controller._publish_snapshot(session.id)
             message = _wait_for_websocket_message(
                 websocket,
@@ -1719,7 +1726,7 @@ def test_websocket_broadcasts_state_updates_alerts_and_slot_scoped_log_lines(tmp
             """
             _run_async(coro, loop=manager.event_loop)
 
-        with client.websocket_connect("/ws") as websocket:
+        with client.websocket_connect("ws://127.0.0.1:8000/ws") as websocket:
             _send(
                 manager.broadcast_state(
                     {
@@ -1841,7 +1848,7 @@ def test_background_session_websocket_streams_runtime_task_status_changes_before
     app = create_app(store=store, runtime_paths=runtime_paths)
     with TestClient(app) as client:
 
-        with client.websocket_connect("/ws") as websocket:
+        with client.websocket_connect("ws://127.0.0.1:8000/ws") as websocket:
             start_response = client.post(f"/api/sessions/{session.id}/start")
             assert start_response.status_code == 202
 
@@ -1925,7 +1932,7 @@ def test_background_session_websocket_streams_subscribed_log_lines_and_progress_
     app = create_app(store=store, runtime_paths=runtime_paths)
     with TestClient(app) as client:
 
-        with client.websocket_connect("/ws") as websocket:
+        with client.websocket_connect("ws://127.0.0.1:8000/ws") as websocket:
             websocket.send_json({"type": "subscribe_logs", "worker_slot": 0})
             start_response = client.post(f"/api/sessions/{session.id}/start")
             assert start_response.status_code == 202
@@ -1978,7 +1985,7 @@ def test_background_session_websocket_emits_timeout_or_problem_alerts_from_runti
     app = create_app(store=store, runtime_paths=runtime_paths)
     with TestClient(app) as client:
 
-        with client.websocket_connect("/ws") as websocket:
+        with client.websocket_connect("ws://127.0.0.1:8000/ws") as websocket:
             start_response = client.post(f"/api/sessions/{session.id}/start")
             assert start_response.status_code == 202
 
@@ -2478,7 +2485,7 @@ def test_broadcast_alert_reaches_websocket_with_correct_structure(tmp_path: Path
         client.post("/api/sessions", json={"id": session_id, "name": "Alert WS", "pack": "claude-code"})
 
         controller = app.state.controller
-        with client.websocket_connect("/ws") as websocket:
+        with client.websocket_connect("ws://127.0.0.1:8000/ws") as websocket:
             controller._broadcast_alert(session_id, "Pipeline stopped", severity="warning")
             msg = websocket.receive_json()
             assert msg["type"] == "alert"
@@ -2558,7 +2565,7 @@ def test_pipeline_event_triggers_websocket_snapshot(tmp_path: Path) -> None:
         client.post("/api/sessions", json={"id": session_id, "name": "PipeEvt", "pack": "claude-code"})
 
         controller = app.state.controller
-        with client.websocket_connect("/ws") as websocket:
+        with client.websocket_connect("ws://127.0.0.1:8000/ws") as websocket:
             # Simulate a pipeline event (file claimed)
             controller._publish_runtime_event(
                 BackendRuntimeEvent(
@@ -2584,7 +2591,7 @@ def test_preparation_status_event_triggers_websocket_snapshot(tmp_path: Path) ->
         client.post("/api/sessions", json={"id": session_id, "name": "PrepStatus", "pack": "claude-code"})
 
         controller = app.state.controller
-        with client.websocket_connect("/ws") as websocket:
+        with client.websocket_connect("ws://127.0.0.1:8000/ws") as websocket:
             # Update session status, then fire preparation_status event
             store.update_session_status(session_id, status="planning")
             controller._publish_runtime_event(
@@ -2663,10 +2670,16 @@ def test_worker_idle_state_publishes_immediately_when_activity_advances_even_ins
 def test_session_start_broadcasts_status_transitions_over_websocket(
     tmp_path: Path,
     repo_root: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Starting a session with planning must push at least one state_update
     showing planning status to the WebSocket before execution begins.
     This is the scenario where the user saw 'planning' but the Monitor was blank."""
+    from types import SimpleNamespace
+    from cognitive_switchyard import orchestrator
+
+    plan = "---\nPLAN_ID: 001\nPRIORITY: normal\nESTIMATED_SCOPE: synthetic.py\nDEPENDS_ON: none\nFULL_TEST_AFTER: no\n---\n\n# Synthetic task\n\nImplement synthetic task.\n"
+    monkeypatch.setattr(orchestrator, "build_agent_runtime", lambda *_args, **_kwargs: SimpleNamespace(planner_agent=lambda **_kwargs: plan))
     store, runtime_paths = _build_store(tmp_path)
     _write_fixture_runtime_pack(
         runtime_paths,
@@ -2718,14 +2731,17 @@ def test_session_start_broadcasts_status_transitions_over_websocket(
         name="Start Transitions",
         pack="claude-code",
         created_at="2026-03-09T10:00:00Z",
+        config_json=json.dumps({"environment": {"COGNITIVE_SWITCHYARD_REPO_ROOT": str(tmp_path)}}),
     )
     session_paths = runtime_paths.session_paths(session.id)
     (session_paths.intake / "001_task.md").write_text("# Task 1\n", encoding="utf-8")
+    marker = session_paths.root / "synthetic-workspace-marker"
+    marker.write_text("preserve")
 
     app = create_app(store=store, runtime_paths=runtime_paths)
 
     with TestClient(app) as client:
-        with client.websocket_connect("/ws") as websocket:
+        with client.websocket_connect("ws://127.0.0.1:8000/ws") as websocket:
             start_resp = client.post(f"/api/sessions/{session.id}/start")
             assert start_resp.status_code == 202
 
@@ -2733,12 +2749,16 @@ def test_session_start_broadcasts_status_transitions_over_websocket(
             seen_statuses = set()
             seen_pipeline_events = False
             for _ in range(64):
-                msg = websocket.receive_json()
+                future = websocket.portal.start_task_soon(websocket._send_rx.receive)
+                try:
+                    msg = json.loads(future.result(timeout=10)["text"])
+                finally:
+                    future.cancel()
                 if msg["type"] == "state_update":
                     status = msg["data"]["session"]["status"]
                     seen_statuses.add(status)
                     # If we see "idle" or "aborted", stop
-                    if status in {"idle", "aborted"}:
+                    if status in {"idle", "aborted", "paused"}:
                         break
 
             # We must have seen "planning" status at some point
@@ -2746,6 +2766,8 @@ def test_session_start_broadcasts_status_transitions_over_websocket(
                 f"Expected to see 'planning' or 'running' status in WebSocket updates, "
                 f"but only saw: {seen_statuses}"
             )
+            assert "idle" in seen_statuses, seen_statuses
+            assert marker.read_text() == "preserve"
 
 
 def test_session_creation_seeds_intake_claude_md_from_pack_prompt(tmp_path: Path) -> None:
@@ -3302,7 +3324,7 @@ def test_build_dashboard_payload_run_elapsed_nonzero_during_active_statuses(
     )
     run_started_at = _timestamp_offset(seconds=-30)
     store.update_session_status(session.id, status=active_status, started_at=run_started_at)
-    store.write_session_runtime_state(session.id, run_number=1, run_started_at=run_started_at)
+    store.write_session_runtime_state(session.id, run_number=1, run_started_at=run_started_at, active_clock_version=1)
 
     payload = build_dashboard_payload(store, session.id, runtime_paths=runtime_paths)
 
@@ -3367,6 +3389,7 @@ def test_build_dashboard_payload_cumulative_elapsed_includes_run_during_planning
         run_number=2,
         run_started_at=run_started_at,
         accumulated_elapsed_seconds=100,
+        active_clock_version=1,
     )
 
     payload = build_dashboard_payload(store, session.id, runtime_paths=runtime_paths)
@@ -4139,7 +4162,7 @@ def test_reprocess_blocked_while_workers_active(tmp_path: Path) -> None:
 
 
 def test_reprocess_cleans_worktree_on_backward_move(tmp_path: Path) -> None:
-    """move_task from done→intake calls git branch -D for the per-task branch."""
+    """move_task from done→intake cleans merged task branches for known slots."""
     import json
     from unittest.mock import MagicMock, patch
     from cognitive_switchyard.server import ConnectionManager, SessionController
@@ -4147,10 +4170,7 @@ def test_reprocess_cleans_worktree_on_backward_move(tmp_path: Path) -> None:
     store, runtime_paths = _build_store(tmp_path)
     _write_runtime_pack(runtime_paths)
     config_json = json.dumps({
-        "environment": {
-            "COGNITIVE_SWITCHYARD_SOURCE_REPO": "/source/repo",
-            "COGNITIVE_SWITCHYARD_REPO_ROOT": "/worktree/path",
-        }
+        "_worktree": {"source_repo": "/source/repo", "path": "/worktree/path"}
     })
     session = store.create_session(
         session_id="rp-005",
@@ -4160,6 +4180,7 @@ def test_reprocess_cleans_worktree_on_backward_move(tmp_path: Path) -> None:
         config_json=config_json,
     )
     _register_task(store, session.id, task_id="cleanup-t1", title="Cleanup Task")
+    store.project_task(session.id, "cleanup-t1", status="active", worker_slot=1)
     store.project_task(session.id, "cleanup-t1", status="done")
 
     cm = ConnectionManager()
@@ -4169,16 +4190,17 @@ def test_reprocess_cleans_worktree_on_backward_move(tmp_path: Path) -> None:
         connection_manager=cm,
     )
 
-    with patch("cognitive_switchyard.server.subprocess.run") as mock_run:
+    with patch("cognitive_switchyard.server._registered_secondary_worktree", return_value=True), \
+         patch("cognitive_switchyard.server.subprocess.run") as mock_run:
         mock_run.return_value = MagicMock(returncode=0)
         controller.move_task(session.id, "cleanup-t1", "intake")
 
-    # Verify git branch -D was called for the task branch
+    # Verify only a merged branch for the server-recorded slot is deleted.
     calls = [list(call.args[0]) for call in mock_run.call_args_list]
     assert any(
         call[:4] == ["git", "-C", "/source/repo", "branch"]
-        and "-D" in call
-        and "switchyard-cleanup-t1" in call
+        and "-d" in call
+        and "switchyard-cleanup-t1-1" in call
         for call in calls
     )
     # Task row should be deleted (moved to intake)
@@ -4357,3 +4379,41 @@ def test_dag_endpoint_joins_task_titles_and_statuses(tmp_path: Path) -> None:
     # A node the store does not know keeps only its graph fields.
     assert "title" not in resolved_nodes["999"]
     assert "status" not in resolved_nodes["999"]
+
+
+def test_dashboard_timers_add_checkpoint_and_live_interval_without_writes(tmp_path: Path, monkeypatch) -> None:
+    from cognitive_switchyard import server
+    store, paths = _build_store(tmp_path)
+    _write_runtime_pack(paths)
+    store.create_session(session_id="synthetic", name="Synthetic", pack="claude-code", created_at="2026-01-01T00:00:00Z")
+    store.write_session_runtime_state("synthetic", run_number=1, run_started_at="2026-01-01T00:00:00Z", accumulated_elapsed_seconds=32, last_run_elapsed_seconds=12, active_clock_version=1)
+    store.update_session_status("synthetic", status="running")
+    monkeypatch.setattr(server, "_elapsed_seconds", lambda _: 4)
+    before = store.get_session("synthetic")
+    payload = server.build_dashboard_payload(store, "synthetic", runtime_paths=paths)
+    assert payload["session"]["run_elapsed"] == 16
+    assert payload["session"]["elapsed"] == 36
+    assert store.get_session("synthetic") == before
+    for status in ("paused", "idle", "completed"):
+        store.update_session_status("synthetic", status=status)
+        before = store.get_session("synthetic")
+        payload = server.build_dashboard_payload(store, "synthetic", runtime_paths=paths)
+        assert payload["session"]["run_elapsed"] == 12
+        assert payload["session"]["elapsed"] == 32
+        assert store.get_session("synthetic") == before
+
+
+def test_dashboard_ignores_previous_run_elapsed_in_legacy_active_session(tmp_path: Path, monkeypatch) -> None:
+    from cognitive_switchyard import server
+    store, paths = _build_store(tmp_path)
+    _write_runtime_pack(paths)
+    store.create_session(session_id="legacy", name="Synthetic", pack="claude-code", created_at="2026-01-01T00:00:00Z")
+    store.write_session_runtime_state("legacy", run_number=2, run_started_at="2026-01-01T00:00:00Z", accumulated_elapsed_seconds=32, last_run_elapsed_seconds=12)
+    store.update_session_status("legacy", status="running")
+    monkeypatch.setattr(server, "_elapsed_seconds", lambda _: 4)
+    before = store.get_session("legacy")
+    payload = server.build_dashboard_payload(store, "legacy", runtime_paths=paths)
+    assert payload["session"]["run_elapsed"] == 0
+    assert payload["session"]["elapsed"] == 32
+    assert store.get_session("legacy") == before
+    assert store.session_clock_version("legacy") == 0

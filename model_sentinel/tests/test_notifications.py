@@ -1,10 +1,18 @@
 from pathlib import Path
 
 from model_sentinel.notifications import (
+    _send_plain_notification,
     _notification_target_path,
     _resolve_terminal_notifier,
     _with_report_path,
 )
+
+
+def test_plain_notification_escapes_backslashes_and_quotes(monkeypatch):
+    commands = []
+    monkeypatch.setattr("model_sentinel.notifications.subprocess.run", lambda command, **kwargs: commands.append(command))
+    _send_plain_notification(title='title\\"x', message='message\\n', sound_name='sound\\"x')
+    assert commands == [["osascript", "-e", 'display notification "message\\\\n" with title "title\\\\\\"x" sound name "sound\\\\\\"x"']]
 
 
 def test_with_report_path_appends_file_path_for_file_target() -> None:

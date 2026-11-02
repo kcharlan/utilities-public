@@ -5,6 +5,8 @@ This Compose project runs n8n locally without storing its encryption key or muta
 ## Private configuration
 
 Copy `.env.example` to `.env`, replace every synthetic value, and keep the file mode at `0600`. The local `.env` is ignored by Git.
+The start script uses `jq` to check the resolved Compose configuration and
+rejects the example encryption key before pulling or starting the container.
 
 `N8N_ENCRYPTION_KEY` protects credentials stored in the n8n database. Once a database contains encrypted credentials, do not change this key unless you have followed an n8n-supported key-rotation or credential-migration procedure. Losing or casually replacing it can make stored credentials unreadable.
 

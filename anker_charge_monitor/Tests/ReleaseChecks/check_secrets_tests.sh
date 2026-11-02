@@ -3,7 +3,17 @@ set -eu
 scanner="$(cd "$(dirname "$0")/../.." && pwd)/tools/check_secrets.sh"
 work=$(mktemp -d "${TMPDIR:-/tmp}/prime-secrets-tests.XXXXXX")
 work=$(cd "$work" && pwd -P)
-trap 'chmod -R u+rwX "$work"; rm -rf "$work"' EXIT
+cleanup() {
+  local code=$? path
+  trap - EXIT
+  chmod -R u+rwX "$work" || { [ "$code" -ne 0 ] || code=1; }
+  for path in "$work" "${patterns:-}" "${fault_base:-}"; do
+    [ -n "$path" ] && { [ -e "$path" ] || [ -L "$path" ]; } || continue
+    rm -r -- "${path:?}" || { [ "$code" -ne 0 ] || code=1; }
+  done
+  exit "$code"
+}
+trap cleanup EXIT
 chmod 700 "$work"
 # TMPDIR may sit inside a checkout (`make test` points it into .build/tmp); stop Git's repository
 # discovery above $work, so the case without a repository finds none.
@@ -18,7 +28,6 @@ cp .secrets-patterns patterns-copy
 # the trap has removed $work, and rm -f would then silently keep the file.
 patterns="${work%/*}/${work##*/}.patterns"
 mv patterns-copy "$patterns"
-trap 'chmod -R u+rwX "$work"; rm -rf "$work"; rm -f "$patterns"' EXIT
 check() {
   local want=$1 code=0
   ANKER_CHARGE_MONITOR_SECRETS_FILE="$work/.secrets-patterns" bash "$scanner" > result 2>&1 || code=$?
@@ -31,6 +40,31 @@ printf 'device_sn auth_token BEGIN PRIVATE KEY\n' > protocol
 printf 'ff09460103010f0a00\n' > fixture
 git add .gitignore protocol fixture
 check 0
+# Fail only the scanner's cleanup through an exported function; no OS removal is attempted.
+fault_base="${work%/*}/${work##*/}.faults"
+mkdir -p "$fault_base/tmp" "$fault_base/bin"
+printf '#!/bin/sh\nexit 2\n' > "$fault_base/bin/git"
+chmod 755 "$fault_base/bin/git"
+for scenario in clean match error; do
+  if [ "$scenario" = match ]; then head -n 1 "$patterns" > protocol; else git checkout -- protocol; fi
+  test_path=$PATH
+  [ "$scenario" != error ] || test_path="$fault_base/bin:$PATH"
+  : > "$fault_base/attempts"
+  export FAILURE_ATTEMPTS="$fault_base/attempts"
+  code=0
+  ( rm() { printf 'attempt\n' >> "$FAILURE_ATTEMPTS"; return 91; }; export -f rm
+    TMPDIR="$fault_base/tmp" PATH="$test_path" ANKER_CHARGE_MONITOR_SECRETS_FILE="$work/.secrets-patterns" bash "$scanner"
+  ) > "$fault_base/output" 2>&1 || code=$?
+  expected=2; [ "$scenario" != match ] || expected=1
+  [ "$code" -eq "$expected" ] || { echo "FAIL: cleanup failure $scenario exited $code, expected $expected"; exit 1; }
+  [ "$(cat "$fault_base/output")" = 'secrets check: redacted failure' ] || { echo "FAIL: cleanup failure $scenario output"; exit 1; }
+  [ "$(wc -l < "$fault_base/attempts" | tr -d ' ')" = 1 ] || { echo "FAIL: cleanup failure $scenario attempts"; exit 1; }
+  retained=("$fault_base/tmp"/prime-secrets-scan.*)
+  [ "${#retained[@]}" -eq 1 ] && [ -d "${retained[0]}" ] || { echo "FAIL: cleanup failure $scenario lost scratch"; exit 1; }
+  retained_path=${retained[0]}
+  rm -r -- "${retained_path:?}"
+done
+git checkout -- protocol
 while IFS= read -r literal; do
   printf '%s\n' "$literal" > protocol
   check 1
@@ -46,10 +80,10 @@ while IFS= read -r literal; do
   git add protocol
   touch "$literal"
   check 1
-  rm "$literal"
+  rm -- "${literal:?}"
   touch "$literal"
   git add -- "$literal"
-  rm "$literal"
+  rm -- "${literal:?}"
   check 1
   git rm --cached -q -- "$literal"
 done < "$patterns"
@@ -98,7 +132,7 @@ rm link
 mkdir tracked-dir ignored/nested
 printf "safe\n" > tracked-dir/file
 git add tracked-dir/file
-rm -rf tracked-dir
+rm -r -- tracked-dir
 cp "$patterns" ignored/nested/file
 ln -s ignored/nested tracked-dir
 check 0
@@ -126,7 +160,7 @@ exec "$realgit" "\$@"
 SH
 chmod +x fakebin/git
 PATH="$work/fakebin:$PATH" check 2
-rm -rf fakebin
+rm -r -- fakebin
 mv .git git-unavailable
 check 2
 mv git-unavailable .git

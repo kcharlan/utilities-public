@@ -622,7 +622,7 @@ def test_f2_project_task_db_updated_before_file_move(tmp_path: Path, repo_root: 
     assert task_in_db.status == "active"
 
 
-def test_f6_write_worker_recovery_metadata_creates_readable_file(tmp_path: Path) -> None:
+def test_f6_write_worker_recovery_metadata_creates_readable_file(tmp_path: Path, monkeypatch) -> None:
     """F-6 regression: write_worker_recovery_metadata must produce a valid JSON file."""
     store, runtime_paths = _build_store(tmp_path)
     store.create_session(
@@ -633,6 +633,7 @@ def test_f6_write_worker_recovery_metadata_creates_readable_file(tmp_path: Path)
     )
     workspace = tmp_path / "ws"
     workspace.mkdir()
+    monkeypatch.setattr("cognitive_switchyard.process_identity.process_identity", lambda pid: "synthetic-identity")
 
     store.write_worker_recovery_metadata(
         "session-f6",
@@ -646,6 +647,7 @@ def test_f6_write_worker_recovery_metadata_creates_readable_file(tmp_path: Path)
     assert meta is not None
     assert meta.task_id == "t99"
     assert meta.pid == 12345
+    assert meta.process_identity == "synthetic-identity"
 
 
 def test_list_all_tasks_returns_tasks_across_all_statuses(
@@ -736,3 +738,11 @@ def test_started_at_preserved_for_non_created_transitions(tmp_path: Path) -> Non
     store.update_session_status("session-reset-2", status="paused")
     session = store.get_session("session-reset-2")
     assert session.started_at == "2026-03-09T11:00:00Z"
+
+
+def test_runtime_state_write_rejects_unknown_session(tmp_path: Path) -> None:
+    store, _ = _build_store(tmp_path)
+    with pytest.raises(KeyError, match="Unknown session"):
+        store.write_session_runtime_state("missing", verification_pending=True)
+    with pytest.raises(KeyError, match="Unknown session"):
+        store.project_task("missing", "synthetic", status="ready")

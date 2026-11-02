@@ -45,9 +45,12 @@ static int authorize(void *unused,int action,const char *a,const char *b,const c
     }
 }
 Err opencode_db_open(const char *path,sqlite3 **out) {
-    *out=NULL;char *uri=NULL;sqlite3 *db=NULL;Err e=metadata_database_uri(path,&uri);
+    *out=NULL;char *uri=NULL;sqlite3 *db=NULL;Err e=metadata_sidecars_admit(path,(Str){0},NULL);
+    if(!e.code)e=metadata_database_uri(path,&uri);
     if(!e.code&&sqlite3_open_v2(uri,&db,SQLITE_OPEN_READONLY|SQLITE_OPEN_URI,NULL)!=SQLITE_OK)e=sql_error(db);
     free(uri);
+    if(!e.code&&sqlite3_db_config(db,SQLITE_DBCONFIG_DEFENSIVE,1,NULL)!=SQLITE_OK)e=sql_error(db);
+    if(!e.code&&sqlite3_db_config(db,SQLITE_DBCONFIG_TRUSTED_SCHEMA,0,NULL)!=SQLITE_OK)e=sql_error(db);
     if(!e.code&&sqlite3_busy_timeout(db,1000)!=SQLITE_OK)e=sql_error(db);
     if(!e.code&&sqlite3_set_authorizer(db,authorize,NULL)!=SQLITE_OK)e=sql_error(db);
     if(e.code){if(db)sqlite3_close(db);}else *out=db;

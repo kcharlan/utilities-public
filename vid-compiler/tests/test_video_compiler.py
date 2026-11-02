@@ -20,7 +20,6 @@ from video_compiler import (
 @pytest.mark.parametrize(
     ("num_samples", "expected"),
     [
-        (0, [0.0]),
         (1, [0.0]),
         (3, [0.0, 3.0, 6.0]),
     ],
@@ -29,6 +28,10 @@ def test_even_sampling_preserves_legacy_endpoint_matrix(
     num_samples: int, expected: list[float]
 ) -> None:
     assert sample_start_times(10.0, 2.0, 2.0, num_samples, "even") == expected
+
+
+def test_zero_samples_yields_no_samples() -> None:
+    assert sample_start_times(10.0, 2.0, 2.0, 0, "even") == []
 
 
 def test_even_sampling_repeats_zero_when_no_start_range_remains() -> None:

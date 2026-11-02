@@ -405,12 +405,12 @@ private struct ModelRowView: View {
                 Text(row.name).fixedSize(horizontal: false, vertical: true).frame(width: nameWidth, alignment: .leading).help(row.model)
                 HStack(alignment: .firstTextBaseline, spacing: 2) {
                     // A model in a speed episode shows its numeral and sparkline in the lamp color (mockup).
-                    Text(row.tps.map { String(Int($0.rounded())) } ?? "–").font(.system(size: 17, weight: .medium).monospacedDigit())
+                    Text(row.tps.map(DashboardFormat.whole) ?? "–").font(.system(size: 17, weight: .medium).monospacedDigit())
                         .foregroundStyle(row.color.map(Theme.color) ?? Color.primary)
                     Text("tok/s").font(.system(size: 11)).foregroundStyle(.secondary)
                 }
                 .frame(width: 80, alignment: .leading)
-                Text(row.usual.map { "usual \(Int($0.rounded()))" } ?? "").font(.system(size: 11)).foregroundStyle(.secondary)
+                Text(row.usual.map { "usual \(DashboardFormat.whole($0))" } ?? "").font(.system(size: 11)).foregroundStyle(.secondary)
                 Spacer(minLength: 4)
                 Sparkline(values: row.sparkline, reference: row.usual)
                     .stroke(row.color.map(Theme.color) ?? Color.secondary, style: StrokeStyle(lineWidth: 1.2, lineCap: .round, lineJoin: .round))
@@ -460,7 +460,7 @@ struct IncidentLinks: View {
     var body: some View {
         if !incidents.isEmpty {
             VStack(alignment: .leading, spacing: 2) {
-                ForEach(incidents) { incident in
+                ForEach(incidents.filter { StatusLink.isSafe($0.link) }) { incident in
                     Link(destination: incident.link) {
                         Label(incident.name, systemImage: "arrow.up.right.square").labelStyle(.titleAndIcon)
                     }

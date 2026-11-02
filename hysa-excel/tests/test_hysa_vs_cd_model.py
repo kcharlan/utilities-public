@@ -44,6 +44,18 @@ def with_values(**overrides: str) -> list[tuple[str, str]]:
     return [(name, overrides.get(name, value)) for name, value in VALID_ROWS]
 
 
+def test_output_tracks_edited_duration_across_supported_range(tmp_path: Path) -> None:
+    inputs = tmp_path / "inputs.csv"
+    write_inputs(inputs)
+    output = tmp_path / "model.xlsx"
+    MODEL.build_workbook(MODEL.load_inputs(inputs), output)
+    workbook = openpyxl.load_workbook(output, data_only=False)
+    balances = workbook["Monthly Balances"]
+    for column in ("C", "E", "G", "I", "K"):
+        assert balances[f"{column}1201"].value is not None
+    assert workbook["Output"]["B2"].value == "=INDEX('Monthly Balances'!C:C,'Inputs'!$B$8+1)"
+
+
 def run_cli(tmp_path: Path, *args: str) -> subprocess.CompletedProcess[str]:
     runtime_home = tmp_path / "runtime"
     env = os.environ.copy()
@@ -180,6 +192,8 @@ def test_default_output_is_written_to_runtime_home(tmp_path: Path) -> None:
 def test_runtime_home_symlink_is_rejected_without_touching_target(tmp_path: Path) -> None:
     target = tmp_path / "target-runtime"
     target.mkdir(mode=0o755)
+    target.chmod(0o755)
+    assert stat.S_IMODE(target.stat().st_mode) == 0o755
     runtime = tmp_path / "runtime"
     runtime.symlink_to(target, target_is_directory=True)
 
@@ -237,7 +251,7 @@ def test_generated_workbook_has_four_formula_driven_sheets(tmp_path: Path) -> No
     assert workbook["Monthly Balances"]["B2"].value.startswith("=MAX(")
     assert workbook["Monthly Balances"]["C2"].value == "='Inputs'!$B$2*(1+B2/12)"
     assert workbook["Monthly Balances"]["C3"].value == "=C2*(1+B3/12)"
-    assert workbook["Output"]["B2"].value == "='Monthly Balances'!C3"
+    assert workbook["Output"]["B2"].value == "=INDEX('Monthly Balances'!C:C,'Inputs'!$B$8+1)"
     assert "MAX($B$2:$B$9)" in workbook["Output"]["C2"].value
 
 
@@ -255,8 +269,8 @@ def test_one_month_duration_compounds_once_and_output_uses_that_balance(
     balances = workbook["Monthly Balances"]
     assert balances["C2"].value == "='Inputs'!$B$2*(1+B2/12)"
     assert balances["E2"].value == "='Inputs'!$B$2*(1+D2/12)"
-    assert workbook["Output"]["B2"].value == "='Monthly Balances'!C2"
-    assert workbook["Output"]["B3"].value == "='Monthly Balances'!E2"
+    assert workbook["Output"]["B2"].value == "=INDEX('Monthly Balances'!C:C,'Inputs'!$B$8+1)"
+    assert workbook["Output"]["B3"].value == "=INDEX('Monthly Balances'!E:E,'Inputs'!$B$8+1)"
 
 
 def test_multi_month_compounding_has_n_periods_numerically_and_in_formulas(
@@ -274,7 +288,7 @@ def test_multi_month_compounding_has_n_periods_numerically_and_in_formulas(
     assert balances["C2"].value == "='Inputs'!$B$2*(1+B2/12)"
     assert balances["C3"].value == "=C2*(1+B3/12)"
     assert balances["C4"].value == "=C3*(1+B4/12)"
-    assert workbook["Output"]["B2"].value == "='Monthly Balances'!C4"
+    assert workbook["Output"]["B2"].value == "=INDEX('Monthly Balances'!C:C,'Inputs'!$B$8+1)"
 
     synthetic_principal = 1e100
     synthetic_rate = 1.0

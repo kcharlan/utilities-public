@@ -15,8 +15,10 @@ import json
 import logging
 import os
 import plistlib
+import re
 import socket
 import subprocess
+import tempfile
 import threading
 import webbrowser
 from contextlib import asynccontextmanager
@@ -24,13 +26,13 @@ from typing import Any, Dict, List, Optional, Set
 from urllib.parse import unquote
 
 import uvicorn
-from fastapi import FastAPI, Request, WebSocket, WebSocketDisconnect, Query
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Query
 from fastapi.responses import HTMLResponse, JSONResponse, Response
 
 DATA_DIR = os.path.expanduser(os.environ.get("LAUNCHMASTER_HOME", "~/.launchmaster"))
 BACKUP_DIR = os.path.join(DATA_DIR, "backups")
 CONFIG_FILE = os.path.join(DATA_DIR, "config.json")
-VERSION = "1.1.1"
+VERSION = "1.1.2"
 DEFAULT_PORT = 8200
 
 logger = logging.getLogger("launchmaster")
@@ -2173,6 +2175,10 @@ function SettingsModal({ onClose, settings, setSettings, addToast, touchedRef })
   const [saving, setSaving] = useState(false);
 
   const handleSave = async () => {
+    if (settings.poll_interval === '' || !Number.isFinite(settings.poll_interval) || settings.poll_interval <= 0) {
+      addToast('error', 'Poll interval must be a positive number');
+      return;
+    }
     setSaving(true);
     try {
       await api('/settings', {
@@ -2189,7 +2195,7 @@ function SettingsModal({ onClose, settings, setSettings, addToast, touchedRef })
   };
 
   return (
-    html`<div class=${"modal-overlay"} onClick=${onClose}><div class=${"modal"} onClick=${e => e.stopPropagation()} style=${{ width: 480 }}><div class=${"modal-header"}><div class=${"modal-title"}><${Icon} name=${"settings"} size=${18} /> Settings</div><button class=${"icon-btn"} onClick=${onClose}><${Icon} name=${"x"} size=${16} /></button></div><div class=${"modal-body"}><div class=${"settings-section"}><div class=${"settings-section-title"}>Refresh</div><div class=${"form-group"}><label class=${"form-label"}>Poll Interval (seconds)</label><input class=${"form-input"} type=${"number"} value=${settings.poll_interval} onInput=${e => { touchedRef.current = true; setSettings(s => ({ ...s, poll_interval: Number(e.target.value) })); }} style=${{ width: 120 }} /><div class=${"form-hint"}>How often to refresh job status via WebSocket</div></div></div><div class=${"settings-section"}><div class=${"settings-section-title"}>Display</div><div class=${"toggle-row"}><span class=${"toggle-row-label"}>Show Apple System Jobs</span><div class=${'toggle-switch' + (settings.show_apple_jobs ? ' on' : '')} onClick=${() => setSettings(s => ({ ...s, show_apple_jobs: !s.show_apple_jobs }))} /></div><div class=${"toggle-row"}><span class=${"toggle-row-label"}>Dark Mode</span><div class=${'toggle-switch' + (settings.dark_mode ? ' on' : '')} onClick=${() => setSettings(s => ({ ...s, dark_mode: !s.dark_mode }))} /></div></div><div class=${"settings-section"}><div class=${"settings-section-title"}>Safety</div><div class=${"toggle-row"}><span class=${"toggle-row-label"}>Confirm before destructive actions</span><div class=${'toggle-switch' + (settings.confirm_destructive ? ' on' : '')} onClick=${() => setSettings(s => ({ ...s, confirm_destructive: !s.confirm_destructive }))} /></div><div class=${"toggle-row"}><span class=${"toggle-row-label"}>Confirm before modifying Apple jobs</span><div class=${'toggle-switch' + (settings.confirm_apple_modify ? ' on' : '')} onClick=${() => setSettings(s => ({ ...s, confirm_apple_modify: !s.confirm_apple_modify }))} /></div></div><div class=${"settings-section"}><div class=${"settings-section-title"}>Keyboard Shortcuts</div><div style=${{ display: 'grid', gridTemplateColumns: '60px 1fr', gap: '6px 12px', fontSize: 12, color: 'var(--text-secondary)' }}><kbd class=${"kbd"}>s</kbd> <span>Start selected job</span><kbd class=${"kbd"}>x</kbd> <span>Stop selected job</span><kbd class=${"kbd"}>r</kbd> <span>Reload selected job</span><kbd class=${"kbd"}>e</kbd> <span>Edit selected job</span><kbd class=${"kbd"}>l</kbd> <span>View logs</span><kbd class=${"kbd"}>n</kbd> <span>Create new job</span><kbd class=${"kbd"}>Esc</kbd> <span>Close menu/dialog/panel, then deselect</span><kbd class=${"kbd"}>/</kbd> <span>Focus search</span><kbd class=${"kbd"}>?</kbd> <span>Open settings & shortcuts</span></div></div></div><div class=${"modal-footer"}><button class=${"btn"} onClick=${onClose}>Cancel</button><button class=${"btn btn-accent"} onClick=${handleSave} disabled=${saving}>${saving ? 'Saving...' : 'Save & Close'}</button></div></div></div>`
+    html`<div class=${"modal-overlay"} onClick=${onClose}><div class=${"modal"} onClick=${e => e.stopPropagation()} style=${{ width: 480 }}><div class=${"modal-header"}><div class=${"modal-title"}><${Icon} name=${"settings"} size=${18} /> Settings</div><button class=${"icon-btn"} onClick=${onClose}><${Icon} name=${"x"} size=${16} /></button></div><div class=${"modal-body"}><div class=${"settings-section"}><div class=${"settings-section-title"}>Refresh</div><div class=${"form-group"}><label class=${"form-label"}>Poll Interval (seconds)</label><input class=${"form-input"} type=${"number"} value=${settings.poll_interval} onInput=${e => { touchedRef.current = true; setSettings(s => ({ ...s, poll_interval: e.target.value === "" ? "" : Number(e.target.value) })); }} style=${{ width: 120 }} /><div class=${"form-hint"}>How often to refresh job status via WebSocket</div></div></div><div class=${"settings-section"}><div class=${"settings-section-title"}>Display</div><div class=${"toggle-row"}><span class=${"toggle-row-label"}>Show Apple System Jobs</span><div class=${'toggle-switch' + (settings.show_apple_jobs ? ' on' : '')} onClick=${() => setSettings(s => ({ ...s, show_apple_jobs: !s.show_apple_jobs }))} /></div><div class=${"toggle-row"}><span class=${"toggle-row-label"}>Dark Mode</span><div class=${'toggle-switch' + (settings.dark_mode ? ' on' : '')} onClick=${() => setSettings(s => ({ ...s, dark_mode: !s.dark_mode }))} /></div></div><div class=${"settings-section"}><div class=${"settings-section-title"}>Safety</div><div class=${"toggle-row"}><span class=${"toggle-row-label"}>Confirm before destructive actions</span><div class=${'toggle-switch' + (settings.confirm_destructive ? ' on' : '')} onClick=${() => setSettings(s => ({ ...s, confirm_destructive: !s.confirm_destructive }))} /></div><div class=${"toggle-row"}><span class=${"toggle-row-label"}>Confirm before modifying Apple jobs</span><div class=${'toggle-switch' + (settings.confirm_apple_modify ? ' on' : '')} onClick=${() => setSettings(s => ({ ...s, confirm_apple_modify: !s.confirm_apple_modify }))} /></div></div><div class=${"settings-section"}><div class=${"settings-section-title"}>Keyboard Shortcuts</div><div style=${{ display: 'grid', gridTemplateColumns: '60px 1fr', gap: '6px 12px', fontSize: 12, color: 'var(--text-secondary)' }}><kbd class=${"kbd"}>s</kbd> <span>Start selected job</span><kbd class=${"kbd"}>x</kbd> <span>Stop selected job</span><kbd class=${"kbd"}>r</kbd> <span>Reload selected job</span><kbd class=${"kbd"}>e</kbd> <span>Edit selected job</span><kbd class=${"kbd"}>l</kbd> <span>View logs</span><kbd class=${"kbd"}>n</kbd> <span>Create new job</span><kbd class=${"kbd"}>Esc</kbd> <span>Close menu/dialog/panel, then deselect</span><kbd class=${"kbd"}>/</kbd> <span>Focus search</span><kbd class=${"kbd"}>?</kbd> <span>Open settings & shortcuts</span></div></div></div><div class=${"modal-footer"}><button class=${"btn"} onClick=${onClose}>Cancel</button><button class=${"btn btn-accent"} onClick=${handleSave} disabled=${saving}>${saving ? 'Saving...' : 'Save & Close'}</button></div></div></div>`
   );
 }
 
@@ -3024,6 +3030,10 @@ def discover_plists() -> List[Dict[str, Any]]:
             try:
                 with open(filepath, "rb") as f:
                     plist_data = plistlib.load(f)
+                if not isinstance(plist_data, dict):
+                    raise ValueError("Plist must be a dictionary")
+                if not isinstance(plist_data.get("Label"), str) or not plist_data["Label"]:
+                    raise ValueError("Plist label must be a non-empty string")
                 entry["label"] = plist_data.get("Label", filename.replace(".plist", ""))
                 entry["program_arguments"] = plist_data.get("ProgramArguments")
                 entry["program"] = plist_data.get("Program")
@@ -3169,7 +3179,11 @@ def build_job_list(include_apple: bool = False) -> List[Dict[str, Any]]:
         # Enabled: not in plist Disabled AND not in launchctl print-disabled
         job["enabled"] = not job.get("disabled", False) and label not in disabled_labels
         job["status"] = get_job_status(job)
-        job["schedule_human"] = humanize_schedule(job.get("plist_data", {}))
+        try:
+            job["schedule_human"] = humanize_schedule(job.get("plist_data", {}))
+        except (TypeError, ValueError, OverflowError) as exc:
+            job["parse_error"] = f"Invalid schedule: {exc}"
+            job["schedule_human"] = "Unknown schedule"
         # Remove plist_data from the response to keep payloads small
         job.pop("plist_data", None)
         jobs_by_label[label] = job
@@ -3297,7 +3311,7 @@ def _humanize_calendar_interval(sci: Any) -> str:
             continue
         wd = entry.get("Weekday")
         if wd is not None:
-            weekdays.append(WEEKDAY_NAMES.get(wd, str(wd)))
+            weekdays.append(WEEKDAY_NAMES.get(wd, str(wd)) if isinstance(wd, int) else str(wd))
         h = entry.get("Hour")
         m = entry.get("Minute")
         if h is not None:
@@ -3306,6 +3320,11 @@ def _humanize_calendar_interval(sci: Any) -> str:
             minute = m
 
     # Build time string
+    try:
+        hour = int(hour) if hour is not None else None
+        minute = int(minute) if minute is not None else None
+    except (ValueError, TypeError, OverflowError):
+        return "Calendar schedule"
     if hour is not None:
         minute_val = minute if minute is not None else 0
         h_int = int(hour)
@@ -3486,13 +3505,34 @@ async def save_plist(plist_path: str, content: str) -> Dict[str, Any]:
         return {"success": False, "message": f"Invalid plist XML: {exc}"}
 
     try:
-        with open(plist_path, "w", encoding="utf-8") as f:
-            f.write(content)
+        target = os.path.realpath(plist_path)
+        mode = os.stat(target).st_mode if os.path.exists(target) else None
+        fd, temporary = tempfile.mkstemp(prefix=".launchmaster-", dir=os.path.dirname(target))
+        try:
+            with os.fdopen(fd, "w", encoding="utf-8") as f:
+                f.write(content)
+                f.flush()
+                os.fsync(f.fileno())
+            if mode is not None:
+                os.chmod(temporary, mode)
+            os.replace(temporary, target)
+        finally:
+            if os.path.exists(temporary):
+                os.unlink(temporary)
         return {"success": True, "message": f"Saved {plist_path}"}
     except PermissionError:
         return {"success": False, "message": f"Permission denied writing {plist_path}"}
     except OSError as exc:
         return {"success": False, "message": f"Error writing {plist_path}: {exc}"}
+
+
+def _job_target(label: Any, domain_dir: str) -> Optional[str]:
+    if not isinstance(label, str) or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]*", label):
+        return None
+    target = os.path.join(domain_dir, f"{label}.plist")
+    if os.path.commonpath((os.path.realpath(domain_dir), os.path.realpath(target))) != os.path.realpath(domain_dir):
+        return None
+    return target
 
 
 async def create_job(plist_data: Dict[str, Any], domain: str) -> Dict[str, Any]:
@@ -3506,14 +3546,16 @@ async def create_job(plist_data: Dict[str, Any], domain: str) -> Dict[str, Any]:
     if not domain_dir:
         return {"success": False, "message": f"Unknown domain: {domain}"}
 
-    target_path = os.path.join(domain_dir, f"{label}.plist")
-    if os.path.exists(target_path):
+    target_path = _job_target(label, domain_dir)
+    if not target_path:
+        return {"success": False, "message": "Invalid plist label or target"}
+    if os.path.lexists(target_path):
         return {"success": False, "message": f"Plist already exists: {target_path}"}
 
     # Write plist
     try:
         plist_bytes = plistlib.dumps(plist_data, fmt=plistlib.FMT_XML)
-        with open(target_path, "wb") as f:
+        with open(target_path, "xb") as f:
             f.write(plist_bytes)
     except PermissionError:
         return {"success": False, "message": f"Permission denied writing {target_path}"}
@@ -3582,6 +3624,8 @@ async def import_job(content: str, domain: str) -> Dict[str, Any]:
     except Exception as exc:
         return {"success": False, "message": f"Invalid plist XML: {exc}"}
 
+    if not isinstance(plist_data, dict):
+        return {"success": False, "message": "Plist must be a dictionary"}
     label = plist_data.get("Label")
     if not label:
         return {"success": False, "message": "Plist must contain a 'Label' key"}
@@ -3590,10 +3634,15 @@ async def import_job(content: str, domain: str) -> Dict[str, Any]:
     if not domain_dir:
         return {"success": False, "message": f"Unknown domain: {domain}"}
 
-    target_path = os.path.join(domain_dir, f"{label}.plist")
+    target_path = _job_target(label, domain_dir)
+    if not target_path:
+        return {"success": False, "message": "Invalid plist label or target"}
     try:
-        with open(target_path, "w", encoding="utf-8") as f:
-            f.write(content)
+        if os.path.exists(target_path):
+            backup_plist(target_path)
+        result = await save_plist(target_path, content)
+        if not result["success"]:
+            return result
     except PermissionError:
         return {"success": False, "message": f"Permission denied writing {target_path}"}
     except OSError as exc:
@@ -3613,7 +3662,7 @@ def backup_plist(plist_path: str) -> str:
     import shutil
     os.makedirs(BACKUP_DIR, exist_ok=True)
     label = os.path.basename(plist_path).replace(".plist", "")
-    timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+    timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S_%f")
     backup_name = f"{label}.{timestamp}.plist"
     backup_path = os.path.join(BACKUP_DIR, backup_name)
     shutil.copy2(plist_path, backup_path)
@@ -3629,7 +3678,7 @@ def list_backups() -> List[Dict[str, Any]]:
         if not filename.endswith(".plist"):
             continue
         filepath = os.path.join(BACKUP_DIR, filename)
-        # Parse label and timestamp from filename: label.YYYYMMDD_HHMMSS.plist
+        # Parse both legacy second-resolution and microsecond backup names.
         parts = filename.rsplit(".", 2)
         if len(parts) >= 3:
             label = parts[0]
@@ -3658,9 +3707,15 @@ async def read_log_file(path: str, tail_lines: int = 200) -> List[str]:
         return [f"[Log file not found: {path}]"]
     try:
         def _read():
-            with open(path, "r", encoding="utf-8", errors="replace") as f:
-                lines = f.readlines()
-            return [line.rstrip("\n") for line in lines[-tail_lines:]]
+            count = max(0, min(tail_lines, 1000))
+            if not count:
+                return []
+            with open(path, "rb") as f:
+                f.seek(0, os.SEEK_END)
+                size = f.tell()
+                f.seek(max(0, size - 1024 * 1024))
+                data = f.read(1024 * 1024).decode("utf-8", errors="replace")
+            return data.splitlines()[-count:]
         return await asyncio.to_thread(_read)
     except PermissionError:
         return [f"[Permission denied: {path}]"]
@@ -3698,6 +3753,10 @@ async def read_unified_log(label: str, limit: int = 100) -> List[str]:
 # Step 5: FastAPI REST API
 # ============================================================
 
+def _valid_poll_interval(value: Any) -> bool:
+    return isinstance(value, (int, float)) and not isinstance(value, bool) and 0 < value < float("inf")
+
+
 def _load_config() -> Dict[str, Any]:
     """Load config from disk, returning defaults if missing."""
     defaults = {
@@ -3726,6 +3785,8 @@ def _load_config() -> Dict[str, Any]:
                 data.pop(legacy_key, None)
             merged = dict(defaults)
             merged.update(data)
+            if not _valid_poll_interval(merged["poll_interval"]):
+                merged["poll_interval"] = defaults["poll_interval"]
             return merged
         return dict(defaults)
     except (json.JSONDecodeError, OSError):
@@ -3773,6 +3834,8 @@ async def _poll_loop() -> None:
     global _cached_jobs
     while True:
         interval = _config.get("poll_interval", 5)
+        if not _valid_poll_interval(interval):
+            interval = 5
         await asyncio.sleep(interval)
         try:
             new_jobs = await asyncio.to_thread(build_job_list, True)
@@ -3795,7 +3858,39 @@ async def lifespan(application):
         _poll_task.cancel()
 
 
+# local-server-guard:begin
+class LocalOriginGuard:
+    """Reject foreign Host on every request, and foreign Origin on state changes."""
+
+    def __init__(self, app):
+        self.app = app
+
+    async def __call__(self, scope, receive, send):
+        if scope["type"] not in ("http", "websocket"):
+            await self.app(scope, receive, send)
+            return
+        server = scope.get("server")
+        port = server[1] if server and len(server) > 1 else None
+        allowed = {f"127.0.0.1:{port}", f"localhost:{port}"}
+        headers = [(k.lower(), v.decode("latin-1")) for k, v in scope.get("headers", [])]
+        hosts = [v for k, v in headers if k == b"host"]
+        origins = [v for k, v in headers if k == b"origin"]
+        ok = type(port) is int and 1 <= port <= 65535 and len(hosts) == 1 and hosts[0] in allowed
+        if ok and (scope["type"] == "websocket" or scope["method"] not in ("GET", "HEAD")):
+            ok = len(origins) == 1 and origins[0] == f"http://{hosts[0]}"
+        if ok:
+            await self.app(scope, receive, send)
+        elif scope["type"] == "websocket":
+            await receive()
+            await send({"type": "websocket.close", "code": 1008})
+        else:
+            await send({"type": "http.response.start", "status": 403,
+                        "headers": [(b"content-type", b"text/plain")]})
+            await send({"type": "http.response.body", "body": b"Forbidden"})
+# local-server-guard:end
+
 app = FastAPI(title="launchmaster", version=VERSION, lifespan=lifespan)
+app.add_middleware(LocalOriginGuard)
 
 
 # --- SPA ---
@@ -3956,12 +4051,11 @@ async def api_get_plist(label: str):
 
 
 @app.put("/api/jobs/{label:path}/plist")
-async def api_save_plist(label: str, request: Request):
+async def api_save_plist(label: str, body: Dict[str, Any]):
     label = unquote(label)
     job = _find_job(label)
     if not job:
         return JSONResponse(status_code=404, content={"success": False, "message": f"Job not found: {label}"})
-    body = await request.json()
     content = body.get("content", "")
     plist_path = job.get("plist_path")
     if not plist_path:
@@ -4008,8 +4102,7 @@ async def api_delete_job(label: str):
 # --- Create / Import ---
 
 @app.post("/api/jobs")
-async def api_create_job(request: Request):
-    body = await request.json()
+async def api_create_job(body: Dict[str, Any]):
     plist_data = body.get("plist_data", {})
     domain = body.get("domain", "user-agent")
     result = await create_job(plist_data, domain)
@@ -4019,8 +4112,7 @@ async def api_create_job(request: Request):
 
 
 @app.post("/api/jobs/import")
-async def api_import_job(request: Request):
-    body = await request.json()
+async def api_import_job(body: Dict[str, Any]):
     content = body.get("content", "")
     domain = body.get("domain", "user-agent")
     result = await import_job(content, domain)
@@ -4084,30 +4176,37 @@ async def api_list_backups():
 
 @app.post("/api/backups/{filename}/restore")
 async def api_restore_backup(filename: str):
-    import shutil
+    if os.path.basename(filename) != filename:
+        return {"success": False, "message": "Invalid backup filename"}
     backup_path = os.path.join(BACKUP_DIR, filename)
+    if os.path.commonpath((os.path.realpath(BACKUP_DIR), os.path.realpath(backup_path))) != os.path.realpath(BACKUP_DIR):
+        return {"success": False, "message": "Invalid backup path"}
     if not os.path.isfile(backup_path):
         return JSONResponse(
             status_code=404,
             content={"success": False, "message": f"Backup not found: {filename}"},
         )
-    # Parse label from filename
-    parts = filename.rsplit(".", 2)
-    label = parts[0] if len(parts) >= 3 else filename.replace(".plist", "")
-
-    # Try to find original domain from label
+    # The plist label determines the destination.
     try:
         with open(backup_path, "rb") as f:
             plist_data = plistlib.load(f)
-        plist_label = plist_data.get("Label", label)
-    except Exception:
-        plist_label = label
+        plist_label = plist_data.get("Label") if isinstance(plist_data, dict) else None
+    except Exception as exc:
+        return {"success": False, "message": f"Invalid backup plist: {exc}"}
 
     # Default restore to user-agent domain
     target_dir = PLIST_DIRS["user-agent"]
-    target_path = os.path.join(target_dir, f"{plist_label}.plist")
+    target_path = _job_target(plist_label, target_dir)
+    if not target_path:
+        return {"success": False, "message": "Invalid plist label or target"}
     try:
-        shutil.copy2(backup_path, target_path)
+        if os.path.exists(target_path):
+            backup_plist(target_path)
+        with open(backup_path, "rb") as f:
+            content = plistlib.dumps(plistlib.load(f), fmt=plistlib.FMT_XML).decode("utf-8")
+        result = await save_plist(target_path, content)
+        if not result["success"]:
+            return result
     except PermissionError:
         return {"success": False, "message": f"Permission denied writing {target_path}"}
     except OSError as exc:
@@ -4129,8 +4228,9 @@ async def api_get_settings():
 
 
 @app.put("/api/settings")
-async def api_put_settings(request: Request):
-    body = await request.json()
+async def api_put_settings(body: Dict[str, Any]):
+    if "poll_interval" in body and not _valid_poll_interval(body["poll_interval"]):
+        return JSONResponse(status_code=400, content={"success": False, "message": "Poll interval must be a positive number"})
     _config.update(body)
     await asyncio.to_thread(_save_config, _config)
     return {"success": True, "message": "Settings saved"}
@@ -4190,10 +4290,6 @@ def parse_args():
         help=f"Preferred port (default: {DEFAULT_PORT})",
     )
     parser.add_argument(
-        "--host", type=str, default="127.0.0.1",
-        help="Host to bind to (default: 127.0.0.1)",
-    )
-    parser.add_argument(
         "--no-browser", action="store_true",
         help="Don't open browser on startup",
     )
@@ -4219,7 +4315,7 @@ def main():
     if port != args.port:
         logger.warning("Port %d is in use; using port %d instead.", args.port, port)
 
-    url = f"http://{args.host}:{port}"
+    url = f"http://127.0.0.1:{port}"
     print(f"launchmaster v{VERSION} starting at {url}")
 
     if not args.no_browser and not os.environ.get("UTILITIES_TESTING"):
@@ -4227,7 +4323,7 @@ def main():
 
     uvicorn.run(
         app,
-        host=args.host,
+        host="127.0.0.1",
         port=port,
         log_level="debug" if args.debug else "warning",
     )

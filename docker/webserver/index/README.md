@@ -31,10 +31,13 @@ A built-in control panel for creating and managing reverse-proxy endpoints witho
 
 ### Dynamic Reverse Proxy
 
-*   **Transparent proxying:** Proxies requests matching configured endpoint paths to upstream targets using `@fastify/reply-from`. Common request bodies (including `application/x-www-form-urlencoded`) are streamed through without server-side parsing.
+*   **Transparent proxying:** Proxies requests matching configured endpoint paths to upstream targets using `@fastify/reply-from`. Request bodies are forwarded as bytes, up to 100 MiB. WebSocket upgrades for configured endpoints require a same-origin `Origin` and are forwarded to the upstream.
 *   **Strip path option:** Each endpoint can strip or preserve the public prefix when forwarding traffic.
 *   **Host access:** Targets using `localhost` or `127.0.0.1` are automatically rewritten to `host.docker.internal` (or the value of `HOST_DOCKER_GATEWAY`) so containers can reach host-side services.
-*   **Sticky routing:** When an app served via a stripped-path alias makes follow-up requests to absolute paths (e.g., `/search`), the proxy remembers the client (5 minutes per IP+User-Agent) and continues routing to the same upstream.
+*   **Absolute paths:** A same-origin Referer under a stripped-path alias routes
+    follow-up requests to that endpoint. Requests without such a Referer must
+    use the configured prefix; the server does not guess from client identity,
+    which could send another application's cookies to the wrong upstream.
 
 This service runs on port `3000` within its Docker container. Nginx uses it for
 the root fallback and for missing paths not captured by Nginx's common
@@ -48,6 +51,13 @@ static-asset location.
 | `CONFIG_ROOT` | `/mnt/config` | Directory where `endpoints.json` is stored |
 | `CONFIG_FILE` | `$CONFIG_ROOT/endpoints.json` | Full path to the endpoint config file |
 | `HOST_DOCKER_GATEWAY` | `host.docker.internal` | Loopback remap target so containers can reach localhost services on the host |
+| `PUBLIC_PORT` | `7711` | Public loopback port accepted in Host and Origin headers |
+
+The configuration API rejects non-loopback Hosts and requires a matching
+same-origin Origin on mutations. Nginx must preserve the public Host header,
+including its port. Invalid stored configuration is quarantined; valid entries
+are retained and the configuration page reports the recovery. The file browser
+does not expose hidden paths or paths resolving outside the webroot.
 
 ## Integration with Docker Compose
 

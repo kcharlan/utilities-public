@@ -16,7 +16,7 @@ function loadPopupStatusRenderer(background = null, clipboard = { writeText: asy
   const blobs = [];
   const elements = {};
   const markup = [];
-  for (const id of ['appearanceButton','appearanceMenu','appearanceAuto','appearanceMeter','appearanceNative','automaticHint','status','statusLabel','statusDetail','captureToggle','persistenceStatus','registerHeading','registerTotal','register','deliveryState','deliveryDetails','captureState','captureHeld','logState','logList','deliveryFold','captureFold','logFold','export','notice','reset','forcePush','clearCapture','reload']) {
+  for (const id of ['appearanceButton','appearanceMenu','appearanceAuto','appearanceMeter','appearanceNative','automaticHint','status','statusLabel','statusDetail','captureToggle','persistenceStatus','registerHeading','registerTotal','register','deliveryState','deliveryDetails','captureState','captureHeld','logState','logList','deliveryFold','captureFold','logFold','export','notice','reset','forcePush','recoverSequence','clearCapture','reload']) {
     elements[id] = fakeNode(markup);
     elements[id].addEventListener = (event, fn) => { callbacks[id + ':' + event] = fn; };
     elements[id].attributes = {};
@@ -323,6 +323,11 @@ test('delivery states, queued/inflight arithmetic, buttons and first-error fold 
  p.context.renderStatus({available:false}); assert.equal(p.elements.deliveryState.textContent,'Unavailable');
  p.context.renderCaptureState({captureCount:0}); assert.equal(p.elements.clearCapture.disabled,true);
  p.context.renderCaptureState({captureCount:1}); assert.equal(p.elements.clearCapture.disabled,false);
+});
+test('sequence recovery is offered only for a conflict', () => {
+ const p=loadPopupStatusRenderer();
+ p.context.renderStatus({pending:{}, recoveryAvailable:false}); assert.equal(p.elements.recoverSequence.disabled,true);
+ p.context.renderStatus({pending:{a:1}, recoveryAvailable:true, deliveryError:'Collector HTTP 409'}); assert.equal(p.elements.recoverSequence.disabled,false);
 });
 test('log shows newest five with decision tones and empty state', () => {
  const p=loadPopupStatusRenderer(); p.context.renderStatus({debug:[]}); assert.equal(p.elements.logState.textContent,'None'); assert.match(p.elements.logList.textContent,/Nothing observed/);

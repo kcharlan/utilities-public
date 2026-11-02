@@ -291,6 +291,7 @@ audited_scopes=(
   storage_monitor
   tools/deploy_storage_monitor.mjs
   tools/deployment_files.mjs
+  tools/transaction.mjs
   tools/deploy_copies.mjs
   tools/deployment_copies.json
   ':(glob)**/.gitignore'
@@ -377,6 +378,9 @@ if [[ "$git_snapshot_ok" == true ]]; then
   for indexed_path in "${index_paths[@]}"; do
     indexed_source="$REPO_ROOT/$indexed_path"
     if [[ -L "$indexed_source" || ! -f "$indexed_source" ]]; then
+      source_state_invalid[$indexed_path]=1
+    elif ! run_git_capture "source hash failed" "$AUDIT_TMP/source-oid" hash-object --no-filters -- "$indexed_path" ||
+         [[ "$(<"$AUDIT_TMP/source-oid")" != "${index_oids[$indexed_path]}" ]]; then
       source_state_invalid[$indexed_path]=1
     fi
   done
@@ -659,20 +663,20 @@ audit_native_deployment() {
 audit_native_deployment colophon tools/deploy_colophon.mjs \
   native-source-inventory native 'colophon native' \
   'colophon native deployment unverified (source, binary or receipt drift)' \
-  colophon/Makefile tools/deploy_colophon.mjs tools/deployment_files.mjs
+  colophon/Makefile tools/deploy_colophon.mjs tools/deployment_files.mjs tools/transaction.mjs
 
 audit_native_deployment brew_version tools/deploy_brew_version.mjs \
   brew-version-source-inventory brew 'brew-version native' \
   'brew-version native deployment unverified (source, command, app or receipt drift)' \
   brew_version/Package.swift brew_version/Makefile brew_version/Resources/Info.plist \
   brew_version/Tests/BrewVersionCLITests/Fixtures/expected-help.txt \
-  tools/deploy_brew_version.mjs tools/deployment_files.mjs
+  tools/deploy_brew_version.mjs tools/deployment_files.mjs tools/transaction.mjs
 
 audit_native_deployment storage_monitor tools/deploy_storage_monitor.mjs \
   storage-monitor-source-inventory storage storage_monitor \
   'storage_monitor deployment unverified (source, launcher, walker or receipt drift)' \
   storage_monitor/storage_monitor storage_monitor/native/Makefile \
-  tools/deploy_storage_monitor.mjs tools/deployment_files.mjs
+  tools/deploy_storage_monitor.mjs tools/deployment_files.mjs tools/transaction.mjs
 
 audit_native_deployment anker_charge_monitor tools/deploy_anker_charge_monitor.mjs \
   anker-charge-monitor-source-inventory anker 'anker-charge-monitor native' \
@@ -680,7 +684,7 @@ audit_native_deployment anker_charge_monitor tools/deploy_anker_charge_monitor.m
   anker_charge_monitor/Package.swift anker_charge_monitor/Makefile \
   anker_charge_monitor/Resources/Info.plist anker_charge_monitor/tools/install.sh \
   anker_charge_monitor/tools/resolve_signing_identity.sh \
-  tools/deploy_anker_charge_monitor.mjs tools/deploy_brew_version.mjs tools/deployment_files.mjs
+  tools/deploy_anker_charge_monitor.mjs tools/deploy_brew_version.mjs tools/deployment_files.mjs tools/transaction.mjs
 
 audit_native_deployment telltale tools/deploy_telltale.mjs \
   telltale-source-inventory telltale 'telltale native' \
@@ -689,7 +693,7 @@ audit_native_deployment telltale tools/deploy_telltale.mjs \
   telltale/Resources/Fonts/BarlowSemiCondensed-Medium.ttf \
   telltale/Resources/Fonts/BarlowSemiCondensed-Regular.ttf telltale/Resources/Fonts/OFL.txt \
   telltale/tools/install.sh telltale/tools/resolve_signing_identity.sh \
-  tools/deploy_telltale.mjs tools/deploy_brew_version.mjs tools/deployment_files.mjs
+  tools/deploy_telltale.mjs tools/deploy_brew_version.mjs tools/deployment_files.mjs tools/transaction.mjs
 
 for mapping in "${copy_mappings[@]}"; do
   source_relative="${mapping%%|*}"
@@ -1131,7 +1135,7 @@ if [[ "$model_can_inspect" == true ]]; then
         metadata_kind_count="$(grep -Ec \
           '^BUILD_KIND = "standalone"$' "$streamed_file" || true)"
         metadata_revision_count="$(grep -Ec \
-          '^BUILD_REVISION = "([0-9a-f]{12}(\+modified)?|unknown)"$' \
+          '^BUILD_REVISION = "([0-9a-f]{12}|unknown)"$' \
           "$streamed_file" || true)"
         metadata_hash_count="$(grep -Fxc \
           "BUILD_SOURCE_HASH = \"$model_source_hash\"" \
@@ -1184,6 +1188,7 @@ for project in "${all_projects[@]}"; do
   project_mode_differences=0
   project_stale="${stale_counts[$project]:-0}"
   project_source_state_failures=0
+  project_index_count=0
   project_operational_errors="${stale_history_operational_errors[$project]:-0}"
 
   if [[ "$git_snapshot_ok" != true ]]; then
@@ -1195,6 +1200,7 @@ for project in "${all_projects[@]}"; do
       if [[ "$tracked_file" != "$project"/* ]]; then
         continue
       fi
+      project_index_count=$((project_index_count + 1))
       source_file="$REPO_ROOT/$tracked_file"
       if [[ -n "${source_state_invalid[$tracked_file]-}" ]]; then
         project_source_state_failures=$((project_source_state_failures + 1))
@@ -1246,6 +1252,9 @@ for project in "${all_projects[@]}"; do
         project_source_state_failures=$((project_source_state_failures + 1))
       fi
     done
+    if (( project_index_count == 0 && project_source_state_failures == 0 )); then
+      project_source_state_failures=1
+    fi
   fi
 
   if (( project_missing ||

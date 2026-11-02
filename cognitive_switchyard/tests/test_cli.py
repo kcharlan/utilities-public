@@ -594,3 +594,14 @@ def test_validate_pack_reports_manifest_reference_permission_shebang_and_regex_f
     assert "status.progress_format: must be a valid regex" in captured.out
     assert "scripts/preflight: script is not executable" in captured.out
     assert "scripts/execute: text executable is missing a shebang" in captured.out
+
+
+def test_serve_rejects_non_loopback_before_runtime_setup(tmp_path: Path, monkeypatch) -> None:
+    runtime_root = tmp_path / 'synthetic-runtime'
+    def forbidden(_args):
+        pytest.fail('runtime setup happened before host validation')
+    monkeypatch.setattr('cognitive_switchyard.cli._initialize_runtime', forbidden)
+    with pytest.raises(SystemExit) as exc:
+        main(['--runtime-root', str(runtime_root), 'serve', '--host', '0.0.0.0'])
+    assert exc.value.code == 2
+    assert not runtime_root.exists()
