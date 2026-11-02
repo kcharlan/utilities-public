@@ -1,5 +1,11 @@
 # Lessons learned
 
+## 2026-11-02: Normalize distance records before aggregation
+
+An output column labelled kilometres can silently misstate mixed-unit records if
+it sums raw values or assumes one unit. Convert each record using its declared
+unit before deduplication and aggregation; reject missing or unknown units.
+
 ## 2026-11-02: Cover every launchd domain in target selection
 
 Apple and non-Apple daemons both use the system launchd domain. Exercise every
