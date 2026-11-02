@@ -1,7 +1,17 @@
 from __future__ import annotations
 
+import math
 from pathlib import Path
 from typing import Any
+
+
+def validate_score(score: object, source: str) -> dict:
+    summary = score.get("summary") if isinstance(score, dict) else None
+    value = summary.get("score_percent") if isinstance(summary, dict) else None
+    if (isinstance(value, bool) or not isinstance(value, (int, float))
+            or not 0 <= value <= 100 or not math.isfinite(value)):
+        raise ValueError(f"{source}: summary.score_percent must be a number from 0 to 100")
+    return score
 
 
 def _format_elapsed(elapsed_ms: Any) -> str:

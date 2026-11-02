@@ -1868,3 +1868,95 @@ def test_repo_task_model_step_never_receives_bench_base_python(tmp_path: Path) -
     assert exit_code == 0
     assert ordinary_base_python_path.read_text(encoding="utf-8") != "None"
     assert model_base_python_path.read_text(encoding="utf-8") == "None"
+
+
+def _repo_task_bench(
+    tmp_path: Path, *, executor_script: str, step_scripts: dict[str, str], extra_yaml: str = ""
+) -> tuple[Path, Path, Path]:
+    source_repo = tmp_path / "source-repo"
+    source_repo.mkdir()
+    _git(["init", "-b", "main"], cwd=source_repo)
+    _write_text(source_repo / "seed.txt", "synthetic seed\n")
+    _git(["add", "seed.txt"], cwd=source_repo)
+    _git(["commit", "-m", "seed"], cwd=source_repo)
+    benchmark_dir = tmp_path / "bench"
+    results_dir = tmp_path / "results"
+    steps = "".join(f"  - name: {name}\n    run: ./scripts/{name}.sh\n" for name in step_scripts)
+    _write_text(
+        benchmark_dir / "bench.yaml",
+        f"type: repo_task\nid: synthetic\noutput_dir: {results_dir}\n"
+        f"workspace:\n  kind: git_worktree\n  source_repo: {source_repo}\n"
+        "executor:\n  kind: cli\n  command: ./scripts/executor.sh\n"
+        "steps:\n  - name: execute\n    use_executor: true\n"
+        f"{steps}scoring:\n  output: score.json\n{extra_yaml}",
+    )
+    for name, content in {"executor": executor_script, **step_scripts}.items():
+        path = benchmark_dir / "scripts" / f"{name}.sh"
+        _write_text(path, content)
+        path.chmod(0o755)
+    return benchmark_dir, results_dir, source_repo
+
+
+@pytest.mark.parametrize(
+    ("score_content", "expected_error"),
+    [
+        (None, "score.json: score file was not written"),
+        ('{"score": 100}', "score.json: summary.score_percent must be a number from 0 to 100"),
+        ('{"summary": {"score_percent": 150}}', "score.json: summary.score_percent must be a number from 0 to 100"),
+        ('{broken', "score.json: not valid JSON"),
+    ],
+    ids=["missing", "no-summary", "out-of-range", "invalid-json"],
+)
+def test_repo_task_invalid_score_file_fails_with_named_error(
+    tmp_path: Path, monkeypatch, score_content: str | None, expected_error: str
+) -> None:
+    from benchmark_llm.storage import list_runs
+
+    judge = "#!/bin/sh\n" + (
+        f"printf '%s' '{score_content}' > \"$BENCH_RUN_DIR/score.json\"\n" if score_content else "exit 0\n"
+    )
+    benchmark_dir, results_dir, _ = _repo_task_bench(
+        tmp_path,
+        executor_script='#!/bin/sh\nprintf done > "$WORKSPACE_ROOT/result.txt"\n',
+        step_scripts={"judge": judge},
+    )
+    captured: list[Path] = []
+    monkeypatch.setattr(
+        cli_module, "run_repo_task_final_summary",
+        lambda *, run_dirs, **kwargs: captured.extend(run_dirs) or results_dir / "summary.md",
+    )
+    runtime_home = tmp_path / "runtime"
+    stderr = io.StringIO()
+    exit_code = main(
+        ["run", str(benchmark_dir), "-m", "demo-model"],
+        environ={"BENCH_RUNTIME_HOME": str(runtime_home)}, stdout=io.StringIO(), stderr=stderr,
+    )
+    run_dir, = results_dir.iterdir()
+    failure = json.loads((run_dir / "failure.json").read_text())
+    assert exit_code == 1
+    assert failure["error"] == expected_error
+    assert failure["failed_command"] is None
+    assert f"Model failed: demo-model ({run_dir.name})" in stderr.getvalue()
+    assert captured == [run_dir]
+    assert list_runs(runtime_home) == []
+
+
+def test_validate_score_accepts_contract_shapes() -> None:
+    from benchmark_llm.reporting import validate_score
+
+    for score in [
+        {"summary": {"score_percent": 91.0}},
+        {"score": 75, "max_score": 100, "summary": {"passed": 3, "total": 4, "score_percent": 75.0}},
+        {"summary": {"score_percent": 0}},
+        {"summary": {"score_percent": 100}},
+    ]:
+        assert validate_score(score, "score.json") == score
+    for score in [
+        True, {"summary": True}, {"summary": {"score_percent": True}},
+        {"summary": {"score_percent": float("nan")}},
+        {"summary": {"score_percent": float("inf")}},
+        {"summary": {"score_percent": -1}}, {"summary": {"score_percent": "91"}},
+        {"score": 100},
+    ]:
+        with pytest.raises(ValueError, match="score.json"):
+            validate_score(score, "score.json")
