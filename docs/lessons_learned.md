@@ -2211,3 +2211,9 @@ Office documents can nest paragraphs and slide shapes inside content controls
 and groups. Walk those containers in order and reuse the normal paragraph,
 table, and shape processing; strict-mode synthetic conversions catch silent
 text loss that a successful return code alone misses.
+
+### 2026-11-02 — Validate direction before normalizing amounts
+
+Taking an absolute value can turn an unsupported positive withdrawal into an
+outgoing transfer. Reject the unexpected sign before normalization and test a
+later invalid row across a batch so no earlier outputs are committed.

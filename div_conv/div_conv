@@ -1195,6 +1195,11 @@ def cook_transactions(
                 f"{transaction.source_file}: row {transaction.source_row} requires "
                 f"brokerages.{brokerage}.{target_name}.{transaction.action} in {config}."
             )
+        if transaction.action == "withdrawal" and transaction.amount > 0:
+            raise UserError(
+                f"{transaction.source_file}: row {transaction.source_row} has a positive "
+                "Withdrawal amount; Vanguard withdrawals must be negative or zero."
+            )
         cooked.append(
             CookedTransaction(
                 brokerage=brokerage,

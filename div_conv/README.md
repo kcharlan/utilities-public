@@ -100,7 +100,7 @@ Supported Vanguard actions:
 
 The Vanguard cooked CSV preserves the Vanguard header and included source rows unchanged. Reinvestment and sweep rows are omitted, matching QIF transaction inclusion.
 
-For both brokerages, inclusion depends on the supported transaction action, never the fund name, symbol, investment type, or amount sign. Changing funds does not change filtering; included dividends still require the normal local security mapping. The dividend income entry remains included when its accompanying reinvestment purchase is excluded. Negative dividend adjustments and Vanguard withdrawals remain included. Unknown actions stop conversion rather than being silently discarded.
+For both brokerages, inclusion depends on the supported transaction action, never the fund name, symbol, or investment type. Changing funds does not change filtering; included dividends still require the normal local security mapping. The dividend income entry remains included when its accompanying reinvestment purchase is excluded. Negative dividend adjustments and Vanguard withdrawals with negative or zero amounts remain included. A positive Vanguard withdrawal stops the batch with a row-specific error. Unknown actions stop conversion rather than being silently discarded.
 
 The two contracts are registered as separate adapters. Each adapter owns its required headers, allowed source actions, and raw-row extraction. Shared code owns configuration validation, batch cooking, rendering, and the all-artifact output transaction.
 
