@@ -14,10 +14,10 @@ def test_state_inventory_retains_names_years_and_qif(monkeypatch, tmp_path):
     assert not tmp_path.resolve().is_relative_to(PROJECT.parent)
     states = {state['code']: state for state in build_payload(PROJECT / 'rules', rules_source='bundled')['states']}
     assert states['GA']['display_name'] == 'Georgia'
-    assert states['GA']['years'] == [2025, 2026]
+    assert {2025, 2026} <= set(states['GA']['years'])
     assert states['GA']['qif']['state_transfer'] == '[GA State Income Taxes]'
     assert states['PA']['display_name'] == 'Pennsylvania'
-    assert states['PA']['years'] == [2026]
+    assert 2026 in states['PA']['years']
     assert states['PA']['qif']['state_transfer'] == '[PA State Income Taxes]'
 
 

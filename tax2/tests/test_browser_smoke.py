@@ -423,7 +423,9 @@ def test_tablet_sidebar_spans_main_and_export(built_browser):
 def test_defaults_format_reconciliation_and_current_qif(built_browser):
     page = built_browser(instant='2026-10-08T12:00:00Z')
     expect(page.get_by_label('Tax Year', exact=True)).to_have_value('2026')
-    assert page.get_by_label('Tax Year', exact=True).locator('option').all_text_contents() == ['2026', '2025']
+    years = page.get_by_label('Tax Year', exact=True).locator('option').all_text_contents()
+    assert years == sorted(years, key=int, reverse=True)
+    assert {'2025', '2026'} <= set(years)
     field = page.get_by_label('Monthly Unearned Income', exact=True)
     expect(field).to_have_value('12,500.00')
     field.focus()

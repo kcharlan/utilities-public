@@ -1,10 +1,13 @@
 import pytest
 from pathlib import Path
+import shutil
 import yaml
 
 from taxkit.models import FilingStatus, IncomeClass
 from taxkit.rules_loader import load_rules
 from taxkit.utils import discover_year_files
+
+PROJECT = Path(__file__).resolve().parents[1]
 
 
 def test_discovery_single_implementation():
@@ -136,15 +139,37 @@ def test_empty_components_fail(tmp_path):
         load_rules(str(write_synthetic(tmp_path / "empty.yaml", data)))
 
 
-def test_bundled_normalization_preserves_frozen_rules_except_enabled_pa_eit():
-    for path in Path("rules").rglob("*.yaml"):
-        frozen = Path("tests/fixtures/parity/bundled") / path
+def assert_live_rules_match_frozen(project_root):
+    frozen_root = project_root / "tests/fixtures/parity/bundled/rules"
+    frozen_files = sorted(frozen_root.rglob("*.yaml"))
+    assert frozen_files
+    for frozen in frozen_files:
+        relative = frozen.relative_to(frozen_root)
+        path = project_root / "rules" / relative
+        assert path.is_file(), f"Missing live rule: {path}"
         expected = load_rules(str(frozen)).model_dump(mode="json")
-        if path == Path("rules/states/PA/2026.yaml"):
+        if relative == Path("states/PA/2026.yaml"):
             # The retired-engine oracle retains disabled EIT; 3.0.1 enables it.
             # Keep comparing every other field, including the rate and basis.
             next(c for c in expected['components'] if c['name'] == 'local_eit')['enabled'] = True
         assert load_rules(str(path)).model_dump(mode="json") == expected
+
+
+def test_live_rules_match_every_frozen_rule_except_enabled_pa_eit():
+    assert_live_rules_match_frozen(PROJECT)
+
+
+def test_rule_pin_ignores_new_live_years_and_rejects_empty_frozen_set(tmp_path):
+    empty_root = tmp_path / "empty"
+    (empty_root / "tests/fixtures/parity/bundled/rules").mkdir(parents=True)
+    with pytest.raises(AssertionError):
+        assert_live_rules_match_frozen(empty_root)
+
+    copy_root = tmp_path / "copy"
+    shutil.copytree(PROJECT / "rules", copy_root / "rules")
+    shutil.copytree(PROJECT / "tests/fixtures/parity/bundled", copy_root / "tests/fixtures/parity/bundled")
+    shutil.copyfile(copy_root / "rules/federal/2026.yaml", copy_root / "rules/federal/2027.yaml")
+    assert_live_rules_match_frozen(copy_root)
 
 
 @pytest.mark.parametrize("status", ["single", "married_joint"])
@@ -170,7 +195,7 @@ def test_all_numeric_model_fields_finite(tmp_path, value, field):
 
 
 def test_v1_ga_2025_normalizes_to_default_component():
-    rules = load_rules("rules/states/GA/2025.yaml")
+    rules = load_rules(str(PROJECT / "rules/states/GA/2025.yaml"))
 
     assert len(rules.components) == 1
     component = rules.components[0]
@@ -182,7 +207,7 @@ def test_v1_ga_2025_normalizes_to_default_component():
 
 
 def test_v1_federal_2026_normalizes_to_default_component():
-    rules = load_rules("rules/federal/2026.yaml")
+    rules = load_rules(str(PROJECT / "rules/federal/2026.yaml"))
 
     assert len(rules.components) == 1
     component = rules.components[0]
@@ -257,12 +282,12 @@ components:
 
 
 def test_pa_years_after_rules_added():
-    assert sorted(discover_year_files(Path("rules/states/PA"))) == [2026]
+    assert 2026 in discover_year_files(PROJECT / "rules/states/PA")
 
 
 def test_pa_2026_components_and_ga_qif_defaults():
-    pa_rules = load_rules("rules/states/PA/2026.yaml")
-    ga_rules = load_rules("rules/states/GA/2026.yaml")
+    pa_rules = load_rules(str(PROJECT / "rules/states/PA/2026.yaml"))
+    ga_rules = load_rules(str(PROJECT / "rules/states/GA/2026.yaml"))
 
     assert pa_rules.display_name == "Pennsylvania"
     assert len(pa_rules.components) == 2
