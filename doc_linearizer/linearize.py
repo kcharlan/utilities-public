@@ -131,7 +131,7 @@ def transform_waffle_tables(root_soup: BeautifulSoup, content_div: BeautifulSoup
             continue
         
         # The header cells are tds in this table
-        headers = [td.get_text(strip=True) for td in header_row.find_all("td")]
+        headers = [_sanitize_cell_text(td.get_text(strip=True)) for td in header_row.find_all("td")]
         if not headers:
             continue
 
@@ -148,12 +148,12 @@ def transform_waffle_tables(root_soup: BeautifulSoup, content_div: BeautifulSoup
             
             # Check for subheader rows (one cell with colspan)
             if len(tds) == 1 and tds[0].has_attr('colspan'):
-                subheader_text = tds[0].get_text(separator=" ", strip=True).replace("\n", " ")
+                subheader_text = _sanitize_cell_text(tds[0].get_text(separator=" ", strip=True))
                 cells = [f"**{subheader_text}**"] + [""] * (len(headers) - 1)
                 markdown_table.append(f"| {' | '.join(cells)} |")
             else:
                 cells = [
-                    td.get_text(separator=" ", strip=True).replace("\n", " ")
+                    _sanitize_cell_text(td.get_text(separator=" ", strip=True))
                     for td in tds
                 ]
                 if len(cells) == len(headers) and any(c.strip() for c in cells):
@@ -169,7 +169,7 @@ def transform_dict_tables(root_soup: BeautifulSoup, content_div: BeautifulSoup, 
     Markdown-formatted text blocks.
     """
     for table in content_div.find_all("table", class_="dict"):
-        headers = [th.get_text(strip=True) for th in table.find_all("th")]
+        headers = [_sanitize_cell_text(th.get_text(strip=True)) for th in table.find_all("th")]
         
         # Skip tables that don't look like a dictionary table
         if not headers:
@@ -183,7 +183,7 @@ def transform_dict_tables(root_soup: BeautifulSoup, content_div: BeautifulSoup, 
 
         for row in table.find("tbody").find_all("tr"):
             cells = [
-                td.get_text(separator=" ", strip=True).replace("\n", " ")
+                _sanitize_cell_text(td.get_text(separator=" ", strip=True))
                 for td in row.find_all("td")
             ]
             if len(cells) == len(headers):
@@ -310,7 +310,7 @@ def strip_decorative_elements(content_div: BeautifulSoup):
 
 def _sanitize_cell_text(text: str) -> str:
     collapsed = re.sub(r"\s+", " ", text or "")
-    return collapsed.replace("|", r"\|").strip()
+    return collapsed.replace("\\", r"\\").replace("|", r"\|").strip()
 
 
 def convert_tables_to_markdown(soup: BeautifulSoup, content_div: BeautifulSoup, table_blocks: dict):
@@ -498,7 +498,12 @@ def process_page(
     html_string = str(content_div)
     markdown = converter.handle(html_string).strip()
     for token, table_markdown in table_blocks.items():
-        markdown = markdown.replace(token, table_markdown)
+        markdown = re.sub(
+            rf"^([ \t>]*?){re.escape(token)}",
+            lambda match: match.group(1) + table_markdown.replace("\n", "\n" + match.group(1)),
+            markdown,
+            flags=re.MULTILINE,
+        )
 
     return f'<a id="{html.escape(page_anchor_id, quote=True)}"></a>\n\n{markdown}'
 

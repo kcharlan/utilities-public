@@ -81,3 +81,29 @@ grep -Fq 'Glob page' "$scratch_dir/glob-output/guide.md"
 if grep -Fq 'Generated asset sentinel' "$scratch_dir/glob-output/guide.md"; then
   printf 'generated asset view was included\n' >&2; exit 1
 fi
+
+# Preserve both blockquote structure and literal backslashes in table cells.
+mkdir -p "$scratch_dir/context/site" "$scratch_dir/context-output"
+cat > "$scratch_dir/context/site/index.html" <<'HTML'
+<html><body>
+<table><tr><th>Kind</th><th>Value</th></tr><tr><td>pipe</td><td>a|b</td></tr><tr><td>backslash pipe</td><td>a\|b</td></tr></table>
+<table class="dict"><thead><tr><th>Kind</th><th>Value</th></tr></thead><tbody><tr><td>dict</td><td>a\|b</td></tr></tbody></table>
+<table class="waffle"><tbody><tr><td>Kind</td><td>Value</td></tr><tr><td>waffle</td><td>a\|b</td></tr></tbody></table>
+<blockquote><table><tr><th>A</th><th>B</th></tr><tr><td>one</td><td>two</td></tr></table></blockquote>
+</body></html>
+HTML
+UV_PYTHON_DOWNLOADS=never UV_OFFLINE=1 "$project_dir/linearize.py" "$scratch_dir/context" -o "$scratch_dir/context-output/guide.md"
+context_output="$scratch_dir/context-output/guide.md"
+context_failed=0
+for expected in '> | A | B |' '> |---|---|' '> | one | two |'; do
+  if ! grep -Fxq "$expected" "$context_output"; then
+    printf 'missing quoted table line: %s\n' "$expected" >&2; context_failed=1
+  fi
+done
+for expected in '| pipe | a\|b |' '| backslash pipe | a\\\|b |' '| dict | a\\\|b |' '| waffle | a\\\|b |'; do
+  if ! grep -Fxq "$expected" "$context_output"; then
+    printf 'missing escaped cell line: %s\n' "$expected" >&2; context_failed=1
+  fi
+done
+if [ "$context_failed" -ne 0 ]; then cat "$context_output" >&2; exit 1; fi
+awk '/^> \| A \| B \|$/ {if (getline <= 0 || $0 != "> |---|---|") exit 1; if (getline <= 0 || $0 != "> | one | two |") exit 1; found=1} END {if (!found) exit 1}' "$context_output"

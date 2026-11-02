@@ -2217,4 +2217,6 @@ text loss that a successful return code alone misses.
 When an HTML-to-Markdown pipeline constructs table Markdown before calling the
 converter, preserve those blocks across conversion. HTML whitespace collapsing
 and `<br>` hard breaks can change empty-cell padding and table line endings;
-check exact rendered lines as well as cell values and escaped pipes.
+restore the surrounding block prefix on every line, and escape source
+backslashes before pipe delimiters. Check rendered cell values and quoted
+table structure as well as exact top-level lines.
