@@ -1,7 +1,6 @@
 'use strict';
 
 const test = require('node:test');
-const { getMarketRows } = require('./helpers/dataset.cjs');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 
@@ -238,20 +237,18 @@ test('window export preserves zero spending and need while absent or zero baseli
   assert.equal(windowExportRows([ledgerRow(2000)], spending([40], { partial: true, horizon: 3 })).length, 1);
 });
 
-test('1966 fixed-real CSV retains 25 delivered years plus five unfunded years and a $36000 need', async () => {
-  const marketRows = (await getMarketRows()).filter(row => row.year >= 1966).slice(0, 30);
-  const result = simulate(marketRows, STRATEGIES.fixedReal, { initialRate: .04 }, {
-    startingBalance: 1000000, allocation: { stock: .5, bond: .5, bill: 0 }, horizon: 30,
+test('failed simulation exports delivered, failed and unfunded rows with the export-wide need', () => {
+  const marketRows = Array.from({length: 9}, (_, i) => ({year:4200+i, stock_tr:0, bond10_tr:0, tbill_tr:0, cpi_change:0, quality:'ok'}));
+  const result = simulate(marketRows, STRATEGIES.fixedReal, {initialRate:.15}, {
+    startingBalance:100, allocation:{stock:1,bond:0,bill:0}, horizon:9,
   });
-  const rows = loadExportHelpers().windowExportRows(result.rows, result.metrics.spending, 36000);
-  assert.equal(rows.length, 30);
-  assert.equal(rows.filter(row => row.status === 'unfunded').length, 5);
-  assert.equal(rows[24].year, 1990);
-  assert.equal(rows[24].status, 'failed');
-  assert.equal(rows[24].withdrawal_real, result.metrics.spending.lastPartial);
-  assert.equal(rows.at(-1).year, 1995);
-  rows.forEach(row => assert.equal(row.need_real, 36000));
-  rows.slice(25).forEach(row => assert.equal(row.withdrawal_real_pct_of_year1, 0));
+  const rows = loadExportHelpers().windowExportRows(result.rows, result.metrics.spending, 12);
+  assert.equal(rows.length, 9);
+  assert.equal(rows[6].status, 'failed');
+  assert.equal(rows[6].withdrawal_real, result.metrics.spending.lastPartial);
+  assert.deepEqual(rows.slice(7).map(row => row.status), ['unfunded', 'unfunded']);
+  rows.slice(7).forEach(row => assert.equal(row.withdrawal_real_pct_of_year1, 0));
+  rows.forEach(row => assert.equal(row.need_real, 12));
 });
 
 test('curve CSV appends shared spending and need metrics without losing legacy fields', () => {

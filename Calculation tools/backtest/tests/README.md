@@ -59,7 +59,7 @@ controls remain unchanged. File startup is offline. Browser profiles, snapshots,
 exports and data-bearing temporary assemblies stay outside the public checkout
 and are cleaned after normal completion, errors or cancellation.
 
-`test:synthetic` runs its explicitly named whole-file invented Node subset and
+`test:synthetic` runs its explicitly named whole-file invented Node subset, including engine, lifestyle, export and sweep-render tests, and
 both complete invented compiler modules. It does not certify real historical
 or browser acceptance and does not implicitly invoke the root audit suites.
 Full compiler discovery also reproduces the selected pair exactly from all three

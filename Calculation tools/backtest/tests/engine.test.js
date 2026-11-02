@@ -1,7 +1,6 @@
 'use strict';
 
 const test = require('node:test');
-const { getMarketRows } = require('./helpers/dataset.cjs');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const vm = require('node:vm');
@@ -798,11 +797,8 @@ test('CommonJS loading avoids global pollution and browser loading exposes Backt
   assert.equal(commonJsContext.BacktestEngine, undefined);
 });
 
-const realMarketRows = getMarketRows;
-
-test('availableYearRange applies the real-data bill boundary only to nonzero bill allocations', async () => {
-  const rows = await realMarketRows();
-  assert.equal(rows.length, 154);
+test('availableYearRange applies the bill boundary of an invented 1872-2025 series only to nonzero bill allocations', () => {
+  const rows = Array.from({length: 154}, (_, i) => year(1872 + i, 0, 0, i < 56 ? null : 0));
 
   const withBills = availableYearRange(
     STRATEGIES.fixedReal,
@@ -1288,32 +1284,19 @@ test('maxSafeRate validates deterministic adaptive discovery steps', () => {
   );
 });
 
-const lifestyleMarketRows = getMarketRows;
-
 const lifestyleOptions = { startingBalance: 1_000_000, allocation: { stock: 0.6, bond: 0.4, bill: 0 }, horizon: 30 };
 
-test('historical guardrails use the first tolerant minimum and expose a frozen spending profile', async () => {
-  const result = simulate((await lifestyleMarketRows()).filter(row => row.year >= 1966 && row.year <= 1995), STRATEGIES.guytonKlinger, { initialRate: 0.04 }, lifestyleOptions);
-  // Floating-point drift of about 1e-16 used to select 1991 instead of the first minimum in 1978.
-  assert.equal(result.metrics.minRealSpendingYear, 1978);
-  close(result.metrics.minRealSpending, 22631.650335181035);
-  assert.equal(result.metrics.spending.floorFirstIndex, 12);
-  assert.equal(result.metrics.spending.floorHeldYears, 14);
-  close(result.metrics.spending.floor, 22631.650335181035);
-  assert.ok(Object.isFrozen(result.metrics.spending));
-  assert.ok(Object.isFrozen(result.metrics.spending.path));
-});
-
-test('failed fixed-real profile keeps the failure payout and pads only unfunded years', async () => {
-  const result = simulate((await lifestyleMarketRows()).filter(row => row.year >= 1966 && row.year <= 1995), STRATEGIES.fixedReal, { initialRate: 0.04 }, { ...lifestyleOptions, allocation: { stock: 0.5, bond: 0.5, bill: 0 } });
-  assert.equal(result.metrics.failureYear, 1990);
-  assert.equal(result.rows.length, 25);
+test('failed fixed-real profile keeps the failure payout and pads only unfunded years', () => {
+  const rows = Array.from({length: 9}, (_, i) => year(4200 + i, 0));
+  const result = simulate(rows, STRATEGIES.fixedReal, {initialRate: .15}, {startingBalance: 100, allocation: {stock: 1, bond: 0, bill: 0}, horizon: 9});
+  assert.equal(result.metrics.failureYear, 4206);
+  assert.equal(result.rows.length, 7);
   const spending = result.metrics.spending;
   assert.equal(spending.floor, 0);
-  assert.equal(spending.unfundedYears, 5);
-  close(spending.lastPartial, 36296.481024963985);
-  assert.equal(spending.baseline, 40000);
-  assert.equal(spending.path.length, 30);
+  assert.equal(spending.unfundedYears, 2);
+  close(spending.lastPartial, 10);
+  assert.equal(spending.baseline, 15);
+  assert.equal(spending.path.length, 9);
 });
 
 test('empty and partial spending profiles preserve requested horizon and legacy minimum values', () => {
@@ -1330,116 +1313,6 @@ test('empty and partial spending profiles preserve requested horizon and legacy 
   const result = simulate([year(2000, 0)], STRATEGIES.fixedReal, {}, lifestyleOptions);
   assert.equal(result.metrics.spending.partial, true);
   assert.equal(result.metrics.spending.path.length, 1);
-});
-
-test('solvency searches preserve all captured adaptive safe rates bit for bit', async () => {
-  const rows = await lifestyleMarketRows();
-  const expected = [
-  {
-    "id": "guytonKlinger",
-    "start": 1929,
-    "value": 0.08250147163958535
-  },
-  {
-    "id": "guytonKlinger",
-    "start": 1937,
-    "value": 0.09803611146446112
-  },
-  {
-    "id": "guytonKlinger",
-    "start": 1959,
-    "value": 0.059607565219892425
-  },
-  {
-    "id": "guytonKlinger",
-    "start": 1966,
-    "value": 0.08065796208196752
-  },
-  {
-    "id": "guytonKlinger",
-    "start": 1968,
-    "value": 0.08818604233835321
-  },
-  {
-    "id": "guytonKlinger",
-    "start": 1973,
-    "value": 0.0978790480023754
-  },
-  {
-    "id": "guytonKlinger",
-    "start": 1982,
-    "value": 0.09807653470734841
-  },
-  {
-    "id": "guytonKlinger",
-    "start": 1990,
-    "value": 0.07710272695124967
-  },
-  {
-    "id": "guytonKlinger",
-    "start": 1995,
-    "value": 0.07731539053286085
-  },
-  {
-    "id": "guytonKlinger",
-    "start": 1996,
-    "value": 0.08228150058581835
-  },
-  {
-    "id": "barbell",
-    "start": 1929,
-    "value": 0.0346829474262777
-  },
-  {
-    "id": "barbell",
-    "start": 1937,
-    "value": 0.04119167861204278
-  },
-  {
-    "id": "barbell",
-    "start": 1959,
-    "value": 0.05387837098858836
-  },
-  {
-    "id": "barbell",
-    "start": 1966,
-    "value": 0.03857175876996098
-  },
-  {
-    "id": "barbell",
-    "start": 1968,
-    "value": 0.03899752967418317
-  },
-  {
-    "id": "barbell",
-    "start": 1973,
-    "value": 0.04122533502177976
-  },
-  {
-    "id": "barbell",
-    "start": 1982,
-    "value": 0.0930058760502252
-  },
-  {
-    "id": "barbell",
-    "start": 1990,
-    "value": 0.06890524175728023
-  },
-  {
-    "id": "barbell",
-    "start": 1995,
-    "value": 0.07546501632857783
-  },
-  {
-    "id": "barbell",
-    "start": 1996,
-    "value": 0.06395506737446979
-  }
-];
-  for (const { id, start, value } of expected) {
-    const actual = maxSafeRate(rows.filter(row => row.year >= start && row.year < start + 30), STRATEGIES[id], id === 'guytonKlinger' ? { initialRate: 0.04 } : {}, lifestyleOptions, { adaptiveStep: 0.001 });
-    assert.equal(actual, value, id + ' ' + start);
-  }
 });
 
 test('safe-rate search skips spending-profile metrics while public simulation builds them', () => {
