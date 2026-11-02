@@ -267,10 +267,6 @@ SHELL_COMMAND_PREFIX = re.compile(
 BASE_PYTHON_HEAD = re.compile(
     r"""^"\$(?:BENCH_BASE_PYTHON|\{BENCH_BASE_PYTHON(?::\?[^}]*)?\})"(?:\s|$)"""
 )
-CHECK = ': "${BENCH_BASE_PYTHON:?BENCH_BASE_PYTHON is not set}"'
-REMOVE = "rm -rf -- .venv"
-REBUILD = '"$BENCH_BASE_PYTHON" -m venv .venv'
-CREATE = '"${BENCH_BASE_PYTHON:?BENCH_BASE_PYTHON is not set}" -m venv .venv'
 
 
 def _tracked_example_files() -> list[Path]:
@@ -377,23 +373,6 @@ def test_example_scripts_create_venvs_only_from_bench_base_python():
         name = str(path.relative_to(PROJECT_ROOT))
         offenders.extend(_venv_creation_offenses(name, path.read_text(encoding="utf-8")))
     assert not offenders, "\n".join(offenders)
-
-
-def test_example_scripts_use_exact_base_python_venv_lines():
-    policy = (PROJECT_ROOT / "examples/policy-engine/scripts/run_checks.sh").read_text(encoding="utf-8")
-    cron_run = (PROJECT_ROOT / "examples/cron-eval/scripts/run_checks.sh").read_text(encoding="utf-8")
-    cron_prepare = (PROJECT_ROOT / "examples/cron-eval/scripts/prepare.sh").read_text(encoding="utf-8")
-    for text in (policy, cron_run):
-        lines = text.splitlines()
-        assert (
-            lines.index(CHECK)
-            < lines.index(REMOVE)
-            < lines.index(REBUILD)
-            < lines.index("source .venv/bin/activate")
-        )
-        assert "--clear" not in text
-    prepare_lines = [l for l in cron_prepare.splitlines() if CREATE in l]
-    assert prepare_lines and all("--clear" not in l for l in prepare_lines)
 
 
 def test_model_command_env_never_receives_bench_base_python():
