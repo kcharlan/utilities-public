@@ -1,5 +1,10 @@
 # Lessons Learned
 
+## Recovery Inputs Must Not Stop Recovery
+
+- What went wrong: Unreadable worker metadata raised during every resume, preventing the rest of the session from recovering.
+- Pattern to follow instead: Quarantine unreadable recovery inputs with their bytes intact, record a warning, and follow the safe missing-input path.
+
 ## Cleanup Without a Session Thread
 
 - What went wrong: Aborting a session with no live thread marked it aborted but left its worktree behind because cleanup was tied to the thread's exit.
