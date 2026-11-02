@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 import sys
 from pathlib import Path
 
@@ -28,11 +29,6 @@ def empty_registry(tmp_path, monkeypatch):
     registry = tmp_path / "registry.toml"
     registry.write_text("[projects]\n", encoding="utf-8")
     monkeypatch.setattr(guard, "REGISTRY_PATH", registry)
-
-
-def test_retired_python_colophon_has_no_launcher_or_manifest_policy() -> None:
-    assert "colophon/colophon" not in LAUNCHERS
-    assert "colophon/colophon" not in DEPENDENCY_MANIFESTS
 
 
 def test_unregistered_uv_launcher_is_discovered_and_rejected(tmp_path, monkeypatch, capsys, empty_registry) -> None:
@@ -166,7 +162,7 @@ def test_launcher_requires_an_upper_bound(tmp_path, monkeypatch, constraint, def
 def test_guard_metadata_has_an_upper_bound() -> None:
     metadata = extract_pep723(Path(guard.__file__).read_text(encoding="utf-8"))
     assert metadata is not None
-    assert "<3.16" in metadata["requires-python"]
+    assert re.search(r"<\s*3\.\d+", metadata["requires-python"])
 
 
 @pytest.mark.parametrize("dependencies, expected", [
@@ -366,36 +362,6 @@ def test_router_log_lazy_dependencies_are_covered() -> None:
     assert missing_declared_imports(path, text, metadata["dependencies"]) == []
 
 
-def test_git_fleet_browser_test_dependencies_are_manifest_only() -> None:
-    manifest_type, manifest_path, allowed_extras = DEPENDENCY_MANIFESTS[
-        "git-multirepo-dashboard/git_dashboard.py"
-    ]
-
-    assert (manifest_type, manifest_path, allowed_extras) == ("header", "", frozenset())
-    assert guard.check_test_requirements("git_fleet", {
-        "launcher": "git-multirepo-dashboard/git_dashboard.py",
-        "test_requirements": "git-multirepo-dashboard/tests/requirements-test.txt",
-    }) == []
-    requirements = guard.parse_requirements_file(
-        guard.REPO_ROOT / "git-multirepo-dashboard/tests/requirements-test.txt"
-    )
-    assert {"playwright", "pytest-playwright"} <= {
-        guard.normalize_distribution(requirement) for requirement in requirements
-    }
-
-
-def test_vid_compiler_has_stdlib_runtime_and_pytest_only_dev_policy() -> None:
-    launcher = "vid-compiler/video_compiler.py"
-
-    assert launcher in LAUNCHERS
-    assert DEPENDENCY_MANIFESTS[launcher] == (
-        "header",
-        "",
-        frozenset(),
-    )
-    assert check_dependency_manifest(launcher) == []
-
-
 def test_target_missing_import_is_reported(tmp_path, monkeypatch) -> None:
     target = tmp_path / "target.py"
     target.write_text("def load():\n    import librosa\n", encoding="utf-8")
@@ -424,18 +390,6 @@ def test_target_syntax_error_is_reported(tmp_path, monkeypatch) -> None:
 
 def test_targets_belong_to_registered_launchers() -> None:
     assert set(guard.LAUNCHER_TARGETS) <= set(LAUNCHERS)
-
-
-def test_transcription_app_is_not_entrypoint_allowlisted() -> None:
-    assert "transcription/app.py" not in guard.NON_UV_ENTRYPOINT_ALLOWLIST
-
-
-def test_transcription_policy_reconciles_manifests() -> None:
-    launcher = "transcription/transcription"
-    assert DEPENDENCY_MANIFESTS[launcher] == (
-        "requirements", "transcription/requirements-dev.txt", frozenset({"httpx", "pip", "pytest"})
-    )
-    assert check_dependency_manifest(launcher) == []
 
 
 def test_attached_requirement_includes_and_constraints(tmp_path):

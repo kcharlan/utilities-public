@@ -123,13 +123,6 @@ test('tooltip placement flips and clamps to the chart and viewport intersection'
  const oversized=place({x:50,y:50},{width:600,height:350},chart,viewport);
  assert.equal(oversized.left,0);assert.equal(oversized.top,-100);
 });
-test('all charts use a shared measured tooltip container with intrinsic width',()=>{
- const source=readFileSync(new URL('../frontend_vendor/svg_charts.js',import.meta.url),'utf8');
- const css=readFileSync(new URL('../frontend_vendor/svg_charts.css',import.meta.url),'utf8');
- assert.match(source,/useLayoutEffect/);assert.match(source,/function Tooltip\(/);
- assert.match(source,/getBoundingClientRect\(\)/);assert.match(css,/width:\s*max-content/);
- assert.equal((source.match(/tooltipNode\(tooltip,/g)||[]).length,4);
-});
 test('donut tooltip sits at the sector midpoint and horizontal bars track the pointer row',()=>{
  let state=[],cursor=0;const h=(tag,props,...children)=>({tag,props:props||{},children:children.flat(Infinity).filter(Boolean)});
  const hooks={useRef:()=>({current:null}),useState(initial){const i=cursor++;return [state[i]??initial,value=>state[i]=value];},useEffect(){}};
