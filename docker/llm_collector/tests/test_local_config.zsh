@@ -42,10 +42,12 @@ LLM_COLLECTOR_DATA_DIR=$TEST_ROOT/state/llm_collector
 BUCKET_TIMEZONE=UTC
 EOF
 for existing in no yes; do
+  chmod 644 "$TEST_ROOT/config/llm_collector/secret.env"
   if [[ "$existing" = yes ]]; then
     chmod 644 "$TEST_ROOT/project/extension/config.local.js"
   fi
   (umask 022; HOME="$TEST_ROOT/home" XDG_CONFIG_HOME="$TEST_ROOT/config" XDG_STATE_HOME="$TEST_ROOT/state" bash "$TEST_ROOT/project/setup.sh" --non-interactive >/dev/null)
+  [[ "$(stat -f '%Lp' "$TEST_ROOT/config/llm_collector/secret.env")" = 600 ]]
   [[ "$(stat -f '%Lp' "$TEST_ROOT/project/extension/config.local.js")" = 600 ]]
 done
 
