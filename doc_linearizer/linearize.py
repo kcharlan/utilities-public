@@ -8,6 +8,7 @@
 # ///
 import argparse
 import glob
+import html
 import os
 import re
 import shutil
@@ -498,7 +499,7 @@ def process_page(
     html_string = str(content_div)
     markdown = converter.handle(html_string).strip()
 
-    return f'<a id="{page_anchor_id}"></a>\n\n{markdown}'
+    return f'<a id="{html.escape(page_anchor_id, quote=True)}"></a>\n\n{markdown}'
 
 
 def main():

@@ -27,6 +27,8 @@ direct schedule tests alongside an API smoke test.
 HTML-to-Markdown converters can discard both element IDs and fragment links.
 When combining pages, explicitly emit each page anchor and verify rewritten
 links against the resulting document, including pages without headings.
+Escape attribute values when emitting raw HTML, and parse the emitted IDs in
+tests so quotes and entity-like filenames cannot disguise malformed markup.
 
 ## 2026-11-02: Normalize distance records before aggregation
 
