@@ -8,6 +8,26 @@ import pytest
 from conftest import jtree_mod
 
 
+def test_save_refuses_file_changed_on_disk_since_open(loaded_client, sample_json_file, tmp_path):
+    external = b'{"external": "synthetic"}\n'
+    Path(sample_json_file).write_bytes(external)
+    assert loaded_client.put('/api/node', params={'path': '["name"]'}, json={'value': 'changed'}).status_code == 200
+    response = loaded_client.post('/api/save')
+    assert response.status_code == 409
+    assert 'changed on disk' in response.json()['detail']
+    assert Path(sample_json_file).read_bytes() == external
+    assert loaded_client.get('/api/status').json()['dirty'] is True
+    rescue = loaded_client.post('/api/save-as', json={'path': str(tmp_path / 'rescued.json')})
+    assert rescue.json()['ok'] is True
+
+
+def test_consecutive_saves_are_not_conflicts(loaded_client, sample_json_file):
+    for value in ('first', 'second'):
+        assert loaded_client.put('/api/node', params={'path': '["name"]'}, json={'value': value}).status_code == 200
+        assert loaded_client.post('/api/save').status_code == 200
+    assert '"second"' in Path(sample_json_file).read_text()
+
+
 def test_surrogate_save_preserves_file_and_reports_error(loaded_client, sample_json_file):
     before = open(sample_json_file, 'rb').read()
     manager = jtree_mod.JSONManager(sample_json_file)
@@ -144,6 +164,7 @@ def test_changed_save_advances_mtime_and_preserves_security_metadata(loaded_clie
     subprocess.run(['chmod', '+a', 'everyone allow read', sample_json_file], check=True)
     os.chmod(sample_json_file, 0o640)
     os.utime(sample_json_file, ns=(1_000_000_000, 1_000_000_000))
+    assert loaded_client.post('/api/open', json={'path': sample_json_file}).status_code == 200
     before = os.stat(sample_json_file)
     before_acl = subprocess.check_output(['ls', '-le', sample_json_file], text=True).splitlines()[1:]
     assert loaded_client.put('/api/node', params={'path': '["name"]'}, json={'value': 'changed'}).status_code == 200

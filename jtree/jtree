@@ -177,6 +177,18 @@ class LocalOriginGuard:
 
 # --- JSON Manager ---
 
+def _disk_identity(path):
+    try:
+        st = os.stat(path)
+    except FileNotFoundError:
+        return None
+    return (st.st_dev, st.st_ino, st.st_mtime_ns, st.st_size)
+
+
+class FileChangedOnDisk(Exception):
+    pass
+
+
 class JSONManager:
     MAX_FILE_SIZE = 50 * 1024 * 1024  # 50MB
 
@@ -198,6 +210,7 @@ class JSONManager:
 
         with open(self.file_path, 'r', encoding='utf-8') as f:
             self.data, self.warning = self._load(f.read())
+        self.disk_identity = _disk_identity(self.file_path)
 
     @staticmethod
     def _validate_value(value):
@@ -235,6 +248,7 @@ class JSONManager:
             raise ValueError(f"Content too large: {len(content) / 1024 / 1024:.1f}MB (max 50MB)")
         instance = object.__new__(cls)
         instance.file_path = None
+        instance.disk_identity = None
         instance.display_name = file_name
         instance.readonly = False
         instance.dirty = False
@@ -644,6 +658,8 @@ class JSONManager:
         if target is None:
             raise PermissionError("No file path set. Use Save As to choose a location.")
         target = os.path.realpath(os.path.abspath(target))
+        if path is None and self.disk_identity is not None and _disk_identity(target) != self.disk_identity:
+            raise FileChangedOnDisk('File changed on disk since it was opened; reopen it or use Save As')
         content = (json.dumps(self.data, indent=2, ensure_ascii=False, allow_nan=False) + '\n').encode('utf-8')
         fd, temp_path = tempfile.mkstemp(prefix='.jtree-', dir=os.path.dirname(target))
         try:
@@ -674,6 +690,7 @@ class JSONManager:
             self.file_path = target
             self.display_name = os.path.basename(target)
         if self.file_path and target == os.path.realpath(self.file_path):
+            self.disk_identity = _disk_identity(target)
             self.dirty = False
 
 
@@ -919,6 +936,8 @@ def api_save():
             return {"ok": True}
         except PermissionError as e:
             raise HTTPException(status_code=403, detail=str(e))
+        except FileChangedOnDisk as e:
+            raise HTTPException(status_code=409, detail=str(e))
         except (ValueError, UnicodeError) as e:
             raise HTTPException(status_code=400, detail=str(e))
         except OSError as e:
