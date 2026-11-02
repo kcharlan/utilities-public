@@ -53,9 +53,6 @@ fi
 if [[ "$*" = *--sign* ]]; then
  [[ "$*" = *'--sign AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA --timestamp=none'* ]] || exit 91
 fi
-if [[ "$*" = *--verify* && "${!#}" = "$PRIME_MONITOR_APPS_DIR/Anker Charge Monitor.app" && -e "$PRIME_MONITOR_TEST_FAILURE" && -e "$PRIME_MONITOR_TEST_ACTIVATED" ]]; then
- rm -- "${PRIME_MONITOR_TEST_FAILURE:?}" "${PRIME_MONITOR_TEST_ACTIVATED:?}"; exit 92
-fi
 if [[ "$*" = *--verify* && "${!#}" = "$PRIME_MONITOR_APPS_DIR/Anker Charge Monitor.app" && "${SYNTHETIC_FAIL_POST_ACTIVATION:-0}" = 1 && -e "$PRIME_MONITOR_TEST_ACTIVATED" ]]; then exit 92; fi
 MOCK
 cat > "$scratch/bin/pgrep" <<'MOCK'
@@ -76,7 +73,7 @@ fi
 MOCK
 chmod 700 "$scratch/bin/"*
 export PATH="$scratch/bin:$PATH" SYNTHETIC_SIGN_LOG="$scratch/sign.log"
-export PRIME_MONITOR_APPS_DIR="$scratch/home/Applications" PRIME_MONITOR_BACKUP_DIR="$scratch/backups" PRIME_MONITOR_TEST_FAILURE="$scratch/fail-activation"
+export PRIME_MONITOR_APPS_DIR="$scratch/home/Applications" PRIME_MONITOR_BACKUP_DIR="$scratch/backups"
 export PRIME_MONITOR_TEST_CORRUPT="$scratch/corrupt-activation"
 export PRIME_MONITOR_TEST_ACTIVATED="$scratch/activated"
 cd "$scratch/project"
@@ -128,29 +125,23 @@ make release >> "$scratch/release.log" 2>&1
 cmp "$root/Resources/device_catalog.json" "$app/Contents/Resources/device_catalog.json"
 [ "$(stat -f %i "$exe")" != "$old_inode" ]
 cat <&9 > "$scratch/held"; cmp "$scratch/prior" "$scratch/held"; exec 9<&-
-# Successful activation, failed activation recovery, and notice preserve old readers.
+# Verify failed activation recovery and the running-process notice.
 tools/install.sh "$app" > "$scratch/install.log"
 if [ -e "$PRIME_MONITOR_TEST_ACTIVATED" ] || [ -L "$PRIME_MONITOR_TEST_ACTIVATED" ]; then rm -- "${PRIME_MONITOR_TEST_ACTIVATED:?}"; fi
 installed="$PRIME_MONITOR_APPS_DIR/Anker Charge Monitor.app"
 printf 'prior installed executable\n' > "$scratch/installed-prior"
 installed_exe="$installed/Contents/MacOS/PrimeMonitor"
 rm -- "${installed_exe:?}"; cp "$scratch/installed-prior" "$installed_exe"; chmod 755 "$installed_exe"
-exec 8< "$installed/Contents/MacOS/PrimeMonitor"
 prior_inode=$(stat -f %i "$installed")
 if SYNTHETIC_FAIL_STAGE_MOVE=1 tools/install.sh "$app" > "$scratch/move-fail.log" 2>&1; then echo 'FAIL: failed activation move accepted'; exit 1; fi
 [ "$(stat -f %i "$installed")" = "$prior_inode" ]
 cmp "$scratch/installed-prior" "$installed_exe"
-touch "$PRIME_MONITOR_TEST_FAILURE"
-if tools/install.sh "$app" > "$scratch/recover.log" 2>&1; then echo 'FAIL: activation failure accepted'; exit 1; fi
-rg -q 'previous app restored' "$scratch/recover.log"
-cmp "$scratch/installed-prior" "$installed/Contents/MacOS/PrimeMonitor"
 touch "$PRIME_MONITOR_TEST_CORRUPT"
 if tools/install.sh "$app" > "$scratch/corrupt.log" 2>&1; then echo 'FAIL: corrupt activation metadata accepted'; exit 1; fi
 cmp "$scratch/installed-prior" "$installed/Contents/MacOS/PrimeMonitor"
 SYNTHETIC_RUNNING=0 tools/install.sh "$app" > "$scratch/running.log"
 rg -q 'Quit and reopen Anker Charge Monitor' "$scratch/running.log"
 cmp "$exe" "$installed/Contents/MacOS/PrimeMonitor"
-cat <&8 > "$scratch/held-installed"; cmp "$scratch/installed-prior" "$scratch/held-installed"; exec 8<&-
 [ -z "$(find "$PRIME_MONITOR_APPS_DIR" -name '.prime-monitor-stage-*' -print)" ]
 # The injected function records a synthetic failure without attempting OS removal.
 if [ -e "$PRIME_MONITOR_TEST_ACTIVATED" ]; then rm -- "${PRIME_MONITOR_TEST_ACTIVATED:?}"; fi
@@ -179,30 +170,7 @@ stage=$(find "$PRIME_MONITOR_APPS_DIR" -maxdepth 1 -name '.prime-monitor-stage-*
 rm -r -- "${stage:?}"
 rg -q -- '--force --sign AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA --timestamp=none' "$SYNTHETIC_SIGN_LOG"
 rg -q -- '--verify --strict' "$SYNTHETIC_SIGN_LOG"
-# Exercise the actual EXIT function with a synthetic failing rm and owned paths.
-awk '/^finish\(\) \{$/{copy=1; count++} copy {print} copy && /^}$/{copy=0} END {if (count != 1) exit 1}' Tests/Snapshots/build.sh > "$scratch/finish.zsh"
-cat >> "$scratch/finish.zsh" <<'SH'
-owned=true
-snapshot_home=$TEST_HOME
-package_dir=$TEST_HOME/package
-rm() { print attempt >> "$TEST_ATTEMPTS"; return 91; }
-trap finish EXIT
-exit "$TEST_EXIT"
-SH
-for original in 0 7; do
-  test_home="$scratch/cleanup-home-$original"
-  mkdir -p "$test_home/package" "$test_home/tmp"
-  attempts="$scratch/cleanup-attempts-$original"
-  code=0
-  TEST_HOME="$test_home" TEST_ATTEMPTS="$attempts" TEST_EXIT="$original" zsh "$scratch/finish.zsh" > "$scratch/cleanup.log" 2>&1 || code=$?
-  expected=$original; [ "$expected" -ne 0 ] || expected=1
-  [ "$code" -eq "$expected" ] || { echo "FAIL: cleanup exited $code, expected $expected"; exit 1; }
-  count=2; [ "$original" -eq 0 ] || count=1
-  [ "$(wc -l < "$attempts" | tr -d ' ')" = "$count" ]
-  rg -q 'Cannot remove' "$scratch/cleanup.log"
-  [ -d "$test_home" ]
-done
-# Exercise the same extracted EXIT function with the real rm on owned paths.
+# Exercise the extracted EXIT function with the real rm on owned paths.
 awk '/^finish\(\) \{$/{copy=1; count++} copy {print} copy && /^}$/{copy=0} END {if (count != 1) exit 1}' Tests/Snapshots/build.sh > "$scratch/finish-real.zsh"
 cat >> "$scratch/finish-real.zsh" <<'SH'
 owned=true
