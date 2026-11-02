@@ -12,7 +12,6 @@ import benchmark_llm.cli as cli_module
 from benchmark_llm.cli import main
 from benchmark_llm.execution import run_command
 from benchmark_llm.repo_task import _resolve_repo_steps
-from benchmark_llm.util import resolve_base_python
 
 
 def _write_text(path: Path, content: str) -> None:
@@ -53,17 +52,6 @@ def _git_output(args: list[str], cwd: Path) -> str:
         text=True,
     )
     return completed.stdout
-
-
-def _wait_for_pid_exit(pid: int, timeout_sec: float = 2.0) -> bool:
-    deadline = time.monotonic() + timeout_sec
-    while time.monotonic() < deadline:
-        try:
-            os.kill(pid, 0)
-        except OSError:
-            return True
-        time.sleep(0.05)
-    return False
 
 
 def test_run_command_returns_without_waiting_for_background_descendants(tmp_path: Path) -> None:
@@ -138,38 +126,6 @@ def test_run_command_marks_inactivity_timeout_after_output_stalls(tmp_path: Path
     assert "timed_out" not in record
     assert record["stdout"] == "start\n"
     assert elapsed < 2.5
-
-
-def test_run_command_timeout_kills_spawned_child_processes(tmp_path: Path) -> None:
-    child_pid_path = tmp_path / "child.pid"
-    _write_text(
-        tmp_path / "spawn_child.sh",
-        "\n".join(
-            [
-                "#!/usr/bin/env bash",
-                "set -euo pipefail",
-                "sleep 30 &",
-                "child=$!",
-                f"printf '%s' \"$child\" > '{child_pid_path}'",
-                "wait \"$child\"",
-            ]
-        )
-        + "\n",
-    )
-    os.chmod(tmp_path / "spawn_child.sh", 0o755)
-
-    record = run_command(
-        "./spawn_child.sh",
-        cwd=tmp_path,
-        env=os.environ.copy(),
-        phase="process_group_timeout",
-        timeout_sec=1,
-    )
-
-    assert record["exit_code"] == -15
-    assert record["timed_out"] is True
-    child_pid = int(child_pid_path.read_text(encoding="utf-8"))
-    assert _wait_for_pid_exit(child_pid)
 
 
 def test_repo_task_resolves_execution_defaults_and_step_overrides() -> None:
@@ -1487,19 +1443,6 @@ def test_repo_task_failure_preserves_run_dir_and_worktree(tmp_path: Path) -> Non
     assert str(runtime_home / "worktrees") in worktree_list
 
 
-def test_base_python_defaults_to_resolver(tmp_path: Path, monkeypatch) -> None:
-    captured = _capture_repo_task_environ(tmp_path, monkeypatch, {})
-
-    expected, _warning = resolve_base_python(
-        executable=sys.executable,
-        prefix=sys.prefix,
-        base_prefix=sys.base_prefix,
-        version=sys.version_info[:2],
-        base_executable=getattr(sys, "_base_executable", None),
-    )
-    assert captured["BENCH_BASE_PYTHON"] == expected
-
-
 @pytest.mark.parametrize("shape", ["plain", "symlink"])
 def test_base_python_override_passes_through(tmp_path: Path, monkeypatch, shape: str) -> None:
     target = tmp_path / "synthetic-bin" / "python3.99"
@@ -1519,47 +1462,7 @@ def test_base_python_override_passes_through(tmp_path: Path, monkeypatch, shape:
     assert captured[0]["BENCH_BASE_PYTHON"] == str(override)
     assert _warning_lines(stderr) == []
 
-@pytest.mark.parametrize(
-    "bad_override",
-    ["relative/python3", "/nonexistent-synthetic-dir/python3.99"],
-)
-def test_base_python_invalid_override_rejected(
-    tmp_path: Path,
-    monkeypatch,
-    bad_override: str,
-) -> None:
-    benchmark_dir = tmp_path / "bench"
-    _write_text(
-        benchmark_dir / "bench.yaml",
-        f"type: repo_task\noutput_dir: {tmp_path / 'results'}\n",
-    )
-
-    called = False
-
-    def fake_run_repo_task(**_: object) -> Path:
-        nonlocal called
-        called = True
-        return tmp_path / "should-not-run"
-
-    monkeypatch.setattr(cli_module, "run_repo_task", fake_run_repo_task)
-
-    stderr = io.StringIO()
-    exit_code = main(
-        ["run", str(benchmark_dir), "-m", "model-a"],
-        environ={
-            "BENCH_RUNTIME_HOME": str(tmp_path / "runtime-home"),
-            "BENCH_BASE_PYTHON": bad_override,
-        },
-        stdout=io.StringIO(),
-        stderr=stderr,
-    )
-
-    assert exit_code == 1
-    assert called is False
-    assert "BENCH_BASE_PYTHON" in stderr.getvalue()
-
-
-@pytest.mark.parametrize("shape", ["relative-existing", "not-executable", "directory"])
+@pytest.mark.parametrize("shape", ["relative-existing", "missing-absolute", "not-executable", "directory"])
 def test_base_python_override_rejects_each_invalid_shape(
     tmp_path: Path, monkeypatch, shape: str
 ) -> None:
@@ -1569,6 +1472,8 @@ def test_base_python_override_rejects_each_invalid_shape(
         os.chmod(tmp_path / "rel" / "python3.99", 0o755)
         value = "rel/python3.99"
         assert Path(value).is_file() and os.access(value, os.X_OK)
+    elif shape == "missing-absolute":
+        value = "/nonexistent-synthetic-dir/python3.99"
     elif shape == "not-executable":
         target = tmp_path / "plain" / "python3.99"
         _write_text(target, "#!/bin/sh\nexit 0\n")

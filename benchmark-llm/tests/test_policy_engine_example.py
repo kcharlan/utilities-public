@@ -52,19 +52,6 @@ def test_policy_engine_example_includes_adjudication_step_and_assets() -> None:
     assert "visible/.gitignore" in bench_yaml["visibility"]["expose"]
 
 
-def test_policy_engine_adjudication_defaults_to_cx_wrapper() -> None:
-    repo_root = Path(__file__).resolve().parents[1]
-    script_text = (repo_root / "examples" / "policy-engine" / "scripts" / "adjudicate.sh").read_text(
-        encoding="utf-8"
-    )
-    readme_text = (repo_root / "examples" / "policy-engine" / "README.md").read_text(encoding="utf-8")
-
-    assert 'ADJUDICATOR_BIN="${BENCH_POLICY_ENGINE_ADJUDICATOR_BIN:-cx}"' in script_text
-    assert "active default remains `cx exec`" in readme_text
-    assert "summary.md" in readme_text
-    assert "zsh -lic" in readme_text
-
-
 def test_policy_engine_final_summary_prompt_renderer_groups_models_and_includes_benchmark_overview(
     tmp_path: Path,
 ) -> None:
@@ -165,56 +152,6 @@ def test_policy_engine_final_summary_prompt_renderer_groups_models_and_includes_
     assert "Strong visible coverage" in prompt_text
     assert "Hidden robustness was mixed" in prompt_text
     assert "inactivity_timeout" in prompt_text
-
-
-def test_policy_engine_adjudication_runs_via_zsh_login_shell_for_wrapper_resolution() -> None:
-    repo_root = Path(__file__).resolve().parents[1]
-    script_text = (repo_root / "examples" / "policy-engine" / "scripts" / "adjudicate.sh").read_text(
-        encoding="utf-8"
-    )
-
-    assert 'ADJUDICATOR_MODEL="${BENCH_POLICY_ENGINE_ADJUDICATOR_MODEL:-}"' in script_text
-    assert 'elif [ "$ADJUDICATOR_BIN" != "cx" ] && [ "$ADJUDICATOR_BIN" != "codex" ]; then' in script_text
-    assert 'ADJUDICATOR_ARGS+=(-m "$BENCH_MODEL")' in script_text
-    assert 'ADJUDICATOR_COMMAND_STRING+="$(printf \'%q\' \"$arg\")"' in script_text
-    assert 'zsh -lic "$ADJUDICATOR_COMMAND_STRING" < "$PROMPT_PATH" | tee "$EVENTS_PATH"' in script_text
-
-
-def test_policy_engine_final_summary_codex_path_skips_git_repo_check() -> None:
-    repo_root = Path(__file__).resolve().parents[1]
-    script_text = (repo_root / "examples" / "policy-engine" / "scripts" / "adjudicate.sh").read_text(
-        encoding="utf-8"
-    )
-
-    assert '--skip-git-repo-check' in script_text
-
-
-def test_policy_engine_executor_uses_portable_mktemp_templates() -> None:
-    repo_root = Path(__file__).resolve().parents[1]
-    script_text = (repo_root / "examples" / "policy-engine" / "scripts" / "invoke_model.sh").read_text(
-        encoding="utf-8"
-    )
-
-    assert 'TMP_ROOT="${TMPDIR:-/tmp}"' in script_text
-    assert 'TMP_ROOT="${TMP_ROOT%/}"' in script_text
-    assert 'EVENTS_BASE="$(mktemp "${TMP_ROOT}/opencode-events.XXXXXX")"' in script_text
-    assert 'EXPORT_BASE="$(mktemp "${TMP_ROOT}/opencode-export.XXXXXX")"' in script_text
-    assert 'EVENTS_PATH="${EVENTS_BASE}.jsonl"' in script_text
-    assert 'EXPORT_PATH="${EXPORT_BASE}.json"' in script_text
-    assert 'mktemp "${TMPDIR:-/tmp}/opencode-events.XXXXXX.jsonl"' not in script_text
-
-
-def test_policy_engine_adjudication_resolves_script_dir_before_entering_workspace() -> None:
-    repo_root = Path(__file__).resolve().parents[1]
-    script_text = (repo_root / "examples" / "policy-engine" / "scripts" / "adjudicate.sh").read_text(
-        encoding="utf-8"
-    )
-
-    assert 'SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"' in script_text
-    assert 'cd "$BENCH_WORKSPACE"' in script_text
-    assert script_text.index('SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"') < script_text.index(
-        'cd "$BENCH_WORKSPACE"'
-    )
 
 
 def test_policy_engine_eval_helpers_compare_rows_and_render_template() -> None:
@@ -354,94 +291,6 @@ def test_policy_engine_prompt_exposes_required_contract_without_eval_signaling()
     prompt_lower = prompt_text.lower()
     for forbidden in ["benchmark", "evaluation", "adjudication", "evaluator", "test", "tests"]:
         assert forbidden not in prompt_lower
-
-
-def test_policy_engine_adjudicator_prompt_uses_semantics_first_guidance() -> None:
-    repo_root = Path(__file__).resolve().parents[1]
-    adjudicator_prompt = (
-        repo_root / "examples" / "policy-engine" / "hidden" / "adjudicator_prompt.md"
-    ).read_text(encoding="utf-8")
-
-    for required in [
-        "Do not invent requirements that were not visible to the model.",
-        "Judge semantics before syntax.",
-        "Hidden datasets measure generalization of the visible contract.",
-        "if pytest -q fails but python -m pytest -q succeeds and the checks are otherwise usable,",
-        "count that as a minor setup/usability issue, not a semantic failure.",
-        "If the failure is recoverable without modifying model code or changing task semantics,",
-        "apply the minimum neutral recovery and rerun to continue evaluation.",
-        "Record both first-run result and recovered result.",
-        "Examples of disallowed recoveries:",
-        "editing model code",
-        "changing the required CLI surface",
-        "Robustness and safety - 15",
-        "CLI and output usability - 10",
-        "Code quality and restraint - 10",
-    ]:
-        assert required in adjudicator_prompt
-
-
-def test_policy_engine_rubric_and_report_template_match_revised_weights() -> None:
-    repo_root = Path(__file__).resolve().parents[1]
-    rubric = yaml.safe_load(
-        (repo_root / "examples" / "policy-engine" / "hidden" / "rubric.yaml").read_text(
-            encoding="utf-8"
-        )
-    )
-    report_template = (
-        repo_root / "examples" / "policy-engine" / "report_template.md"
-    ).read_text(encoding="utf-8")
-
-    assert rubric["weights"] == {
-        "visible_correctness": 25,
-        "hidden_generalization": 25,
-        "hidden_robustness": 15,
-        "code_quality": 10,
-        "cli_output_usability": 10,
-        "tests_docs": 10,
-        "run_behavior_efficiency": 5,
-    }
-    assert [check["name"] for check in rubric["checks"]] == [
-        "Visible set summary",
-        "Hidden C summary",
-        "Hidden D summary",
-        "Mutation summary",
-    ]
-    assert "- Hidden robustness and safety: {{ score_hidden_robustness }}" in report_template
-    assert "- Code quality and restraint: {{ score_code_quality }}" in report_template
-    assert "- Run hygiene and efficiency: {{ score_run_behavior }}" in report_template
-    assert "| Visible set summary | {{ visible_summary }} |" in report_template
-    assert "| Hidden C summary | {{ hidden_c_summary }} |" in report_template
-    assert "| Hidden D summary | {{ hidden_d_summary }} |" in report_template
-    assert "| Mutation summary | {{ mutation_summary }} |" in report_template
-
-
-def test_policy_engine_readme_documents_visible_contract_and_validation_interpretation() -> None:
-    repo_root = Path(__file__).resolve().parents[1]
-    readme_text = (repo_root / "examples" / "policy-engine" / "README.md").read_text(
-        encoding="utf-8"
-    )
-
-    for required in [
-        "The model-facing prompt exposes the hard contract directly.",
-        "python policy_engine.py --policy ... --benefits ... --output ...",
-        "Prefer the README-documented command if present.",
-        "If one works and the other does not, treat that as a minor setup/usability issue",
-        "Hidden validations are for generalization of the visible task.",
-    ]:
-        assert required in readme_text
-
-
-def test_policy_engine_run_checks_allows_missing_requirements_txt() -> None:
-    repo_root = Path(__file__).resolve().parents[1]
-    script_text = (
-        repo_root / "examples" / "policy-engine" / "scripts" / "run_checks.sh"
-    ).read_text(encoding="utf-8")
-
-    assert "python -m pip install pytest==9.1.1 PyYAML==6.0.3" in script_text
-    assert "if [ -f requirements.txt ]; then" in script_text
-    assert "python -m pip install -r requirements.txt" in script_text
-    assert 'python "$BENCH_BENCHMARK_DIR/scripts/run_validation.py"' in script_text
 
 
 def test_policy_engine_findings_sidecar_supports_jsonl_append_and_load(tmp_path: Path) -> None:

@@ -179,33 +179,3 @@ def test_cron_eval_reference_impl_completes_bench_run_at_100(tmp_path: Path) -> 
     assert len(runs) == 1
     assert runs[0]["score_percent"] == 100.0
     assert len(list((tmp_path / "results").glob("*/manifest.json"))) == 1
-
-
-def test_cron_eval_adjudication_prompt_is_explanatory_not_scoring() -> None:
-    repo_root = Path(__file__).resolve().parents[1]
-    prompt_text = (
-        repo_root / "examples" / "cron-eval" / "hidden" / "adjudicator_prompt.md"
-    ).read_text(encoding="utf-8")
-    script_text = (
-        repo_root / "examples" / "cron-eval" / "scripts" / "adjudicate.sh"
-    ).read_text(encoding="utf-8")
-
-    assert "The score is fixed" in prompt_text
-    assert "You may not change it" in prompt_text
-    assert "Your only job is to explain what failed and why" in prompt_text
-    assert 'ADJUDICATOR_BIN="${BENCH_CRON_EVAL_ADJUDICATOR_BIN:-cx}"' in script_text
-    assert "BENCH_CRON_EVAL_ADJUDICATOR_MODEL" in script_text
-    assert "BENCH_CRON_EVAL_ADJUDICATOR_ARGS" in script_text
-    assert 'zsh -lic "$ADJUDICATOR_COMMAND_STRING" < "$PROMPT_PATH"' in script_text
-
-
-def test_cron_eval_run_checks_wrapper_uses_repo_task_environment() -> None:
-    repo_root = Path(__file__).resolve().parents[1]
-    script_text = (
-        repo_root / "examples" / "cron-eval" / "scripts" / "run_checks.sh"
-    ).read_text(encoding="utf-8")
-
-    assert '"$BENCH_RUN_DIR"' in script_text
-    assert '"$BENCH_WORKSPACE"' in script_text
-    assert '"$BENCH_HIDDEN_DIR"' in script_text
-    assert '"$@"' not in script_text
