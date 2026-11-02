@@ -76,7 +76,7 @@ Project-specific validation commands, applied with the Testing Scope above. A co
   - `doc_linearizer`: `bash tests/test_launcher.sh` from its project directory.
   - `reversible-skew`: `uv python find --no-python-downloads --script reversible-skew/rs.py` and the same for `reversible-skew/rs-big.py` (both must resolve Python 3.12), then the complete compatibility validation in its README.
   - `video-scenes`: `uv python find --no-python-downloads --script video-scenes/video-scenes`, then its README's synthetic Validation check in temporary space.
-  - `apple-health-extract`: `bash tests/test_run_wrapper.sh` and `bash tests/test_extraction.sh` from its project directory; use only synthetic inputs.
+  - `apple-health-extract`: `bash tests/test_run_wrapper.sh`, `bash tests/test_extraction.sh`, and `bash tests/test_timezone_duplicates.sh` from its project directory; use only synthetic inputs.
 - `benchmark-llm`: `UV_PYTHON_DOWNLOADS=never tools/run_project_tests.py benchmark_llm` from the repository root.
 - `cognitive_switchyard`: `UV_PYTHON_DOWNLOADS=never tools/run_project_tests.py cognitive_switchyard` from the repository root, including browser E2E.
 - `brew_version` (Swift command line, from repository root; see its README):
