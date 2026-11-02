@@ -59,7 +59,7 @@
 
 - What went wrong: Several code paths wrote to the filesystem (file move, log write) before committing to the DB. A crash between the two left the filesystem and DB in divergent states that recovery could not detect or repair.
 - Pattern that caused it: Treating the filesystem as the primary record and the DB as the secondary, with no protection for the gap between them.
-- Pattern to follow instead: Commit DB state first, then perform the filesystem change. The reconciler can repair a DB that is ahead of the filesystem; it cannot repair a DB that is behind.
+- Pattern to follow instead: Commit DB state first, then perform the filesystem change. Reconcile before projecting again from a DB path: recovery now reconciles first so it can repair a DB that is ahead of the filesystem. Defer blocking missing plans until orphan cleanup has run, preserving the persisted distinction between active orphans and deliberately blocked work across another crash. The reconciler cannot repair a DB that is behind.
 
 ## Lock Discipline Must Cover All Mutable State Fields on Shared Objects
 

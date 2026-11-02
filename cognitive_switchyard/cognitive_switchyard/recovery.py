@@ -32,6 +32,10 @@ def recover_execution_session(
     warnings: list[str] = []
     protected_slots: set[int] = set()
 
+    # Leave missing-plan statuses intact until orphan cleanup has run, so a
+    # crash here does not turn an orphan into an intentionally blocked task.
+    store.reconcile_filesystem_projection(session_id, block_missing=False)
+
     for worker_dir in sorted(path for path in session_paths.workers.iterdir() if path.is_dir()):
         if not worker_dir.name.isdigit():
             continue
@@ -45,7 +49,7 @@ def recover_execution_session(
             protected_slots.add(slot_number)
             if metadata.pid is None:
                 task = store.get_task(session_id, metadata.task_id)
-                if task.status == "active":
+                if task.status == "active" and task.plan_path.exists():
                     store.project_task(session_id, task.task_id, status="ready")
             continue
         for plan_path in sorted(worker_dir.glob("*.plan.md")):
