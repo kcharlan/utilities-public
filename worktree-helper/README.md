@@ -194,6 +194,8 @@ worktree --doctor
 
 Deletion refuses ignored files and detached commits not reachable from a ref.
 Use `--force` only when their loss is intended.
+Resetting an existing branch also requires `--force` if it has commits outside
+the selected start point.
 
 ### Create Modes
 
@@ -214,7 +216,12 @@ Other create-related flags:
 --lock-reason TEXT
 ```
 
-The `--orphan` option appears in version 0.1.3's CLI and TUI, but its current validation conflicts with the required `--new-branch` or `--reset-branch` option. Orphan creation therefore does not currently complete; use `git worktree add --orphan` directly until that implementation is fixed.
+The `--orphan` option appears in version 0.1.4's CLI and TUI, but its current validation conflicts with the required `--new-branch` or `--reset-branch` option. Orphan creation therefore does not currently complete; use `git worktree add --orphan` directly until that implementation is fixed.
+
+### Tests
+
+Run `bash tests/test_delete_safety.sh` and `bash tests/test_reset_branch_safety.sh`
+from the `worktree-helper` directory. These use synthetic Git repositories.
 
 ### Prune Flags
 

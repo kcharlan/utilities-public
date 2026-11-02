@@ -1,5 +1,12 @@
 # Lessons learned
 
+## 2026-11-02: Guard branch resets against commit loss
+
+Before resetting a local branch, check whether its tip is an ancestor of the
+selected start point and require explicit force when it is not. Exercise the
+refusal and forced reset with real synthetic Git repositories, checking both
+the branch ref and destination path.
+
 ## 2026-11-02: Cover every launchd domain in target selection
 
 Apple and non-Apple daemons both use the system launchd domain. Exercise every
