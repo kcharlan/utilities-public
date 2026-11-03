@@ -32,8 +32,14 @@ import TelltaleTestSupport
             let file = try TranscriptBuilder.file(root: root, text: TranscriptBuilder.user("2026-01-01T00:00:00Z"))
             #expect(chmod(file.path, 0o000) == 0)
             defer { chmod(file.path, 0o600) }
+            let discovered = try #require(TranscriptDiscovery.files(roots: [root]).first)
+            let expected: String
+            do { _ = try TranscriptParser.parse(file: discovered, cursor: FileCursor(rootIndex: discovered.rootIndex), now: Date()); Issue.record("expected unreadable transcript"); return }
+            catch { expected = readFailureReason(error) }
             let result = ClaudeUsageSource(roots: [root]).ingest(cursor: nil, backfillFrom: .distantPast, now: Date())
-            guard case .readProblem = result.state else { Issue.record("expected read problem, got \(result.state)"); return }
+            guard case .readProblem(let detail) = result.state else { Issue.record("expected read problem, got \(result.state)"); return }
+            #expect(detail.contains(file.lastPathComponent))
+            #expect(detail.contains(expected))
         }
     }
 

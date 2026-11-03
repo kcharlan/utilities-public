@@ -2383,3 +2383,10 @@ Git Fleet's `make_tmpdir` helper called `tempfile.mkdtemp()` with no cleanup, le
 ## 2026-11-03: Reproduce log size limits with synthetic inputs
 
 A cap can reject valid local logs at the reader or decoder before provider parsing sees them. Reproduce each boundary with conspicuously synthetic inputs, including large single-segment frames and resumed plain lines, and account for decoder allocations, reader buffers and accumulated parser results. The Telltale `ZstdLargeInputTests`, `LineReaderLargeLineTests` and provider regressions exercise the acceptance contract; their shared `LargeLogSizes` fixtures document its sizing.
+
+## 2026-11-03: Preserve dynamic error types when rendering read failures
+
+Foundation can bridge Swift errors to NSError, so a broad NSError cast can hide a
+Swift error's own description. Check the dynamic NSError type and CocoaError
+explicitly, then prefer a Swift CustomStringConvertible description; exercise
+both protocols, an NSError subclass and the localized fallback.

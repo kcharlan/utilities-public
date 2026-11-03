@@ -2,13 +2,21 @@ import CZstd
 import Foundation
 
 /// Why a compressed rollout could not be read.
-public enum ZstdError: Error, Equatable, Sendable {
+public enum ZstdError: Error, Equatable, Sendable, CustomStringConvertible {
     /// The file holds fewer bytes than discovery recorded, or ends inside a frame.
     case truncated
     /// The decoder rejected the data (bad magic, damaged block, unsupported parameters).
     case corrupt(String)
     /// The file could not be opened or read, or the decoder could not allocate.
     case io(String)
+
+    public var description: String {
+        switch self {
+        case .truncated: return "compressed data is truncated"
+        case .corrupt(let detail): return "compressed data is corrupt: \(detail)"
+        case .io(let detail): return "compressed data read failed: \(detail)"
+        }
+    }
 }
 
 /// Streams the lines of a Codex `.jsonl.zst` rollout. Decoder allocations (see
