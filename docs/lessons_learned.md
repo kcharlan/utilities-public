@@ -2390,3 +2390,11 @@ Foundation can bridge Swift errors to NSError, so a broad NSError cast can hide 
 Swift error's own description. Check the dynamic NSError type and CocoaError
 explicitly, then prefer a Swift CustomStringConvertible description; exercise
 both protocols, an NSError subclass and the localized fallback.
+
+## 2026-11-03: Test actor responsiveness through lock ordering
+
+A wall-clock deadline around an async sleep also measures unrelated work on the
+same actor. Hold the contested resource until the actor observes the operation
+in flight, then release it and verify the actual write. A bounded watchdog
+prevents a broken synchronous operation from hanging the test; deliberately
+move the write onto the actor to confirm the test catches that regression.
