@@ -12,22 +12,22 @@ for script in "$project/rs.py" "$project/rs-big.py"; do
     printf 'synthetic input data\n' > input
     hash=$(shasum input | cut -d' ' -f1)
     if "$script" "$operation" -i input -o ./input; then echo 'same file accepted' >&2; exit 1; fi
-    [[ $(shasum input | cut -d' ' -f1) == "$hash" ]]
+    [[ $(shasum input | cut -d' ' -f1) == "$hash" ]] || { echo 'FAIL: reversible-skew/tests/test_input_safety.sh:15' >&2; exit 1; }
     ln -s input link
     if "$script" "$operation" -i input -o link; then echo 'symlink accepted' >&2; exit 1; fi
-    [[ $(shasum input | cut -d' ' -f1) == "$hash" ]]
+    [[ $(shasum input | cut -d' ' -f1) == "$hash" ]] || { echo 'FAIL: reversible-skew/tests/test_input_safety.sh:18' >&2; exit 1; }
     rm -- link
     ln input link
     if "$script" "$operation" -i input -o link; then echo 'hard link accepted' >&2; exit 1; fi
-    [[ $(shasum input | cut -d' ' -f1) == "$hash" ]]
+    [[ $(shasum input | cut -d' ' -f1) == "$hash" ]] || { echo 'FAIL: reversible-skew/tests/test_input_safety.sh:22' >&2; exit 1; }
     rm -- link
   done
   printf 'bad' > invalid
   printf 'existing output' > output
   if "$script" inverse -i invalid -o output; then echo 'invalid stream accepted' >&2; exit 1; fi
-  [[ $(cat output) == 'existing output' ]]
+  [[ $(cat output) == 'existing output' ]] || { echo 'FAIL: reversible-skew/tests/test_input_safety.sh:28' >&2; exit 1; }
   if "$script" inverse -i invalid -o absent; then echo 'invalid stream accepted' >&2; exit 1; fi
-  [[ ! -e absent ]]
+  [[ ! -e absent ]] || { echo 'FAIL: reversible-skew/tests/test_input_safety.sh:30' >&2; exit 1; }
   head -c 100 /dev/urandom > raw.bin
   "$script" transform -i raw.bin -o raw.rsbwt
   [[ $(od -An -tx1 -N4 raw.rsbwt | tr -d ' \n') == ffffffff ]] || { echo 'FAIL: reversible-skew/tests/test_input_safety.sh:33' >&2; exit 1; }

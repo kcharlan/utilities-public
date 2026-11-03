@@ -8,18 +8,18 @@ ffmpeg -v error -f lavfi -i color=c=black:s=16x16:d=1 -c:v libx264 "$d/clip.mp4"
 hash=$(shasum "$d/clip.mp4" | cut -d' ' -f1)
 cd "$d"
 if "$script" -s '' -f 1 clip.mp4; then echo 'same file accepted' >&2; exit 1; fi
-[[ $(shasum clip.mp4 | cut -d' ' -f1) == "$hash" ]]
+[[ $(shasum clip.mp4 | cut -d' ' -f1) == "$hash" ]] || { echo 'FAIL: trim_last/tests/test_trim_last.sh:11' >&2; exit 1; }
 ln -s clip.mp4 clip_trim.mp4
 if "$script" -f 1 ./clip.mp4; then echo 'symlink accepted' >&2; exit 1; fi
-[[ $(shasum clip.mp4 | cut -d' ' -f1) == "$hash" ]]
+[[ $(shasum clip.mp4 | cut -d' ' -f1) == "$hash" ]] || { echo 'FAIL: trim_last/tests/test_trim_last.sh:14' >&2; exit 1; }
 rm -- clip_trim.mp4
 ln clip.mp4 clip_trim.mp4
 if "$script" -f 1 clip.mp4; then echo 'hard link accepted' >&2; exit 1; fi
-[[ $(shasum clip.mp4 | cut -d' ' -f1) == "$hash" ]]
+[[ $(shasum clip.mp4 | cut -d' ' -f1) == "$hash" ]] || { echo 'FAIL: trim_last/tests/test_trim_last.sh:18' >&2; exit 1; }
 rm -- clip_trim.mp4
 cp clip.mp4 clip_trim.mp4
 if "$script" -f 1 clip.mp4 clip_trim.mp4; then echo 'another input accepted as output' >&2; exit 1; fi
-[[ $(shasum clip_trim.mp4 | cut -d' ' -f1) == "$hash" ]]
+[[ $(shasum clip_trim.mp4 | cut -d' ' -f1) == "$hash" ]] || { echo 'FAIL: trim_last/tests/test_trim_last.sh:22' >&2; exit 1; }
 rm -- clip_trim.mp4 clip_trim_trim.mp4
 for kind in symlink directory; do
   mkdir "$kind"
@@ -60,14 +60,14 @@ fi
 if "$script" 1 missing.mp4; then echo 'missing input accepted' >&2; exit 1; fi
 printf 'invalid media\n' > bad.mp4
 if "$script" 1 bad.mp4; then echo 'invalid input accepted' >&2; exit 1; fi
-[[ ! -e bad_trim.mp4 ]]
+[[ ! -e bad_trim.mp4 ]] || { echo 'FAIL: trim_last/tests/test_trim_last.sh:63' >&2; exit 1; }
 cp clip.mp4 unsupported.foo
 printf 'existing output' > unsupported_trim.foo
 if "$script" -f 1 unsupported.foo; then echo 'encoding failure accepted' >&2; exit 1; fi
-[[ $(cat unsupported_trim.foo) == 'existing output' ]]
+[[ $(cat unsupported_trim.foo) == 'existing output' ]] || { echo 'FAIL: trim_last/tests/test_trim_last.sh:67' >&2; exit 1; }
 [[ -z $(find . -name '.trim-last.*' -print) ]] || { echo 'temporary directory remains after encoding failure' >&2; exit 1; }
 "$script" 1 clip.mp4
-[[ -s clip_trim.mp4 ]]
+[[ -s clip_trim.mp4 ]] || { echo 'FAIL: trim_last/tests/test_trim_last.sh:70' >&2; exit 1; }
 
 dur() { ffprobe -v error -show_entries format=duration -of csv=p=0 "$1"; }
 ffmpeg -v error -f lavfi -i color=c=red:s=16x16:d=3 -f lavfi -i color=c=blue:s=16x16:d=2 \

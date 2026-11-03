@@ -38,13 +38,13 @@ fi
 [[ $(qpdf --show-npages repaired_1.pdf) == 2 ]] || { echo 'FAIL: pdf-split/tests/test_pdf_split.sh:38' >&2; exit 1; }
 hash=$(shasum chunk_1.pdf | cut -d' ' -f1)
 if "$script" ./chunk_1.pdf 1M chunk; then echo 'same file accepted' >&2; exit 1; fi
-[[ $(shasum chunk_1.pdf | cut -d' ' -f1) == "$hash" ]]
+[[ $(shasum chunk_1.pdf | cut -d' ' -f1) == "$hash" ]] || { echo 'FAIL: pdf-split/tests/test_pdf_split.sh:41' >&2; exit 1; }
 ln -s chunk_1.pdf linked_1.pdf
 if "$script" chunk_1.pdf 1M linked; then echo 'symlink accepted' >&2; exit 1; fi
-[[ $(shasum chunk_1.pdf | cut -d' ' -f1) == "$hash" ]]
+[[ $(shasum chunk_1.pdf | cut -d' ' -f1) == "$hash" ]] || { echo 'FAIL: pdf-split/tests/test_pdf_split.sh:44' >&2; exit 1; }
 ln chunk_1.pdf hard_1.pdf
 if "$script" chunk_1.pdf 1M hard; then echo 'hard link accepted' >&2; exit 1; fi
-[[ $(shasum chunk_1.pdf | cut -d' ' -f1) == "$hash" ]]
+[[ $(shasum chunk_1.pdf | cut -d' ' -f1) == "$hash" ]] || { echo 'FAIL: pdf-split/tests/test_pdf_split.sh:47' >&2; exit 1; }
 "$script" chunk_1.pdf 1M out
 qpdf --check out_1.pdf
 "$script" chunk_1.pdf 1 split
@@ -105,7 +105,7 @@ if REAL_MV="$mv_path" PATH="$d/bin:$PATH" "$script" chunk_1.pdf 1 publish; then 
 if REAL_MV="$mv_path" PATH="$d/bin:$PATH" "$script" chunk_1.pdf 1 new; then echo 'publication failure accepted' >&2; exit 1; fi
 [[ ! -e new_1.pdf ]] || exit 1
 [[ ! -e new_2.pdf ]] || exit 1
-[[ $(shasum chunk_1.pdf | cut -d' ' -f1) == "$hash" ]]
+[[ $(shasum chunk_1.pdf | cut -d' ' -f1) == "$hash" ]] || { echo 'FAIL: pdf-split/tests/test_pdf_split.sh:108' >&2; exit 1; }
 printf 'recoverable original' > recovery_1.pdf
 if FAIL_RESTORE=1 REAL_MV="$mv_path" PATH="$d/bin:$PATH" "$script" chunk_1.pdf 1 recovery 2> recovery.log; then echo 'rollback failure accepted' >&2; exit 1; fi
 recovery_dir=$(sed -n 's/^Rollback incomplete; recovery files retained in //p' recovery.log)
@@ -116,4 +116,4 @@ mv -f -- "$recovery_dir/backup_1" recovery_1.pdf
 rm -r -- "${recovery_dir:?}"
 [[ $(cat recovery_1.pdf) == 'recoverable original' ]] || exit 1
 if "$script" missing.pdf 1M failed; then echo 'missing input accepted' >&2; exit 1; fi
-[[ ! -e failed_1.pdf ]]
+[[ ! -e failed_1.pdf ]] || { echo 'FAIL: pdf-split/tests/test_pdf_split.sh:119' >&2; exit 1; }

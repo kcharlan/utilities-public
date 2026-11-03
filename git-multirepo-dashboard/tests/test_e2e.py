@@ -1177,17 +1177,14 @@ def test_repo_detail_view_renders(server, page, tmp_path):
         }}
     """)
 
-    if result.get("repos") and len(result["repos"]) > 0:
-        repo_id = result["repos"][0]["id"]
-        page.goto(f"{server}#/repo/{repo_id}")
-        page.wait_for_load_state("networkidle")
-        page.wait_for_timeout(1000)
+    assert [repo["name"] for repo in result["repos"]] == ["detail_repo"], result
+    repo_id = result["repos"][0]["id"]
+    page.goto(f"{server}#/repo/{repo_id}")
+    page.wait_for_load_state("networkidle")
 
-        assert errors == [], f"JS errors on repo detail view: {errors}"
-
-        main_text = page.locator("main").inner_text()
-        assert "detail_repo" in main_text or len(main_text) > 0, \
-            "Repo detail view has no content"
+    expect(page.get_by_role("button", name="Back to fleet")).to_be_visible()
+    expect(page.locator(".detail-header h1")).to_have_text("detail_repo")
+    assert errors == [], f"JS errors on repo detail view: {errors}"
 
 
 def test_repo_detail_back_navigation(server, page, tmp_path):
@@ -1208,18 +1205,19 @@ def test_repo_detail_back_navigation(server, page, tmp_path):
         }}
     """)
 
-    if result.get("repos") and len(result["repos"]) > 0:
-        repo_id = result["repos"][0]["id"]
-        page.goto(f"{server}#/repo/{repo_id}")
-        page.wait_for_load_state("networkidle")
-        page.wait_for_timeout(500)
+    assert [repo["name"] for repo in result["repos"]] == ["back_nav_repo"], result
+    repo_id = result["repos"][0]["id"]
+    page.goto(f"{server}#/repo/{repo_id}")
+    back_button = page.get_by_role("button", name="Back to fleet")
+    expect(back_button).to_be_visible()
+    expect(page.locator(".detail-header h1")).to_have_text("back_nav_repo")
 
-        # Click Fleet Overview tab to go back
-        page.locator("nav >> text=Fleet Overview").click()
-        page.wait_for_timeout(500)
+    # Click Fleet Overview tab to go back
+    page.locator("nav >> text=Fleet Overview").click()
 
-        url_hash = page.url.split(server)[-1]
-        assert "#/repo/" not in url_hash, "Still on repo detail after clicking Fleet Overview"
+    expect(page).to_have_url(re.compile(r"#/fleet$"))
+    expect(back_button).to_have_count(0)
+    expect(page.locator('.project-card[aria-label="View back_nav_repo details"]')).to_be_visible()
 
 
 # ═════════════════════════════════════════════════════════════════════════════
@@ -2260,26 +2258,29 @@ def test_branch_names_not_corrupted(server, page, tmp_path):
 
 def test_branch_stale_not_zero_days_for_recent(server, page, tmp_path):
     """Recently committed branches should NOT show 'stale (0 days)'."""
-    _create_git_repo(tmp_path, "stale_test_repo")
+    # A non-default branch: the API always reports the default branch as fresh.
+    _create_git_repo_with_branches(tmp_path, "stale_test_repo", ["feature/recent"])
 
     page.goto(server)
     page.wait_for_load_state("networkidle")
 
-    page.evaluate(f"""
+    result = page.evaluate(f"""
         async () => {{
-            await fetch('/api/repos', {{
+            const r = await fetch('/api/repos', {{
                 method: 'POST',
                 headers: {{ 'Content-Type': 'application/json' }},
                 body: JSON.stringify({{ path: '{str(tmp_path)}' }})
             }});
+            return await r.json();
         }}
     """)
-    page.wait_for_timeout(500)
+    assert [repo["name"] for repo in result["repos"]] == ["stale_test_repo"], result
+    repo_id = result["repos"][0]["id"]
 
     page.locator("header >> text=Full Scan").click()
 
-    # Wait for scan complete
-    for _ in range(30):
+    # Wait for scan complete — up to 60s since the module-scoped server accumulates repos
+    for _ in range(120):
         page.wait_for_timeout(500)
         body_text = page.locator("body").inner_text()
         if "Scan complete" in body_text:
@@ -2287,24 +2288,20 @@ def test_branch_stale_not_zero_days_for_recent(server, page, tmp_path):
 
     page.wait_for_timeout(1000)
 
-    # Check branch data via API
-    repos_resp = page.evaluate("async () => (await fetch('/api/repos')).json()")
-    repos_data = repos_resp.get("repos", []) if isinstance(repos_resp, dict) else repos_resp
-    if repos_data and len(repos_data) > 0:
-        repo_id = repos_data[0]["id"]
-        branches_data = page.evaluate(
-            "async (id) => (await fetch('/api/repos/' + id + '/branches')).json()",
-            repo_id,
-        )
-
-        if "branches" in branches_data:
-            for b in branches_data["branches"]:
-                if b["last_commit_date"] is not None:
-                    # A branch with a recent commit date should NOT be stale
-                    assert b["is_stale"] is False, \
-                        f"Branch '{b['name']}' has date {b['last_commit_date']} but is_stale=True"
-                    assert b["last_commit_date"] != "", \
-                        f"Branch '{b['name']}' has empty string date"
+    branches_data = page.evaluate(
+        "async (id) => (await fetch('/api/repos/' + id + '/branches')).json()",
+        repo_id,
+    )
+    branches = branches_data["branches"]
+    dated = [b for b in branches if b["last_commit_date"] is not None]
+    assert any(not b["is_default"] for b in dated), \
+        f"Expected the recent non-default branch to have a commit date: {branches}"
+    for b in dated:
+        # A branch with a recent commit date should NOT be stale
+        assert b["is_stale"] is False, \
+            f"Branch '{b['name']}' has date {b['last_commit_date']} but is_stale=True"
+        assert b["last_commit_date"] != "", \
+            f"Branch '{b['name']}' has empty string date"
 
 
 def _create_git_repo_with_branches(parent_dir, name, branch_names):

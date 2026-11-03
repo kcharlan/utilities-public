@@ -76,13 +76,51 @@ def run_command(
     stderr_path: Path | None = None,
     progress_callback: CommandProgressCallback | None = None,
 ) -> dict[str, Any]:
+    # Temporary stdout/stderr logs are removed on every exit path, including
+    # interruptions and exceptions raised by the progress callback.
+    temp_paths: list[Path] = []
+    try:
+        return _run_command(
+            command,
+            cwd,
+            env,
+            phase,
+            metrics_path=metrics_path,
+            timeout_sec=timeout_sec,
+            inactivity_timeout_sec=inactivity_timeout_sec,
+            stdout_path=stdout_path,
+            stderr_path=stderr_path,
+            progress_callback=progress_callback,
+            temp_paths=temp_paths,
+        )
+    finally:
+        for path in temp_paths:
+            try:
+                path.unlink()
+            except OSError:
+                pass
+
+
+def _run_command(
+    command: str,
+    cwd: Path,
+    env: dict[str, str],
+    phase: str,
+    *,
+    metrics_path: Path | None,
+    timeout_sec: int | None,
+    inactivity_timeout_sec: int | None,
+    stdout_path: Path | None,
+    stderr_path: Path | None,
+    progress_callback: CommandProgressCallback | None,
+    temp_paths: list[Path],
+) -> dict[str, Any]:
     started = utc_now()
     if metrics_path is not None:
         metrics_path.parent.mkdir(parents=True, exist_ok=True)
         if metrics_path.exists():
             metrics_path.unlink()
 
-    temp_paths: list[Path] = []
     if stdout_path is None:
         stdout_fd, stdout_name = tempfile.mkstemp(prefix="benchmark-llm-stdout-", suffix=".log")
         os.close(stdout_fd)
@@ -227,9 +265,4 @@ def run_command(
                 "inactivity_timed_out": inactivity_timed_out,
             }
         )
-    for path in temp_paths:
-        try:
-            path.unlink()
-        except OSError:
-            pass
     return record

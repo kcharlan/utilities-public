@@ -8,7 +8,7 @@ import {appTreeHash,makeRelease,replaceAppFromBackup} from './deploy_brew_versio
 import {runTransaction} from './transaction.mjs';
 
 export function createMacosAppDeployment(config) {
-  const {project, appName, executable, contract, helpers, requiredInputs, label, envPrefix, receiptName, backupName, removePrefix, receiptPrefix, buildPrefix, scriptName, repoRoot, renameRestore} = config;
+  const {project, appName, executable, contract, helpers, requiredInputs, label, envPrefix, receiptName, backupName, removePrefix, receiptPrefix, buildPrefix, scriptName, repoRoot} = config;
   const buildInput=name=>helpers.includes(name) || ['Package.swift','Makefile'].some(n=>name===project+'/'+n) || new RegExp('^'+project+'/(Sources|Resources|Tests|tools)/').test(name);
 function sourceInventory(repo,snapshot) {
   const listing=snapshot?parseIndexSnapshot(snapshot):parseStagedListing(execFileSync('git',['-C',repo,'ls-files','--stage','--sparse','-z','--',project,...helpers],{encoding:'utf8'}));
@@ -99,7 +99,6 @@ function restore(repo,value,apps,receipt,saved,identity) {
     if(current) {const stage=fs.mkdtempSync(path.join(apps,removePrefix));fs.renameSync(current,path.join(stage,'displaced-app'));finishCleanup(null,cleanupDirectories([stage]),'Restoration cleanup failed',saved);}
   } else {
     const target=path.join(apps,value.state.name);
-    if(renameRestore && current && current!==target) fs.renameSync(current,target);
     replaceAppFromBackup(value.app,target,apps,saved);
     if(appTreeHash(path.join(apps,value.state.name))!==value.state.appTreeHash) throw Error('Restored app hash mismatch');
   }

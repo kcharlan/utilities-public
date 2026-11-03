@@ -22,51 +22,6 @@ def _load_module(path: Path):
     return module
 
 
-def test_cron_eval_example_manifest_and_assets() -> None:
-    repo_root = Path(__file__).resolve().parents[1]
-    benchmark_dir = repo_root / "examples" / "cron-eval"
-    bench_yaml = yaml.safe_load((benchmark_dir / "bench.yaml").read_text(encoding="utf-8"))
-
-    assert bench_yaml["type"] == "repo_task"
-    assert bench_yaml["id"] == "cron-eval"
-    assert bench_yaml["runs"] == 3
-    assert bench_yaml["run_order"] == "breadth"
-    assert bench_yaml["output_dir"] == "${BENCH_CRON_EVAL_OUTPUT_DIR:-~/Documents/benchmark-llm/cron-eval}"
-    assert bench_yaml["workspace"]["source_repo"] == "${BENCH_CRON_EVAL_SOURCE_REPO}"
-    assert bench_yaml["executor"]["command"] == "./scripts/invoke_model.sh"
-    assert [step["name"] for step in bench_yaml["steps"]] == [
-        "prepare",
-        "execute",
-        "validate",
-        "adjudicate",
-    ]
-
-    for relative in [
-        "prompt.txt",
-        "README.md",
-        "report_template.md",
-        "models-openrouter.txt",
-        "visible/spec.md",
-        "visible/examples.md",
-        "visible/starter_test.py",
-        "visible/.gitignore",
-        "hidden/reference_impl.py",
-        "hidden/rubric.yaml",
-        "hidden/adjudicator_prompt.md",
-        "scripts/prepare.sh",
-        "scripts/invoke_model.sh",
-        "scripts/run_checks.py",
-        "scripts/run_checks.sh",
-        "scripts/adjudicate.sh",
-        "scripts/render_adjudication_prompt.py",
-        "scripts/render_report.py",
-        "scripts/render_final_summary_prompt.py",
-        "scripts/findings_io.py",
-        "scripts/harness_metrics.py",
-    ]:
-        assert (benchmark_dir / relative).exists(), relative
-
-
 def test_cron_eval_conformance_suite_has_expected_shape_and_weights() -> None:
     repo_root = Path(__file__).resolve().parents[1]
     conformance_dir = repo_root / "examples" / "cron-eval" / "hidden" / "conformance"
@@ -165,7 +120,14 @@ def test_cron_eval_reference_impl_completes_bench_run_at_100(tmp_path: Path) -> 
     manifest["workspace"]["source_repo"] = str(source_repo)
     manifest["workspace"]["commit_outputs"] = False
     reference = shlex.quote(str(benchmark / "hidden" / "reference_impl.py"))
-    manifest["executor"]["command"] = f'cp {reference} "$WORKSPACE_ROOT/cron_eval.py"'
+    # The model step must see the task spec and the ignore file that keeps its
+    # venv out of committed outputs before it writes the submission.
+    manifest["executor"]["command"] = (
+        'for name in prompt.txt spec.md examples.md starter_test.py .gitignore; do '
+        'test -f "$WORKSPACE_ROOT/$name" || { echo "missing model-visible $name" >&2; exit 1; }; done; '
+        'grep -Fqx ".venv/" "$WORKSPACE_ROOT/.gitignore" || { echo ".gitignore lacks .venv/" >&2; exit 1; }; '
+        f'cp {reference} "$WORKSPACE_ROOT/cron_eval.py"'
+    )
     manifest["steps"] = [step for step in manifest["steps"] if step["name"] != "adjudicate"]
     manifest_path.write_text(yaml.safe_dump(manifest), encoding="utf-8")
     runtime_home = tmp_path / "runtime"

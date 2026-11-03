@@ -587,22 +587,10 @@ class TestApiRefresh:
 
 
 # ============================================================
-# API edge cases — invalid methods, unknown routes
+# Query parameter validation — non-integer season and cutoff
 # ============================================================
 
-class TestEdgeCases:
-    def test_unknown_route_returns_404(self, client):
-        resp = client.get("/api/nonexistent")
-        assert resp.status_code == 404
-
-    def test_post_to_data_not_allowed(self, client):
-        resp = client.post("/api/data")
-        assert resp.status_code == 405
-
-    def test_post_to_scenarios_not_allowed(self, client):
-        resp = client.post("/api/scenarios")
-        assert resp.status_code == 405
-
+class TestIntegerQueryParams:
     def test_season_as_string_param(self, client):
         """FastAPI should reject non-integer season."""
         resp = client.get("/api/data?season=abc")

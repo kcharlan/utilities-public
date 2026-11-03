@@ -7,10 +7,19 @@ d="${d:A}"
 loopback_only() {
   jq -e '[.services[] | (.ports // [])[]] | length > 0 and all(.host_ip == "127.0.0.1")' "$1" >/dev/null
 }
+# Exit, not return: zsh 5.9 skips the EXIT trap when a function returns
+# nonzero at top level, which would leave $d behind.
 assert_loopback() {
-  loopback_only "$2" || { print -u2 -- "$1 publishes no ports or a non-loopback port"; return 1; }
+  loopback_only "$2" || { print -u2 -- "$1 publishes no ports or a non-loopback port"; exit 1; }
 }
 mkdir -p "$d/home" "$d/bundle/"{webserver,excalidraw,llm_proxy,n8n-poc,llm_collector/llm_collector_container} "$d/deploy/"{webserver,llm_proxy/output,n8n-poc} "$d/data" "$d/webroot"
+# Cleanup regression hook: fail one assertion and stop, as a failing check would.
+if [[ -n "${COMPOSE_CONTRACT_INJECT_FAILURE:-}" ]]; then
+  print -r -- '{"services":{}}' > "$d/no-ports.json"
+  assert_loopback synthetic-injected "$d/no-ports.json"
+  print -u2 'Injected failure unexpectedly passed'
+  exit 0
+fi
 for stack in webserver excalidraw llm_proxy n8n-poc; do
   cp "$root/$stack/docker-compose.yml" "$d/bundle/$stack/"
 done
@@ -44,6 +53,16 @@ EOF
 docker-compose -p synthetic --project-directory "$d/bundle/synthetic" -f "$d/bundle/synthetic/docker-compose.yml" config --format json > "$d/synthetic.json"
 if loopback_only "$d/synthetic.json"; then
   print -u2 'Synthetic non-loopback port unexpectedly passed the loopback check'
+  exit 1
+fi
+# A failing assertion must still remove the suite directory.
+mkdir -p "$d/cleanup-tmp"
+cleanup_status=0
+TMPDIR="$d/cleanup-tmp" COMPOSE_CONTRACT_INJECT_FAILURE=1 /bin/zsh "${0:A}" > "$d/cleanup.out" 2>&1 || cleanup_status=$?
+if (( cleanup_status == 0 )) || ! grep -Fq 'synthetic-injected publishes no ports' "$d/cleanup.out" ||
+   [[ -n "$(find "$d/cleanup-tmp" -mindepth 1 -print -quit)" ]]; then
+  cat "$d/cleanup.out" >&2
+  print -u2 -- "A failing assertion exited $cleanup_status or left: $(find "$d/cleanup-tmp" -mindepth 1 -maxdepth 1)"
   exit 1
 fi
 print 'All Compose contract tests passed.'

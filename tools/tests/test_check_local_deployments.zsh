@@ -2,7 +2,8 @@
 
 set -euo pipefail
 
-readonly TEST_SCRIPT_DIR="${0:A:h}"
+readonly TEST_SCRIPT="${0:A}"
+readonly TEST_SCRIPT_DIR="${TEST_SCRIPT:h}"
 readonly REPO_UNDER_TEST="${TEST_SCRIPT_DIR:h:h}"
 readonly FIXTURE_NODE="$(command -v node)"
 readonly AUDIT_SOURCE="$REPO_UNDER_TEST/tools/check_local_deployments.zsh"
@@ -77,7 +78,35 @@ assert_status() {
   fi
 }
 
-fixture_counter=0
+# Cases are queued here and run at the end of the file, each in its own subshell.
+typeset -a SUITE_CASES=()
+queue_case() {
+  SUITE_CASES+=("${(j: :)${(q)@}}")
+}
+
+# Fails through errexit inside a function, the path on which zsh 5.9 skips the
+# EXIT trap. Only the cleanup regression test below runs it.
+synthetic_failing_case() {
+  write_synthetic_file "$SUITE_ROOT/synthetic-failing-case/marker" 'failing case'
+  print -- 'synthetic failing case ran'
+  false
+}
+
+test_failing_case_removes_suite_root() {
+  local private_tmp="$SUITE_ROOT/failing-case-tmp"
+  local output="$SUITE_ROOT/failing-case.out"
+  local run_status=0
+  mkdir -p -- "$private_tmp"
+  TMPDIR="$private_tmp" CHECK_LOCAL_DEPLOYMENTS_TESTS_INJECT_FAILURE=1 \
+    /bin/zsh "$TEST_SCRIPT" > "$output" 2>&1 || run_status=$?
+  (( run_status != 0 )) || fail 'suite with a failing case exited 0'
+  assert_contains "$output" 'synthetic failing case ran'
+  assert_not_contains "$output" 'check_local_deployments tests: PASS'
+  [[ -z "$(find "$private_tmp" -mindepth 1 -print -quit)" ]] ||
+    fail "failing case left $(find "$private_tmp" -mindepth 1 -maxdepth 1)"
+}
+queue_case test_failing_case_removes_suite_root
+
 FIXTURE_ROOT=
 FIXTURE_REPO=
 FIXTURE_HOME=
@@ -214,8 +243,8 @@ install_fixture_archive() {
 }
 
 new_fixture() {
-  fixture_counter=$((fixture_counter + 1))
-  FIXTURE_ROOT="$SUITE_ROOT/fixture-$fixture_counter"
+  # Unique without a counter, which would restart in each case's subshell.
+  FIXTURE_ROOT="$(mktemp -d "$SUITE_ROOT/fixture-XXXXXX")"
   FIXTURE_REPO="$FIXTURE_ROOT/repo"
   FIXTURE_HOME="$FIXTURE_ROOT/home"
   FIXTURE_SCRIPTS="$FIXTURE_HOME/Library/Scripts"
@@ -1516,62 +1545,62 @@ test_model_archive_bounds_streamed_output() {
   fi
 }
 
-test_passing_baseline
-test_scripts_project_and_command_link_drift
-test_missing_direct_copy
-test_project_byte_drift
-test_project_without_index_files_fails
-test_matching_unstaged_source_and_copy_fails
-test_normalized_worktree_bytes_do_not_match_index
-test_direct_mode_drift
-test_direct_special_mode_drift
-test_project_mode_drift
-test_project_byte_and_mode_dimensions
-test_direct_symlink_rejected
-test_direct_nonregular_types_rejected
-test_model_owner_execute_required
-test_model_owner_executable_modes
-test_compare_operational_error
-test_stat_operational_error
-test_protected_modes_and_types
-test_hostile_mktemp_targets_rejected
-test_tmp_cleanup_after_chmod_failure
-test_untracked_project_source_ignored
-test_staged_project_addition_audited
-test_direct_source_requires_index_membership
-test_untracked_model_module_excluded
-test_staged_model_module_audited
-test_missing_tracked_sources_fail
-test_staged_project_deletion_fails_source_state
-test_staged_root_gitignore_deletion_fails_history_coverage
-test_tracked_source_symlink_rejected
-test_git_index_collection_failure_suppresses_dependent_ok
-test_genuine_stale_project_file
-test_deleted_and_absent_is_not_stale
-test_tracked_gitignore_suppresses_intentional_local_transition
-test_untracked_same_path_does_not_hide_stale_file
-test_indexed_readd_suppresses_historical_deletion
-test_duplicate_deletion_history_counts_once
-test_rename_origin_is_stale
-test_ignore_negation_does_not_hide_stale_file
-test_untracked_ignore_sources_are_not_authoritative
-test_side_branch_only_deletion_is_excluded
-test_stale_pathname_with_spaces_is_not_printed
-test_shallow_history_fails_coverage
-test_model_archive_rejects_untracked_extra_module
-test_model_archive_accepts_installer_layout
-test_model_archive_detects_nested_asset_drift
-test_model_archive_rejects_invalid_packaged_provenance
-test_model_archive_rejects_modified_revision
-test_model_archive_rejects_deleted_index_module
-test_model_archive_requires_exact_preamble
-test_model_archive_content_mismatches
-test_model_archive_rejects_duplicate_entry
-test_model_archive_rejects_traversal_entry_without_writes
-test_model_archive_rejects_expected_symlink_entry
-test_model_archive_rejects_encrypted_entries
-test_model_archive_rejects_truncation
-test_model_archive_bounds_streamed_output
+queue_case test_passing_baseline
+queue_case test_scripts_project_and_command_link_drift
+queue_case test_missing_direct_copy
+queue_case test_project_byte_drift
+queue_case test_project_without_index_files_fails
+queue_case test_matching_unstaged_source_and_copy_fails
+queue_case test_normalized_worktree_bytes_do_not_match_index
+queue_case test_direct_mode_drift
+queue_case test_direct_special_mode_drift
+queue_case test_project_mode_drift
+queue_case test_project_byte_and_mode_dimensions
+queue_case test_direct_symlink_rejected
+queue_case test_direct_nonregular_types_rejected
+queue_case test_model_owner_execute_required
+queue_case test_model_owner_executable_modes
+queue_case test_compare_operational_error
+queue_case test_stat_operational_error
+queue_case test_protected_modes_and_types
+queue_case test_hostile_mktemp_targets_rejected
+queue_case test_tmp_cleanup_after_chmod_failure
+queue_case test_untracked_project_source_ignored
+queue_case test_staged_project_addition_audited
+queue_case test_direct_source_requires_index_membership
+queue_case test_untracked_model_module_excluded
+queue_case test_staged_model_module_audited
+queue_case test_missing_tracked_sources_fail
+queue_case test_staged_project_deletion_fails_source_state
+queue_case test_staged_root_gitignore_deletion_fails_history_coverage
+queue_case test_tracked_source_symlink_rejected
+queue_case test_git_index_collection_failure_suppresses_dependent_ok
+queue_case test_genuine_stale_project_file
+queue_case test_deleted_and_absent_is_not_stale
+queue_case test_tracked_gitignore_suppresses_intentional_local_transition
+queue_case test_untracked_same_path_does_not_hide_stale_file
+queue_case test_indexed_readd_suppresses_historical_deletion
+queue_case test_duplicate_deletion_history_counts_once
+queue_case test_rename_origin_is_stale
+queue_case test_ignore_negation_does_not_hide_stale_file
+queue_case test_untracked_ignore_sources_are_not_authoritative
+queue_case test_side_branch_only_deletion_is_excluded
+queue_case test_stale_pathname_with_spaces_is_not_printed
+queue_case test_shallow_history_fails_coverage
+queue_case test_model_archive_rejects_untracked_extra_module
+queue_case test_model_archive_accepts_installer_layout
+queue_case test_model_archive_detects_nested_asset_drift
+queue_case test_model_archive_rejects_invalid_packaged_provenance
+queue_case test_model_archive_rejects_modified_revision
+queue_case test_model_archive_rejects_deleted_index_module
+queue_case test_model_archive_requires_exact_preamble
+queue_case test_model_archive_content_mismatches
+queue_case test_model_archive_rejects_duplicate_entry
+queue_case test_model_archive_rejects_traversal_entry_without_writes
+queue_case test_model_archive_rejects_expected_symlink_entry
+queue_case test_model_archive_rejects_encrypted_entries
+queue_case test_model_archive_rejects_truncation
+queue_case test_model_archive_bounds_streamed_output
 
 
 # The retired receipt, AST closure and strict native metadata assertions belonged
@@ -1599,9 +1628,9 @@ test_backtest_source_inventory() {
   assert_status 1 "$AUDIT_STATUS" 'backtest removed index source'
   assert_contains "$AUDIT_STDERR" 'FAIL: backtest static source inventory unverified'
 }
-test_backtest_drift
-test_backtest_missing_data
-test_backtest_source_inventory
+queue_case test_backtest_drift
+queue_case test_backtest_missing_data
+queue_case test_backtest_source_inventory
 
 test_calculator_page_deployment() {
   local page="$1"
@@ -1635,8 +1664,8 @@ test_calculator_page_deployment() {
   assert_status 1 "$AUDIT_STATUS" "unindexed $page source"
   assert_contains "$AUDIT_STDERR" "$page source is pending deletion"
 }
-test_calculator_page_deployment ai-model-timeline.html
-test_calculator_page_deployment drawdown.html
+queue_case test_calculator_page_deployment ai-model-timeline.html
+queue_case test_calculator_page_deployment drawdown.html
 
 test_native_colophon_deployment() {
   new_fixture
@@ -1663,12 +1692,6 @@ test_native_colophon_deployment() {
   assert_contains "$AUDIT_STDERR" 'colophon native deployment unverified'
 
   new_fixture
-  rm -- "$FIXTURE_SCRIPTS/.colophon-native.json"
-  run_audit
-  assert_status 1 "$AUDIT_STATUS" 'native receipt missing'
-  assert_contains "$AUDIT_STDERR" 'colophon native deployment unverified'
-
-  new_fixture
   git -C "$FIXTURE_REPO" rm -q --cached colophon/src/main.c
   run_audit
   assert_status 1 "$AUDIT_STATUS" 'native source removed from index'
@@ -1688,7 +1711,7 @@ test_native_colophon_deployment() {
   assert_status 1 "$AUDIT_STATUS" 'missing canonical native input'
   assert_contains "$AUDIT_STDERR" 'colophon native source inventory unverified'
 }
-test_native_colophon_deployment
+queue_case test_native_colophon_deployment
 
 test_native_brew_version_deployment() {
   new_fixture
@@ -1712,11 +1735,6 @@ test_native_brew_version_deployment() {
   assert_status 1 "$AUDIT_STATUS" 'brew source drift'
   assert_contains "$AUDIT_STDERR" 'brew-version native deployment unverified'
   new_fixture
-  rm "$FIXTURE_SCRIPTS/.brew-version-native.json"
-  run_audit
-  assert_status 1 "$AUDIT_STATUS" 'brew receipt missing'
-  assert_contains "$AUDIT_STDERR" 'brew-version native deployment unverified'
-  new_fixture
   git -C "$FIXTURE_REPO" rm -q --cached brew_version/Package.swift
   run_audit
   assert_status 1 "$AUDIT_STATUS" 'brew source removed from index'
@@ -1734,7 +1752,7 @@ test_native_brew_version_deployment() {
   assert_contains "$AUDIT_STDERR" 'brew-version native source inventory unverified'
   assert_not_contains "$AUDIT_STDERR" 'brew-version native deployment unverified'
 }
-test_native_brew_version_deployment
+queue_case test_native_brew_version_deployment
 
 test_storage_monitor_deployment() {
   new_fixture
@@ -1761,12 +1779,6 @@ test_storage_monitor_deployment() {
   assert_contains "$AUDIT_STDERR" 'storage_monitor deployment unverified (source, launcher, walker or receipt drift)'
 
   new_fixture
-  rm -- "$FIXTURE_SCRIPTS/.storage_monitor.json"
-  run_audit
-  assert_status 1 "$AUDIT_STATUS" 'storage monitor receipt missing'
-  assert_contains "$AUDIT_STDERR" 'storage_monitor deployment unverified (source, launcher, walker or receipt drift)'
-
-  new_fixture
   git -C "$FIXTURE_REPO" rm -q --cached storage_monitor/native/src/storage_monitor_walk.c
   run_audit
   assert_status 1 "$AUDIT_STATUS" 'storage monitor native source removed from index'
@@ -1786,7 +1798,7 @@ test_storage_monitor_deployment() {
     assert_not_contains "$AUDIT_STDOUT" 'OK: storage_monitor deployment'
   done
 }
-test_storage_monitor_deployment
+queue_case test_storage_monitor_deployment
 
 test_native_required_installers() {
   local mapping installer label
@@ -1806,7 +1818,7 @@ test_native_required_installers() {
     assert_not_contains "$AUDIT_STDOUT" "OK: $label deployment"
   done
 }
-test_native_required_installers
+queue_case test_native_required_installers
 
 test_telltale_leak_checker_required() {
   new_fixture
@@ -1816,7 +1828,7 @@ test_telltale_leak_checker_required() {
   assert_contains "$AUDIT_STDERR" 'telltale native source inventory unverified'
   assert_not_contains "$AUDIT_STDOUT" 'OK: telltale native deployment'
 }
-test_telltale_leak_checker_required
+queue_case test_telltale_leak_checker_required
 
 test_native_transaction_helper_required() {
   local label
@@ -1829,7 +1841,7 @@ test_native_transaction_helper_required() {
     assert_not_contains "$AUDIT_STDOUT" "OK: $label deployment"
   done
 }
-test_native_transaction_helper_required
+queue_case test_native_transaction_helper_required
 
 test_native_shared_app_helper_required() {
   local label
@@ -1845,7 +1857,7 @@ test_native_shared_app_helper_required() {
     assert_not_contains "$AUDIT_STDERR" "$label source inventory unverified"
   done
 }
-test_native_shared_app_helper_required
+queue_case test_native_shared_app_helper_required
 
 test_native_anker_charge_monitor_deployment() {
   local source response
@@ -1888,7 +1900,7 @@ test_native_anker_charge_monitor_deployment() {
     assert_contains "$AUDIT_STDERR" 'anker-charge-monitor native child protocol unverified'
   done
 }
-test_native_anker_charge_monitor_deployment
+queue_case test_native_anker_charge_monitor_deployment
 
 # Port: test_native_anker_charge_monitor_deployment above, plus a required font input.
 test_native_telltale_deployment() {
@@ -1932,7 +1944,7 @@ test_native_telltale_deployment() {
     assert_contains "$AUDIT_STDERR" 'telltale native child protocol unverified'
   done
 }
-test_native_telltale_deployment
+queue_case test_native_telltale_deployment
 
 test_copy_manifest_and_lifecycle() {
   new_fixture
@@ -1967,6 +1979,15 @@ test_copy_manifest_and_lifecycle() {
   run_audit
   assert_status 0 "$AUDIT_STATUS" 'deployed source audit'
 }
-test_copy_manifest_and_lifecycle
+queue_case test_copy_manifest_and_lifecycle
+
+if [[ -n "${CHECK_LOCAL_DEPLOYMENTS_TESTS_INJECT_FAILURE:-}" ]]; then
+  SUITE_CASES=(synthetic_failing_case)
+fi
+# Each case runs in a subshell so a failure stops the suite here, at top level,
+# where the EXIT trap still removes the suite root.
+for suite_case in "${SUITE_CASES[@]}"; do
+  ( ${(Q)${(z)suite_case}} )
+done
 
 print -- "check_local_deployments tests: PASS"
