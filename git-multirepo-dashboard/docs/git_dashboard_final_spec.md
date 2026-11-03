@@ -157,6 +157,8 @@ Registration is idempotent for an existing absolute path. The path-repair endpoi
 
 Results update `working_state` without erasing error fields created by broader scans. `GET /api/fleet` reads that stored state and joins branches, dependencies, 13-week sparklines, and fleet KPIs into the response without starting work.
 
+`present_quick_status` defines the presentation rule for fleet and repository detail; `test_repo_detail_quick_status_matches_fleet` covers its boundary cases.
+
 A failed status command records its error and leaves the dirty flag and counts unknown; the card shows a status-failed badge instead of Clean. A later successful quick scan clears that error. Worktree deletions and type changes count as modified files.
 
 Repository `dep_summary.unchecked` and fleet `kpis.unchecked_deps` count rows unless `outdated_state` is `checked` or `floating` and `vuln_state` is `checked`. Findings do not override incomplete coverage. Outdated counts include `outdated` and `major` severities; vulnerable counts use `vulnerable` severity.

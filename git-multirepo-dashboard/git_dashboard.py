@@ -48,7 +48,7 @@ except ImportError:  # pragma: no cover - Windows
 
 # ── Constants ─────────────────────────────────────────────────────────────────
 DEFAULT_PORT = 8300
-VERSION = "0.3.7"
+VERSION = "0.3.8"
 
 # Populated by build_tools_dict() during preflight; global so /api/status can
 # return it without re-running which() on every request.
@@ -605,13 +605,26 @@ async def upsert_working_state(db, repo_id: str, data: dict) -> None:
     await db.commit()
 
 
+def present_quick_status(path_exists: bool, dirty, modified, untracked, staged, quick_error) -> dict:
+    """Present stored quick status using the fleet API's compatibility rules."""
+    if not path_exists:
+        return {"has_uncommitted": False, "modified_count": 0, "untracked_count": 0,
+                "staged_count": 0, "quick_scan_error": None}
+    if quick_error:
+        return {"has_uncommitted": None, "modified_count": None, "untracked_count": None,
+                "staged_count": None, "quick_scan_error": quick_error}
+    return {"has_uncommitted": bool(dirty), "modified_count": modified or 0,
+            "untracked_count": untracked or 0, "staged_count": staged or 0,
+            "quick_scan_error": quick_error}
+
+
 # ── Fleet Quick Scan ──────────────────────────────────────────────────────────
 
 async def scan_fleet_quick(db) -> list:
     """Quick-scan all registered repos in parallel (semaphore=8), upsert working_state.
 
-    Repos whose disk paths no longer exist are included with path_exists=False and
-    null working-state fields (not silently skipped).
+    Repos whose disk paths no longer exist use present_quick_status for status
+    presentation and remain included (not silently skipped).
     Returns a list of dicts containing repo metadata + quick-scan data.
     """
     cursor = await db.execute(
@@ -634,11 +647,7 @@ async def scan_fleet_quick(db) -> list:
                     "runtime": runtime,
                     "default_branch": default_branch,
                     "path_exists": False,
-                    "has_uncommitted": False,
-                    "modified_count": 0,
-                    "untracked_count": 0,
-                    "staged_count": 0,
-                    "quick_scan_error": None,
+                    **present_quick_status(False, None, None, None, None, None),
                     "current_branch": None,
                     "last_commit_hash": None,
                     "last_commit_message": None,
@@ -6637,7 +6646,7 @@ async def scan_progress_sse(scan_id: int):
 
 @app.get("/api/repos/{repo_id}")
 async def get_repo_detail(repo_id: str, db=Depends(get_db)):
-    """Return full detail for one repo: repositories row + working_state."""
+    """Return repo detail, presenting quick status with present_quick_status."""
     cursor = await db.execute(
         "SELECT id, name, path, runtime, default_branch, last_full_scan_at "
         "FROM repositories WHERE id = ?",
@@ -6650,19 +6659,17 @@ async def get_repo_detail(repo_id: str, db=Depends(get_db)):
     ws_cursor = await db.execute(
         "SELECT repo_id, has_uncommitted, modified_count, untracked_count, "
         "staged_count, current_branch, last_commit_hash, last_commit_message, "
-        "last_commit_date, checked_at, dep_check_error, missing_dep_tools, dep_manifests "
+        "last_commit_date, checked_at, dep_check_error, missing_dep_tools, dep_manifests, quick_scan_error "
         "FROM working_state WHERE repo_id = ?",
         (repo_id,),
     )
     ws_row = await ws_cursor.fetchone()
+    path_exists = Path(repo[2]).is_dir()
     ws = None
     if ws_row:
         ws = {
             "repo_id": ws_row[0],
-            "has_uncommitted": bool(ws_row[1]),
-            "modified_count": ws_row[2],
-            "untracked_count": ws_row[3],
-            "staged_count": ws_row[4],
+            **present_quick_status(path_exists, ws_row[1], ws_row[2], ws_row[3], ws_row[4], ws_row[13]),
             "current_branch": ws_row[5],
             "last_commit_hash": ws_row[6],
             "last_commit_message": ws_row[7],
@@ -6680,7 +6687,7 @@ async def get_repo_detail(repo_id: str, db=Depends(get_db)):
         "runtime": repo[3],
         "default_branch": repo[4],
         "last_full_scan_at": repo[5],
-        "path_exists": Path(repo[2]).is_dir(),
+        "path_exists": path_exists,
         "working_state": ws,
     }
 
@@ -7055,11 +7062,7 @@ async def get_fleet(db=Depends(get_db)):
         exists = Path(path).is_dir()
         results.append(dict(id=repo_id, name=name, path=path, runtime=runtime,
                             default_branch=default_branch, path_exists=exists,
-                            has_uncommitted=None if exists and quick_error else bool(dirty) if exists else False,
-                            modified_count=None if exists and quick_error else (modified or 0) if exists else 0,
-                            untracked_count=None if exists and quick_error else (untracked or 0) if exists else 0,
-                            staged_count=None if exists and quick_error else (staged or 0) if exists else 0,
-                            quick_scan_error=quick_error if exists else None,
+                            **present_quick_status(exists, dirty, modified, untracked, staged, quick_error),
                             current_branch=branch if exists else None,
                             last_commit_hash=commit if exists else None,
                             last_commit_message=message if exists else None,

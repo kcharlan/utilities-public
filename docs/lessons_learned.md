@@ -2380,6 +2380,10 @@ HAR Scope's zoom field set its "cancel" state and then called `blur()` on Escape
 
 Git Fleet's `make_tmpdir` helper called `tempfile.mkdtemp()` with no cleanup, leaving 42 directories in `$TMPDIR` on every suite run until more than 1,200 had built up. Test helpers that need fresh directories should be fixtures on `tmp_path` or `tmp_path_factory`, so pytest's retention removes them. To prove a suite is clean, run it with `TMPDIR` pointed at a private empty directory and count what is left.
 
+## 2026-11-03: Exercise every API consumer of shared status fields
+
+Fleet and repository detail both expose quick status, so exercise each consumer when changing its presentation. Share the rule in `present_quick_status` and cover boundary cases through `test_repo_detail_quick_status_matches_fleet`.
+
 ## 2026-11-03: Reproduce log size limits with synthetic inputs
 
 A cap can reject valid local logs at the reader or decoder before provider parsing sees them. Reproduce each boundary with conspicuously synthetic inputs, including large single-segment frames and resumed plain lines, and account for decoder allocations, reader buffers and accumulated parser results. The Telltale `ZstdLargeInputTests`, `LineReaderLargeLineTests` and provider regressions exercise the acceptance contract; their shared `LargeLogSizes` fixtures document its sizing.

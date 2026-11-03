@@ -98,7 +98,7 @@ def test_get_repo_detail_success(test_app):
     assert ws is not None
     # working_state must expose the expected keys
     for key in ("repo_id", "has_uncommitted", "modified_count", "untracked_count",
-                "staged_count", "current_branch", "checked_at"):
+                "staged_count", "current_branch", "checked_at", "quick_scan_error"):
         assert key in ws, f"working_state missing key: {key}"
 
 
