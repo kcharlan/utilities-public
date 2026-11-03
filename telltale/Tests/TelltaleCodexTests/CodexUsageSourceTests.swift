@@ -5,6 +5,29 @@ import TelltaleCore
 import TelltaleTestSupport
 
 @Suite struct CodexUsageSourceTests {
+    @Test func compressedReplacementWithLineLargerThanFormerCapsStaysReady() throws {
+        try withScratchDirectory { home in
+            var builder = RolloutBuilder(session: 1)
+            builder.sessionMeta(); builder.turnContext(at: 1, model: Self.sol); builder.userMessage(at: 2)
+            builder.record("response_item", at: 3, payload: ["type": "custom_tool_call_output", "output": String(repeating: "S", count: LargeLogSizes.line)])
+            builder.usage(at: 12, response: 1)
+            let plain = try builder.writePlain(codexHome: home)
+            let source = Self.source(home)
+            let first = source.ingest(cursor: nil, backfillFrom: .distantPast, now: Self.at(100))
+            #expect(first.state == .ready)
+            #expect(first.batch.responses.map(\.responseID) == [RolloutBuilder.responseID(1)])
+            try FileManager.default.removeItem(at: plain)
+            _ = try builder.writeCompressed(codexHome: home, archived: true)
+            let replacement = source.ingest(cursor: first.cursor, backfillFrom: .distantPast, now: Self.at(200))
+            #expect(replacement.state == .ready); #expect(replacement.batch.responses.isEmpty)
+            let file = try #require(RolloutDiscovery.files(codexHome: home).first)
+            let saved = try #require(Self.cursor(replacement).sessions[file.sessionID])
+            #expect(saved.compressedSize == file.size); #expect(saved.compressedModified == file.modified)
+            #expect(saved.byteOffset == nil); #expect(!RolloutParser.needsRead(file, cursor: saved))
+            let cold = source.ingest(cursor: nil, backfillFrom: .distantPast, now: Self.at(300))
+            #expect(cold.state == .ready); #expect(cold.batch.responses.map(\.responseID) == [RolloutBuilder.responseID(1)])
+        }
+    }
     @Test func formatProblemOutranksAReadProblem() throws {
         try withScratchDirectory { home in
             let broken = try Self.session(1).writeCompressed(codexHome: home)

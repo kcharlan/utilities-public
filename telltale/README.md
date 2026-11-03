@@ -2,7 +2,7 @@
 
 ## Purpose
 
-Telltale 0.3.5 is a native macOS menu bar app that watches Codex and Claude Code usage metadata
+Telltale 0.3.6 is a native macOS menu bar app that watches Codex and Claude Code usage metadata
 and OpenAI and Claude service status and tells you when something is off. The design is in
 [`docs/telltale_design_spec.md`](docs/telltale_design_spec.md), the visual rules in
 [`docs/telltale_visual_design.md`](docs/telltale_visual_design.md), and the Claude provider
@@ -24,9 +24,9 @@ Git, Bash and ripgrep. There are no third-party Swift dependencies; zstd decompr
 vendored as the `CZstd` C target, and the readout font is bundled in `Resources/Fonts` (see
 Third-party notices).
 
-The collector rejects plain log lines over 16 MiB. Compressed rollouts are limited to a 128 MiB
-zstd window, 64 MiB of decompressed data per file, and 4 MiB per line. An oversized file is
-reported as a read problem rather than processed partially.
+The collector imposes no application-level line or decompressed-file size caps. Compressed
+rollouts remain subject to the vendored decoder’s supported window and available resources;
+see the resource documentation in `Sources/TelltaleCodex/ZstdReader.swift`.
 
 ## Build and test
 
@@ -377,7 +377,7 @@ these checks by hand on `make acceptance`'s bundle (and the installed release wh
 and record each one separately, with the date and macOS build. One missed press fails the
 check.
 
-- After authorized deployment, exercise a speed reversal and check the replacement alert is new and shows its worst deviation. During a fresh evaluation compare each row with its terminal sparkline value. Check the panel footer, dashboard sidebar and installed Info.plist show 0.3.5, with build 10 in help.
+- After authorized deployment, exercise a speed reversal and check the replacement alert is new and shows its worst deviation. During a fresh evaluation compare each row with its terminal sparkline value. Check the panel footer, dashboard sidebar and installed Info.plist show 0.3.6, with build 11 in help.
 - Status item dot, Light and Dark bars: a new alert shows a filled dot and an acknowledged one a ring whose hollow centre is plain at a glance; Mark as new fills it again.
 - VoiceOver reads the version in the panel footer and dashboard sidebar; hovering each shows the build number.
 - Lens glyph, amber dot and accessibility label. Press the status item repeatedly, slowly

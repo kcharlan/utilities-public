@@ -6,6 +6,16 @@ import TelltaleTestSupport
 @testable import TelltaleClaude
 
 @Suite struct ClaudeUsageSourceTests {
+    @Test func largeUserLineStaysReady() throws {
+        try withScratchDirectory { root in
+            let user = try TranscriptBuilder.line(["type": "user", "timestamp": "2026-01-01T00:00:00Z", "message": ["content": String(repeating: "S", count: LargeLogSizes.line)]])
+            let response = try TranscriptBuilder.assistant("2026-01-01T00:00:05Z")
+            _ = try TranscriptBuilder.file(root: root, text: user + response)
+            let result = ClaudeUsageSource(roots: [root]).ingest(cursor: nil, backfillFrom: .distantPast, now: Date().addingTimeInterval(180))
+            #expect(result.state == .ready); #expect(result.batch.responses.count == 1)
+            #expect(result.batch.responses.first?.outputTokens == 300)
+        }
+    }
     @Test func formatProblemOutranksUnreadableTranscript() throws {
         try withScratchDirectory { root in
             let unreadable = try TranscriptBuilder.file(root: root, text: TranscriptBuilder.user("2026-01-01T00:00:00Z"))
