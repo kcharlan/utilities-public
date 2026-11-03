@@ -10,6 +10,7 @@ Standalone Zsh utility that runs the `ccusage claude daily` and `ccusage codex d
   - `cusage-MMYY.csv` for Codex usage (the `cusage` prefix is retained for compatibility)
 - Accepts both upstream JSON shapes used by the report generators: an object with a `daily` array or a top-level array.
 - Accepts either `date` or `period` as the upstream date field.
+- Rejects rows missing both date fields and preserves the existing report.
 - Normalizes the CSV `date` column to ISO `YYYY-MM-DD` when upstream tools emit display-formatted dates.
 - Automatically includes both the current month and the prior month during the first 2 days of a new month.
 - Supports an explicit prior-month mode for manual backfills after the boundary window.

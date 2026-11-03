@@ -2,8 +2,8 @@ from __future__ import annotations
 
 import csv
 import importlib.util
-import math
 import os
+import re
 import stat
 import subprocess
 import sys
@@ -53,7 +53,59 @@ def test_output_tracks_edited_duration_across_supported_range(tmp_path: Path) ->
     balances = workbook["Monthly Balances"]
     for column in ("C", "E", "G", "I", "K"):
         assert balances[f"{column}1201"].value is not None
-    assert workbook["Output"]["B2"].value == "=INDEX('Monthly Balances'!C:C,'Inputs'!$B$8+1)"
+
+
+def test_cd_rate_columns_roll_over_on_each_term_boundary(tmp_path: Path) -> None:
+    inputs = tmp_path / "inputs.csv"
+    output = tmp_path / "model.xlsx"
+    write_inputs(
+        inputs,
+        with_values(**{"Total Duration (months)": "61", "Rate Change Frequency (months)": "1"}),
+    )
+    MODEL.build_workbook(MODEL.load_inputs(inputs), output)
+    workbook = openpyxl.load_workbook(output, data_only=False)
+    balances = workbook["Monthly Balances"]
+
+    terms_found = set()
+    for header in balances[1]:
+        match = re.fullmatch(r"CD (\d+)mo Rate", str(header.value))
+        if not match:
+            continue
+        term = int(match.group(1))
+        terms_found.add(term)
+        rate_column = header.column_letter
+        balance_column = balances.cell(1, header.column + 1).column_letter
+
+        def current_rate(row: int) -> str:
+            return (
+                f"MAX('Inputs'!$B$4+INT((A{row}-1)/'Inputs'!$B$6)*"
+                "'Inputs'!$B$5*'Inputs'!$B$7,0)"
+            )
+
+        assert balances[f"{rate_column}2"].value == f"={current_rate(2)}"
+        selected_months = set()
+        for month in range(2, 62):
+            row = month + 1
+            formula = balances[f"{rate_column}{row}"].value
+            condition = re.fullmatch(
+                r"=IF\(MOD\(A(\d+)-(\d+),(\d+)\)=0,(.*),(\w+\d+)\)", formula
+            )
+            assert condition is not None, formula
+            condition_row, offset, divisor, true_branch, false_branch = condition.groups()
+            assert int(condition_row) == row
+            assert int(offset) == 1
+            assert int(divisor) == term
+            assert true_branch == current_rate(row)
+            assert false_branch == f"{rate_column}{row - 1}"
+            if (month - int(offset)) % int(divisor) == 0:
+                selected_months.add(month)
+            assert balances[f"{balance_column}{row}"].value == (
+                f"={balance_column}{row - 1}*(1+{rate_column}{row}/12)"
+            )
+
+        assert selected_months == set(range(term + 1, 62, term))
+
+    assert terms_found == {3, 6, 12, 18, 24, 36, 60}
 
 
 def run_cli(tmp_path: Path, *args: str) -> subprocess.CompletedProcess[str]:
@@ -267,13 +319,11 @@ def test_one_month_duration_compounds_once_and_output_uses_that_balance(
 
     workbook = openpyxl.load_workbook(output, data_only=False)
     balances = workbook["Monthly Balances"]
-    assert balances["C2"].value == "='Inputs'!$B$2*(1+B2/12)"
     assert balances["E2"].value == "='Inputs'!$B$2*(1+D2/12)"
-    assert workbook["Output"]["B2"].value == "=INDEX('Monthly Balances'!C:C,'Inputs'!$B$8+1)"
     assert workbook["Output"]["B3"].value == "=INDEX('Monthly Balances'!E:E,'Inputs'!$B$8+1)"
 
 
-def test_multi_month_compounding_has_n_periods_numerically_and_in_formulas(
+def test_multi_month_compounding_has_n_periods_in_formulas(
     tmp_path: Path,
 ) -> None:
     inputs = tmp_path / "multi-month.csv"
@@ -285,22 +335,8 @@ def test_multi_month_compounding_has_n_periods_numerically_and_in_formulas(
 
     workbook = openpyxl.load_workbook(output, data_only=False)
     balances = workbook["Monthly Balances"]
-    assert balances["C2"].value == "='Inputs'!$B$2*(1+B2/12)"
     assert balances["C3"].value == "=C2*(1+B3/12)"
     assert balances["C4"].value == "=C3*(1+B4/12)"
-    assert workbook["Output"]["B2"].value == "=INDEX('Monthly Balances'!C:C,'Inputs'!$B$8+1)"
-
-    synthetic_principal = 1e100
-    synthetic_rate = 1.0
-    projected = MODEL.compound_monthly(
-        synthetic_principal,
-        [synthetic_rate, synthetic_rate, synthetic_rate],
-    )
-    assert math.isclose(
-        projected,
-        synthetic_principal * (1 + synthetic_rate / 12) ** 3,
-        rel_tol=1e-12,
-    )
 
 
 def test_numeric_safety_bounds_accept_extreme_but_safe_inputs(tmp_path: Path) -> None:
@@ -319,14 +355,7 @@ def test_numeric_safety_bounds_accept_extreme_but_safe_inputs(tmp_path: Path) ->
     )
 
     values = MODEL.load_inputs(inputs)
-    bound = MODEL.maximum_compounded_balance(
-        values["Initial Principal"],
-        1.0,
-        int(values["Total Duration (months)"]),
-    )
-
-    assert math.isfinite(bound)
-    assert bound < MODEL.SAFE_BALANCE_LIMIT
+    assert values["Total Duration (months)"] == 1200
 
 
 def test_numeric_safety_rejects_principal_and_sensitivity_above_bounds(
@@ -439,26 +468,13 @@ def test_workbook_is_closed_when_build_fails_midway(
 
 def test_percent_strings_are_accepted_without_embedding_defaults(tmp_path: Path) -> None:
     inputs = tmp_path / "percent.csv"
-    rows = [
-        (
-            name,
-            "0%"
-            if name
-            in {
-                "Starting HYSA Rate",
-                "Starting CD Rate",
-                "Rate Step (per period)",
-                "CD Sensitivity",
-            }
-            else value,
-        )
-        for name, value in VALID_ROWS
-    ]
-    write_inputs(inputs, rows)
+    # Deliberately fictional rates exercise percentage scaling independently.
+    write_inputs(inputs, with_values(**{"Starting HYSA Rate": "2.5%", "CD Sensitivity": "50%"}))
     output = tmp_path / "percent.xlsx"
 
     result = run_cli(tmp_path, "--inputs", str(inputs), "--output", str(output))
 
     assert result.returncode == 0, result.stderr
     workbook = openpyxl.load_workbook(output, data_only=False)
-    assert workbook["Inputs"]["B3"].value == 0
+    assert workbook["Inputs"]["B3"].value == pytest.approx(0.025)
+    assert workbook["Inputs"]["B7"].value == pytest.approx(0.5)

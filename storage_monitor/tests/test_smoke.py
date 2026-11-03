@@ -22,13 +22,6 @@ def test_help_exits_without_creating_runtime_state(tmp_path):
     assert not runtime_home.exists()
 
 
-def test_launcher_loads_fastapi_app(monkeypatch, tmp_path):
-    monkeypatch.setenv("STORAGE_MONITOR_HOME", str(tmp_path / "runtime_home"))
-    module = load_launcher(SCRIPT_PATH)
-
-    assert module.app.title == "Storage Monitor"
-
-
 def test_parse_diskutil_info_extracts_byte_counts(monkeypatch, tmp_path):
     monkeypatch.setenv("STORAGE_MONITOR_HOME", str(tmp_path / "runtime_home"))
     module = load_launcher(SCRIPT_PATH)

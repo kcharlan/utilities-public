@@ -30,50 +30,6 @@ test('browser target defaults to the source file and accepts only explicit local
   }
 });
 
-test('raw HTTP backslashes are refused before normalization in both target production boundaries',t=>{
- const root=fixture(t),{browserTargets}=require('./run_artifact_browser.cjs');
- const layouts={sourceRoot:root,artifactRoot:root,sourceExpectedRoot:root,artifactExpectedRoot:root};
- for(const override of ['http://127.0.0.1:1/calculators/other\\..\\backtest/index.html','http://127.0.0.1:1/calculators\\backtest\\index.html','http:\\\\127.0.0.1:1\\calculators\\backtest\\index.html']){
-  assert.throws(()=>helpers.resolveTarget(root,override,{purpose:'installed'}),/target|route|backslash/i);
-  assert.throws(()=>browserTargets(layouts,null,override),/target|route|backslash/i);
- }
- const spaced=pathToFileURL(path.join(root,'invented directory with spaces','index.html')).href;
- assert.ok(spaced.includes('%20'));assert.equal(helpers.resolveTarget(root,spaced).url,spaced);
- assert.equal(browserTargets(layouts,null,spaced)[0].url,spaced);
-});
-
-test('all trimmed ASCII C0 and space edges are refused at both raw target boundaries',t=>{
- const root=fixture(t),{browserTargets}=require('./run_artifact_browser.cjs');
- const layouts={sourceRoot:root,artifactRoot:root,sourceExpectedRoot:root,artifactExpectedRoot:root};
- const index='http://127.0.0.1:1/calculators/backtest/index.html',folder='http://127.0.0.1:1/calculators/backtest/';
- const traversal='http://127.0.0.1:1/calculators/other\\..\\backtest/index.html';
- const file=pathToFileURL(path.join(root,'invented directory with spaces','index.html')).href;
- for(let code=0;code<=0x20;code++){
-  const edge=String.fromCharCode(code);
-  for(const override of [edge+index,index+edge,edge+traversal,edge+folder,edge+file,file+edge]){
-   assert.throws(()=>helpers.resolveTarget(root,override,{purpose:'installed'}),/target|route|control|whitespace/i,`resolveTarget must reject edge ${code}`);
-   assert.throws(()=>browserTargets(layouts,null,override),/target|route|control|whitespace/i,`browserTargets must reject edge ${code}`);
-  }
- }
-});
-
-test('embedded tab LF and CR scheme disguises fail while ordinary file spaces and direct HTTP index remain supported',t=>{
- const root=fixture(t),{browserTargets}=require('./run_artifact_browser.cjs');
- const layouts={sourceRoot:root,artifactRoot:root,sourceExpectedRoot:root,artifactExpectedRoot:root};
- for(const control of ['\t','\n','\r'])for(const override of [`h${control}ttp://127.0.0.1:1/calculators/backtest/index.html`,`http${control}://127.0.0.1:1/calculators/backtest/`,`http:${control}//127.0.0.1:1/calculators/backtest/index.html`,`http://127.0.0.1:1/calculators/${control}backtest/index.html`,`f${control}ile:///invented/index.html`]){
-  assert.throws(()=>helpers.resolveTarget(root,override,{purpose:'installed'}),/target|route|control|whitespace/i);
-  assert.throws(()=>browserTargets(layouts,null,override),/target|route|control|whitespace/i);
- }
- const index='http://127.0.0.1:1/calculators/backtest/index.html';
- assert.equal(helpers.resolveTarget(root,index,{purpose:'installed'}).url,index);
- const installed=browserTargets(layouts,null,index)[0];assert.equal(installed.url,index);assert.equal(installed.purpose,'installed');assert.equal(installed.documentRoutes,'selected-entry');
- const file=pathToFileURL(path.join(root,'invented directory with spaces','index.html')).href;
- for(const override of [file,file.replaceAll('%20',' ')]){
-  assert.equal(helpers.resolveTarget(root,override).url,file);
-  const target=browserTargets(layouts,null,override)[0];assert.equal(target.url,override);assert.equal(target.purpose,'artifact');
- }
-});
-
 test('missing managed Chromium and data are fatal prerequisites', t => {
   const root = fixture(t);
   assert.throws(() => helpers.requirePrerequisites({ executablePath: () => path.join(root, 'missing-browser') }, root), /playwright install chromium/);

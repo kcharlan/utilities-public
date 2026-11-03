@@ -70,7 +70,7 @@ def parse_args():
 
 RUNTIME_PATHS = build_runtime_paths()
 DATA_DIR = str(RUNTIME_PATHS.home)
-VERSION = "0.2.3"
+VERSION = "0.2.4"
 GRAPH_ROOT = "https://graph.microsoft.com/v1.0"
 AUTHORITY = "https://login.microsoftonline.com/consumers"
 GRAPH_SCOPES = ["Files.ReadWrite.All"]
@@ -338,7 +338,7 @@ def parse_submission(payload: dict) -> dict:
         raise HTTPException(status_code=400, detail=f"Missing required fields: {', '.join(missing)}")
 
     try:
-        date.fromisoformat(str(payload["date"]))
+        submission_date = date.fromisoformat(str(payload["date"]).strip()).isoformat()
     except ValueError as exc:
         raise HTTPException(status_code=400, detail="Date must be YYYY-MM-DD.") from exc
 
@@ -350,7 +350,7 @@ def parse_submission(payload: dict) -> dict:
         raise HTTPException(status_code=400, detail="Amount must be positive.")
 
     return {
-        "date": str(payload["date"]).strip(),
+        "date": submission_date,
         "vendor": normalize_space(str(payload["vendor"])),
         "amount": amount,
         "category": normalize_space(str(payload["category"])),
@@ -784,6 +784,10 @@ def append_expense_row(
     return output.getvalue(), target_row, next_id
 
 
+def csv_literal_text(value: str) -> str:
+    return "'" + value if value.startswith(("=", "+", "-", "@")) else value
+
+
 def build_csv_text(submission: dict, receipt_link: str, receipt_filename: str) -> str:
     buffer = io.StringIO()
     writer = csv.writer(buffer)
@@ -792,17 +796,17 @@ def build_csv_text(submission: dict, receipt_link: str, receipt_filename: str) -
         [
             "",
             submission["date"],
-            submission["vendor"],
+            csv_literal_text(submission["vendor"]),
             f"{submission['amount']:.2f}",
-            submission["category"],
-            submission["business_purpose"],
-            submission["paid_by"],
-            submission["payment_method"],
-            submission["reimbursable"],
-            submission["reimbursement_status"],
+            csv_literal_text(submission["category"]),
+            csv_literal_text(submission["business_purpose"]),
+            csv_literal_text(submission["paid_by"]),
+            csv_literal_text(submission["payment_method"]),
+            csv_literal_text(submission["reimbursable"]),
+            csv_literal_text(submission["reimbursement_status"]),
             receipt_link,
             receipt_filename,
-            submission["notes"],
+            csv_literal_text(submission["notes"]),
         ]
     )
     return buffer.getvalue()

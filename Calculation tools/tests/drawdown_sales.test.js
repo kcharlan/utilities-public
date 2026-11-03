@@ -282,12 +282,6 @@ test('[summary] horizon counts fully funded months when the reserve fails', () =
   assert.match(stats.innerHTML, /Horizon<\/div>\s*<div class="stat-value warning">3\.0 yrs<\/div>/);
 });
 
-test('[Gross sold] table renames only the visible sale heading', () => {
-  assert.match(calculatorHtml, /<th>Gross sold<\/th>/);
-  assert.doesNotMatch(calculatorHtml, /<th>Sold<\/th>/);
-  assert.match(calculatorHtml, /r\.sold > 0 \? fmtMoney\(r\.sold\) : '—'/);
-});
-
 test('[methodology] explains tax, principal events, reserve failure, and income reset', () => {
   // Keep the content checks scoped to the structured method appendix.
   const method = calculatorHtml.match(/<section class="method"[^>]*>([\s\S]*?)<\/section>/)?.[1] ?? '';
@@ -303,19 +297,6 @@ test('[methodology] explains tax, principal events, reserve failure, and income 
   assert.match(text, /At zero principal, payable investment income is zero.*explicit income edit resets raw income and yield/i);
   assert.match(text, /Expenses are funded only from cash above the protected floor/i);
   assert.match(text, /reserve failure when an expense or the protected reserve cannot be funded/i);
-});
-
-test('[layout] amortization uses a bounded two-axis scroll region for sticky headers', () => {
-  assert.match(
-    calculatorHtml,
-    /\.table-section\s*\{[^}]*max-width:\s*100%;[^}]*\}/,
-  );
-  assert.doesNotMatch(calculatorHtml, /\.table-section\s*\{[^}]*overflow[^}]*\}/);
-  assert.match(
-    calculatorHtml,
-    /\.table-scroll\s*\{[^}]*max-width:\s*100%;[^}]*max-height:\s*calc\(100vh - 24px\);[^}]*overflow:\s*auto;[^}]*\}/,
-  );
-  assert.match(calculatorHtml, /<div class="table-scroll">\s*<table class="amort">[\s\S]*?<\/table>\s*<\/div>/);
 });
 
 test('[CSV] keeps the original schema and appends readable and precise fields', () => {

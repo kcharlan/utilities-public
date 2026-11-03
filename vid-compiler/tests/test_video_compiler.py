@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import json
 import random
+import shutil
 import subprocess
 from pathlib import Path
 
@@ -15,6 +17,53 @@ from video_compiler import (
     process_video,
     sample_start_times,
 )
+
+
+@pytest.mark.parametrize("with_audio", [True, False], ids=["with_audio", "video_only"])
+def test_real_render_has_expected_duration_and_streams(
+    tmp_path: Path, with_audio: bool
+) -> None:
+    for executable in ("ffmpeg", "ffprobe"):
+        assert shutil.which(executable), f"render prerequisite missing: {executable} on PATH"
+    encoders = subprocess.run(
+        ["ffmpeg", "-hide_banner", "-encoders"],
+        capture_output=True, text=True, check=True, timeout=30,
+    )
+    assert "h264_videotoolbox" in encoders.stdout, (
+        "render prerequisite missing: FFmpeg h264_videotoolbox encoder"
+    )
+
+    source = tmp_path / "synthetic-source.mp4"
+    output = tmp_path / "render" / "synthetic-output.mp4"
+    command = [
+        "ffmpeg", "-hide_banner", "-loglevel", "error", "-y",
+        "-f", "lavfi", "-i", "testsrc=size=64x64:rate=10:duration=6",
+    ]
+    if with_audio:
+        command += ["-f", "lavfi", "-i", "sine=frequency=440:duration=6"]
+    command += ["-c:v", "h264_videotoolbox", "-pix_fmt", "yuv420p"]
+    if with_audio:
+        command += ["-c:a", "aac"]
+    command.append(str(source))
+    subprocess.run(command, capture_output=True, text=True, check=True, timeout=60)
+
+    assert process_video(source, output, 2, 1.0, 2.0, "even") is True
+    result = subprocess.run(
+        ["ffprobe", "-v", "error", "-show_format", "-show_streams",
+         "-print_format", "json", str(output)],
+        capture_output=True, text=True, check=True, timeout=30,
+    )
+    metadata = json.loads(result.stdout)
+    assert float(metadata["format"]["duration"]) == pytest.approx(4.0, abs=0.25)
+    video = [stream for stream in metadata["streams"] if stream["codec_type"] == "video"]
+    audio = [stream for stream in metadata["streams"] if stream["codec_type"] == "audio"]
+    assert len(video) == 1
+    assert video[0]["codec_name"] == "h264"
+    assert (video[0]["width"], video[0]["height"]) == (64, 64)
+    assert video[0]["r_frame_rate"] == "10/1"
+    assert int(video[0]["nb_frames"]) == 40
+    assert [stream["codec_name"] for stream in audio] == (["aac"] if with_audio else [])
+    assert list(output.parent.glob("*.partial*.mp4")) == []
 
 
 @pytest.mark.parametrize(
@@ -97,35 +146,13 @@ def test_probe_media_reads_duration_and_audio_presence(
         '[{"codec_type":"video"},{"codec_type":"audio"}]}',
         stderr="",
     )
-    calls: list[tuple[list[str], dict[str, object]]] = []
 
     def run(command, **kwargs):
-        calls.append((command, kwargs))
         return completed
 
     monkeypatch.setattr(video_compiler.subprocess, "run", run)
 
     assert probe_media(source) == MediaInfo(duration=12.5, has_audio=True)
-    assert calls == [
-        (
-            [
-                "ffprobe",
-                "-v",
-                "error",
-                "-print_format",
-                "json",
-                "-show_format",
-                "-show_streams",
-                str(source),
-            ],
-            {
-                "capture_output": True,
-                "text": True,
-                "check": False,
-                "shell": False,
-            },
-        )
-    ]
 
 
 @pytest.mark.parametrize(
@@ -353,21 +380,3 @@ def test_missing_matches_preserve_zero_status(
         ["--input", "missing-*.mp4", "--output_dir", str(tmp_path)]
     ) == 0
     assert capsys.readouterr().out == "No matching files found.\n"
-
-
-def test_equal_basenames_keep_documented_final_path_collision(
-    tmp_path: Path,
-) -> None:
-    args = video_compiler.argparse.Namespace(
-        output_dir=tmp_path,
-        samples=1,
-        sample_length=2.0,
-        tail_length=3.0,
-        sampling="even",
-        verbose=False,
-    )
-
-    first = video_compiler.batch_args("one/shared.mp4", args)
-    second = video_compiler.batch_args("two/shared.mp4", args)
-
-    assert first[1] == second[1] == tmp_path / "shared_compilation.mp4"

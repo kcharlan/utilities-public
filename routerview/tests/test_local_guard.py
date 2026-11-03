@@ -16,15 +16,22 @@ def test_shared_guard_contract(monkeypatch, tmp_path):
                         post_path='/api/purge').result()
 
 
-def test_purge_rejects_foreign_host_and_origin(monkeypatch, tmp_path):
+def test_rejected_purge_requests_leave_rows_and_backups_untouched(monkeypatch, tmp_path):
+    import asyncio
+    import httpx
     module = load_module(monkeypatch, tmp_path / 'home')
     client, db_path = build_client(module, tmp_path)
     with sqlite3.connect(db_path) as db:
         db.execute("INSERT INTO generations (id, created_at, created_date, created_hour, model, model_short, ingested_at) VALUES ('fake-1', '2020-01-01', '2020-01-01', 0, 'fake-model', 'fake-model', '2020-01-01')")
     for headers in ({'host': 'evil.example'}, {'origin': 'https://evil.example'}):
         assert client.post('/api/purge?before=2099-01-01', headers=headers).status_code == 403
+    async def request():
+        async with httpx.AsyncClient(transport=httpx.ASGITransport(app=module.app), base_url='http://127.0.0.1:8000') as client:
+            return await client.post('/api/purge?before=2099-01-01')
+    assert asyncio.run(request()).status_code == 403
     with sqlite3.connect(db_path) as db:
         assert db.execute('SELECT COUNT(*) FROM generations').fetchone()[0] == 1
+    assert not (tmp_path / 'home' / 'backups').exists()
 
 
 def test_port_finder_binds_loopback(monkeypatch, tmp_path):
@@ -36,22 +43,6 @@ def test_port_finder_binds_loopback(monkeypatch, tmp_path):
     monkeypatch.setattr(module.socket, 'socket', lambda *args: Socket())
     assert module.find_open_port(8123) == 8123
     assert calls == [('127.0.0.1', 8123)]
-
-
-def test_missing_origin_purge_cannot_change_rows_or_create_backup(monkeypatch, tmp_path):
-    import asyncio
-    import httpx
-    module = load_module(monkeypatch, tmp_path / 'home')
-    _, db_path = build_client(module, tmp_path)
-    with sqlite3.connect(db_path) as db:
-        db.execute("INSERT INTO generations (id, created_at, created_date, created_hour, model, model_short, ingested_at) VALUES ('fake-1', '2020-01-01', '2020-01-01', 0, 'fake', 'fake', '2020-01-01')")
-    async def request():
-        async with httpx.AsyncClient(transport=httpx.ASGITransport(app=module.app), base_url='http://127.0.0.1:8000') as client:
-            return await client.post('/api/purge?before=2099-01-01')
-    assert asyncio.run(request()).status_code == 403
-    with sqlite3.connect(db_path) as db:
-        assert db.execute('SELECT COUNT(*) FROM generations').fetchone()[0] == 1
-    assert not (tmp_path / 'home' / 'backups').exists()
 
 
 def test_get_does_not_create_or_harden_runtime(monkeypatch, tmp_path):

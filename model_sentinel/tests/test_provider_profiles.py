@@ -5,6 +5,7 @@ from typing import Any
 import pytest
 
 from model_sentinel.config import ProviderConfig
+from model_sentinel.normalize import normalize_models
 from model_sentinel.provider_profiles import (
     GENERIC_PROFILE,
     OPENROUTER_PROFILE,
@@ -159,6 +160,29 @@ def test_openrouter_profile_only_accepts_its_data_envelope(
             {"models": models},
             OPENROUTER_PROFILE,
         )
+
+
+def test_non_object_model_entry_is_rejected(synthetic_provider: ProviderConfig) -> None:
+    with pytest.raises(ProviderFetchError, match="non-object model entry at index 1"):
+        extract_model_list(
+            synthetic_provider,
+            {"data": [{"id": "synthetic/model-a"}, "synthetic-string"]},
+            OPENROUTER_PROFILE,
+        )
+
+
+def test_generic_and_custom_profiles_keep_identifier_fallbacks(
+    synthetic_provider: ProviderConfig,
+) -> None:
+    generic = normalize_models(synthetic_provider, [{"name": "synthetic-name"}], GENERIC_PROFILE)
+    custom_profile = replace(
+        OPENROUTER_PROFILE,
+        normalized_fields={**OPENROUTER_PROFILE.normalized_fields, "provider_model_id": (("model",),)},
+    )
+    custom = normalize_models(synthetic_provider, [{"model": "synthetic-model"}], custom_profile)
+
+    assert generic[0].provider_model_id == "synthetic-name"
+    assert custom[0].provider_model_id == "synthetic-model"
 
 
 @pytest.mark.parametrize("profile", (GENERIC_PROFILE, OPENROUTER_PROFILE))

@@ -16,8 +16,9 @@ print unrelated > "$ROOT_DIR/unrelated"
 print staged > "$ROOT_DIR/staged"
 git -C "$ROOT_DIR" add staged
 printf '%s\n' '## Allowed Files' '- `allowed`' > "$ROOT_DIR/plans/packet.md"
-sed '$d' "$script" > "$d/functions.zsh"
-source "$d/functions.zsh"
+set -- help
+source "$script" > "$d/source-output"
+[[ ! -s "$d/source-output" ]] || { print -u2 'sourcing ran main'; exit 1; }
 auto_commit_validated_packet 1 "$ROOT_DIR/plans/packet.md" example
 [[ $(git -C "$ROOT_DIR" show --format= --name-only HEAD) == allowed ]] || { print -u2 'commit included unrelated paths'; exit 1; }
 [[ -f "$ROOT_DIR/unrelated" && -z $(git -C "$ROOT_DIR" ls-files unrelated) ]] || exit 1

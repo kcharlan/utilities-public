@@ -97,7 +97,7 @@ and meant nothing; it is now counted in Python over data rows, the way
 `_render_html_card_table` already counted its own. No cell content moved.
 
 DELIBERATELY NOT COVERED HERE: the full HTML document envelope (`<!DOCTYPE>`,
-the `<style>` block, provider headers) is already pinned byte-for-byte by
+provider headers) is already pinned byte-for-byte (excluding stylesheet contents) by
 `test_render_characterization.py`; duplicating it would add hundreds of lines
 of noise and a second place to update. The HTML goldens below are the exact
 changed-models region and the exact summary table, asserted by containment.

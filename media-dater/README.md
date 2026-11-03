@@ -64,9 +64,9 @@ media-dater --prefix "VACATION_" --ext mov,mp4 ~/Movies/Trip
 ## Behavior and limitations
 
 - QuickTime UTC timestamps are converted to the local timezone before naming.
-- Without `--ext`, discovery includes every non-hidden regular file, not just
-  recognized image and video formats. Use `--ext` when the target contains
-  unrelated files.
+- Discovery excludes hidden files. Without `--ext`, it includes every other
+  regular file, not just recognized image and video formats. Use `--ext` when
+  the target contains unrelated files.
 - ExifTool reads only `CreateDate`; the script does not fall back to other date
   tags or filesystem timestamps. Files without a usable `CreateDate` are left
   unchanged and ExifTool reports them.

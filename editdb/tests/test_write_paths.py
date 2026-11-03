@@ -39,6 +39,36 @@ def rows(client):
 
 
 @pytest.fixture
+def console_client(client):
+    _, path = client
+    with closing(sqlite3.connect(path)) as db, db:
+        db.executescript("DROP TABLE items; CREATE TABLE items (id INTEGER PRIMARY KEY, label TEXT UNIQUE); INSERT INTO items VALUES (1, 'one'), (2, 'two');")
+    return client
+
+
+def test_console_returning_update_persists(console_client):
+    http, _ = console_client
+    response = http.post('/api/query', json={'query': "UPDATE items SET label='changed' WHERE id=1 RETURNING label"})
+    assert response.status_code == 200
+    assert response.json() == {'columns': ['label'], 'rows': [{'label': 'changed'}]}
+    assert rows(console_client) == [(1, 'changed'), (2, 'two')]
+
+
+def test_console_failed_statement_changes_nothing(console_client):
+    http, _ = console_client
+    response = http.post('/api/query', json={'query': "UPDATE items SET label='two' WHERE id=1"})
+    assert response.status_code == 400
+    assert rows(console_client) == [(1, 'one'), (2, 'two')]
+
+
+def test_console_rejects_multiple_statements(console_client):
+    http, _ = console_client
+    response = http.post('/api/query', json={'query': "UPDATE items SET label='x'; DELETE FROM items"})
+    assert response.status_code == 400
+    assert rows(console_client) == [(1, 'one'), (2, 'two')]
+
+
+@pytest.fixture
 def export_client(client):
     http, path = client
     with closing(sqlite3.connect(path)) as db, db:

@@ -45,7 +45,7 @@ Single-file FastAPI + embedded Preact SPA (no Node.js build tooling required).
 ### Browser support
 
 The automated browser suite runs with current Playwright Chromium and verifies the
-embedded assets, representative computed styles, dark-mode
+embedded assets, that styled classes apply, dark-mode palette changes and
 persistence, refresh behavior, and page/console error cleanliness. The manual client floors for this browser-delivered UI are Chrome 111, Safari 16.4,
 and Firefox 128. Safari and Firefox are not covered by the automated
 browser test, so browser-specific behavior on those clients requires manual

@@ -52,7 +52,7 @@ build, with one notice per process. Normal builds and deployment require the
 current recipe. The owner reruns `npm run setup:data` when a refresh is intended.
 
 The original cases retain financial controls, Window/Sweep/Lifestyle,
-frontier performance, cancellation, reload/theme, narrow/keyboard behavior,
+frontier timing (reported as a diagnostic), cancellation, reload/theme, narrow/keyboard behavior,
 browser errors/request checks and actual CSV schema/content/formula guards.
 The 69 complete 30-year historical windows and existing 50/50 and 75/25
 controls remain unchanged. File startup is offline. Browser profiles, snapshots,

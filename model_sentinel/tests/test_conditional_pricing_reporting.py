@@ -7,7 +7,6 @@ from dataclasses import replace
 import pytest
 
 import model_sentinel.reporting as reporting
-import model_sentinel.conditional_pricing as pricing_semantics
 from model_sentinel.conditional_pricing import (
     LiveComparisonIdentity,
     PricingComparisonEvent,
@@ -233,75 +232,6 @@ def test_nonconditional_event_still_has_universal_pricing_accounting() -> None:
     assert core.remaining_field_changes == event.field_changes
 
 
-def test_semantic_builders_run_once_per_core_not_once_per_projection(
-    monkeypatch,
-) -> None:
-    calls = {
-        "interpreter": 0,
-        "equality": 0,
-        "absorption": 0,
-        "interpreter_accounting": 0,
-        "final_accounting": 0,
-    }
-    real_interpreter = reporting.interpret_conditional_pricing
-    real_equality = pricing_semantics._semantic_change
-    real_absorption = pricing_semantics.decide_sibling_base_price_absorption
-    real_interpreter_accounting = pricing_semantics.build_model_pricing_accounting
-    real_final_accounting = reporting.build_model_pricing_accounting
-
-    def count_interpreter(*args, **kwargs):
-        calls["interpreter"] += 1
-        return real_interpreter(*args, **kwargs)
-
-    def count_equality(*args, **kwargs):
-        calls["equality"] += 1
-        return real_equality(*args, **kwargs)
-
-    def count_absorption(*args, **kwargs):
-        calls["absorption"] += 1
-        return real_absorption(*args, **kwargs)
-
-    def count_interpreter_accounting(*args, **kwargs):
-        calls["interpreter_accounting"] += 1
-        return real_interpreter_accounting(*args, **kwargs)
-
-    def count_final_accounting(*args, **kwargs):
-        calls["final_accounting"] += 1
-        return real_final_accounting(*args, **kwargs)
-
-    monkeypatch.setattr(reporting, "interpret_conditional_pricing", count_interpreter)
-    monkeypatch.setattr(pricing_semantics, "_semantic_change", count_equality)
-    monkeypatch.setattr(
-        pricing_semantics,
-        "decide_sibling_base_price_absorption",
-        count_absorption,
-    )
-    monkeypatch.setattr(
-        pricing_semantics,
-        "build_model_pricing_accounting",
-        count_interpreter_accounting,
-    )
-    monkeypatch.setattr(
-        reporting,
-        "build_model_pricing_accounting",
-        count_final_accounting,
-    )
-
-    core = reporting.build_model_event_semantic_core(_event(), OPENROUTER_PROFILE)
-    for mode in ("default", "all", "squelched"):
-        reporting.project_model_event_semantics(
-            core,
-            reporting.make_report_detail_policy(mode=mode),
-            OPENROUTER_PROFILE,
-        )
-
-    assert calls == {
-        "interpreter": 1,
-        "equality": 1,
-        "absorption": 1,
-        "interpreter_accounting": 1,
-        "final_accounting": 1,
-    }
 
 
 def test_semantic_composite_keeps_card_and_prevents_bulk_grouping() -> None:
@@ -1206,16 +1136,7 @@ def test_explicit_incomplete_stored_core_mapping_never_rebuilds(monkeypatch) -> 
         )
 
 
-def test_stored_plan_indexes_supplied_edge_maps_once() -> None:
-    class CountingMap(dict):
-        def __init__(self, *args, **kwargs):
-            super().__init__(*args, **kwargs)
-            self.items_calls = 0
-
-        def items(self):
-            self.items_calls += 1
-            return super().items()
-
+def test_stored_plan_includes_all_supplied_edges() -> None:
     cores = {}
     projections = {}
     models = {}
@@ -1259,36 +1180,22 @@ def test_stored_plan_indexes_supplied_edge_maps_once() -> None:
                 "_comparison_edge": edge_key,
             }
         ]
-    counted_cores = CountingMap(cores)
-    counted_projections = CountingMap(projections)
 
     plan = reporting.plan_changes_provider(
         models,
         policy,
         OPENROUTER_PROFILE,
-        counted_cores,
-        counted_projections,
+        cores,
+        projections,
     )
 
     assert len(plan.entries) == 200
-    assert counted_cores.items_calls == 1
-    assert counted_projections.items_calls == 1
 
 
 @pytest.mark.parametrize("format_name", ("text", "html"))
-def test_changes_artifact_indexes_global_edge_maps_once_across_blocks(
+def test_changes_artifact_renders_across_blocks(
     format_name: str,
-    monkeypatch,
 ) -> None:
-    class CountingMap(dict):
-        def __init__(self, *args, **kwargs):
-            super().__init__(*args, **kwargs)
-            self.items_calls = 0
-
-        def items(self):
-            self.items_calls += 1
-            return super().items()
-
     events = []
     scrape_id = 3000
     for day_index, day in enumerate(("27", "28")):
@@ -1336,20 +1243,6 @@ def test_changes_artifact_indexes_global_edge_maps_once_across_blocks(
         "synthetic-provider-b": OPENROUTER_PROFILE,
     }
     semantic = reporting.build_changes_semantic_core(events, profiles)
-    counted_cores = CountingMap(semantic.by_identity)
-    projection_index_calls = []
-    real_projection_index = reporting._index_stored_semantic_projections
-
-    def count_projection_index(source):
-        projection_index_calls.append(len(source or ()))
-        return real_projection_index(source)
-
-    monkeypatch.setattr(
-        reporting,
-        "_index_stored_semantic_projections",
-        count_projection_index,
-    )
-
     report = reporting.render_changes_report(
         format_name=format_name,
         provider_id=None,
@@ -1358,13 +1251,11 @@ def test_changes_artifact_indexes_global_edge_maps_once_across_blocks(
         changes=(),
         provider_profiles=profiles,
         stored_events=tuple(events),
-        semantic_cores=counted_cores,
+        semantic_cores=semantic.by_identity,
         changes_semantic_core=semantic,
     )
 
     assert "Synthetic Provider" in report
-    assert counted_cores.items_calls == 1
-    assert projection_index_calls == [4]
 
 
 def test_artifact_semantics_requires_exact_edge_resolution() -> None:

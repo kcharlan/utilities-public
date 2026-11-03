@@ -123,7 +123,7 @@ Full-scan time depends on directory count, storage performance, permissions, and
 - Cache-like and stale-installer paths are moved to `~/.Trash/`; they are not permanently deleted by Storage Monitor.
 - Snapshot deletion and thinning are permanent operations delegated to macOS.
 - Finder reveal actions are available for files, directories, and report-only candidates.
-- After cleanup actions, Storage Monitor refreshes affected index paths, APFS metadata, and the persisted report without requiring another full scan.
+- After cleanup actions, Storage Monitor refreshes affected index paths, APFS metadata, and the persisted report without requiring another full scan. If a refreshed directory loses the owner of a hard-linked file, a surviving link elsewhere remains uncounted until its own directory is refreshed or a full scan runs.
 
 Review every proposed action before running it. Estimates are approximate, APFS free-space changes can be delayed, and provider commands may reclaim less than their displayed upper bound.
 

@@ -231,14 +231,6 @@ def projected_max_rate(
     return max(0.0, starting_rate, final_unclamped)
 
 
-def compound_monthly(principal: float, annual_rates: Iterable[float]) -> float:
-    """Apply one monthly compounding period for every supplied annual rate."""
-    balance = principal
-    for annual_rate in annual_rates:
-        balance *= 1 + max(annual_rate, 0.0) / 12
-    return balance
-
-
 def maximum_compounded_balance(
     principal: float, maximum_annual_rate: float, duration_months: int
 ) -> float:

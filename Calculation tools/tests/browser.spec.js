@@ -1,4 +1,14 @@
 const { expect, test } = require('@playwright/test');
+const { readFile } = require('node:fs/promises');
+
+const numberText = text => Number(text.replace(/[^\d.-]/g, ''));
+
+test('early-loan APY input converts to the equivalent monthly rate', async ({ page }) => {
+  await page.goto('/early_loan_termination_calculator.html');
+  const rates = await page.evaluate(() => [toMonthly(12.682503013197, 'APY'), toMonthly(12, 'APR')]);
+  expect(Math.abs(rates[0] - 0.01)).toBeLessThan(1e-9);
+  expect(rates[1]).toBe(0.01);
+});
 
 test('early payoff preserves value when vendor and discount rates match', async ({ page }) => {
   await page.goto('/early_loan_termination_calculator.html');
@@ -41,7 +51,7 @@ test('immediate loan payments use annuity-due amounts and accrue after the first
   for (const value of values) expect(value).toBeCloseTo(110, 8);
 });
 
-test('IRR refuses an unbracketed result and keeps beginning timing valid', async ({ page }) => {
+test('lump-sum IRR matches closed-form annuities and refuses an unbracketed result', async ({ page }) => {
   await page.goto('/lump_sum_calculator.html');
   expect(await page.evaluate(() => solveMonthlyIRR(1e12, 1, 1))).toBeNull();
   expect(await page.evaluate(() => solveMonthlyIRR(1, 1e12, 1))).toBeNull();
@@ -52,11 +62,72 @@ test('IRR refuses an unbracketed result and keeps beginning timing valid', async
   await page.locator('#calcBtn').click();
   await expect(page.locator('#mirr')).toHaveValue('0.0000');
   await expect(page.locator('#amort1 tbody tr').last().locator('td').last()).toHaveText('0.00');
+
+  await page.locator('#lump').fill('1000');
+  await page.locator('#pay').fill('88.85');
+  await page.locator('#term').fill('12');
+  await page.locator('#timing').selectOption('end');
+  await page.locator('#calcBtn').click();
+  for (const [selector, expected, tolerance] of [['#mirr', 1.0002, 0.0005], ['#airr', 12, 0.01], ['#aeff', 12.69, 0.01]]) {
+    expect(Math.abs(Number(await page.locator(selector).inputValue()) - expected)).toBeLessThanOrEqual(tolerance);
+  }
+  await expect(page.locator('#amort1 tbody tr').last().locator('td').last()).toHaveText('0.00');
+
+  await page.locator('#lump').fill('995.91');
+  await page.locator('#pay').fill('87.61');
+  await page.locator('#timing').selectOption('begin');
+  await page.locator('#calcBtn').click();
+  expect(Math.abs(Number(await page.locator('#mirr').inputValue()) - 1)).toBeLessThanOrEqual(0.001);
+});
+
+test('money-sense savings matches the annuity future value for end and beginning contributions', async ({ page }) => {
+  await page.goto('/money_sense_calculators.html');
+  for (const [selector, value] of Object.entries({ '#saveInitial': '1000', '#saveAPR': '12', '#saveYears': '1', '#saveMonths': '0', '#saveMonthly': '100' })) {
+    await page.locator(selector).fill(value);
+  }
+  await page.locator('#contribTiming').selectOption('end');
+  await page.evaluate(() => calcSavings());
+  const end = numberText(await page.locator('#saveEnd').innerText());
+  const contributions = numberText(await page.locator('#saveContrib').innerText());
+  const interest = numberText(await page.locator('#saveInterest').innerText());
+  expect(Math.abs(end - 2395.08)).toBeLessThanOrEqual(0.05);
+  expect(contributions).toBe(2200);
+  expect(Math.abs(interest - (end - contributions))).toBeLessThanOrEqual(0.01);
+  await page.locator('#contribTiming').selectOption('begin');
+  await page.evaluate(() => calcSavings());
+  expect(Math.abs(numberText(await page.locator('#saveEnd').innerText()) - 2407.76)).toBeLessThanOrEqual(0.05);
+});
+
+test('money-sense term mode pays the standard amortizing payment and exports it', async ({ page }) => {
+  await page.goto('/money_sense_calculators.html');
+  await page.locator('#debtPrincipal').fill('10000');
+  await page.locator('#debtAPR').fill('12');
+  await page.locator('#debtMode').selectOption('term');
+  await page.locator('#debtTermMonths').fill('12');
+  await page.locator('#debtExtra2').fill('0');
+  await page.evaluate(() => calcDebt());
+  await expect(page.locator('#debtMonths')).toHaveText('12 months');
+  expect(Math.abs(numberText(await page.locator('#debtTotalInterest').innerText()) - 661.85)).toBeLessThanOrEqual(0.10);
+  const pending = page.waitForEvent('download');
+  await page.locator('#exportDebtBtn').click();
+  const csv = await readFile(await (await pending).path(), 'utf8');
+  expect(csv.split(/\r?\n/)[1]).toBe('1,10000,100,788.49,888.49,9211.51');
+});
+
+test('money-sense minimum mode applies the dollar floor', async ({ page }) => {
+  await page.goto('/money_sense_calculators.html');
+  await page.locator('#debtPrincipal').fill('1000');
+  await page.locator('#debtAPR').fill('0');
+  await page.locator('#debtMode').selectOption('min');
+  await page.locator('#debtMinPct').fill('2');
+  await page.locator('#debtMinFloor').fill('25');
+  await page.evaluate(() => calcDebt());
+  await expect(page.locator('#debtMonths')).toHaveText('40 months');
 });
 
 test('debt payoff at the safety limit succeeds, while an unpaid balance fails', async ({ page }) => {
   await page.goto('/money_sense_calculators.html');
-  const maxMonths = await page.evaluate(async () => Number((await (await fetch(location.href)).text()).match(/const maxMonths = (\d+)/)[1]));
+  const maxMonths = 1200; // Documented debt loop safety cap.
   await page.locator('#debtAPR').fill('0');
   await page.locator('#debtMode').selectOption('fixed');
   await page.locator('#debtFixedPayment').fill('1');

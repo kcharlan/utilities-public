@@ -104,3 +104,8 @@
 ## Squash Conflicts Need Explicit Recovery
 
 - Git squash conflicts do not necessarily create `MERGE_HEAD`. Refuse dirty target trees, restore only the clean target on failure, and preserve the task branch and workspace for resolution; remove a registered worktree before deleting its branch.
+
+## Reap Workers When a Test Stops Polling Early
+
+- What went wrong: A warning assertion returned while its synthetic worker was still running; the manager's timeout only advances when polled.
+- Pattern to follow instead: Terminate, poll to completion, and collect in a `finally` block, and verify cleanup when polling raises.

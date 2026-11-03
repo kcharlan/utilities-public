@@ -30,7 +30,7 @@ for script in "$project/rs.py" "$project/rs-big.py"; do
   [[ ! -e absent ]]
   head -c 100 /dev/urandom > raw.bin
   "$script" transform -i raw.bin -o raw.rsbwt
-  [[ $(od -An -tx1 -N4 raw.rsbwt | tr -d ' \n') == ffffffff ]]
+  [[ $(od -An -tx1 -N4 raw.rsbwt | tr -d ' \n') == ffffffff ]] || { echo 'FAIL: reversible-skew/tests/test_input_safety.sh:33' >&2; exit 1; }
   head -c 98 raw.rsbwt > cut.rsbwt
   rm -f restored
   if "$script" inverse -i cut.rsbwt -o restored; then

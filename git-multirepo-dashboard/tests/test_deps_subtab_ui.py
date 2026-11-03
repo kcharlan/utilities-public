@@ -221,46 +221,6 @@ def test_check_now_404(test_app):
     assert resp.status_code == 404
 
 
-# ─────────────────────────────────────────────────────────────────────────────
-# 9. HTML_TEMPLATE contains DepsTab component
-# ─────────────────────────────────────────────────────────────────────────────
-
-def test_deps_tab_component_exists():
-    """HTML_TEMPLATE contains DepsTab component definition."""
-    assert "function DepsTab" in git_dashboard.HTML_TEMPLATE
-
-
-# ─────────────────────────────────────────────────────────────────────────────
-# 10. DepsTab replaces PlaceholderTab for deps sub-tab
-# ─────────────────────────────────────────────────────────────────────────────
-
-def test_deps_tab_replaces_placeholder():
-    """The deps sub-tab renders DepsTab, not PlaceholderTab."""
-    tmpl = git_dashboard.HTML_TEMPLATE
-    # DepsTab must be rendered for the deps sub-tab
-    assert "activeSubTab === 'deps'" in tmpl
-    assert "DepsTab" in tmpl
-    # The line routing deps must use DepsTab, not PlaceholderTab
-    deps_lines = [ln for ln in tmpl.split('\n') if "activeSubTab === 'deps'" in ln]
-    assert len(deps_lines) >= 1
-    assert "DepsTab" in deps_lines[0]
-    assert "PlaceholderTab" not in deps_lines[0]
-
-
-# ─────────────────────────────────────────────────────────────────────────────
-# 11. HTML_TEMPLATE has correct severity → display text mapping
-# ─────────────────────────────────────────────────────────────────────────────
-
-def test_severity_status_text_mapping():
-    """HTML_TEMPLATE contains all 4 severity display strings."""
-    tmpl = git_dashboard.HTML_TEMPLATE
-    assert "up to date" in tmpl
-    assert "outdated" in tmpl
-    assert "major update" in tmpl
-    # Vulnerable shows advisory_id value — template must reference advisory_id for display
-    assert "advisory_id" in tmpl
-
-
 def test_detail_returns_coverage_metadata(test_app, tmp_path):
     import sqlite3
     import json

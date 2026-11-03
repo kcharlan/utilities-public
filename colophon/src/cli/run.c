@@ -88,7 +88,6 @@ int cli_run(const Args *args){
     int stat_result=stat(ledger_path,&st);if(stat_result){failure=err_make(ERR_IO,"ledger stat failed");goto fail;}
     /* Snapshot before catalog/scan; later ledger recording consumes this. */
     struct timespec ledger_mtime=st.st_mtimespec;
-    if(cp_fault("catalog_thread_start")){failure=err_make(ERR_IO,"synthetic injected catalog_thread_start");failure_type="RuntimeError";goto fail;}
     const char *url=getenv("COLOPHON_PRICING_URL");if(!url)url="https://models.dev/api.json";
     char *catalog_path=join(home,"pricing-cache.json");if(!catalog_path){failure=err_make(ERR_NOMEM,"path allocation failed");goto fail;}
     failure=catalog_fetch_start(catalog_path,(Str){url,(uint32_t)strlen(url)},args->offline,args->refresh_prices,snapshot,&fetch);free(catalog_path);if(failure.code)goto fail;
@@ -101,7 +100,6 @@ int cli_run(const Args *args){
     /* scan -> metadata -> corpus -> links -> workspaces -> catalog join. */
     CP_PHASE_MARK(1);
     if(codex_present){failure=metadata_load(codex,&metadata);if(failure.code)goto fail;}
-    if(cp_fault("original_error_abort_failure")){failure=err_make(ERR_INVALID,"Synthetic original failure\nsecond line");failure_type="ValueError";goto fail;}
     if(cp_fault("build_corpus")){failure=err_make(ERR_IO,"synthetic injected build_corpus");goto fail;}
     assembly_records=calloc(scan.count?scan.count:1,sizeof *assembly_records);if(!assembly_records){failure=err_make(ERR_NOMEM,"assembly input allocation failed");goto fail;}
     for(size_t i=0;i<scan.count;i++)assembly_records[i]=assembly_record(scan.records[i]);
@@ -139,14 +137,13 @@ int cli_run(const Args *args){
     failure=opencode_compose(&opencode,&corpus);if(failure.code)goto fail;
     failure=antigravity_compose(&antigravity,&corpus,catalog.catalog?&index:NULL,&pricing);if(failure.code)goto fail;
     failure=compose_refresh_costs(&corpus,ledger.available);if(failure.code)goto fail;
-    if(cp_fault("cache_abort_fail")){failure=err_make(ERR_INVALID,"synthetic injected cache_abort_fail");failure_type="ValueError";goto fail;}
     char *key=NULL;failure=file_codex_path_key(codex,&key);if(failure.code==ERR_OK)failure=file_abbreviate_home(key,&display);free(key);if(failure.code!=ERR_OK)goto fail;
     host=cli_source_host(url);
     tzset();time_t now=time(NULL);struct tm local;char zone[128]="";if(localtime_r(&now,&local))strftime(zone,sizeof zone,"%Z",&local);
     PayloadInputs in={.snapshot_ms=snapshot,.codex_home=display,.source_host=host,.timezone=zone,
         .logs=scan.count+scan.unreadable_count,.parsed=scan.parsed,.cached=scan.cached,.scan=&scan,.corpus=&corpus,.metadata=&metadata,.source_codex_home=codex,.workspace_errors=&aliases.errors,.pricing=&pricing,.catalog=&catalog,.ledger=&ledger,.codex_present=codex_present,.claude=&claude,.opencode=&opencode,.antigravity=&antigravity};
     CP_PHASE_MARK(4);
-    size_t max=0,limit=cp_page_warn_bytes();bool converged=false;
+    size_t max=0,limit=20u*1024u*1024u;bool converged=false;
     for(int i=0;i<3;i++){jsonw_free(&payload);jsonw_free(&page);payload_empty(&payload,&in);failure=page_render(&payload,&page);if(failure.code!=ERR_OK){if(failure.code==ERR_INVALID)failure_type="ValueError";goto fail;}
         size_t size=page.length;if(size>max)max=size;bool over=size>limit;if(in.page_size==size&&in.over_limit==over){converged=true;break;}in.page_size=size;in.over_limit=over;}
     if(!converged){in.page_size=max;in.over_limit=max>limit;jsonw_free(&payload);jsonw_free(&page);payload_empty(&payload,&in);failure=page_render(&payload,&page);if(failure.code!=ERR_OK){if(failure.code==ERR_INVALID)failure_type="ValueError";goto fail;}}
@@ -154,7 +151,7 @@ int cli_run(const Args *args){
     CP_PHASE_MARK(5);
     if(interrupted)goto fail;
     failure=cp_fault("original_page_failure")?err_make(ERR_IO,"Synthetic page failure"):
-        cp_fault("page_replace")?err_make(ERR_IO,"synthetic injected page_replace"):atomic_write(output,page.data,page.length);
+        atomic_write(output,page.data,page.length);
     if(failure.code!=ERR_OK){page_failure=true;goto fail;}
     failure=claude_store_commit(&claude_store,&claude,&interrupted);if(failure.code)goto fail;
     if(cache_opened){failure=cache_commit(&cache,&scan.live,&interrupted);committed=cache.committed;}

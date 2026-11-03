@@ -291,55 +291,6 @@ def test_shared_reporting_helper_aliases_and_detail_policy() -> None:
     )
 
 
-def test_provider_profile_accepts_the_complete_legacy_positional_shape() -> None:
-    """New profile fields must not shift any pre-feature positional argument."""
-    categorize = lambda field: f"category:{field}"
-    is_price = lambda field: field == "pricing.prompt"
-    is_count = lambda field: field == "context_length"
-    path_rule = PriceDisplayRule(unit_label="/synthetic", multiplier=2, divisor=3)
-    leaf_rule = PriceDisplayRule(unit_label="/leaf", multiplier=4, divisor=5)
-
-    profile = ProviderProfile(
-        "synthetic",
-        7,
-        11,
-        {"pricing.prompt": path_rule},
-        {"prompt": leaf_rule},
-        PriceDisplayRule(unit_label="/fallback"),
-        "synthetic-group",
-        ("payload", "items"),
-        {"context": (("context_window",),)},
-        {"pricing.prompt": "Prompt"},
-        {"prompt": "Prompt leaf"},
-        ("pricing.prompt", "pricing.completion"),
-        frozenset({"enabled"}),
-        categorize,
-        is_price,
-        is_count,
-        ("legacy_selector",),
-        ("pricing.*",),
-        ("benchmarks.*",),
-    )
-
-    assert profile.kind == "synthetic"
-    assert profile.price_multiplier == 7
-    assert profile.price_divisor == 11
-    assert dict(profile.price_path_rules) == {"pricing.prompt": path_rule}
-    assert dict(profile.price_leaf_rules) == {"prompt": leaf_rule}
-    assert profile.unmatched_price_rule == PriceDisplayRule(unit_label="/fallback")
-    assert profile.primary_price_comparison_group == "synthetic-group"
-    assert profile.envelope_keys == ("payload", "items")
-    assert profile.normalized_fields == {"context": (("context_window",),)}
-    assert profile.field_path_labels == {"pricing.prompt": "Prompt"}
-    assert profile.field_leaf_labels == {"prompt": "Prompt leaf"}
-    assert profile.pricing_field_order == ("pricing.prompt", "pricing.completion")
-    assert profile.known_boolean_fields == frozenset({"enabled"})
-    assert profile.categorize is categorize
-    assert profile.is_price_amount_field is is_price
-    assert profile.is_count_field is is_count
-    assert profile.pricing_override_condition_fields == ("legacy_selector",)
-    assert profile.default_show_fields == ("pricing.*",)
-    assert profile.default_squelch_fields == ("benchmarks.*",)
 
 
 def test_legacy_report_entry_points_accept_calls_without_semantic_core() -> None:

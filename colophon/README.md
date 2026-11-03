@@ -53,6 +53,8 @@ fell back to unattributed session totals dated at each session's start.
 Version 0.5.3 offers a copied Continue in CLI command for eligible live
 OpenCode primary sessions with absolute working-directory and database paths.
 
+Version 0.5.4 removes unused test hooks and expands cache failure coverage.
+
 The page's All/Codex/Claude/OpenCode/Antigravity switch preserves filters and uses green/blue/violet/pink
 provider marks, split overview bars and metric-based calendar colors.
 Claude continuation commands are offered only for supported primary CLI

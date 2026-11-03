@@ -3,22 +3,39 @@ set -euo pipefail
 script=$(cd "$(dirname "$0")/.." && pwd)/pdf-split-by-size.sh
 d=$(mktemp -d "${TMPDIR:-/tmp}/audit-XXXXXX")
 trap 'rm -r -- "${d:?}"' EXIT
-for cmd in qpdf shasum node; do command -v "$cmd" >/dev/null; done
-# Generate a valid synthetic two-page PDF with computed cross-reference offsets.
-node - "$d/chunk_1.pdf" <<'JS'
+for cmd in qpdf shasum node jq; do command -v "$cmd" >/dev/null; done
+# Generate synthetic PDFs with computed cross-reference offsets.
+node - "$d" <<'JS'
 const fs = require("fs");
+function makePdf(widths) {
 let pdf = "%PDF-1.4\n";
 const offsets = [0];
-for (const obj of ["<< /Type /Catalog /Pages 2 0 R >>", "<< /Type /Pages /Kids [3 0 R 4 0 R] /Count 2 >>", "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 10 10] /Resources << >> >>", "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 10 10] /Resources << >> >>"]) {
+const objects = ["<< /Type /Catalog /Pages 2 0 R >>", `<< /Type /Pages /Kids [${widths.map((_, i) => `${i + 3} 0 R`).join(' ')}] /Count ${widths.length} >>`, ...widths.map(width => `<< /Type /Page /Parent 2 0 R /MediaBox [0 0 ${width} 10] /Resources << >> >>`)];
+for (const obj of objects) {
   offsets.push(Buffer.byteLength(pdf));
   pdf += `${offsets.length - 1} 0 obj\n${obj}\nendobj\n`;
 }
 const xref = Buffer.byteLength(pdf);
-pdf += "xref\n0 5\n0000000000 65535 f \n" + offsets.slice(1).map(n => String(n).padStart(10, "0") + " 00000 n \n").join("");
-pdf += `trailer\n<< /Size 5 /Root 1 0 R >>\nstartxref\n${xref}\n%%EOF\n`;
-fs.writeFileSync(process.argv[2], pdf);
+pdf += `xref\n0 ${offsets.length}\n0000000000 65535 f \n` + offsets.slice(1).map(n => String(n).padStart(10, "0") + " 00000 n \n").join("");
+pdf += `trailer\n<< /Size ${offsets.length} /Root 1 0 R >>\nstartxref\n${xref}\n%%EOF\n`;
+return {pdf, xref};
+}
+const two = makePdf([10, 10]);
+fs.writeFileSync(`${process.argv[2]}/chunk_1.pdf`, two.pdf);
+fs.writeFileSync(`${process.argv[2]}/damaged.pdf`, two.pdf.replace(`startxref\n${two.xref}\n`, `startxref\n${two.xref + 7}\n`));
+fs.writeFileSync(`${process.argv[2]}/three.pdf`, makePdf([10, 20, 30]).pdf);
 JS
 cd "$d"
+if qpdf --check damaged.pdf; then
+  echo 'damaged fixture produced no warning' >&2
+  exit 1
+else
+  run_rc=$?
+  [[ $run_rc == 3 ]] || { echo "damaged fixture exited $run_rc, expected 3" >&2; exit 1; }
+fi
+"$script" damaged.pdf 1M repaired
+[[ -s repaired_1.pdf ]] || { echo 'FAIL: pdf-split/tests/test_pdf_split.sh:37' >&2; exit 1; }
+[[ $(qpdf --show-npages repaired_1.pdf) == 2 ]] || { echo 'FAIL: pdf-split/tests/test_pdf_split.sh:38' >&2; exit 1; }
 hash=$(shasum chunk_1.pdf | cut -d' ' -f1)
 if "$script" ./chunk_1.pdf 1M chunk; then echo 'same file accepted' >&2; exit 1; fi
 [[ $(shasum chunk_1.pdf | cut -d' ' -f1) == "$hash" ]]
@@ -33,6 +50,25 @@ qpdf --check out_1.pdf
 "$script" chunk_1.pdf 1 split
 [[ -s split_1.pdf ]] || exit 1
 [[ -s split_2.pdf ]] || exit 1
+[[ $(qpdf --show-npages split_1.pdf) == 1 ]] || { echo 'FAIL: pdf-split/tests/test_pdf_split.sh:53' >&2; exit 1; }
+[[ $(qpdf --show-npages split_2.pdf) == 1 ]] || { echo 'FAIL: pdf-split/tests/test_pdf_split.sh:54' >&2; exit 1; }
+qpdf --empty --pages three.pdf 1-2 -- p12.pdf
+qpdf --empty --pages three.pdf 1-3 -- p123.pdf
+size12=$(stat -f%z p12.pdf)
+size123=$(stat -f%z p123.pdf)
+(( size12 < size123 )) || { echo 'FAIL: pdf-split/tests/test_pdf_split.sh:59' >&2; exit 1; }
+limit=$(( (size12 + size123) / 2 ))
+"$script" three.pdf "$limit" mixed
+[[ -s mixed_1.pdf && -s mixed_2.pdf && ! -e mixed_3.pdf ]] || { echo 'FAIL: pdf-split/tests/test_pdf_split.sh:62' >&2; exit 1; }
+[[ $(qpdf --show-npages mixed_1.pdf) == 2 ]] || { echo 'FAIL: pdf-split/tests/test_pdf_split.sh:63' >&2; exit 1; }
+[[ $(qpdf --show-npages mixed_2.pdf) == 1 ]] || { echo 'FAIL: pdf-split/tests/test_pdf_split.sh:64' >&2; exit 1; }
+(( $(stat -f%z mixed_1.pdf) <= limit )) || { echo 'FAIL: pdf-split/tests/test_pdf_split.sh:65' >&2; exit 1; }
+(( $(stat -f%z mixed_2.pdf) <= limit )) || { echo 'FAIL: pdf-split/tests/test_pdf_split.sh:66' >&2; exit 1; }
+page_widths() {
+  qpdf --json=2 "$1" | jq -r '[.pages[].object as $id | .qpdf[1]["obj:" + $id].value["/MediaBox"] | .[2] - .[0]] | join(" ")'
+}
+[[ $(page_widths mixed_1.pdf) == '10 20' ]] || { echo 'FAIL: pdf-split/tests/test_pdf_split.sh:70' >&2; exit 1; }
+[[ $(page_widths mixed_2.pdf) == '30' ]] || { echo 'FAIL: pdf-split/tests/test_pdf_split.sh:71' >&2; exit 1; }
 # Inject a late qpdf failure after the first chunk was prepared.
 mkdir bin
 qpdf_path=$(command -v qpdf)

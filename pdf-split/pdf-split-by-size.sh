@@ -29,7 +29,7 @@ to_bytes() {
 lim_bytes=$(to_bytes "$limit_str")
 
 # Total pages
-pages=$(qpdf --show-npages "$in")
+pages=$(qpdf --warning-exit-0 --show-npages "$in")
 
 # Every possible chunk name must be safe before any output is published.
 for (( chunk = 1; chunk <= pages; chunk++ )); do
@@ -52,7 +52,7 @@ while (( start <= pages )); do
   while :; do
     test_out="$tmpdir/test.pdf"
     # Build a candidate chunk [start..end]
-    qpdf --empty --pages "$in" "$start-$end" -- "$test_out" >/dev/null 2>&1
+    qpdf --warning-exit-0 --empty --pages "$in" "$start-$end" -- "$test_out" >/dev/null 2>&1
     size=$(stat -f%z "$test_out")
 
     if (( size > lim_bytes )); then
@@ -71,7 +71,7 @@ while (( start <= pages )); do
   done
 
   final="${prefix}_$chunk.pdf"
-  qpdf --empty --pages "$in" "$start-$end" -- "$tmpdir/chunk_$chunk.pdf"
+  qpdf --warning-exit-0 --empty --pages "$in" "$start-$end" -- "$tmpdir/chunk_$chunk.pdf"
   (( chunk++ ))
   (( start = end + 1 ))
 done

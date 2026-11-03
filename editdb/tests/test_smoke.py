@@ -18,12 +18,6 @@ def test_help_exits_without_creating_files(tmp_path):
     assert list(tmp_path.iterdir()) == []
 
 
-def test_launcher_loads_fastapi_app():
-    module = load_launcher(SCRIPT_PATH)
-
-    assert module.app.title == "EditDB API"
-
-
 def test_status_reports_no_database_before_startup():
     module = load_launcher(SCRIPT_PATH)
     response = ASGISyncClient(module.app).get("/api/status")

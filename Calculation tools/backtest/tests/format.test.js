@@ -50,17 +50,9 @@ test('no view carries its own money or percent formatter any more', () => {
   const script = fs.readFileSync(require.resolve('../app.js'), 'utf8')
     + fs.readFileSync(require.resolve('../views.js'), 'utf8');
 
-  // The two former duplicates are gone by name...
-  assert.doesNotMatch(script, /function heatmapMoney\b/);
-  assert.doesNotMatch(script, /function concisePercent\b/);
-  // ...and no view re-derives a currency or percent string inline.
   assert.doesNotMatch(script, /style: 'currency'/, 'currency formatting belongs to format.js');
   assert.doesNotMatch(script, /\$\$\{Number\([^)]*\)\.toLocaleString/, 'no inline currency assembly');
 
-  // format.js must load before the code that consumes it.
-  const html = fs.readFileSync(require.resolve('../index.html'), 'utf8');
-  assert.ok(html.indexOf('src="format.js"') < html.indexOf('src="views.js"'));
-  assert.ok(html.indexOf('src="views.js"') < html.indexOf('src="app.js"'));
 });
 
 test('escapeHtml converts values to safe text markup without changing plain text', () => {

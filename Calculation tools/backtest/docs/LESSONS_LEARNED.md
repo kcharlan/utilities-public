@@ -1,5 +1,11 @@
 # Market Atlas lessons
 
+## Reconcile every consumed series
+
+Independent-source checks should cover every consumed financial series. CPI
+needs bias and geometric-mean controls that tolerate annual observation timing
+differences while detecting sustained disagreement.
+
 ## Keep the scope concrete
 
 This is one owner's static app on one MacBook Pro, served by the existing

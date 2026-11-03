@@ -33,6 +33,8 @@ Before 1928, bills are absent (`null` in JS, empty in CSV) and quality is
 columns are null before 1928. Numeric values are decimals
 rounded to eight places. The compiler independently reconciles Shiller and
 Damodaran stock/bond annual series over 1928–2022 before writing either output.
+It also reconciles CPI changes over that overlap, limiting absolute bias and
+absolute geometric-mean difference to 0.0030 each.
 
 The versioned acquisition recipe is [`data/sources.json`](data/sources.json).
 Its Shiller HTTPS identifier is the XLS link exposed by the

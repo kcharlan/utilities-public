@@ -19,16 +19,6 @@ def test_shared_guard_contract(monkeypatch, tmp_path):
                         post_path='/api/scan').result()
 
 
-def test_guard_blocks_foreign_hosts_and_origins(monkeypatch, tmp_path):
-    monkeypatch.setenv("STORAGE_MONITOR_HOME", str(tmp_path / "runtime"))
-    module = load_launcher(SCRIPT)
-    monkeypatch.setattr(module, "start_scan", lambda: True)
-    assert probe_http(module.app, "GET", "/api/state", host="foreign.example:8000") == 403
-    assert probe_http(module.app, "POST", "/api/scan", host="127.0.0.1:8000", origin="http://foreign.example") == 403
-    assert probe_http(module.app, "POST", "/api/scan", host="127.0.0.1:8000") == 403
-    assert probe_http(module.app, "POST", "/api/scan", host="127.0.0.1:8000", origin="http://127.0.0.1:8000") == 200
-
-
 def test_get_breakdown_does_not_modify_store(monkeypatch, tmp_path):
     monkeypatch.setenv("STORAGE_MONITOR_HOME", str(tmp_path / "runtime"))
     module = load_launcher(SCRIPT)

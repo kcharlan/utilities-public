@@ -54,6 +54,7 @@ RECONCILIATION_THRESHOLDS = {
                  "abs_geometric_mean_difference": 0.0050},
     "bond10_tr": {"mae": 0.0300, "abs_bias": 0.0060, "stdev_ratio": (0.93, 1.10),
                   "abs_geometric_mean_difference": 0.0050},
+    "cpi_change": {"abs_bias": 0.0030, "abs_geometric_mean_difference": 0.0030},
 }
 
 
@@ -443,7 +444,7 @@ def reconcile(
             raise ValueError(f"{source} is missing required 1928-2022 overlap years: {missing}")
 
     metrics: dict[str, dict[str, float]] = {}
-    for series in ("stock_tr", "bond10_tr"):
+    for series in RECONCILIATION_THRESHOLDS:
         shiller_values = [shiller_years[year][series] for year in overlap]
         damodaran_values = [damodaran_years[year][series] for year in overlap]
         differences = [left - right for left, right in zip(shiller_values, damodaran_values, strict=True)]
@@ -466,17 +467,18 @@ def reconcile(
     failures: list[str] = []
     for series, values in metrics.items():
         limits = RECONCILIATION_THRESHOLDS[series]
-        if values["mae"] > limits["mae"]:
+        if "mae" in limits and values["mae"] > limits["mae"]:
             failures.append(f"{series} MAE {values['mae']:.6f} exceeds {limits['mae']:.4f}")
         if abs(values["bias"]) > limits["abs_bias"]:
             failures.append(
                 f"{series} absolute bias {abs(values['bias']):.6f} exceeds {limits['abs_bias']:.4f}"
             )
-        lower, upper = limits["stdev_ratio"]
-        if not lower <= values["stdev_ratio"] <= upper:
-            failures.append(
-                f"{series} stdev ratio {values['stdev_ratio']:.6f} is outside {lower:.2f}-{upper:.2f}"
-            )
+        if "stdev_ratio" in limits:
+            lower, upper = limits["stdev_ratio"]
+            if not lower <= values["stdev_ratio"] <= upper:
+                failures.append(
+                    f"{series} stdev ratio {values['stdev_ratio']:.6f} is outside {lower:.2f}-{upper:.2f}"
+                )
         if abs(values["geometric_mean_difference"]) > limits["abs_geometric_mean_difference"]:
             failures.append(
                 f"{series} absolute geometric mean difference "

@@ -583,9 +583,6 @@ struct CatalogFetch {
     pthread_mutex_t mutex;
     pthread_cond_t finished;
     bool cancel,done,offline,refresh;
-#ifdef COLOPHON_TESTING
-    bool pending_input,pending_started;
-#endif
     char *path,*url;
     int64_t now,connect_ms,body_ms,join_ms;
     CatalogResult result;
@@ -747,7 +744,6 @@ static Err perform_fetch(CatalogFetch *fetch) {
         if(code!=CURLM_OK){diagnostic=curl_multi_strerror(code);break;}
         if(transfer.headers&&!header_checkpoint) {
             header_checkpoint=true;
-            if(cp_fault("catalog_timer")){timeout=true;break;}
             if(transfer.status==304||transfer.status!=200){complete=true;break;}
         }
         int queued;CURLMsg *message;
@@ -776,7 +772,7 @@ static Err perform_fetch(CatalogFetch *fetch) {
         goto done;
     }
     if(transfer.status!=200){char message[80];snprintf(message,sizeof message,"catalog HTTP status %ld",transfer.status);error=fetch_diagnostic(out,message);goto done;}
-    if(cp_fault("catalog_timer")||monotonic_ms()-transfer.body_start>=fetch->body_ms){error=catalog_message(out,STR_LIT("catalog body timeout"));goto done;}
+    if(monotonic_ms()-transfer.body_start>=fetch->body_ms){error=catalog_message(out,STR_LIT("catalog body timeout"));goto done;}
     if(transfer.body.error.code){error=transfer.body.error;goto done;}
     error=decode_fetched((Str){transfer.body.data,(uint32_t)transfer.body.length},&decoded,&diagnostic);
     if(error.code||diagnostic)goto done;
@@ -787,7 +783,7 @@ static Err perform_fetch(CatalogFetch *fetch) {
     error=artifact.error;if(error.code)goto done;
     pthread_mutex_lock(&fetch->mutex);
     if(!fetch->cancel) {
-        error=cp_fault("catalog_replace")?err_make(ERR_IO,"Synthetic cache replace failure"):atomic_write(fetch->path,artifact.data,artifact.length);
+        error=atomic_write(fetch->path,artifact.data,artifact.length);
         if(!error.code){yyjson_doc_free(out->catalog);out->catalog=decoded;decoded=NULL;out->status="fetched";out->has_fetched_at=true;out->fetched_at_ms=fetch->now;}
     }
     pthread_mutex_unlock(&fetch->mutex);
@@ -799,13 +795,6 @@ done:
 }
 static void *fetch_worker(void *context) {
     CatalogFetch *fetch=context;
-#ifdef COLOPHON_TESTING
-    if(fetch->pending_input){
-        pthread_mutex_lock(&fetch->mutex);fetch->pending_started=true;pthread_cond_broadcast(&fetch->finished);
-        while(!fetch->cancel){struct timespec wait={0,50000000};pthread_cond_timedwait_relative_np(&fetch->finished,&fetch->mutex,&wait);}
-        pthread_mutex_unlock(&fetch->mutex);
-    }else
-#endif
     fetch->error=perform_fetch(fetch);
     pthread_mutex_lock(&fetch->mutex);fetch->done=true;pthread_cond_signal(&fetch->finished);pthread_mutex_unlock(&fetch->mutex);return NULL;
 }
@@ -818,9 +807,6 @@ Err catalog_fetch_start(const char *path,Str url,bool offline,bool refresh,int64
     fetch->path=strdup(path);fetch->url=malloc((size_t)url.n+1);
     if(!fetch->path||!fetch->url){free(fetch->path);free(fetch->url);free(fetch);return err_make(ERR_NOMEM,"catalog thread allocation");}
     memcpy(fetch->url,url.p,url.n);fetch->url[url.n]=0;fetch->offline=offline;fetch->refresh=refresh;fetch->now=now;
-#ifdef COLOPHON_TESTING
-    fetch->pending_input=cp_fault("original_catalog_pending");
-#endif
     fetch->connect_ms=cp_catalog_budget("COLOPHON_TEST_CONNECT_TIMEOUT_MS",3000);
     fetch->body_ms=cp_catalog_budget("COLOPHON_TEST_BODY_TIMEOUT_MS",30000);
     /* Hook values are bounded to an hour, so this sum cannot overflow. */
@@ -833,9 +819,6 @@ Err catalog_fetch_start(const char *path,Str url,bool offline,bool refresh,int64
     pthread_attr_t attributes;code=pthread_attr_init(&attributes);
     if(!code){code=pthread_attr_setstacksize(&attributes,512u*1024u);if(!code)code=pthread_create(&fetch->thread,&attributes,fetch_worker,fetch);pthread_attr_destroy(&attributes);}
     if(code){fetch_destroy(fetch);return err_make(ERR_IO,"catalog thread start failed: %s",strerror(code));}
-#ifdef COLOPHON_TESTING
-    if(fetch->pending_input){pthread_mutex_lock(&fetch->mutex);while(!fetch->pending_started)pthread_cond_wait(&fetch->finished,&fetch->mutex);pthread_mutex_unlock(&fetch->mutex);}
-#endif
     *out=fetch;return ERR_SUCCESS;
 }
 void catalog_fetch_cancel(CatalogFetch **owner) {

@@ -22,6 +22,11 @@ run_profile() {
     PYTHONDONTWRITEBYTECODE=1 COLOPHON_PRICING_URL=http://127.0.0.1:9/catalog.json \
     "$project_dir/.venv/bin/python" -B -m pytest --basetemp "$test_scratch/cases" "$@"
 }
+run_mutations=false
+for arg in "$@"; do
+    if [ "$arg" = tests/test_cli.py ]; then run_mutations=true; fi
+done
+if "$run_mutations"; then
 # Evaluate source protection under allowlisted scratch without writing canaries.
 # Separate invocations preserve the sandbox; macOS rejects nested sandbox_apply.
 export COLOPHON_TEST_SOURCE_PROBE="$test_scratch/synthetic-project"
@@ -107,4 +112,5 @@ if ! rg -q 'AssertionError: Antigravity source protection missing' "$test_scratc
 fi
 echo 'Antigravity protection mutation rejected as expected: .gemini'
 unset COLOPHON_TEST_POLICY_HOME
+fi
 run_profile "$project_dir/tests/sandbox.sb" "$project_dir" "$@"

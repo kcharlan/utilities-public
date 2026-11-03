@@ -172,7 +172,7 @@ Err ensure_runtime_home(const char *path) {
         struct stat st;
         if(!lstat(candidate,&st) && S_ISREG(st.st_mode)) {
             long double modified=(long double)st.st_mtimespec.tv_sec*1000+st.st_mtimespec.tv_nsec/1000000.0L;
-            if(modified<(long double)wall-3600000 && !cp_fault("runtime_temp_unlink"))unlink(candidate);
+            if(modified<(long double)wall-3600000)unlink(candidate);
         }
         free(candidate);
     }

@@ -771,13 +771,9 @@ def test_help_and_version_create_no_runtime(native):
     assert help_result.returncode == 0
     for text in ("--offline", "--codex-home", "cache-native/", "COLOPHON_HOME"):
         assert text in help_result.stdout
-    for text in ("make test", "make sanitize", "make tsan", "make check-assets", "make check-sort"):
-        assert text in help_result.stdout
-    assert "parity and performance tools" not in help_result.stdout
-    assert "private/" not in help_result.stdout
     version = native.invoke("--version")
     assert version.returncode == 0
-    assert version.stdout == "colophon 0.5.3\n"
+    assert version.stdout == "colophon 0.5.4\n"
     assert not native.runtime.exists()
 
 def test_sandbox_allows_active_reads_and_scratch_only_writes(tmp_path):
@@ -899,18 +895,7 @@ def test_nonempty_cold_warm_and_rebuild_preserve_session_usage(native):
     assert usage["cached_input"] == 20
     assert usage["output"] == 30
     assert usage["reasoning"] == 5
-
-@pytest.mark.parametrize("status,diagnostic", [(0, "unstable sort is forbidden"), (1, ""), (2, "stable-sort search failed (status 2)")])
-def test_build_sort_guard_preserves_search_status(tmp_path, status, diagnostic):
-    project = Path(__file__).resolve().parents[1]
-    rg = tmp_path / "rg"
-    rg.write_text(f"#!/bin/sh\nexit {status}\n")
-    rg.chmod(0o700)
-    env = os.environ.copy()
-    env["PATH"] = str(tmp_path) + os.pathsep + env["PATH"]
-    result = subprocess.run(["make", "check-sort"], cwd=project, env=env, text=True, capture_output=True)
-    assert (result.returncode == 0) == (status == 1)
-    assert diagnostic in result.stderr
+    assert usage["cost_usd"] == pytest.approx(100 * 1.25e-6 + 20 * 1.25e-7 + 30 * 1e-5)
 
 def test_browser_error_guard_fails_on_console_and_page_errors():
     class Page:
@@ -938,18 +923,51 @@ def test_output_override_and_existing_ledger_are_preserved(native):
     original = source.read_bytes()
     native.runtime.mkdir(mode=0o700)
     ledger = native.runtime / "price-history.json"
-    content = b'{"schema":1,"entries":[{"model":"synthetic-ledger-model","effective_from":null,"per_million":{"input":1,"output":2,"cached_input":0.5,"cache_write":1},"source":"synthetic","note":"invented preservation sentinel"}]}\n'
+    content = b'{"schema":1,"entries":[{"model":"synthetic-ledger-model","effective_from":"2026-01-01T00:00:00Z","per_million":{"input":1,"output":2,"cached_input":0.5,"cache_write":1},"source":"manual","note":"invented preservation sentinel"}]}\n'
     ledger.write_bytes(content)
     ledger.chmod(0o600)
     output = native.root / "synthetic-output.html"
     result = native.build("--output", str(output))
     assert result.returncode == 0, result.stderr
-    assert_session(native.payload(output))
+    payload = native.payload(output)
+    assert_session(payload)
+    assert payload["meta"]["costs"]["available"] is True
     assert mode(output) == 0o600
     assert not native.page.exists()
     assert ledger.read_bytes() == content
     assert source.read_bytes() == original
     private_runtime(native)
+
+def test_user_ledger_dated_rates_price_each_period_and_resist_repricing(native):
+    native.runtime.mkdir(mode=0o700)
+    ledger = native.runtime / "price-history.json"
+    def entry(date, input_rate, cached_rate, output_rate):
+        return {"model": "synthetic-dated-model", "effective_from": date, "source": "manual",
+                "per_million": {"input": input_rate, "cached_input": cached_rate,
+                                "cache_write": 0, "output": output_rate}}
+    entries = [entry("2026-01-02T00:00:00Z", 1, 0.5, 2),
+               entry("2026-01-02T12:00:05Z", 3, 1.5, 5)]
+    ledger.write_text(json.dumps({"schema": 1, "entries": entries}))
+    ledger.chmod(0o600)
+    turn = "synthetic-dated-turn"
+    native.write_session([
+        row("session_meta", {"id": SESSION, "cwd": "/synthetic/kite", "source": "cli"}, 0),
+        row("turn_context", {"model": "synthetic-dated-model", "turn_id": turn}, 1),
+        row("event_msg", {"type": "task_started", "turn_id": turn}, 1),
+        row("event_msg", {"type": "token_count", "turn_id": turn, "info": {
+            "last_token_usage": usage(1000, 0, 100), "total_token_usage": usage(1000, 0, 100)}}, 3),
+        row("event_msg", {"type": "token_count", "turn_id": turn, "info": {
+            "last_token_usage": usage(2000, 0, 200), "total_token_usage": usage(3000, 0, 300)}}, 9),
+    ])
+    expected = 1000 * 1e-6 + 100 * 2e-6 + 2000 * 3e-6 + 200 * 5e-6
+    for extra in (False, True):
+        if extra:
+            entries.append(entry("2026-01-03T00:00:00Z", 100, 0, 2))
+            ledger.write_text(json.dumps({"schema": 1, "entries": entries}))
+        result = native.build()
+        assert result.returncode == 0, result.stderr
+        payload = native.payload()
+        assert payload["sessions"][0]["own_usage"]["cost_usd"] == pytest.approx(expected), payload["meta"]["costs"]
 
 def test_loopback_catalog_fetch_uses_only_synthetic_endpoint(native):
     calls = []
@@ -976,7 +994,20 @@ def test_loopback_catalog_fetch_uses_only_synthetic_endpoint(native):
         assert native.payload()["meta"]["catalog"]["source_host"] == "127.0.0.1"
         assert native.payload()["meta"]["catalog"]["status"] == "fetched"
         assert "synthetic-kite-model" in (native.runtime / "pricing-cache.json").read_text()
-        private_runtime(native)
+        ledger = native.runtime / "price-history.json"
+        for run in range(2):
+            if run:
+                result = native.build("--refresh-prices", offline=False)
+                assert result.returncode == 0, result.stderr
+            entries = [entry for entry in json.loads(ledger.read_text())["entries"]
+                       if entry["model"] == "synthetic-kite-model"]
+            assert len(entries) == 1
+            entry = entries[0]
+            assert entry["source"] == "catalog"
+            assert entry["approximate_date"] is True
+            assert entry["per_million"]["input"] == 1
+            assert entry["per_million"]["output"] == 2
+            private_runtime(native)
     finally:
         server.shutdown()
         server.server_close()
@@ -995,15 +1026,19 @@ def test_local_asset_checker_rejects_corruption_and_missing_asset(tmp_path):
         (assets / path.name).write_bytes(path.read_bytes())
     command = ["perl", str(project / "tools/check_assets.pl"), str(assets)]
     assert subprocess.run(command, capture_output=True).returncode == 0
-    asset = assets / "page.js"
+    page = assets / "page.js"
+    page.write_bytes(page.read_bytes() + b"synthetic corruption")
+    result = subprocess.run(command, capture_output=True, text=True)
+    assert result.returncode == 0, result.stderr
+    asset = assets / "font.css"
     original = asset.read_bytes()
     asset.write_bytes(original + b"synthetic corruption")
     result = subprocess.run(command, capture_output=True, text=True)
-    assert result.returncode != 0 and "digest mismatch: page.js" in result.stderr
+    assert result.returncode != 0 and "digest mismatch: font.css" in result.stderr
     asset.write_bytes(original)
     asset.unlink()
     result = subprocess.run(command, capture_output=True, text=True)
-    assert result.returncode != 0 and "page.js" in result.stderr
+    assert result.returncode != 0 and "font.css" in result.stderr
     asset.write_bytes(original)
     assert subprocess.run(command, capture_output=True).returncode == 0
 

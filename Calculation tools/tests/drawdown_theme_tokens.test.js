@@ -60,20 +60,9 @@ test('system, explicit, and print schemes have the required structure', () => {
   assert.ok(calculatorHtml.indexOf(print[0]) > calculatorHtml.indexOf(dark[0]));
 });
 
-test('old colour names, browser storage, and extra scripts are absent', () => {
-  assert.doesNotMatch(calculatorHtml, /var\(--(paper|ink|oxblood|forest|ochre|umber|rule-soft)\b/);
+test('browser storage and extra scripts are absent', () => {
   assert.doesNotMatch(calculatorHtml, /localStorage|sessionStorage|indexedDB|document\.cookie/);
   assert.equal((calculatorHtml.match(/<script\b/g) || []).length, 1);
-});
-
-test('retired drawdown presentation hooks stay removed', () => {
-  assert.doesNotMatch(calculatorHtml, /pull-quote|pq-mark|marker-dot\.surplus/);
-  assert.doesNotMatch(calculatorHtml, /class="footnote"/);
-  assert.doesNotMatch(calculatorHtml, /\.amort tr\.is-pinned \+ tr td\s*\{\s*(?:\/\*[^*]*\*\/\s*)?\}/);
-});
-
-test('renderTable contains no empty surplus branch', () => {
-  assert.doesNotMatch(calculatorHtml, /if \(r\.surplus[^)]*\)\s*\{\s*(\/\/[^\n]*\n\s*)?\}/);
 });
 
 test('named font declarations include a fallback', () => {

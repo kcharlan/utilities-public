@@ -197,15 +197,6 @@ static Err scan_impl(const char *codex, Cache *cache, volatile sig_atomic_t *fla
             slots[i].ready = false;
             jobs[pool.count++] = i;
             total += (uint64_t)out->discovery.logs[order[i]].size;
-#ifdef COLOPHON_TESTING
-            const char *failure = getenv("COLOPHON_TEST_FAIL_AT");
-            if (failure && strtoull(failure, NULL, 10) == pool.count)
-                slots[i].error = err_make(ERR_INVALID, "synthetic injected parse failure");
-            else if (cp_fault("parse_log")) slots[i].error = err_make(ERR_IO, "synthetic injected parse_log");
-            const char *selected=getenv("COLOPHON_TEST_FAIL_PATH");
-            if(selected && !strcmp(selected,out->discovery.logs[order[i]].path.p) && cp_fault("parse_selected"))
-                slots[i].error=err_make(ERR_IO,"Synthetic unreadable log");
-#endif
         }
     pool.parse = true;
     e = phase(&pool, workers, flag, progress, context, total);

@@ -63,10 +63,12 @@ def test_retry_refetches_and_reapplies_after_conflict(monkeypatch, tmp_path, con
     module, state, pending = setup_graph(monkeypatch, tmp_path, conflicts)
     result = module.retry_pending_operation({"worksheet_name": "Expense Log"}, pending["id"])
     assert result["ok"]
+    assert result["receipt_filename"] == "synthetic.pdf"
     assert state["puts"] == [f'"v{n}"' for n in range(1, conflicts + 2)]
     assert state["gets"] == conflicts + 1
     sheet = load_workbook(io.BytesIO(state["content"]))["Expense Log"]
     assert [sheet.cell(n, 3).value for n in range(2, conflicts + 3)] == ["SYNTHETIC OTHER"] * conflicts + ["SYNTHETIC"]
+    assert sheet.cell(conflicts + 2, 12).value == "synthetic.pdf"
     assert not Path(module.pending_path(pending["id"])).exists()
 
 

@@ -1,5 +1,6 @@
 """Measurement tools must reject public checkouts before loading scan code."""
 
+import argparse
 from pathlib import Path
 import runpy
 import shutil
@@ -10,6 +11,7 @@ import pytest
 
 
 PROJECT = Path(__file__).resolve().parents[1]
+reject_repository_destinations = runpy.run_path(str(PROJECT / "tests/destination_guard.py"))["reject_repository_destinations"]
 
 
 @pytest.fixture
@@ -60,28 +62,32 @@ def tool_main(monkeypatch, linked, tool, runtime, output):
     return main
 
 
-@pytest.mark.parametrize("tool,destination", [
-    ("perf/measure_scan.py", "runtime"),
-    ("perf/measure_scan.py", "output"),
-    ("parity/compare_walkers.py", "output"),
-])
 @pytest.mark.parametrize("checkout_index", [0, 1, 2], ids=["primary", "current", "sibling"])
 @pytest.mark.parametrize("symlink", [False, True], ids=["direct", "symlink"])
-def test_rejects_checkout_before_loading_or_writing(
-    monkeypatch, tmp_path, public_checkouts, capsys, tool, destination, checkout_index, symlink,
-):
+def test_guard_rejects_every_checkout_form(tmp_path, public_checkouts, capsys, checkout_index, symlink):
     checkout = public_checkouts[checkout_index]
     if symlink:
         alias = tmp_path / "synthetic-alias"
         alias.symlink_to(checkout, target_is_directory=True)
         checkout = alias
-    runtime = tmp_path / "synthetic-runtime"
-    output = tmp_path / "synthetic-output.json"
-    if destination == "runtime":
-        runtime = checkout / "synthetic-runtime"
-    else:
-        output = checkout / "synthetic-output.json"
-    main = tool_main(monkeypatch, public_checkouts[1], tool, runtime, output)
+    destination = checkout / "synthetic-output"
+    with pytest.raises(SystemExit) as error:
+        reject_repository_destinations(argparse.ArgumentParser(), public_checkouts[1], destination)
+    assert error.value.code == 2
+    assert "outside" in capsys.readouterr().err
+    assert not destination.exists()
+
+
+@pytest.mark.parametrize("tool,destination", [
+    ("perf/measure_scan.py", "runtime"),
+    ("perf/measure_scan.py", "output"),
+    ("parity/compare_walkers.py", "output"),
+])
+def test_tools_reject_before_loading(monkeypatch, tmp_path, public_checkouts, capsys, tool, destination):
+    checkout = public_checkouts[1]
+    runtime = checkout / "synthetic-runtime" if destination == "runtime" else tmp_path / "synthetic-runtime"
+    output = checkout / "synthetic-output.json" if destination == "output" else tmp_path / "synthetic-output.json"
+    main = tool_main(monkeypatch, checkout, tool, runtime, output)
     with pytest.raises(SystemExit) as error:
         main()
     assert error.value.code == 2
@@ -122,31 +128,19 @@ def test_refuses_destinations_when_checkout_inventory_unavailable(
     assert not output.exists()
 
 
-@pytest.mark.parametrize("tool,destination", [
-    ("perf/measure_scan.py", "runtime"),
-    ("perf/measure_scan.py", "output"),
-    ("parity/compare_walkers.py", "output"),
-])
 @pytest.mark.parametrize("redirect", ["GIT_DIR", "GIT_COMMON_DIR", "all"])
 def test_inherited_git_context_cannot_hide_primary_checkout(
-    monkeypatch, tmp_path, public_checkouts, capsys, tool, destination, redirect,
+    monkeypatch, tmp_path, public_checkouts, capsys, redirect,
 ):
     foreign = tmp_path / "synthetic-unrelated"
     subprocess.run(["git", "init", "-q", str(foreign)], check=True)
-    runtime = tmp_path / "synthetic-runtime"
-    output = tmp_path / "synthetic-output.json"
-    if destination == "runtime":
-        runtime = public_checkouts[0] / "synthetic-runtime"
-    else:
-        output = public_checkouts[0] / "synthetic-output.json"
-    main = tool_main(monkeypatch, public_checkouts[1], tool, runtime, output)
+    destination = public_checkouts[0] / "synthetic-output.json"
     for name, value in {"GIT_DIR": foreign / ".git", "GIT_COMMON_DIR": foreign / ".git",
                         "GIT_WORK_TREE": foreign}.items():
         if redirect == "all" or redirect == name:
             monkeypatch.setenv(name, str(value))
     with pytest.raises(SystemExit) as error:
-        main()
+        reject_repository_destinations(argparse.ArgumentParser(), public_checkouts[1], destination)
     assert error.value.code == 2
     assert "outside" in capsys.readouterr().err
-    assert not runtime.exists()
-    assert not output.exists()
+    assert not destination.exists()

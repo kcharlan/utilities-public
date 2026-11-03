@@ -95,6 +95,14 @@ def _poll_until_finished(manager: WorkerManager, slot_number: int, *, deadline_s
     return snapshot
 
 
+def _stop_and_collect(manager: WorkerManager, slot_number: int) -> None:
+    manager.terminate(slot_number, reason="test cleanup")
+    snapshot = _poll_until_finished(manager, slot_number)
+    assert snapshot.exit_code is not None, f"worker slot {slot_number} was not reaped"
+    manager.collect(slot_number)
+    assert slot_number not in manager.active_slot_numbers()
+
+
 def test_dispatch_shell_worker_writes_worker_log_and_collects_status_sidecar(
     repo_root: Path,
     tmp_path: Path,
@@ -556,7 +564,7 @@ def test_idle_warning_includes_worker_slot_and_task_id(
     workspace.mkdir()
     log_path = tmp_path / "logs" / "workers" / "5.log"
 
-    # Use a short idle so warning fires at 80% (0.16s) quickly
+    # Use a short idle so the warning fires at 80% (0.4s) quickly.
     manager = WorkerManager(default_task_idle=0.5, kill_grace_period=0.1)
     manager.dispatch(
         slot_number=5,
@@ -566,23 +574,61 @@ def test_idle_warning_includes_worker_slot_and_task_id(
         log_path=log_path,
     )
 
-    all_alerts = []
-    deadline = time.monotonic() + 5.0
-    while time.monotonic() < deadline:
-        snapshot = manager.poll(5)
-        all_alerts.extend(snapshot.alerts)
-        if any(a.severity == "warning" for a in all_alerts):
-            break
-        if snapshot.is_finished:
-            break
-        time.sleep(0.02)
+    try:
+        all_alerts = []
+        deadline = time.monotonic() + 5.0
+        while time.monotonic() < deadline:
+            snapshot = manager.poll(5)
+            all_alerts.extend(snapshot.alerts)
+            if any(a.severity == "warning" for a in all_alerts):
+                break
+            if snapshot.is_finished:
+                break
+            time.sleep(0.02)
 
-    warning_alerts = [a for a in all_alerts if a.severity == "warning"]
-    assert warning_alerts, "Expected at least one warning alert"
-    msg = warning_alerts[0].message
-    assert "Worker 5" in msg, f"Expected 'Worker 5' in: {msg!r}"
-    assert "task 042" in msg, f"Expected 'task 042' in: {msg!r}"
-    assert "No output" in msg, f"Expected 'No output' in: {msg!r}"
+        warning_alerts = [a for a in all_alerts if a.severity == "warning"]
+        assert warning_alerts, "Expected at least one warning alert"
+        msg = warning_alerts[0].message
+        assert "Worker 5" in msg, f"Expected 'Worker 5' in: {msg!r}"
+        assert "task 042" in msg, f"Expected 'task 042' in: {msg!r}"
+        assert "No output" in msg, f"Expected 'No output' in: {msg!r}"
+    finally:
+        _stop_and_collect(manager, 5)
+
+
+def test_idle_warning_reaps_worker_when_polling_raises(repo_root: Path, tmp_path: Path, monkeypatch) -> None:
+    original_manager = WorkerManager
+    managers = []
+
+    class FailingPollManager(original_manager):
+        def __init__(self, *args, **kwargs):
+            super().__init__(*args, **kwargs)
+            self.fail_next_poll = True
+            managers.append(self)
+
+        def poll(self, slot_number):
+            if self.fail_next_poll:
+                self.fail_next_poll = False
+                raise RuntimeError("synthetic polling failure")
+            return super().poll(slot_number)
+
+        def dispatch(self, *args, **kwargs):
+            pid = super().dispatch(*args, **kwargs)
+            self.process = self._workers[kwargs["slot_number"]].process
+            return pid
+
+    monkeypatch.setitem(test_idle_warning_includes_worker_slot_and_task_id.__globals__, "WorkerManager", FailingPollManager)
+    try:
+        with pytest.raises(RuntimeError, match="synthetic polling failure"):
+            test_idle_warning_includes_worker_slot_and_task_id(repo_root, tmp_path)
+        manager = managers[0]
+        assert manager.process.returncode is not None
+        assert 5 not in manager.active_slot_numbers()
+    finally:
+        if managers and 5 in managers[0].active_slot_numbers():
+            managers[0].terminate(5, reason="synthetic regression fallback cleanup")
+            _poll_until_finished(managers[0], 5)
+            managers[0].collect(5)
 
 
 def test_idle_kill_emits_error_alert(
@@ -607,19 +653,22 @@ def test_idle_kill_emits_error_alert(
         log_path=log_path,
     )
 
-    all_alerts = []
-    deadline = time.monotonic() + 5.0
-    while time.monotonic() < deadline:
-        snapshot = manager.poll(6)
-        all_alerts.extend(snapshot.alerts)
-        if snapshot.is_finished:
-            break
-        time.sleep(0.02)
+    try:
+        all_alerts = []
+        deadline = time.monotonic() + 5.0
+        while time.monotonic() < deadline:
+            snapshot = manager.poll(6)
+            all_alerts.extend(snapshot.alerts)
+            if snapshot.is_finished:
+                break
+            time.sleep(0.02)
 
-    error_alerts = [a for a in all_alerts if a.severity == "error"]
-    assert error_alerts, "Expected at least one error alert after idle kill"
-    msg = error_alerts[0].message
-    assert "Killed" in msg, f"Expected 'Killed' in: {msg!r}"
+        error_alerts = [a for a in all_alerts if a.severity == "error"]
+        assert error_alerts, "Expected at least one error alert after idle kill"
+        msg = error_alerts[0].message
+        assert "Killed" in msg, f"Expected 'Killed' in: {msg!r}"
+    finally:
+        _stop_and_collect(manager, 6)
 
 
 def test_format_seconds_minutes_format() -> None:

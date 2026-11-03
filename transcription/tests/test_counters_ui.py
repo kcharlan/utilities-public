@@ -149,22 +149,23 @@ def test_divider_new_batch_displays_new_transcript(tmp_path, stub_whisper, monke
     assert any(area.value == 'second' for area in at.text_area)
 
 
-def test_app_discloses_cloud_fallback(tmp_path, stub_whisper, monkeypatch):
-    import types
-    import sys
-    import whisper
-    monkeypatch.setenv('OPENAI_API_KEY', 'synthetic-key')
-    monkeypatch.setattr(whisper, 'load_model', lambda name: (_ for _ in ()).throw(RuntimeError('synthetic local failure')))
-    class Client:
-        def __init__(self, api_key):
-            self.audio = types.SimpleNamespace(transcriptions=types.SimpleNamespace(create=lambda **kwargs: 'synthetic cloud transcript'))
-    monkeypatch.setitem(sys.modules, 'openai', types.SimpleNamespace(OpenAI=Client))
-    path = tmp_path / 'sample.wav'
-    path.write_bytes(b'synthetic')
-    at = launch('app')
-    process(at, 'app', path)
-    assert any('OpenAI' in warning.value and 'audio' in warning.value.lower() for warning in at.warning)
-    assert any('synthetic cloud transcript' in area.value for area in at.text_area)
+@pytest.mark.parametrize("dividers,expected", [
+    ("cut a.b", "alpha\n\nbeta\n\ngamma cutting\n\ndelta axb"),
+    ("", "alpha cut, beta Cut gamma cutting a.b delta axb"),
+])
+def test_divider_processing_splits_on_whole_words(dividers, expected, tmp_path, stub_whisper):
+    path = tmp_path / "sample.wav"
+    path.write_bytes(b"synthetic")
+    at = launch("divider")
+    next(item for item in at.text_input if item.label == "Divider Words (space-separated)").set_value(dividers).run()
+    process(at, "divider", path)
+    assert not at.exception
+    next(area for area in at.text_area if area.label == "Raw Transcript").set_value(
+        "alpha cut, beta Cut gamma cutting a.b delta axb"
+    ).run()
+    button(at, "✨ Process Text").click().run()
+    assert not at.exception
+    assert next(area.value for area in at.text_area if area.label == "Processed Output") == expected
 
 
 @pytest.mark.parametrize('interface', ['app', 'divider'])

@@ -70,15 +70,31 @@ def test_untrusted_repo_tools_are_skipped(monkeypatch, tmp_path):
         assert 'trust-repo-tools' in result[0]['check_note']
 
 
-def test_git_disables_repo_hooks_and_fsmonitor(tmp_path):
+def test_git_disables_fsmonitor(tmp_path):
     subprocess.run(['git', 'init', str(tmp_path)], check=True, capture_output=True)
     marker = tmp_path / 'marker'
-    hook = tmp_path / '.git/hooks/post-index-change'
-    hook.write_text('#!/bin/sh\ntouch "' + str(marker) + '"\n')
-    hook.chmod(0o755)
     subprocess.run(['git', '-C', str(tmp_path), 'config', 'core.fsmonitor', 'touch ' + str(marker)], check=True)
     asyncio.run(dashboard.run_git(tmp_path, 'status', '--porcelain=v1'))
     assert not marker.exists()
+
+
+def test_git_disables_hooks_in_argv(tmp_path, monkeypatch):
+    calls = []
+
+    class Process:
+        returncode = 0
+
+        async def communicate(self):
+            return b'', b''
+
+    async def fake_exec(*args, **kwargs):
+        calls.append(args)
+        return Process()
+
+    monkeypatch.setattr(asyncio, 'create_subprocess_exec', fake_exec)
+    asyncio.run(dashboard.run_git(tmp_path, 'status'))
+    assert calls == [('git', '--no-optional-locks', '-c', 'core.fsmonitor=false',
+                      '-c', 'core.hooksPath=/dev/null', '-C', str(tmp_path), 'status')]
 
 
 def test_requirements_include_cannot_escape_repo(tmp_path):

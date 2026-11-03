@@ -35,10 +35,29 @@ def test_string_key_and_non_utf8_blob(client):
     http, path = client
     response = http.get('/api/table/items/full')
     assert response.status_code == 200
+    assert response.json()['data'] == [
+        {'a': 'x', 'b': 1, 'value': 'first', 'raw': {'$blob': 'ff'}},
+        {'a': 'x', 'b': 2, 'value': 'second', 'raw': {'$blob': '00'}},
+    ]
     response = http.put('/api/data/items', json={'where': {'a': 'x', 'b': '2'}, 'values': {'value': 'changed'}})
     assert response.status_code == 200
     with sqlite3.connect(path) as db:
         assert db.execute('SELECT value FROM items ORDER BY b').fetchall() == [('first',), ('changed',)]
+
+
+def test_blob_key_delete_decodes_hex_and_rejects_invalid(client):
+    http, path = client
+    with sqlite3.connect(path) as db:
+        db.execute('CREATE TABLE blobkey (k BLOB PRIMARY KEY, label TEXT)')
+        db.execute('INSERT INTO blobkey VALUES (?, ?)', (b'\xff\x00', 'synthetic'))
+    response = http.post('/api/data/blobkey/delete', json={'k': {'$blob': 'zz'}})
+    assert response.status_code == 400
+    with sqlite3.connect(path) as db:
+        assert db.execute('SELECT k, label FROM blobkey').fetchall() == [(b'\xff\x00', 'synthetic')]
+    response = http.post('/api/data/blobkey/delete', json={'k': {'$blob': 'ff00'}})
+    assert response.status_code == 200
+    with sqlite3.connect(path) as db:
+        assert db.execute('SELECT * FROM blobkey').fetchall() == []
 
 
 def test_import_limits_read_before_allocating_oversized_file(monkeypatch):

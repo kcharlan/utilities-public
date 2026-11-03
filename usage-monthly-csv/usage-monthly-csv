@@ -90,7 +90,7 @@ json_to_csv() {
       end;
 
     $cols,
-    (rows[] | [ $cols[] as $c | if $c == "date" then (.date // .period) else .[$c] end ])
+    (rows[] | [ $cols[] as $c | if $c == "date" then (.date // .period // error("Upstream row has no date or period field")) else .[$c] end ])
     | @csv
   '
 }

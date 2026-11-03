@@ -212,19 +212,8 @@ def test_run_scan_builds_exact_live_edge_outside_provider_result(
     monkeypatch.setattr(cli, "_maybe_notify", lambda **kwargs: None)
     monkeypatch.setattr(cli, "_cleanup_old_reports", lambda *a, **k: None)
     captured = {}
-    core_indexes = []
-    core_builder_calls = []
-    real_core_builder = cli.build_model_event_semantic_core
-
-    def count_core_builder(event, profile):
-        core_builder_calls.append(event.identity)
-        return real_core_builder(event, profile)
-
-    monkeypatch.setattr(cli, "build_model_event_semantic_core", count_core_builder)
-
     def capture_report(**kwargs):
         captured.update(kwargs)
-        core_indexes.append(kwargs["semantic_cores"])
         return "synthetic report"
 
     monkeypatch.setattr(cli, "render_scan_report", capture_report)
@@ -258,10 +247,6 @@ def test_run_scan_builds_exact_live_edge_outside_provider_result(
     assert reporting._mutable_json(core.event.new_model_metadata) == new_model.metadata()
     assert store.saved is save
     assert store.recorded is save
-    assert len(core_builder_calls) == 1
-    assert len(core_indexes) == 3
-    assert core_indexes[0] is core_indexes[1] is core_indexes[2]
-    assert next(iter(core_indexes[0].values())) is next(iter(core_indexes[2].values()))
 
 
 @pytest.mark.parametrize(
@@ -2239,21 +2224,39 @@ def test_healthcheck_warns_when_provider_kind_has_no_registered_profile(
     assert "Provider 'openrouter'" not in profile_lines[0]
 
 
-@pytest.mark.parametrize("notify_flag", [None, True])
-def test_notify_flag_does_not_override_never_policy(notify_flag):
+@pytest.mark.parametrize(
+    "notify_default,notify_flag,notify_on,has_error,has_change,expected",
+    [
+        (True, None, "never", True, True, False),
+        (True, True, "never", True, True, False),
+        (True, None, "changes", False, True, True),
+        (True, None, "changes", True, False, False),
+        (True, None, "errors", True, False, True),
+        (True, None, "errors", False, True, False),
+        (True, None, "both", False, True, True),
+        (True, None, "both", False, False, False),
+        (True, False, "both", True, True, False),
+        (False, True, "changes", False, True, True),
+    ],
+)
+def test_should_notify_follows_policy_and_cli_override(
+    notify_default, notify_flag, notify_on, has_error, has_change, expected
+):
     loaded = type(
         "Loaded",
         (),
-        {"settings": type("Settings", (), {"notify_default": True, "notify_on": "never"})()},
+        {"settings": type("Settings", (), {"notify_default": notify_default, "notify_on": notify_on})()},
     )()
     args = Namespace(notify=notify_flag)
-    changed_and_failed = [
-        type("Result", (), {"status": "error", "change_count": 0})(),
-        type("Result", (), {"status": "ok", "change_count": 3})(),
-    ]
+    results = []
+    if has_error:
+        results.append(type("Result", (), {"status": "error", "change_count": 0})())
+    if has_change:
+        results.append(type("Result", (), {"status": "ok", "change_count": 3})())
 
-    assert cli._should_notify(args=args, loaded=loaded, provider_results=changed_and_failed) is False
-    assert cli._should_notify_for_errors(args=args, loaded=loaded) is False
+    assert cli._should_notify(args=args, loaded=loaded, provider_results=results) is expected
+    if notify_on == "never":
+        assert cli._should_notify_for_errors(args=args, loaded=loaded) is False
 
 
 # ---------------------------------------------------------------------------

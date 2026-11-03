@@ -233,12 +233,7 @@ Err cache_get(Cache *c, const DiscoveredLog *key, Intern *ids, LogRecord *out, b
         return io("log open");
     }
     char tail[65];
-    e = cp_fault("cache_tail_read") ? err_make(ERR_IO, "synthetic injected cache_tail_read")
-                                    : reader_fingerprint(fd, key->size, tail);
-#ifdef COLOPHON_TESTING
-    const char *selected=getenv("COLOPHON_TEST_FAIL_PATH");
-    if(selected && !strcmp(selected,key->path.p) && cp_fault("cache_selected"))e=err_make(ERR_IO,"Synthetic unreadable log during fingerprint read");
-#endif
+    e = reader_fingerprint(fd, key->size, tail);
     close(fd);
     if (e.code) {
         record_destroy(out);
@@ -340,8 +335,7 @@ Err cache_commit(Cache *c, const Omap *live, volatile sig_atomic_t *flag) {
         e=test_cache_prune_barrier();
         if(e.code){free(path);break;}
 #endif
-        if(cp_fault("cache_prune_unlink"))e=err_make(ERR_IO,"Synthetic stale cache deletion denied");
-        else if (unlink(path) && errno != ENOENT)
+        if (unlink(path) && errno != ENOENT)
             e = io("prune unlink");
         free(path);
         if (e.code)
@@ -374,16 +368,6 @@ Err cache_commit(Cache *c, const Omap *live, volatile sig_atomic_t *flag) {
             e = err_make(ERR_IO, "interrupted");
         if (!e.code && had_prior && rename(c->installed, old))
             e = io("backup rename");
-#ifdef COLOPHON_TESTING
-        if (!e.code && had_prior && cp_fault("cache_backup_replaced")) {
-            e = test_cache_replace_backup(c->home, old);
-            if (!e.code) {
-                if (flag)
-                    *flag = 1;
-                e = err_make(ERR_IO, "interrupted");
-            }
-        }
-#endif
         if (!e.code && had_prior && cp_fault("cache_backup_interrupt")) {
             if (flag)
                 *flag = 1;

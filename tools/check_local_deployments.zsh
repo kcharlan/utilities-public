@@ -286,6 +286,7 @@ audited_scopes=(
   tools/deploy_anker_charge_monitor.mjs
   telltale
   tools/deploy_telltale.mjs
+  tools/macos_app_deployment.mjs
   tools/check_no_temp_leaks.sh
   colophon
   tools/deploy_colophon.mjs
@@ -685,7 +686,7 @@ audit_native_deployment anker_charge_monitor tools/deploy_anker_charge_monitor.m
   anker_charge_monitor/Package.swift anker_charge_monitor/Makefile \
   anker_charge_monitor/Resources/Info.plist anker_charge_monitor/tools/install.sh \
   anker_charge_monitor/tools/resolve_signing_identity.sh \
-  tools/deploy_anker_charge_monitor.mjs tools/deploy_brew_version.mjs tools/deployment_files.mjs tools/transaction.mjs
+  tools/deploy_anker_charge_monitor.mjs tools/deploy_brew_version.mjs tools/deployment_files.mjs tools/transaction.mjs tools/macos_app_deployment.mjs
 
 audit_native_deployment telltale tools/deploy_telltale.mjs \
   telltale-source-inventory telltale 'telltale native' \
@@ -694,7 +695,7 @@ audit_native_deployment telltale tools/deploy_telltale.mjs \
   telltale/Resources/Fonts/BarlowSemiCondensed-Medium.ttf \
   telltale/Resources/Fonts/BarlowSemiCondensed-Regular.ttf telltale/Resources/Fonts/OFL.txt \
   telltale/tools/install.sh telltale/tools/resolve_signing_identity.sh \
-  tools/deploy_telltale.mjs tools/deploy_brew_version.mjs tools/deployment_files.mjs tools/transaction.mjs tools/check_no_temp_leaks.sh
+  tools/deploy_telltale.mjs tools/deploy_brew_version.mjs tools/deployment_files.mjs tools/transaction.mjs tools/check_no_temp_leaks.sh tools/macos_app_deployment.mjs
 
 for mapping in "${copy_mappings[@]}"; do
   source_relative="${mapping%%|*}"

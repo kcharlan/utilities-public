@@ -553,7 +553,7 @@ def parse_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
     parser.add_argument(
         "--version",
         action="version",
-        version="router-log-analyzer 0.5.2",
+        version="router-log-analyzer 0.5.3",
     )
     parser.add_argument(
         "--reprocess",
@@ -5879,31 +5879,6 @@ def _netgear_extract_ip(line: str) -> Optional[str]:
         return dhcp_match.group(1).strip()
     ip_match = re.search(r"\b(?:\d{1,3}\.){3}\d{1,3}\b", line)
     return ip_match.group(0) if ip_match else None
-
-
-def parse_timestamp_from_line(line: str) -> Optional[datetime]:
-    """Compatibility wrapper for the legacy NETGEAR timestamp parser."""
-    return _netgear_parse_timestamp_from_line(line)
-
-
-def is_export_noise_line(line: str) -> bool:
-    """Compatibility wrapper for the legacy NETGEAR export-noise detector."""
-    return _netgear_is_export_noise_line(line)
-
-
-def normalize_event_key(raw_label: str) -> str:
-    """Compatibility wrapper for legacy NETGEAR event-key normalization."""
-    return _netgear_normalize_event_key(raw_label)
-
-
-def classify_event_family(event_key: str, line: str) -> str:
-    """Compatibility wrapper for legacy NETGEAR event-family classification."""
-    return _netgear_classify_event_family(event_key, line)
-
-
-def extract_ip(line: str) -> Optional[str]:
-    """Compatibility wrapper for the legacy NETGEAR IPv4 extractor."""
-    return _netgear_extract_ip(line)
 
 
 def _reconstruct_netgear_wrapped_log_lines(

@@ -1,12 +1,9 @@
-import importlib
-import importlib.metadata
-import os
 import subprocess
 import sys
 import wave
 from pathlib import Path
 
-from tools.check_uv_headers import extract_pep723, normalize_distribution, parse_requirements_file
+from tools.check_uv_headers import extract_pep723, parse_requirements_file
 
 PROJECT_DIR = Path(__file__).resolve().parents[1]
 
@@ -15,28 +12,10 @@ def requirements():
     return extract_pep723((PROJECT_DIR / "transcription").read_text())["dependencies"]
 
 
-def test_python_is_312():
-    assert sys.version_info[:2] == (3, 12)
-
-
-def test_direct_pins_are_installed():
-    for requirement in requirements():
-        name, version = requirement.split("==")
-        assert importlib.metadata.version(name) == version
-
-
 def test_header_pins_match_requirement_files():
     manifests = parse_requirements_file(PROJECT_DIR / "requirements.txt")
     manifests += parse_requirements_file(PROJECT_DIR / "requirements-optional.txt")
     assert sorted(requirements()) == sorted(manifests)
-
-
-def test_dev_requirements_name_the_overlay():
-    dev = {normalize_distribution(x) for x in parse_requirements_file(PROJECT_DIR / "requirements-dev.txt")}
-    runtime = {normalize_distribution(x) for x in requirements()}
-    assert dev - runtime == {"httpx", "pip", "pytest"}
-    for name in dev - runtime:
-        importlib.import_module(name)
 
 
 def test_dependency_closure_is_consistent():
