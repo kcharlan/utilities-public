@@ -199,6 +199,22 @@ def _assert_charts_finite(page):
         assert not re.search(r"NaN|Infinity|undefined", chart), chart[:500]
 
 
+def _wait_for_chart_width(wrapper):
+    """Wait until a chart is drawn at its laid-out width before hovering it.
+
+    The shared chart first draws at a placeholder width and measures its
+    container in a later effect. A single mouse move in between falls outside
+    the placeholder plot, and no further move arrives to restore the hover.
+    """
+    wrapper.page.wait_for_function(
+        """el => {
+            const svg = el.querySelector(':scope > svg');
+            return svg && Number(svg.getAttribute('width')) === Math.round(el.getBoundingClientRect().width);
+        }""",
+        arg=wrapper.element_handle(),
+    )
+
+
 def _assert_tooltip_readable_in_viewport(page, tooltip):
     tooltip.wait_for(state="visible")
     page.wait_for_function("""() => {
@@ -1390,6 +1406,7 @@ def test_hiding_every_allocation_series_leaves_a_valid_chart(server, page):
     page.get_by_role('button', name='Synthetic', exact=True).click()
     paths = page.locator('.svgc-wrapper path.svgc-area')
     expect(paths.first).to_have_attribute('fill-opacity', '0')
+    _wait_for_chart_width(page.locator('.svgc-wrapper'))
     box = page.locator('.svgc-wrapper').bounding_box()
     page.mouse.move(box['x'] + box['width'] / 2, box['y'] + box['height'] / 2)
     expect(page.locator('.svgc-tooltip')).to_contain_text('Synthetic')
@@ -1413,6 +1430,7 @@ def test_constrained_chart_tooltip_scrolls_and_keeps_focus(server, page):
       }), host);
     }""")
     chart = page.locator('#synthetic-tooltip-chart .svgc-wrapper')
+    _wait_for_chart_width(chart)
     box = chart.bounding_box()
     page.mouse.move(box['x'] + box['width'] - 12, box['y'] + 30)
     tooltip = chart.get_by_role('region', name='Chart tooltip')
@@ -1501,6 +1519,7 @@ def test_activity_chart_renders_signed_areas_axes_and_custom_tooltip(server, pag
     assert positive["y"] < zero_line["y"]
     assert negative["y"] + negative["height"] > zero_line["y"]
 
+    _wait_for_chart_width(chart)
     chart.scroll_into_view_if_needed()
     chart_box = chart.bounding_box()
     page.mouse.move(chart_box["x"] + chart_box["width"] - 8,
@@ -1562,6 +1581,7 @@ def test_activity_gap_fill_uses_browser_local_calendar_day(server, browser):
             _open_app(page, server + "#/repo/synthetic-boundary")
             chart = page.locator(".detail-content .svgc-wrapper")
             chart.wait_for(state="visible")
+            _wait_for_chart_width(chart)
             chart_box = chart.bounding_box()
             assert chart_box
             page.mouse.move(
@@ -1628,6 +1648,7 @@ def test_time_allocation_chart_renders_stack_axes_and_tooltip(server, page):
 
     box = chart.bounding_box()
     assert box and box["width"] > 200 and box["height"] == pytest.approx(260, abs=2)
+    _wait_for_chart_width(chart)
     chart.scroll_into_view_if_needed()
     box = chart.bounding_box()
     page.mouse.move(box["x"] + box["width"] - 12, box["y"] + box["height"] - 34)
@@ -1672,6 +1693,32 @@ def _activity_history(rows):
             for i, (ins, dels) in enumerate(rows)]
 
 
+def test_chart_hover_waits_for_measured_width(server, page):
+    """A hover sent while the chart still has its placeholder width is lost, so wait first."""
+    page.add_init_script("""
+        const start = performance.now();
+        const delayed = () => performance.now() - start < 1000;
+        const realRect = Element.prototype.getBoundingClientRect;
+        Element.prototype.getBoundingClientRect = function() {
+            const rect = realRect.call(this);
+            return this.classList?.contains('svgc-responsive') && delayed()
+                ? new DOMRect(rect.x, rect.y, 0, rect.height) : rect;
+        };
+        const RealResizeObserver = window.ResizeObserver;
+        window.ResizeObserver = class extends RealResizeObserver {
+            constructor(callback) { super((...args) => setTimeout(() => callback(...args), 1100)); }
+        };
+    """)
+    _mock_activity(page, _activity_history([(5, 2), (9, 1), (3, 4)]))
+    _open_app(page, server + "#/repo/synthetic-repo")
+    wrapper = page.locator(".detail-content .svgc-wrapper")
+    wrapper.wait_for(state="visible")
+    _wait_for_chart_width(wrapper)
+    box = wrapper.bounding_box()
+    page.mouse.move(box["x"] + box["width"] - 8, box["y"] + box["height"] / 2)
+    expect(page.locator(".svgc-tooltip")).to_be_visible()
+
+
 def test_allocation_tooltip_keeps_old_order_hidden_rows_and_separator(server, page):
     _mock_allocation(page)
     _open_app(page, server + "#/analytics")
@@ -1679,6 +1726,7 @@ def test_allocation_tooltip_keeps_old_order_hidden_rows_and_separator(server, pa
     wrapper = chart.locator(".svgc-wrapper")
     wrapper.wait_for()
     page.get_by_role("button", name="Synthetic Charlie", exact=True).click()
+    _wait_for_chart_width(wrapper)
     box = wrapper.bounding_box()
     page.mouse.move(box["x"] + box["width"] / 2, box["y"] + box["height"] / 2)
     tooltip = chart.locator(".svgc-tooltip")
@@ -1738,6 +1786,7 @@ def test_chart_keyboard_reading_and_hover_marks(server, page, view):
     expect(tooltip).not_to_have_text(first)
     page.keyboard.press("Tab")
     expect(tooltip).to_have_count(0)
+    _wait_for_chart_width(host.locator(".svgc-wrapper"))
     surface.scroll_into_view_if_needed()
     box = surface.bounding_box()
     page.mouse.move(box["x"] + box["width"] / 2, box["y"] + box["height"] / 2)

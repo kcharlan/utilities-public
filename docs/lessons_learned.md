@@ -2402,3 +2402,7 @@ same actor. Hold the contested resource until the actor observes the operation
 in flight, then release it and verify the actual write. A bounded watchdog
 prevents a broken synchronous operation from hanging the test; deliberately
 move the write onto the actor to confirm the test catches that regression.
+
+## 2026-11-03: Hover a chart only after it is drawn at its measured width
+
+The shared SVG chart first draws at a 400px placeholder width and measures its container in an effect after paint. A Playwright `mouse.move` sent in that window lands outside the placeholder plot, the chart clears its hover, and Chromium sends no further move when the chart resizes under the stationary cursor, so the tooltip never appears; Git Fleet's date-boundary activity test failed this way under load. Call `_wait_for_chart_width` in `git-multirepo-dashboard/tests/test_e2e.py` before a single-move hover; `test_chart_hover_waits_for_measured_width` holds the placeholder width to prove the wait is needed.
