@@ -360,30 +360,53 @@ import TelltaleTestSupport
     }
 }
 
-@Suite struct ZstdLimitsTests {
-    @Test func rejectsOversizedLinesEvenWhenSkipped() throws {
-        let scratch = try ZstdReaderTests.Scratch()
-        defer { scratch.cleanup() }
-        let bytes = Data(repeating: 120, count: 4 * 1024 * 1024 + 1)
-        let file = try scratch.write(StoredZstdFrame.encode(bytes, blockSize: StoredZstdFrame.maxBlockSize))
-        for skip in [0, 1] {
-            #expect(throws: ZstdError.self) {
-                try ZstdReader.lines(of: file, expectedSize: try Data(contentsOf: file).count, startingAfterLine: skip) { _, _ in }
-            }
-        }
+
+@Suite(.serialized) struct ZstdLargeInputTests {
+    @Test(arguments: [0, 1234]) func singleSegmentWriterRoundTrips(size: Int) throws {
+        let scratch = try ZstdReaderTests.Scratch(); defer { scratch.cleanup() }
+        let url = scratch.directory.appending(path: "single.zst")
+        let data = Data(repeating: 120, count: size)
+        try Data(repeating: 42, count: 2048).write(to: url)
+        try StoredZstdFrame.writeSingleSegment(to: url, contentSize: size) { offset in Data(data[offset...]) }
+        let lines = try ZstdReaderTests.collect(url)
+        #expect(lines.map(\.1) == (size == 0 ? [] : [data]))
     }
-    @Test func rejectsExcessTotalOutputAcrossFrames() throws {
-        let scratch = try ZstdReaderTests.Scratch()
-        defer { scratch.cleanup() }
-        let line = Data(repeating: 120, count: 1023) + Data([10])
-        var block = Data()
-        for _ in 0..<1024 { block.append(line) }
-        let frame = StoredZstdFrame.encode(block, blockSize: StoredZstdFrame.maxBlockSize)
-        var data = Data()
-        for _ in 0..<65 { data.append(frame) }
-        let file = try scratch.write(data)
-        #expect(throws: ZstdError.self) {
-            try ZstdReader.lines(of: file, expectedSize: data.count, startingAfterLine: Int.max) { _, _ in }
+    @Test func readsLineLargerThanFormerCaps() throws {
+        let scratch = try ZstdReaderTests.Scratch(); defer { scratch.cleanup() }
+        let line = Data(repeating: 120, count: LargeLogSizes.line)
+        let frame = StoredZstdFrame.encode(line + Data("\nshort\n".utf8), blockSize: StoredZstdFrame.maxBlockSize)
+        let url = try scratch.write(frame)
+        let all = try ZstdReaderTests.collect(url, expectedSize: frame.count)
+        #expect(all.map(\.0) == [1, 2]); #expect(all.map(\.1) == [line, Data("short".utf8)])
+        let suffix = try ZstdReaderTests.collect(url, expectedSize: frame.count, startingAfterLine: 1)
+        #expect(suffix.map(\.0) == Array(all.dropFirst()).map(\.0)); #expect(suffix.map(\.1) == Array(all.dropFirst()).map(\.1))
+    }
+    private func payload() -> Data { Data(repeating: 120, count: 1023) + Data([10]) }
+    private func verify(_ url: URL) throws {
+        let size = try #require((FileManager.default.attributesOfItem(atPath: url.path)[.size] as? NSNumber)?.intValue)
+        let expected = Data(repeating: 120, count: 1023)
+        var total = 0; var count = 0
+        try ZstdReader.lines(of: url, expectedSize: size) { number, line in
+            #expect(number == count + 1); #expect(line == expected)
+            count += 1; total += line.count + 1
         }
+        #expect(total == LargeLogSizes.file)
+    }
+    @Test func readsMultiFrameFileLargerThanFormerCap() throws {
+        let scratch = try ZstdReaderTests.Scratch(); defer { scratch.cleanup() }
+        let url = scratch.directory.appending(path: "multi.zst")
+        _ = FileManager.default.createFile(atPath: url.path, contents: nil)
+        let handle = try FileHandle(forWritingTo: url); defer { try? handle.close() }
+        var block = Data(); for _ in 0..<128 { block.append(payload()) }
+        let frame = StoredZstdFrame.encode(block, blockSize: StoredZstdFrame.maxBlockSize)
+        for _ in 0..<(LargeLogSizes.file / block.count) { try handle.write(contentsOf: frame) }
+        try handle.close(); try verify(url)
+    }
+    @Test func readsSingleSegmentFrameWithLogSizedWindow() throws {
+        let scratch = try ZstdReaderTests.Scratch(); defer { scratch.cleanup() }
+        let url = scratch.directory.appending(path: "single-large.zst")
+        var block = Data(); for _ in 0..<128 { block.append(payload()) }
+        try StoredZstdFrame.writeSingleSegment(to: url, contentSize: LargeLogSizes.file) { _ in block }
+        try verify(url)
     }
 }

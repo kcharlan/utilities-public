@@ -200,7 +200,7 @@ public struct CodexUsageSource: UsageSource {
             do {
                 parse = try RolloutParser.parse(file: file, cursor: known)
             } catch {
-                readProblems.append("Codex rollout \(file.sessionID): the \(file.compressed ? "compressed" : "plain") file couldn't be read")
+                readProblems.append("Codex rollout \(file.sessionID): the \(file.compressed ? "compressed" : "plain") file couldn't be read (\(readFailureReason(error)))")
                 continue
             }
             sessions[file.sessionID] = parse.cursor
@@ -238,9 +238,9 @@ public struct CodexUsageSource: UsageSource {
         } catch let error as ReadOnlySQLite.FormatProblem {
             return .problem("\(part): \(error.detail)")
         } catch let error as ReadOnlySQLite.Failure {
-            return .failure("\(part): couldn't be read (\(error))")
+            return .failure("\(part): couldn't be read (\(readFailureReason(error)))")
         } catch {
-            return .failure("\(part): couldn't be read")
+            return .failure("\(part): couldn't be read (\(readFailureReason(error)))")
         }
     }
 }

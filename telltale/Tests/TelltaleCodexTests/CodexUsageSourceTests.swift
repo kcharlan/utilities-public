@@ -1,10 +1,34 @@
 import Foundation
+import Darwin
 import Testing
 import TelltaleCodex
 import TelltaleCore
 import TelltaleTestSupport
 
 @Suite struct CodexUsageSourceTests {
+    @Test func compressedReplacementWithLineLargerThanFormerCapsStaysReady() throws {
+        try withScratchDirectory { home in
+            var builder = RolloutBuilder(session: 1)
+            builder.sessionMeta(); builder.turnContext(at: 1, model: Self.sol); builder.userMessage(at: 2)
+            builder.record("response_item", at: 3, payload: ["type": "custom_tool_call_output", "output": String(repeating: "S", count: LargeLogSizes.line)])
+            builder.usage(at: 12, response: 1)
+            let plain = try builder.writePlain(codexHome: home)
+            let source = Self.source(home)
+            let first = source.ingest(cursor: nil, backfillFrom: .distantPast, now: Self.at(100))
+            #expect(first.state == .ready)
+            #expect(first.batch.responses.map(\.responseID) == [RolloutBuilder.responseID(1)])
+            try FileManager.default.removeItem(at: plain)
+            _ = try builder.writeCompressed(codexHome: home, archived: true)
+            let replacement = source.ingest(cursor: first.cursor, backfillFrom: .distantPast, now: Self.at(200))
+            #expect(replacement.state == .ready); #expect(replacement.batch.responses.isEmpty)
+            let file = try #require(RolloutDiscovery.files(codexHome: home).first)
+            let saved = try #require(Self.cursor(replacement).sessions[file.sessionID])
+            #expect(saved.compressedSize == file.size); #expect(saved.compressedModified == file.modified)
+            #expect(saved.byteOffset == nil); #expect(!RolloutParser.needsRead(file, cursor: saved))
+            let cold = source.ingest(cursor: nil, backfillFrom: .distantPast, now: Self.at(300))
+            #expect(cold.state == .ready); #expect(cold.batch.responses.map(\.responseID) == [RolloutBuilder.responseID(1)])
+        }
+    }
     @Test func formatProblemOutranksAReadProblem() throws {
         try withScratchDirectory { home in
             let broken = try Self.session(1).writeCompressed(codexHome: home)
@@ -128,6 +152,9 @@ import TelltaleTestSupport
         try withScratchDirectory { home in
             let broken = try Self.session(1).writeCompressed(codexHome: home)
             try Data("this is not a zstd frame".utf8).write(to: broken)
+            let expected: String
+            do { try ZstdReader.lines(of: broken, expectedSize: Data(contentsOf: broken).count) { _, _ in }; Issue.record("expected corrupt read"); return }
+            catch { expected = readFailureReason(error) }
             try Self.session(2).writePlain(codexHome: home)
             let history = try CodexDatabase.threadHistory(codexHome: home)
             try history.addTurn(turn: 1, status: "failed", errorJSON: Self.capacity, startedAt: Self.at(100))
@@ -140,11 +167,48 @@ import TelltaleTestSupport
                 return
             }
             #expect(detail.contains("rollout") && detail.contains(RolloutBuilder.sessionID(1)))
+            #expect(detail.contains(expected))
             #expect(result.batch.failedTurns.count == 1)
             #expect(result.batch.connectionEvents.count == 1)
             // The healthy session is read; the broken one has no cursor, so it is retried.
             #expect(result.batch.responses.map(\.responseID) == [RolloutBuilder.responseID(2)])
             #expect(try Self.cursor(result).sessions.keys.sorted() == [RolloutBuilder.sessionID(2)])
+        }
+    }
+
+    @Test func truncatedRolloutReportsReason() throws {
+        try withScratchDirectory { home in
+            let file = try Self.session(1).writeCompressed(codexHome: home)
+            let bytes = try Data(contentsOf: file)
+            try Data(bytes.dropLast()).write(to: file)
+            let result = Self.source(home).ingest(cursor: nil, backfillFrom: .distantPast, now: Self.at(100))
+            guard case .readProblem(let detail) = result.state else { Issue.record("expected read problem"); return }
+            #expect(detail.contains("couldn't be read"))
+            #expect(detail.contains(ZstdError.truncated.description))
+        }
+    }
+
+    @Test func snapshotRootCreationFailureReportsReason() throws {
+        try withScratchDirectory { home in
+            let parent = home.appending(path: "synthetic-read-only")
+            try FileManager.default.createDirectory(at: parent, withIntermediateDirectories: true)
+            let root = parent.appending(path: "absent-snapshot")
+            #expect(chmod(parent.path, 0o500) == 0)
+            defer { chmod(parent.path, 0o700) }
+            var info = stat()
+            #expect(lstat(root.path, &info) == -1 && errno == ENOENT)
+            let expected: String
+            do {
+                try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
+                Issue.record("expected directory creation failure"); return
+            } catch {
+                #expect(!(error is ReadOnlySQLite.Failure))
+                expected = readFailureReason(error)
+            }
+            let result = CodexUsageSource(codexHome: home, snapshotDirectory: root).ingest(cursor: nil, backfillFrom: .distantPast, now: Self.at(100))
+            guard case .readProblem(let detail) = result.state else { Issue.record("expected read problem"); return }
+            #expect(detail.contains("Codex failed turns") && detail.contains("couldn't be read"))
+            #expect(detail.contains(expected))
         }
     }
 
@@ -404,10 +468,14 @@ import TelltaleTestSupport
             try history.closeLikeCodex()
             #expect(chmod(history.url.path, 0o000) == 0)
             defer { chmod(history.url.path, 0o600) }
+            let expected: String
+            do { _ = try ThreadHistorySource.read(codexHome: home, since: Self.at(0)); Issue.record("expected SQLite failure"); return }
+            catch { #expect(error is ReadOnlySQLite.Failure); expected = readFailureReason(error) }
             let source = Self.source(home)
             let failed = source.ingest(cursor: nil, backfillFrom: .distantPast, now: Self.at(100))
             guard case .readProblem(let detail) = failed.state else { Issue.record("expected read failure"); return }
             #expect(detail.contains("couldn't be read"))
+            #expect(detail.contains(expected))
             #expect(try Self.cursor(failed).threadHistoryProblem == nil)
             #expect(chmod(history.url.path, 0o600) == 0)
             #expect(source.ingest(cursor: failed.cursor, backfillFrom: .distantPast, now: Self.at(200)).state == .ready)

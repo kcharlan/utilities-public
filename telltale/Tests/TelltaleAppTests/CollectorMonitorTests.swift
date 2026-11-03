@@ -96,25 +96,34 @@ private func waitForLock(_ semaphore: DispatchSemaphore) -> Bool { semaphore.wai
     @Test func databaseWriteDoesNotBlockMainActor() async throws {
         try await withMonitor { h in
             try h.store.set(.collectorEnabled, false)
+            try h.store.set(.collectorAcknowledgement, CollectorAcknowledgement(at: h.now, keys: ["collector"]))
             let locked = DispatchSemaphore(value: 0)
+            let release = DispatchSemaphore(value: 0)
             let url = h.paths.database
             let writer = Task.detached {
                 let store = try Store.open(url, mode: .readWriteExisting)
-                try store.transaction {
+                return try store.transaction {
                     locked.signal()
-                    Thread.sleep(forTimeInterval: 1.5)
+                    return release.wait(timeout: .now() + 10) == .success
                 }
             }
             let acquired = await Task.detached { waitForLock(locked) }.value
             #expect(acquired)
-            guard acquired else { try await writer.value; return }
+            guard acquired else { _ = try await writer.value; return }
             let monitor = h.monitor()
-            let started = Date()
-            let check = Task { await monitor.check() }
-            try await Task.sleep(for: .milliseconds(200))
-            #expect(Date().timeIntervalSince(started) < 1.0)
-            try await writer.value
+            var finished = false
+            let check = Task { let report = await monitor.check(); finished = true; return report }
+            // The report is published immediately before the acknowledgement write. The writer
+            // keeps its transaction until this main-actor task observes that point and releases it.
+            let assessed = await eventually { monitor.lastReport != nil }
+            #expect(assessed)
+            #expect(!finished)
+            release.signal()
+            let writerResult = await writer.result
             _ = await check.value
+            let releasedByTest = try writerResult.get()
+            #expect(releasedByTest)
+            #expect(try h.store.value(.collectorAcknowledgement) == nil)
         }
     }
     @Test func collectorAcknowledgementClearsWhenHealthy() async throws {

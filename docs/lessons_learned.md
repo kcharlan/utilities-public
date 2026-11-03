@@ -2379,3 +2379,22 @@ HAR Scope's zoom field set its "cancel" state and then called `blur()` on Escape
 ## 2026-11-03: Build test temp directories on pytest's tmp_path
 
 Git Fleet's `make_tmpdir` helper called `tempfile.mkdtemp()` with no cleanup, leaving 42 directories in `$TMPDIR` on every suite run until more than 1,200 had built up. Test helpers that need fresh directories should be fixtures on `tmp_path` or `tmp_path_factory`, so pytest's retention removes them. To prove a suite is clean, run it with `TMPDIR` pointed at a private empty directory and count what is left.
+
+## 2026-11-03: Reproduce log size limits with synthetic inputs
+
+A cap can reject valid local logs at the reader or decoder before provider parsing sees them. Reproduce each boundary with conspicuously synthetic inputs, including large single-segment frames and resumed plain lines, and account for decoder allocations, reader buffers and accumulated parser results. The Telltale `ZstdLargeInputTests`, `LineReaderLargeLineTests` and provider regressions exercise the acceptance contract; their shared `LargeLogSizes` fixtures document its sizing.
+
+## 2026-11-03: Preserve dynamic error types when rendering read failures
+
+Foundation can bridge Swift errors to NSError, so a broad NSError cast can hide a
+Swift error's own description. Check the dynamic NSError type and CocoaError
+explicitly, then prefer a Swift CustomStringConvertible description; exercise
+both protocols, an NSError subclass and the localized fallback.
+
+## 2026-11-03: Test actor responsiveness through lock ordering
+
+A wall-clock deadline around an async sleep also measures unrelated work on the
+same actor. Hold the contested resource until the actor observes the operation
+in flight, then release it and verify the actual write. A bounded watchdog
+prevents a broken synchronous operation from hanging the test; deliberately
+move the write onto the actor to confirm the test catches that regression.

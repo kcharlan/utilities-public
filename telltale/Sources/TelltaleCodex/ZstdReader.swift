@@ -2,25 +2,38 @@ import CZstd
 import Foundation
 
 /// Why a compressed rollout could not be read.
-public enum ZstdError: Error, Equatable, Sendable {
+public enum ZstdError: Error, Equatable, Sendable, CustomStringConvertible {
     /// The file holds fewer bytes than discovery recorded, or ends inside a frame.
     case truncated
     /// The decoder rejected the data (bad magic, damaged block, unsupported parameters).
     case corrupt(String)
     /// The file could not be opened or read, or the decoder could not allocate.
     case io(String)
+
+    public var description: String {
+        switch self {
+        case .truncated: return "compressed data is truncated"
+        case .corrupt(let detail): return "compressed data is corrupt: \(detail)"
+        case .io(let detail): return "compressed data read failed: \(detail)"
+        }
+    }
 }
 
-/// Streams the lines of a Codex `.jsonl.zst` rollout without holding the decompressed file.
+/// Streams the lines of a Codex `.jsonl.zst` rollout. Decoder allocations (see
+/// `ZSTD_decodingBufferSize_internal` and its caller in `zstd_decompress.c`), reader buffers,
+/// and accumulated parser results can grow with the input. There is no fixed collector memory
+/// ceiling; supported windows are governed by `ZSTD_dParam_getBounds(ZSTD_d_windowLogMax)`
+/// and `ZSTD_WINDOWLOG_MAX`. Allocation failures remain read failures.
 ///
 /// Both lessons from `colophon/docs/LESSONS_LEARNED.md` apply:
 /// - A zero result from `ZSTD_decompressStream` means the frame is complete and flushed. At the
 ///   recorded end of the file the loop stops on it even when the output buffer is exactly full;
 ///   another decode with empty input would start waiting for a new frame and misreport a valid
-///   file as truncated.
+///   file as truncated (`exactOutputBufferSizedExpansionIsNotTruncated`).
 /// - Running out of bytes before the recorded size is unreadable even when the last decoded
 ///   frame was complete, because a file that shrank at a frame boundary would silently
-///   undercount. The read boundary is checked on its own, not through the decoder's state.
+///   undercount. The read boundary is checked on its own, not through the decoder’s state
+///   (`shrinkAfterDiscoveryThrowsTruncated` and `shrinkAtFrameBoundaryBeyondTheFirstReadThrowsTruncated`).
 public enum ZstdReader {
     /// Size of the decompression output buffer. Tests build frames that expand to exactly this
     /// many bytes (and multiples of it) to pin the end-of-frame handling.
@@ -28,10 +41,6 @@ public enum ZstdReader {
     /// Size of each read from the file. It exceeds `3 * outputBufferSize`, so a small frame is
     /// decoded from one read and its last decode call can fill the output buffer exactly.
     public static let inputBufferSize = 262_144
-    /// Resource limits apply across concatenated frames and to skipped lines too.
-    public static let maximumLineBytes = 4 * 1024 * 1024
-    public static let maximumOutputBytes = 64 * 1024 * 1024
-    public static let maximumWindowLog = 27 // 128 MiB
 
     /// Calls `body` with each line of the decompressed file, in order, without its newline.
     /// A final line without a newline is yielded too, because compressed rollouts are complete.
@@ -59,7 +68,10 @@ public enum ZstdReader {
 
         guard let decoder = ZSTD_createDCtx() else { throw ZstdError.io("zstd decoder allocation failed") }
         defer { ZSTD_freeDCtx(decoder) }
-        let configured = ZSTD_DCtx_setParameter(decoder, ZSTD_d_windowLogMax, Int32(maximumWindowLog))
+        // Valid single-segment frames can require windows as large as their content.
+        let bounds = ZSTD_dParam_getBounds(ZSTD_d_windowLogMax)
+        if ZSTD_isError(bounds.error) != 0 { throw failure(bounds.error, "setup") }
+        let configured = ZSTD_DCtx_setParameter(decoder, ZSTD_d_windowLogMax, bounds.upperBound)
         if ZSTD_isError(configured) != 0 { throw failure(configured, "setup") }
 
         var splitter = LineSplitter(startingAfterLine: startingAfterLine)
@@ -69,7 +81,6 @@ public enum ZstdReader {
         var inputPosition = 0
         var offset = 0
         var remaining = 1  // Nonzero until the decoder ends a frame and flushes it.
-        var totalOutput = 0
 
         while true {
             if inputPosition == inputSize && offset < expectedSize {
@@ -95,8 +106,6 @@ public enum ZstdReader {
             if ZSTD_isError(result) != 0 { throw failure(result, "decode") }
             remaining = result
             if produced > 0 {
-                guard produced <= maximumOutputBytes - totalOutput else { throw ZstdError.corrupt("decompressed output exceeds limit") }
-                totalOutput += produced
                 try output.withUnsafeBytes { try splitter.feed(UnsafeRawBufferPointer(rebasing: $0[0..<produced]), body) }
             }
             // A completed frame is drained even when it exactly fills the output buffer.
@@ -123,7 +132,6 @@ private struct LineSplitter {
     private var pending = Data()
     private var completedLines = 0
     private var hasPartialLine = false
-    private var lineBytes = 0
 
     init(startingAfterLine: Int) {
         self.startingAfterLine = startingAfterLine
@@ -136,13 +144,11 @@ private struct LineSplitter {
             let rest = bytes.count - start
             if let found = memchr(base + start, 0x0A, rest) {
                 let length = found - UnsafeMutableRawPointer(mutating: base + start)
-                try countLineBytes(length)
                 try complete(UnsafeRawBufferPointer(start: base + start, count: length), body)
                 start += length + 1
             } else {
                 // The rest of this chunk starts, or continues, a line that is not finished yet.
                 hasPartialLine = true
-                try countLineBytes(rest)
                 if completedLines >= startingAfterLine {
                     pending.append(UnsafeBufferPointer(start: (base + start).assumingMemoryBound(to: UInt8.self), count: rest))
                 }
@@ -160,15 +166,9 @@ private struct LineSplitter {
     private mutating func complete(_ tail: UnsafeRawBufferPointer, _ body: (Int, Data) throws -> Void) throws {
         completedLines += 1
         hasPartialLine = false
-        lineBytes = 0
         defer { pending.removeAll(keepingCapacity: true) }
         guard completedLines > startingAfterLine else { return }
         pending.append(contentsOf: tail)
         try body(completedLines, pending)
-    }
-
-    private mutating func countLineBytes(_ count: Int) throws {
-        guard count <= ZstdReader.maximumLineBytes - lineBytes else { throw ZstdError.corrupt("decompressed line exceeds limit") }
-        lineBytes += count
     }
 }

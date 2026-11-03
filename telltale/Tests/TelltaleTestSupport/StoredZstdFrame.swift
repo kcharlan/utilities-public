@@ -27,3 +27,28 @@ public enum StoredZstdFrame {
         return frame
     }
 }
+
+extension StoredZstdFrame {
+    /// Writes a single-segment frame without retaining its payload in memory.
+    public static func writeSingleSegment(to url: URL, contentSize: Int, chunk: (_ offset: Int) -> Data) throws {
+        precondition(contentSize >= 0)
+        _ = FileManager.default.createFile(atPath: url.path, contents: nil)
+        let handle = try FileHandle(forWritingTo: url)
+        defer { try? handle.close() }
+        try handle.truncate(atOffset: 0)
+        var header = Data([0x28, 0xB5, 0x2F, 0xFD, 0xE0])
+        let size = UInt64(contentSize)
+        for shift in stride(from: 0, to: 64, by: 8) { header.append(UInt8(truncatingIfNeeded: size >> shift)) }
+        try handle.write(contentsOf: header)
+        var offset = 0
+        repeat {
+            let bytes = contentSize == 0 ? Data() : chunk(offset)
+            precondition(contentSize == 0 || (!bytes.isEmpty && bytes.count <= maxBlockSize && bytes.count <= contentSize - offset))
+            offset += bytes.count
+            let block = UInt32(bytes.count) << 3 | (offset == contentSize ? 1 : 0)
+            try handle.write(contentsOf: Data([UInt8(truncatingIfNeeded: block), UInt8(truncatingIfNeeded: block >> 8), UInt8(truncatingIfNeeded: block >> 16)]))
+            try handle.write(contentsOf: bytes)
+        } while offset < contentSize
+        try handle.close()
+    }
+}
