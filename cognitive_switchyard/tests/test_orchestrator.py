@@ -2534,19 +2534,6 @@ def _make_pack_manifest_with_autofix(tmp_path: Path) -> "PackManifest":
     )
 
 
-def _make_active_task(plan_path: Path) -> "PersistedTask":
-    from cognitive_switchyard.models import PersistedTask
-
-    return PersistedTask(
-        session_id="session-reg-001",
-        task_id="task-reg-001",
-        title="Regression task",
-        status="active",
-        plan_path=plan_path,
-        worker_slot=0,
-    )
-
-
 def _make_effective_runtime_config(*, auto_fix_enabled: bool) -> "EffectiveSessionRuntimeConfig":
     from cognitive_switchyard.models import EffectiveSessionRuntimeConfig
 

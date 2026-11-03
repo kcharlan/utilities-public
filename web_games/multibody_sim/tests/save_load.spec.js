@@ -5,7 +5,6 @@ const path = require('node:path');
 async function openApp(page) {
   await page.goto('/index.html');
   await page.waitForFunction(() => !!window.__multibodyTestApi);
-  await page.waitForTimeout(300);
   await page.selectOption('#modeSelect', 'user');
   await page.waitForFunction(() => {
     const snapshot = window.__multibodyTestApi.getSnapshot();

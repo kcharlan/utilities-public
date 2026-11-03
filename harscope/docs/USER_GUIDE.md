@@ -386,7 +386,7 @@ An interactive SVG canvas showing browser-to-server request/response flows with 
 |--------|-----|
 | **Pan** | Click-drag on canvas, scroll wheel, or arrow keys |
 | **Zoom** | Ctrl/Cmd + scroll wheel, `+`/`-` keys, or use the toolbar stepper |
-| **Zoom stepper** | `[-]` and `[+]` buttons around an editable percentage field (click to type 20–300, press Enter) |
+| **Zoom stepper** | `[-]` and `[+]` buttons around an editable percentage field (click to type 20–300, press Enter to apply or Escape to cancel) |
 | **Fit to view** | **Fit** button or `Home` key |
 | **Reset** | **Reset** button or `0` key |
 

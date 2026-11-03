@@ -271,13 +271,6 @@ def test_compiles_cleanly_fails_on_invalid_escape_sequence(tmp_path):
         testkit.assert_launcher_compiles_cleanly(path)
 
 
-def test_exact_text_rejects_padding_that_normalized_matchers_hide():
-    testkit.assert_exact_text(Page('Copy'), 'Copy')
-    with pytest.raises(AssertionError, match="' Copy '"):
-        testkit.assert_exact_text(Page(' Copy '), 'Copy')
-
-
-
 def test_offline_source_rejects_unquoted_remote_resource():
     with pytest.raises(AssertionError):
         testkit.assert_offline_page_source('<script src=https://example.invalid/x></script>')

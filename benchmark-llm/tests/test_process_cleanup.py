@@ -201,3 +201,34 @@ def test_cleanup_permission_denial_is_not_retried(tmp_path, monkeypatch):
         run_command("unused", tmp_path, {}, "validate", timeout_sec=0)
     assert attempts == [(987654321, signal.SIGTERM)]
     assert "987654321" in exc.value.__notes__[0]
+
+
+import pytest
+
+
+@pytest.mark.parametrize("interrupt_at", ["poll", "command_start", "command_end"])
+def test_interrupted_command_removes_its_temporary_output_logs(tmp_path, monkeypatch, interrupt_at):
+    import tempfile
+    import benchmark_llm.execution as execution
+
+    private_tmp = tmp_path / "private-tmp"
+    private_tmp.mkdir()
+    monkeypatch.setattr(tempfile, "tempdir", str(private_tmp))
+    if interrupt_at == "poll":
+        def interrupt(_seconds):
+            raise KeyboardInterrupt
+        monkeypatch.setattr(execution.time, "sleep", interrupt)
+        callback = None
+    else:
+        def callback(event):
+            if event["event"] == interrupt_at:
+                raise KeyboardInterrupt
+    with pytest.raises(KeyboardInterrupt):
+        run_command(
+            "sleep 30" if interrupt_at == "poll" else "true",
+            tmp_path,
+            os.environ.copy(),
+            "execute",
+            progress_callback=callback,
+        )
+    assert sorted(path.name for path in private_tmp.glob("benchmark-llm-std*")) == []

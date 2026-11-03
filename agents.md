@@ -127,6 +127,7 @@ Project-specific validation commands, applied with the Testing Scope above. A co
 - Shared temp-leak checker (`tools/check_no_temp_leaks.sh`, used by the Brew Version, Anker and Telltale Makefiles):
   - `tools/tests/test_check_no_temp_leaks.sh` (checker cases with a fake TMPDIR and Darwin temp dir, and both Makefiles' `test` and harness targets with a fake `swift`).
   - Changes to the checker also require the complete `brew_version` and `anker_charge_monitor` suites above.
+- Bash assertion guard: after editing any tracked Bash script, run `bash tools/tests/test_bash_assertions.sh` (fails on a standalone `[[ ... ]]` line in a `set -e` script, which macOS Bash 3.2 never treats as a failure).
 - Static deployment/fleet audit tooling:
   - `zsh tools/tests/test_check_home_residue.zsh` (synthetic home residue audit cases).
   - `node --test tools/tests/deploy_storage_monitor.test.mjs tools/tests/deploy_colophon.test.mjs tools/tests/deploy_brew_version.test.mjs tools/tests/deploy_anker_charge_monitor.test.mjs tools/tests/deploy_telltale.test.mjs tools/tests/deploy_calculator_pages.test.mjs tools/tests/deploy_copies.test.mjs tools/tests/transaction.test.mjs` (installer lifecycles and shared filesystem helpers).

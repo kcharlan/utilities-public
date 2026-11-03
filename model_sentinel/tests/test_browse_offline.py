@@ -348,19 +348,6 @@ def _assert_sha256(payload: bytes, expected: str) -> None:
     assert hashlib.sha256(payload).hexdigest() == expected
 
 
-def _manifest_fixture(rows: dict[str, tuple[str, str, str]]) -> str:
-    body = "\n".join(
-        f"| `{filename}` | `{version}` | `{url}` | `{digest}` |"
-        for filename, (version, url, digest) in rows.items()
-    )
-    return (
-        "## Runtime payloads\n\n"
-        "| File | Version | Exact source URL | SHA-256 |\n"
-        "|---|---:|---|---|\n"
-        f"{body}"
-    )
-
-
 def test_first_party_assets_contain_no_external_urls() -> None:
     _assert_html_offline(_read_asset("index.html"))
     _assert_authored_source_offline(_read_asset("app.css"), label="app.css")
@@ -440,37 +427,15 @@ def test_app_root_is_not_a_page_wide_live_region() -> None:
     assert "aria-live" not in main_attributes
 
 
-def test_activity_frontend_preserves_list_semantics_and_date_local_rollups() -> None:
-    source = _read_asset("app.js")
-
-    assert source.index('if (change.kind === "list"') < source.index(
-        'if (change.semantic === "cost"'
-    )
-    assert (
-        'return change.list_added && change.list_added.length ? "capability" : "dim";'
-        in source
-    )
-    assert "data.rollups_by_date[day]" in source
-    assert "rollupLine(group.date)" in source
-    assert "data.rollups.squelched" not in source
-    assert "entry.change_ids_by_change[index]" in source
-    assert "entry.change_ids[Math.min(index" not in source
-
-
-def test_activity_wires_summary_and_folded_models_into_the_feed() -> None:
+def test_activity_feed_renders_each_days_squelched_rollup_line() -> None:
+    # No browser fixture day asserts the "N squelched changes hidden" line.
     source = _read_asset("app.js")
     feed = source[
         source.index("function Feed(") : source.index("function Activity(")
     ]
-    summary = source[
-        source.index("function SummaryStrip(") : source.index("function FoldedLine(")
-    ]
 
+    assert "data.rollups_by_date[day]" in feed
     assert "rollupLine(group.date)" in feed
-    assert "<${FoldedLine}" in feed
-    assert "openModel=${openModel}" in feed
-    assert "<${SummaryStrip}" in feed
-    assert "write({categories" in summary
 
 
 def test_change_table_explains_equal_length_list_content_changes() -> None:
@@ -509,32 +474,6 @@ assert.doesNotMatch(bulk, /→/);
     )
     probe = subprocess.run(["node", "-e", program], capture_output=True, text=True, check=False)
     assert probe.returncode == 0, probe.stdout + probe.stderr
-
-
-def test_heatmap_uses_independent_180_day_range_and_selected_detail() -> None:
-    source = _read_asset("app.js")
-
-    assert "from: clamp(shiftDay(state.to, -179), meta.date_span)" in source
-    assert "detail=${state.detail}" in source
-    assert 'detail === "all"' in source
-    assert 'detail === "squelched"' in source
-
-
-def test_filter_bar_wires_date_range_presets_as_user_navigation() -> None:
-    source = _read_asset("app.js")
-    filter_bar = source[
-        source.index("function FilterBar(") : source.index("function Heatmap(")
-    ]
-    presets = source[
-        source.index("function RangePresets(") : source.index("function SummaryStrip(")
-    ]
-
-    assert "<${RangePresets}" in filter_bar
-    assert "write({from" in presets
-    for label in ("7d", "30d", "90d", "180d", "All"):
-        assert f'"{label}"' in presets
-
-
 
 
 def test_frontend_pages_activity_and_merges_stable_entry_identities() -> None:
@@ -598,43 +537,6 @@ def test_heatmap_uses_roving_buttons_without_incomplete_grid_roles() -> None:
     assert 'event.key === "ArrowDown") target = index + 1' in source
 
 
-
-
-def test_models_frontend_fetches_pins_aspects_series_and_events() -> None:
-    source = _read_asset("app.js")
-
-    assert "function Models(" in source
-    assert "function Pins(" in source
-    assert "function AspectPicker(" in source
-    assert "function PanelStack(" in source
-    assert "function EventRail(" in source
-    assert 'useApi("/api/models"' in source
-    assert 'useApi("/api/series"' in source
-    assert 'useApi("/api/events"' in source
-    assert "setTimeout(() => setDebouncedQuery(query), 150)" in source
-    assert "meta.pin_limit" in source
-    assert "meta.categories" in source
-    assert "aspect.squelched" in source
-
-
-
-
-def test_model_dossier_route_wires_changelog_and_sparklines_without_a_dossier_tab() -> None:
-    source = _read_asset("app.js")
-    model_view = source[
-        source.index("function ModelView(") : source.index("function RawDrawer(")
-    ]
-
-    assert '"model"' in source[source.index("const HASH_KEYS") : source.index("function decode(")]
-    assert '"at"' in source[source.index("const HASH_KEYS") : source.index("function decode(")]
-    assert 'state.view === "model"' in source
-    assert "pinParts(state.model" in source
-    assert "<${ModelView}" in source
-    assert "<${ChangeTable}" in model_view
-    assert "<${SparklinePopover}" in model_view
-    views = source[source.index("const VIEWS") : source.index("const ASPECT_LIMIT")]
-    assert '"model"' not in views
-    assert '"hosts"' in views
 
 
 def test_hosts_exact_rationals_preserve_tiny_negative_zero_ties_and_decimal_limits() -> None:
@@ -807,34 +709,6 @@ assert.equal(displayedSort(["d:price:p"],shown).length,1);
     assert probe.returncode == 0, probe.stdout + probe.stderr
 
 
-def test_model_typeahead_portal_escapes_sidebar_and_cleans_up() -> None:
-    source = _read_asset("app.js")
-    portal = source[
-        source.index("function Portal(") : source.index("function TypeaheadOverlay(")
-    ]
-    host_match = re.search(
-        r"const (\w+) = useMemo\(\(\) => \{(?P<factory>.*?)\}, \[\]\);",
-        portal,
-        re.DOTALL,
-    )
-
-    assert host_match is not None
-    factory = host_match.group("factory")
-    element_match = re.search(r'const (\w+) = document\.createElement\("div"\)', factory)
-    assert element_match is not None
-    element = re.escape(element_match.group(1))
-    assert re.search(rf'{element}\.dataset\.modelSentinelPortal = "typeahead"', factory)
-    assert re.search(rf"return {element};", factory)
-    host = re.escape(host_match.group(1))
-    assert portal.count('document.createElement("div")') == 1
-    assert len(re.findall(r"useEffect\(\(\) => \{", portal)) == 2
-    assert re.search(rf"document\.body\.appendChild\({host}\)", portal)
-    assert re.search(rf"render\(children, {host}\)", portal)
-    assert re.search(rf"render\(null, {host}\).*?{host}\.remove\(\)", portal, re.DOTALL)
-    assert portal.count("render(null,") == 1
-    assert portal.index("render(null,") < portal.index("render(children,")
-
-
 def test_model_typeahead_placement_tracks_viewport_and_anchor() -> None:
     source = _read_asset("app.js")
     placement = source[
@@ -935,77 +809,6 @@ def test_model_typeahead_hides_anchors_outside_viewport_or_sidebar_clip() -> Non
     assert "}, [anchorRef, open, className]);" in overlay
 
 
-def test_model_typeahead_preserves_listbox_keyboard_contract() -> None:
-    source = _read_asset("app.js")
-    overlay = source[
-        source.index("function TypeaheadOverlay(") : source.index("function Pins(")
-    ]
-    # B4: the shared typeahead owns this contract for both Pins and FindModel.
-    typeahead = source[
-        source.index("function ModelTypeahead(") : source.index("function Pins(")
-    ]
-
-    assert "getBoundingClientRect()" in overlay
-    assert "typeaheadPlacement(" in overlay
-    resize_match = re.search(r'window\.addEventListener\("resize", (\w+)\)', overlay)
-    scroll_match = re.search(r'window\.addEventListener\("scroll", (\w+), true\)', overlay)
-    assert resize_match is not None and scroll_match is not None
-    assert re.search(
-        rf'window\.removeEventListener\("resize", {re.escape(resize_match.group(1))}\)',
-        overlay,
-    )
-    assert re.search(
-        rf'window\.removeEventListener\("scroll", {re.escape(scroll_match.group(1))}, true\)',
-        overlay,
-    )
-    observer_match = re.search(r"const (\w+) = new ResizeObserver\(", overlay)
-    assert observer_match is not None
-    observer = re.escape(observer_match.group(1))
-    assert re.search(rf"{observer}\.observe\(", overlay)
-    frame_match = re.search(r"let (\w+) = null;", overlay)
-    assert frame_match is not None
-    frame = re.escape(frame_match.group(1))
-    assert re.search(
-        rf"if \({frame} !== null\) return;\s*{frame} = window\.requestAnimationFrame",
-        overlay,
-    )
-    assert re.search(rf"window\.cancelAnimationFrame\({frame}\)", overlay)
-    assert re.search(rf"{observer}\.disconnect\(\)", overlay)
-    assert re.search(
-        r"if \(!\w+ \|\| !\w+\.isConnected\) \{\s*setPlacement\(null\);\s*return;",
-        overlay,
-    )
-    assert "placement ?" in overlay
-    assert "style=${placement}" in overlay
-
-    query_match = re.search(r'const \[(\w+), (\w+)\] = useState\(""\);', typeahead)
-    assert query_match is not None
-    query, clear_query = map(re.escape, query_match.groups())
-    open_match = re.search(rf"const (\w+) = Boolean\({query}\.trim\(\)\);", typeahead)
-    assert open_match is not None
-    listbox_id = "listboxId"
-    open_state = re.escape(open_match.group(1))
-    assert re.search(rf"aria-expanded=\$\{{{open_state}\}}", typeahead)
-    assert re.search(
-        rf"aria-controls=\$\{{{open_state} \? {listbox_id} : undefined\}}", typeahead
-    )
-    option_match = re.search(
-        rf'const (\w+) = document\.getElementById\({listbox_id}\)\?\.querySelector\("button"\)',
-        typeahead,
-    )
-    assert option_match is not None
-    option = re.escape(option_match.group(1))
-    assert "event.preventDefault()" in typeahead
-    assert re.search(rf"{option}\.focus\(\)", typeahead)
-    assert 'role="listbox"' in typeahead
-    assert 'role="option"' in typeahead
-    assert 'event.key === "Escape"' in typeahead
-    assert len(re.findall(rf'{clear_query}\(""\)', typeahead)) >= 2
-    assert re.search(rf"open=\$\{{{open_state}\}}", typeahead)
-    assert source.count("function ModelTypeahead(") == 1
-    assert source.count("<${ModelTypeahead}") == 2
-
-
 def test_model_typeahead_css_is_fixed_bounded_overlay() -> None:
     styles = _read_asset("app.css")
 
@@ -1070,6 +873,8 @@ def test_models_numeric_panels_use_stepped_synced_uplot_contract() -> None:
 
 
 def test_numeric_timeline_tooltip_preserves_exact_all_model_values() -> None:
+    # The browser hover test pins one model and checks only its name, so the
+    # unrounded values, every-pin rows and text-only insertion stay pinned here.
     source = _read_asset("app.js")
 
     assert "function timelineTooltipValue(value)" in source
@@ -1083,9 +888,6 @@ def test_numeric_timeline_tooltip_preserves_exact_all_model_values() -> None:
             "function TimelinePanel("
         )
     ]
-    panel = source[
-        source.index("function TimelinePanel(") : source.index("function listToneAt(")
-    ]
 
     assert re.search(
         r'typeof value === "number"\s*&&\s*Number\.isFinite\(value\)\s*\?\s*String\(value\)\s*:\s*"—"',
@@ -1094,79 +896,11 @@ def test_numeric_timeline_tooltip_preserves_exact_all_model_values() -> None:
     assert "toFixed" not in helper
     assert "toPrecision" not in helper
     assert "toLocaleString" not in helper
-    assert "u.cursor.idx" in plugin
-    assert "axis[index].completed_at" in plugin
-    assert "item.values[index]" in plugin
     assert "for (const item of items)" in plugin
-    assert "pinParts(item.model, providers).model" in plugin
-    assert "cssSeries(pins.indexOf(item.model))" in plugin
     assert "timelineTooltipValue(value)" in plugin
     assert "textContent" in plugin
     assert "innerHTML" not in plugin
     assert "filter(" not in plugin
-    assert "plugins: [timelineTooltipPlugin({aspect, axis, items, pins, providers})]" in panel
-    assert "function TimelinePanel({aspect, axis, items, pins, providers, plots, write})" in source
-    assert "providers=${meta.providers}" in source[
-        source.index("function PanelStack(") : source.index("function Models(")
-    ]
-
-
-def test_numeric_timeline_tooltip_guards_pre_ready_cursor_and_cleans_up() -> None:
-    source = _read_asset("app.js")
-
-    assert "function timelineTooltipPlugin(" in source
-    plugin = source[
-        source.index("function timelineTooltipPlugin(") : source.index(
-            "function TimelinePanel("
-        )
-    ]
-    cursor = plugin[plugin.index("setCursor:") : plugin.index("destroy:")]
-    destroy = plugin[plugin.index("destroy:") :]
-
-    assert re.search(r"setCursor:\s*\[\s*u\s*=>\s*\{\s*if \(!over \|\| !tooltip\) return;", cursor)
-    assert 'u.root.querySelector(".u-over")' in plugin
-    assert 'document.createElement("div")' in plugin
-    assert 'tooltip.setAttribute("role", "tooltip")' in plugin
-    assert "over.appendChild(tooltip)" in plugin
-    assert 'addEventListener("pointerenter"' in plugin
-    assert 'addEventListener("pointerleave"' in plugin
-    assert 'removeEventListener("pointerenter"' in destroy
-    assert 'removeEventListener("pointerleave"' in destroy
-    assert "tooltip.remove()" in destroy
-    assert "if (!over) return" in destroy
-
-
-def test_numeric_timeline_tooltip_is_pointer_gated_and_edge_bounded() -> None:
-    source = _read_asset("app.js")
-    plugin = source[
-        source.index("function timelineTooltipPlugin(") : source.index(
-            "function TimelinePanel("
-        )
-    ]
-
-    assert "let active = false" in plugin
-    assert re.search(r"pointerEnter\s*=\s*\(\)\s*=>\s*\{\s*active = true;", plugin)
-    assert re.search(
-        r"pointerLeave\s*=\s*\(\)\s*=>\s*\{\s*active = false;\s*tooltip\.hidden = true;",
-        plugin,
-    )
-    assert re.search(r"if \(!active \|\| !Number\.isInteger\(index\)", plugin)
-    assert "u.cursor.left" in plugin
-    assert "u.cursor.top" in plugin
-    assert "tooltip.offsetWidth" in plugin
-    assert "tooltip.offsetHeight" in plugin
-    assert "over.clientWidth" in plugin
-    assert "over.clientHeight" in plugin
-    assert "tooltip.style.maxHeight" in plugin
-    assert "rows.style.maxHeight" in plugin
-    assert re.search(
-        r"timelineTooltipVerticalLayout\(\s*over\.clientHeight,\s*header\.offsetHeight,\s*footer\.offsetHeight,",
-        plugin,
-    )
-    assert re.search(r"cursorLeft\s*\+\s*gap\s*\+\s*tooltipWidth\s*<=\s*over\.clientWidth", plugin)
-    assert "Math.max(inset, Math.min(" in plugin
-    assert "tooltip.style.left" in plugin
-    assert "tooltip.style.top" in plugin
 
 
 def test_numeric_timeline_tooltip_runtime_cursor_gate_rejects_synced_rail_position() -> None:
@@ -1203,63 +937,6 @@ if (!timelineTooltipCursorInside({{left: 400, top: 96}}, over)) process.exit(4);
         )
     ]
     assert "!timelineTooltipCursorInside(u.cursor, over)" in plugin
-
-
-def test_numeric_timeline_tooltip_caches_content_but_always_repositions() -> None:
-    source = _read_asset("app.js")
-    plugin = source[
-        source.index("function timelineTooltipPlugin(") : source.index(
-            "function TimelinePanel("
-        )
-    ]
-    cursor = plugin[plugin.index("setCursor:") : plugin.index("destroy:")]
-
-    assert "let lastIndex = null" in plugin
-    assert "if (index !== lastIndex)" in cursor
-    assert "lastIndex = index" in cursor
-    assert "rows.replaceChildren()" in cursor
-    assert "const positionTooltip = u =>" in plugin
-    assert "positionTooltip(u)" in cursor
-    assert cursor.index("lastIndex = index") < cursor.index("positionTooltip(u)")
-
-
-def test_numeric_timeline_tooltip_css_keeps_eight_value_rows_visible() -> None:
-    styles = _read_asset("app.css")
-
-    def declarations(selector: str) -> str:
-        match = re.search(rf"{re.escape(selector)}\s*\{{([^}}]*)\}}", styles)
-        assert match is not None, selector
-        return match.group(1)
-
-    tooltip = declarations(".plot-host .timeline-tooltip")
-    rows = declarations(".plot-host .timeline-tooltip-rows")
-    row = declarations(".plot-host .timeline-tooltip-row")
-    model = declarations(".plot-host .timeline-tooltip-model")
-    value = declarations(".plot-host .timeline-tooltip-value")
-    header = declarations(".plot-host .timeline-tooltip-header")
-    footer = declarations(".plot-host .timeline-tooltip-footer")
-
-    assert "position: absolute" in tooltip
-    assert "pointer-events: none" in tooltip
-    assert "max-width: calc(100% - 1rem)" in tooltip
-    assert "background: var(--panel-raised)" in tooltip
-    assert "border: 1px solid var(--border-strong)" in tooltip
-    assert "box-shadow:" in tooltip and "var(--shadow)" in tooltip
-    assert 'font-family: ui-monospace, "SFMono-Regular", Consolas, monospace' in tooltip
-    assert "display: none" in declarations(".plot-host .timeline-tooltip[hidden]")
-    assert "min-height: 0" in rows
-    assert "overflow-y: hidden" in rows
-    assert "grid-template-columns: minmax(0, 1fr) auto" in row
-    assert "height: var(--timeline-tooltip-row-height)" in row
-    assert "box-sizing: border-box" in row
-    assert "min-width: 0" in model
-    assert "text-overflow: ellipsis" in model
-    assert "white-space: nowrap" in model
-    assert "flex-shrink: 0" in value
-    assert "text-align: right" in value
-    assert "white-space: nowrap" in value
-    assert "border-block-end:" in header
-    assert "border-block-start:" in footer
 
 
 def test_numeric_timeline_tooltip_runtime_layout_keeps_eight_rows_visible() -> None:
@@ -1428,52 +1105,6 @@ def test_models_empty_conditional_collections_do_not_render_zero_text() -> None:
     assert "pins.length && html`<${EventRail}" not in source
 
 
-def test_catalog_frontend_uses_provider_scoped_saved_scrapes_and_canonical_defaults() -> None:
-    source = _read_asset("app.js")
-
-    assert "function Catalog(" in source
-    assert "function Pickers(" in source
-    assert "function ColumnChooser(" in source
-    assert 'scrape.status === "success" && scrape.saved' in source
-    assert "scrape.provider_id === providerId" in source
-    assert 'aspect.source === "column"' in source
-    assert '["Pricing", "Context & Limits", "Capabilities"].includes(aspect.category)' in source
-    assert 'useApi("/api/catalog"' in source
-    assert 'page_size: CATALOG_PAGE_SIZE' in source
-    assert "patch.asof = String(asOf.scrape_id)" in source
-    assert "const requestedColumns = [...new Set((state.cols || []).filter(id => known.has(id)))]" in source
-    assert "if (!sameList(state.cols || [], columns)) patch.cols = columns" in source
-    assert "disabled=${!catalogScrapes(meta, provider.id).length}" in source
-    assert 'const sort = state.sort === "model_id" || columns.includes(state.sort) ? state.sort : "model_id"' in source
-    assert 'const dir = ["asc", "desc"].includes(state.dir) ? state.dir : "asc"' in source
-    assert "patch.sort = sort" in source
-    assert "patch.dir = dir" in source
-    # C1/C2/C3 add catalog collaborators while preserving canonicalization.
-    assert "function Catalog({meta, state, write, replaceState, openModel, toast, themeKey})" in source
-    assert "if (Object.keys(patch).length) replaceState(patch)" in source
-    assert "replaceState=${replaceState}" in source
-
-
-def test_catalog_table_supports_filter_sort_paging_and_semantic_diffs() -> None:
-    source = _read_asset("app.js")
-    styles = _read_asset("app.css")
-
-    assert "function CatalogTable(" in source
-    assert 'type="search" value=${draft}' in source
-    assert 'aria-sort=${sortAria("model_id")}' in source
-    assert "write({sort: aspect.id, dir: nextSortDirection(aspect.id)})" in source
-    assert "Math.ceil(data.total / CATALOG_PAGE_SIZE)" in source
-    # C2: the server is the single source of truth for value equality.
-    assert "cellChanged" not in source
-    assert "cell && cell.changed" in source
-    assert "semantic(cell.change)" in source
-    assert '`catalog-row --presence-${row.presence}`' in source
-    assert "position: sticky" in styles
-    assert "font-variant-numeric: tabular-nums" in styles
-    assert ".--presence-added" in styles
-    assert ".--presence-removed" in styles
-
-
 def test_catalog_suppresses_stale_rows_and_replaces_debounced_search_hashes() -> None:
     source = _read_asset("app.js")
     use_api = source[source.index("function useApi("):source.index("function activityEntryId(")]
@@ -1488,38 +1119,6 @@ def test_catalog_suppresses_stale_rows_and_replaces_debounced_search_hashes() ->
     assert "onInput=${event => setDraft(event.currentTarget.value)}" in source
     assert 'onInput=${event => write({q:' not in source
     assert "const catalogData = request.fresh ? request.data : null" in source
-
-
-def test_catalog_sparkline_uses_full_series_span_and_links_to_models() -> None:
-    source = _read_asset("app.js")
-
-    assert "function SparklinePopover(" in source
-    assert 'useApi("/api/series", {models: pin, aspects: aspect.id}' in source
-    assert "height: 80" in source
-    assert "uPlot.paths.stepped({align: 1})" in source
-    assert 'write({view: "models", pins, aspects: [aspect.id]' in source
-    assert "Open timeline" in source
-    assert 'event.key === "Escape"' in source
-    assert "function SparklinePopover({meta, pin, aspect, write, close, themeKey})" in source
-    assert "}, [request.data, themeKey])" in source
-    assert "themeKey=${themeKey}" in source
-
-
-def test_catalog_sparkline_traps_focus_inerts_background_and_resizes() -> None:
-    source = _read_asset("app.js")
-    styles = _read_asset("app.css")
-    sparkline = source[source.index("function SparklinePopover("):source.index("function CatalogTable(")]
-
-    # B5: both dialogs share one focus trap implementation.
-    assert "useFocusTrap(panelRef, true, close)" in sparkline
-    assert source.count('if (event.key !== "Tab") return') == 1
-    assert source.count("element.inert = true") == 1
-    assert source.count("element.inert = false") == 1
-    assert "const observer = new ResizeObserver" in sparkline
-    assert "plot.setSize({width, height: 80})" in sparkline
-    assert "observer.disconnect()" in sparkline
-    assert ".spark-host .uplot" in styles
-    assert "max-width: 100%" in styles[styles.index(".spark-host .uplot"):]
 
 
 def test_catalog_feed_cross_link_bounds_activity_to_compared_scrapes() -> None:

@@ -6,7 +6,6 @@ No network calls, no DB writes — pure logic tests.
 
 import json
 import sys
-import tempfile
 from pathlib import Path
 
 import pytest
@@ -30,15 +29,18 @@ from git_dashboard import (
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
-def make_tmpdir(files: dict) -> Path:
-    """Create a temp dir with the given filename→content mapping and return its path."""
-    d = tempfile.mkdtemp()
-    root = Path(d)
-    for name, content in files.items():
-        p = root / name
-        p.parent.mkdir(parents=True, exist_ok=True)
-        p.write_text(content, encoding="utf-8")
-    return root
+@pytest.fixture
+def make_tmpdir(tmp_path_factory):
+    """Return a factory that writes a filename→content mapping into a fresh
+    pytest-managed directory (removed by pytest's retention) and returns its path."""
+    def make(files: dict) -> Path:
+        root = tmp_path_factory.mktemp("deps")
+        for name, content in files.items():
+            p = root / name
+            p.parent.mkdir(parents=True, exist_ok=True)
+            p.write_text(content, encoding="utf-8")
+        return root
+    return make
 
 
 # ── detect_dep_files tests ────────────────────────────────────────────────────
@@ -72,7 +74,7 @@ def test_detect_dep_files_walk_limits(tmp_path, monkeypatch):
     assert found == {"a/b/c/package.json", "at-limit/package.json"}
 
 
-def test_detect_dep_files_requirements_txt():
+def test_detect_dep_files_requirements_txt(make_tmpdir):
     """Test 1: single Python (requirements.txt)"""
     root = make_tmpdir({"requirements.txt": "flask==2.3.0\n"})
     result = detect_dep_files(root)
@@ -82,7 +84,7 @@ def test_detect_dep_files_requirements_txt():
     assert result[0]["runtime"] == "python"
 
 
-def test_detect_dep_files_pyproject_toml():
+def test_detect_dep_files_pyproject_toml(make_tmpdir):
     """Test 2: single Python (pyproject.toml)"""
     root = make_tmpdir({"pyproject.toml": "[project]\nname = 'mypkg'\n"})
     result = detect_dep_files(root)
@@ -92,7 +94,7 @@ def test_detect_dep_files_pyproject_toml():
     assert result[0]["runtime"] == "python"
 
 
-def test_detect_dep_files_package_json():
+def test_detect_dep_files_package_json(make_tmpdir):
     """Test 3: single Node"""
     root = make_tmpdir({"package.json": '{"name": "myapp"}\n'})
     result = detect_dep_files(root)
@@ -102,7 +104,7 @@ def test_detect_dep_files_package_json():
     assert result[0]["runtime"] == "node"
 
 
-def test_detect_dep_files_go_mod():
+def test_detect_dep_files_go_mod(make_tmpdir):
     """Test 4: single Go"""
     root = make_tmpdir({"go.mod": "module example.com/mymod\n\ngo 1.21\n"})
     result = detect_dep_files(root)
@@ -112,7 +114,7 @@ def test_detect_dep_files_go_mod():
     assert result[0]["runtime"] == "go"
 
 
-def test_detect_dep_files_cargo_toml():
+def test_detect_dep_files_cargo_toml(make_tmpdir):
     """Test 5: single Rust"""
     root = make_tmpdir({"Cargo.toml": "[package]\nname = 'mycrate'\n"})
     result = detect_dep_files(root)
@@ -122,7 +124,7 @@ def test_detect_dep_files_cargo_toml():
     assert result[0]["runtime"] == "rust"
 
 
-def test_detect_dep_files_gemfile():
+def test_detect_dep_files_gemfile(make_tmpdir):
     """Test 6: single Ruby"""
     root = make_tmpdir({"Gemfile": "source 'https://rubygems.org'\ngem 'rails'\n"})
     result = detect_dep_files(root)
@@ -132,7 +134,7 @@ def test_detect_dep_files_gemfile():
     assert result[0]["runtime"] == "ruby"
 
 
-def test_detect_dep_files_composer_json():
+def test_detect_dep_files_composer_json(make_tmpdir):
     """Test 7: single PHP"""
     root = make_tmpdir({"composer.json": '{"require": {}}\n'})
     result = detect_dep_files(root)
@@ -142,7 +144,7 @@ def test_detect_dep_files_composer_json():
     assert result[0]["runtime"] == "php"
 
 
-def test_detect_dep_files_mixed_ecosystem():
+def test_detect_dep_files_mixed_ecosystem(make_tmpdir):
     """Test 8: mixed ecosystem (pyproject.toml + package.json → both returned)"""
     root = make_tmpdir({
         "pyproject.toml": "[project]\nname = 'mypkg'\n",
@@ -158,14 +160,14 @@ def test_detect_dep_files_mixed_ecosystem():
     assert len(result) == 2
 
 
-def test_detect_dep_files_empty_dir():
+def test_detect_dep_files_empty_dir(make_tmpdir):
     """Test 9: no manifest files → []"""
     root = make_tmpdir({})
     result = detect_dep_files(root)
     assert result == []
 
 
-def test_detect_dep_files_returns_pyproject_and_requirements():
+def test_detect_dep_files_returns_pyproject_and_requirements(make_tmpdir):
     """Coexisting Python manifests must both be discovered."""
     root = make_tmpdir({
         'pyproject.toml': '[project]\nname="synthetic"\n',
@@ -176,7 +178,7 @@ def test_detect_dep_files_returns_pyproject_and_requirements():
 
 # ── parse_requirements_txt tests ──────────────────────────────────────────────
 
-def test_parse_requirements_txt_basic():
+def test_parse_requirements_txt_basic(make_tmpdir):
     """Test 11: basic pinned deps"""
     root = make_tmpdir({"requirements.txt": "flask==2.3.0\nrequests==2.31.0\n"})
     result = parse_requirements_txt(root / "requirements.txt")
@@ -191,7 +193,7 @@ def test_parse_requirements_txt_basic():
         assert r["manager"] == "pip"
 
 
-def test_parse_requirements_txt_comments_and_blanks():
+def test_parse_requirements_txt_comments_and_blanks(make_tmpdir):
     """Test 12: comments and blank lines are skipped"""
     content = "# comment\n\nflask==2.3.0\n  # indented comment\n"
     root = make_tmpdir({"requirements.txt": content})
@@ -200,7 +202,7 @@ def test_parse_requirements_txt_comments_and_blanks():
     assert result[0]["name"] == "flask"
 
 
-def test_parse_requirements_txt_unpinned():
+def test_parse_requirements_txt_unpinned(make_tmpdir):
     """Test 13: unpinned deps → version None; constrained → version None"""
     content = "flask\nrequests>=2.0\n"
     root = make_tmpdir({"requirements.txt": content})
@@ -214,7 +216,7 @@ def test_parse_requirements_txt_unpinned():
         assert r["version"] is None
 
 
-def test_parse_requirements_txt_editable_skipped():
+def test_parse_requirements_txt_editable_skipped(make_tmpdir):
     """Test 14: -e editable installs are skipped"""
     content = "-e ./local_pkg\nflask==2.3.0\n"
     root = make_tmpdir({"requirements.txt": content})
@@ -223,7 +225,7 @@ def test_parse_requirements_txt_editable_skipped():
     assert result[0]["name"] == "flask"
 
 
-def test_parse_requirements_txt_include():
+def test_parse_requirements_txt_include(make_tmpdir):
     """Test 15: -r include follows one level"""
     root = make_tmpdir({
         "requirements.txt": "-r other.txt\nflask==2.3.0\n",
@@ -236,7 +238,7 @@ def test_parse_requirements_txt_include():
     assert len(result) == 2
 
 
-def test_parse_requirements_txt_circular_include():
+def test_parse_requirements_txt_circular_include(make_tmpdir):
     """Test 16: circular -r include → no infinite loop, returns available deps"""
     root = make_tmpdir({
         "requirements.txt": "-r other.txt\nflask==2.3.0\n",
@@ -250,7 +252,7 @@ def test_parse_requirements_txt_circular_include():
     assert "requests" in names
 
 
-def test_parse_requirements_txt_missing_include():
+def test_parse_requirements_txt_missing_include(make_tmpdir):
     """Validation: -r pointing to nonexistent file → no crash, returns other deps"""
     root = make_tmpdir({
         "requirements.txt": "-r nonexistent.txt\nflask==2.3.0\n",
@@ -262,7 +264,7 @@ def test_parse_requirements_txt_missing_include():
 
 # ── parse_pyproject_toml tests ────────────────────────────────────────────────
 
-def test_parse_pyproject_toml_pep621():
+def test_parse_pyproject_toml_pep621(make_tmpdir):
     """Test 17: [project].dependencies (PEP 621)"""
     content = '[project]\ndependencies = ["flask>=2.0", "requests==2.31.0"]\n'
     root = make_tmpdir({"pyproject.toml": content})
@@ -276,7 +278,7 @@ def test_parse_pyproject_toml_pep621():
         assert r["manager"] == "pip"
 
 
-def test_parse_pyproject_toml_poetry():
+def test_parse_pyproject_toml_poetry(make_tmpdir):
     """Test 18: [tool.poetry.dependencies]"""
     content = '[tool.poetry.dependencies]\npython = "^3.11"\nflask = "^2.3"\nrequests = {version = "^2.31", extras = ["security"]}\n'
     root = make_tmpdir({"pyproject.toml": content})
@@ -293,7 +295,7 @@ def test_parse_pyproject_toml_poetry():
         assert r["manager"] == "pip"
 
 
-def test_parse_pyproject_toml_no_deps():
+def test_parse_pyproject_toml_no_deps(make_tmpdir):
     """Test 19: no dependencies section → []"""
     content = '[build-system]\nrequires = ["setuptools"]\n'
     root = make_tmpdir({"pyproject.toml": content})
@@ -303,7 +305,7 @@ def test_parse_pyproject_toml_no_deps():
 
 # ── parse_package_json tests ──────────────────────────────────────────────────
 
-def test_parse_package_json_deps_and_devdeps():
+def test_parse_package_json_deps_and_devdeps(make_tmpdir):
     """Test 20: both dependencies and devDependencies"""
     pkg = {
         "name": "myapp",
@@ -320,7 +322,7 @@ def test_parse_package_json_deps_and_devdeps():
         assert r["manager"] == "npm"
 
 
-def test_parse_package_json_no_deps():
+def test_parse_package_json_no_deps(make_tmpdir):
     """Test 21: no dependencies key → []"""
     pkg = {"name": "myapp", "version": "1.0.0"}
     root = make_tmpdir({"package.json": json.dumps(pkg)})
@@ -328,7 +330,7 @@ def test_parse_package_json_no_deps():
     assert result == []
 
 
-def test_parse_package_json_version_ranges():
+def test_parse_package_json_version_ranges(make_tmpdir):
     """Test 22: version ranges preserved as-is"""
     pkg = {
         "dependencies": {
@@ -347,7 +349,7 @@ def test_parse_package_json_version_ranges():
 
 # ── parse_go_mod tests ────────────────────────────────────────────────────────
 
-def test_parse_go_mod_require_block():
+def test_parse_go_mod_require_block(make_tmpdir):
     """Test 23: standard require (...) block"""
     content = (
         "module example.com/mymod\n\n"
@@ -368,7 +370,7 @@ def test_parse_go_mod_require_block():
         assert r["manager"] == "gomod"
 
 
-def test_parse_go_mod_single_require():
+def test_parse_go_mod_single_require(make_tmpdir):
     """Test 24: single-line require (no parens)"""
     content = "module example.com/mymod\n\ngo 1.21\n\nrequire github.com/pkg/errors v0.9.1\n"
     root = make_tmpdir({"go.mod": content})
@@ -378,7 +380,7 @@ def test_parse_go_mod_single_require():
     assert "github.com/pkg/errors" in names
 
 
-def test_parse_go_mod_indirect():
+def test_parse_go_mod_indirect(make_tmpdir):
     """Test 25: indirect deps are still included"""
     content = (
         "module example.com/mymod\n\n"
@@ -396,7 +398,7 @@ def test_parse_go_mod_indirect():
 
 # ── parse_cargo_toml tests ────────────────────────────────────────────────────
 
-def test_parse_cargo_toml_string_versions():
+def test_parse_cargo_toml_string_versions(make_tmpdir):
     """Test 26: serde = "1.0" format"""
     content = '[package]\nname = "mycrate"\nversion = "0.1.0"\n\n[dependencies]\nserde = "1.0"\ntokio = "1.28"\n'
     root = make_tmpdir({"Cargo.toml": content})
@@ -410,7 +412,7 @@ def test_parse_cargo_toml_string_versions():
         assert r["manager"] == "cargo"
 
 
-def test_parse_cargo_toml_table_versions():
+def test_parse_cargo_toml_table_versions(make_tmpdir):
     """Test 27: serde = { version = "1.0", features = [...] } format"""
     content = '[package]\nname = "mycrate"\nversion = "0.1.0"\n\n[dependencies]\nserde = { version = "1.0", features = ["derive"] }\n'
     root = make_tmpdir({"Cargo.toml": content})
@@ -420,7 +422,7 @@ def test_parse_cargo_toml_table_versions():
     assert versions.get("serde") == "1.0"
 
 
-def test_parse_cargo_toml_no_deps():
+def test_parse_cargo_toml_no_deps(make_tmpdir):
     """Test 28: no [dependencies] section → []"""
     content = '[package]\nname = "mycrate"\nversion = "0.1.0"\n'
     root = make_tmpdir({"Cargo.toml": content})
@@ -430,7 +432,7 @@ def test_parse_cargo_toml_no_deps():
 
 # ── parse_gemfile tests ───────────────────────────────────────────────────────
 
-def test_parse_gemfile_basic():
+def test_parse_gemfile_basic(make_tmpdir):
     """Test 29: basic gems with version constraints"""
     content = "source 'https://rubygems.org'\ngem 'rails', '~> 7.0'\ngem 'puma', '>= 5.0'\n"
     root = make_tmpdir({"Gemfile": content})
@@ -446,7 +448,7 @@ def test_parse_gemfile_basic():
         assert r["manager"] == "bundler"
 
 
-def test_parse_gemfile_no_version():
+def test_parse_gemfile_no_version(make_tmpdir):
     """Test 30: gem without version → version None"""
     content = "gem 'rake'\n"
     root = make_tmpdir({"Gemfile": content})
@@ -458,7 +460,7 @@ def test_parse_gemfile_no_version():
 
 # ── parse_composer_json tests ─────────────────────────────────────────────────
 
-def test_parse_composer_json_require_and_require_dev():
+def test_parse_composer_json_require_and_require_dev(make_tmpdir):
     """Test 31: both require and require-dev"""
     pkg = {
         "require": {
@@ -482,7 +484,7 @@ def test_parse_composer_json_require_and_require_dev():
         assert r["manager"] == "composer"
 
 
-def test_parse_composer_json_no_require():
+def test_parse_composer_json_no_require(make_tmpdir):
     """Test 32: no require key → []"""
     pkg = {"name": "myvendor/myapp"}
     root = make_tmpdir({"composer.json": json.dumps(pkg)})
@@ -492,7 +494,7 @@ def test_parse_composer_json_no_require():
 
 # ── parse_deps_for_repo orchestrator tests ────────────────────────────────────
 
-def test_parse_deps_for_repo_python():
+def test_parse_deps_for_repo_python(make_tmpdir):
     """Test 33: python repo → merged list with pip manager"""
     root = make_tmpdir({"requirements.txt": "flask==2.3.0\nrequests==2.31.0\n"})
     result = parse_deps_for_repo(root)
@@ -503,7 +505,7 @@ def test_parse_deps_for_repo_python():
         assert "version" in r
 
 
-def test_parse_deps_for_repo_mixed():
+def test_parse_deps_for_repo_mixed(make_tmpdir):
     """Test 34: mixed repo (requirements.txt + package.json) → deps from both"""
     root = make_tmpdir({
         "requirements.txt": "flask==2.3.0\n",
@@ -518,7 +520,7 @@ def test_parse_deps_for_repo_mixed():
     assert "react" in names
 
 
-def test_parse_deps_for_repo_empty():
+def test_parse_deps_for_repo_empty(make_tmpdir):
     """Test 35: no manifest files → []"""
     root = make_tmpdir({})
     result = parse_deps_for_repo(root)
@@ -527,7 +529,7 @@ def test_parse_deps_for_repo_empty():
 
 # ── TOML unavailability graceful degradation ──────────────────────────────────
 
-def test_parse_pyproject_toml_no_tomllib(monkeypatch):
+def test_parse_pyproject_toml_no_tomllib(make_tmpdir, monkeypatch):
     """AC 18: when tomllib is unavailable, return [] without crashing."""
     import git_dashboard
     monkeypatch.setattr(git_dashboard, "tomllib", None)
@@ -537,7 +539,7 @@ def test_parse_pyproject_toml_no_tomllib(monkeypatch):
     assert result == []
 
 
-def test_parse_cargo_toml_no_tomllib(monkeypatch):
+def test_parse_cargo_toml_no_tomllib(make_tmpdir, monkeypatch):
     """AC 18: when tomllib is unavailable, Cargo.toml returns [] without crashing."""
     import git_dashboard
     monkeypatch.setattr(git_dashboard, "tomllib", None)
@@ -555,7 +557,7 @@ def test_parse_cargo_toml_no_tomllib(monkeypatch):
     ("bundler", "gem 'rails', '~> 7.0'\n", "Gemfile"),
     ("composer", '{"require": {"laravel/framework": "^10.0"}}', "composer.json"),
 ])
-def test_standard_shape(manager, content, filename):
+def test_standard_shape(make_tmpdir, manager, content, filename):
     """All parsers return dicts with {name, version, manager}."""
     root = make_tmpdir({filename: content})
     result = parse_deps_for_repo(root)

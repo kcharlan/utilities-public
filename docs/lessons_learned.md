@@ -1,79 +1,5 @@
 # Lessons learned
 
-## 2026-11-02: Treat filename prefixes as literal text
-
-User-selected prefixes can contain regex metacharacters. Compare the prefix as
-literal text before matching the dated suffix, and exercise discovery filters
-with hidden files as well as ordinary files at multiple depths.
-
-## 2026-11-02: Preserve row fields beyond declared export columns
-
-An upstream column declaration can lag behind its rows, so writing only the
-declared fields silently loses data. Include sorted undeclared row keys, warn
-with their names rather than values, and exercise both missing-value modes with
-exact synthetic CSV output.
-
-## 2026-11-02: Canonicalize accepted dates at the input boundary
-
-ISO parsers can accept compact and week-date spellings as well as calendar dates.
-Store the parsed date in canonical form before using it in filenames or other
-outputs, and test each accepted spelling against the resulting value.
-
-## 2026-11-02: Drain request handlers before closing shared databases
-
-Stopping an HTTP accept loop does not finish daemon request threads. Model
-Sentinel's server must join its handlers before closing their SQLite connections;
-bound inactive socket reads so an incomplete local request cannot block shutdown
-forever. Coordinate an in-flight request and guard the close in a regression test
-so the unsafe ordering is detected without closing SQLite during a query.
-
-## 2026-11-02: Guard branch resets against commit loss
-
-Before resetting a local branch, check whether its tip is an ancestor of the
-selected start point and require explicit force when it is not. Exercise the
-refusal and forced reset with real synthetic Git repositories, checking both
-the branch ref and destination path.
-Use full local refs for membership checks: Git's shortened display name can
-change when a tag shares the branch name, bypassing a guard keyed by that name.
-
-## 2026-11-02: Handle decoding failures at the input boundary
-
-Parsing error handlers cannot catch invalid text encoding when a file is decoded
-before parsing. Exercise invalid bytes through the CLI and report decoding errors
-through the same structured input-error contract without creating output.
-
-## 2026-11-02: Describe each launchd calendar entry independently
-
-Combining fields across StartCalendarInterval entries can invent a schedule and
-hide real trigger times. Group only entries differing in weekday, preserve the
-other entries separately, and cover month, day and both Sunday encodings with
-direct schedule tests alongside an API smoke test.
-
-## 2026-11-02: Verify converted links and their emitted targets together
-
-HTML-to-Markdown converters can discard both element IDs and fragment links.
-When combining pages, explicitly emit each page anchor and verify rewritten
-links against the resulting document, including pages without headings.
-Escape attribute values when emitting raw HTML, and parse the emitted IDs in
-tests so quotes and entity-like filenames cannot disguise malformed markup.
-
-## 2026-11-02: Normalize distance records before aggregation
-
-An output column labelled kilometres can silently misstate mixed-unit records if
-it sums raw values or assumes one unit. Convert each record using its declared
-unit before deduplication and aggregation; reject missing or unknown units.
-
-## 2026-11-02: Cover every launchd domain in target selection
-
-Apple and non-Apple daemons both use the system launchd domain. Exercise every
-discovered plist domain and the unknown fallback when constructing job targets
-and bootstrap prefixes, so a new or overlooked domain cannot silently use the
-user GUI domain.
-
-## 2026-11-02: Scope shared Makefile self-tests to their caller
-
-A shared self-test that always exercises every consumer couples otherwise independent project suites. Accept explicit consumer selections, validate them before making scratch space, and retain the unscoped form for the fleet-wide check.
-
 ## Synthetic directory modes and umask
 
 When a test requires a specific directory mode, explicitly chmod the synthetic fixture and assert its precondition: mkdir’s requested mode is filtered by the caller’s umask. Preserve the post-operation mode assertion so rejection and non-mutation remain tested under restrictive umasks.
@@ -85,23 +11,6 @@ Keep a temporary path available for the lifetime of its EXIT trap and refer to i
 In Zsh, returning a failure from an EXIT trap does not replace the original successful exit status. Disable the trap and explicitly exit with the captured primary status or a cleanup-only failure status.
 
 Zsh's `path` array is tied to `PATH`; using `local path` for a cleanup loop can make external commands unavailable. Use a non-special variable name and exercise the real command lookup in a synthetic regression, including both successful and failed primary operations.
-
-## 2026-11-02: Compute imported cache rates from imported prompt tokens
-
-RouterView CSV imports populate `tokens_prompt` but not `native_tokens_prompt`.
-Aggregating the latter made the cache hit rate zero even when imported rows had
-cached tokens. Exercise summary totals and filtered rates through a real CSV
-import so the aggregate uses the data actually stored by the active path.
-
-## 2026-11-02: Extend Excel tables when appending workbook rows
-
-Writing cells below an Excel table does not extend its range or filter. Exercise
-the shipped template through consecutive appends, and extend matching tables
-and their filters while preserving the workbook's formulas and lookup cells.
-
-## 2026-11-02: Label destructive date boundaries with their timezone
-
-RouterView's purge used UTC calendar dates for both generations and daily summaries, but its button did not identify the timezone. State the timezone at the control and in the setup guide, and exercise the rendered label alongside an independent boundary test so users can predict which rows remain.
 
 ## 2026-10-31: Compare old and new in a browser when moving React code to Preact
 
@@ -2278,7 +2187,7 @@ write through a real server with an independently timed status request. A SQLite
 connection context manager commits or rolls back but does not close the handle;
 close test fixture and readback connections explicitly.
 
-## Generated Markdown tables through HTML converters
+## 2026-11-02: Generated Markdown tables through HTML converters
 
 When an HTML-to-Markdown pipeline constructs table Markdown before calling the
 converter, preserve those blocks across conversion. HTML whitespace collapsing
@@ -2309,7 +2218,7 @@ representation instead of a portable encoding. Reuse the API's value encoder
 and serialize BLOB objects as JSON text in CSV cells; test both export formats
 with binary bytes, large integers, Unicode and nulls.
 
-### Ad hoc walks must resolve hard-link ownership
+### 2026-11-02 — Ad hoc walks must resolve hard-link ownership
 
 Storage Monitor's native walker emits hard-linked files as candidates rather than adding their bytes to directory totals. Every standalone walk must resolve those candidates before rolling up totals, just as a full scan does. Regression fixtures should compare an unindexed estimate with `du` before the directory moves, while retaining a watchlist fallback check for the shared path.
 
@@ -2342,7 +2251,7 @@ A live file preview that only refreshes for nonempty matches can submit stale
 selections after the pattern changes. Clear the selection on an empty result and
 test both the warning and unchanged persisted counters through the UI.
 
-### macOS `mktemp -t` can ignore the test's `TMPDIR`
+### 2026-11-02 — macOS `mktemp -t` can ignore the test's `TMPDIR`
 
 On macOS, `mktemp -t` may select the Darwin user temporary directory before `TMPDIR`. A test that checks only its own `TMPDIR` can therefore pass without observing the application's files. When testing cleanup, inject a narrowly scoped creator that uses an explicit absolute template, record the paths, and verify they exist at the operation boundary before asserting their removal.
 
@@ -2355,10 +2264,118 @@ complete script in tests so a trailing line cannot cause main to run unexpectedl
 
 RouterView's Settings icon had no accessible name, so users of assistive technology could not identify it and role-based browser tests could not find it. Give icon-only controls an accessible label and exercise the real control by role.
 
-### macOS Bash 3.2 assertions need explicit failure handlers
+### 2026-11-02 — macOS Bash 3.2 assertions need explicit failure handlers
 
 A standalone `[[ ... ]]` can fail without stopping a script under macOS Bash
 3.2 even with `set -e`. Add an explicit failure handler to each assertion and
 probe actual failing inputs to confirm later commands do not run. For destructive
 UI actions, select the named target and arrange a deterministic decoy first so
 positional selection fails the test.
+
+## 2026-11-02: Treat filename prefixes as literal text
+
+User-selected prefixes can contain regex metacharacters. Compare the prefix as
+literal text before matching the dated suffix, and exercise discovery filters
+with hidden files as well as ordinary files at multiple depths.
+
+## 2026-11-02: Preserve row fields beyond declared export columns
+
+An upstream column declaration can lag behind its rows, so writing only the
+declared fields silently loses data. Include sorted undeclared row keys, warn
+with their names rather than values, and exercise both missing-value modes with
+exact synthetic CSV output.
+
+## 2026-11-02: Canonicalize accepted dates at the input boundary
+
+ISO parsers can accept compact and week-date spellings as well as calendar dates.
+Store the parsed date in canonical form before using it in filenames or other
+outputs, and test each accepted spelling against the resulting value.
+
+## 2026-11-02: Drain request handlers before closing shared databases
+
+Stopping an HTTP accept loop does not finish daemon request threads. Model
+Sentinel's server must join its handlers before closing their SQLite connections;
+bound inactive socket reads so an incomplete local request cannot block shutdown
+forever. Coordinate an in-flight request and guard the close in a regression test
+so the unsafe ordering is detected without closing SQLite during a query.
+
+## 2026-11-02: Guard branch resets against commit loss
+
+Before resetting a local branch, check whether its tip is an ancestor of the
+selected start point and require explicit force when it is not. Exercise the
+refusal and forced reset with real synthetic Git repositories, checking both
+the branch ref and destination path.
+Use full local refs for membership checks: Git's shortened display name can
+change when a tag shares the branch name, bypassing a guard keyed by that name.
+
+## 2026-11-02: Handle decoding failures at the input boundary
+
+Parsing error handlers cannot catch invalid text encoding when a file is decoded
+before parsing. Exercise invalid bytes through the CLI and report decoding errors
+through the same structured input-error contract without creating output.
+
+## 2026-11-02: Describe each launchd calendar entry independently
+
+Combining fields across StartCalendarInterval entries can invent a schedule and
+hide real trigger times. Group only entries differing in weekday, preserve the
+other entries separately, and cover month, day and both Sunday encodings with
+direct schedule tests alongside an API smoke test.
+
+## 2026-11-02: Verify converted links and their emitted targets together
+
+HTML-to-Markdown converters can discard both element IDs and fragment links.
+When combining pages, explicitly emit each page anchor and verify rewritten
+links against the resulting document, including pages without headings.
+Escape attribute values when emitting raw HTML, and parse the emitted IDs in
+tests so quotes and entity-like filenames cannot disguise malformed markup.
+
+## 2026-11-02: Normalize distance records before aggregation
+
+An output column labelled kilometres can silently misstate mixed-unit records if
+it sums raw values or assumes one unit. Convert each record using its declared
+unit before deduplication and aggregation; reject missing or unknown units.
+
+## 2026-11-02: Cover every launchd domain in target selection
+
+Apple and non-Apple daemons both use the system launchd domain. Exercise every
+discovered plist domain and the unknown fallback when constructing job targets
+and bootstrap prefixes, so a new or overlooked domain cannot silently use the
+user GUI domain.
+
+## 2026-11-02: Scope shared Makefile self-tests to their caller
+
+A shared self-test that always exercises every consumer couples otherwise independent project suites. Accept explicit consumer selections, validate them before making scratch space, and retain the unscoped form for the fleet-wide check.
+
+## 2026-11-02: Compute imported cache rates from imported prompt tokens
+
+RouterView CSV imports populate `tokens_prompt` but not `native_tokens_prompt`.
+Aggregating the latter made the cache hit rate zero even when imported rows had
+cached tokens. Exercise summary totals and filtered rates through a real CSV
+import so the aggregate uses the data actually stored by the active path.
+
+## 2026-11-02: Extend Excel tables when appending workbook rows
+
+Writing cells below an Excel table does not extend its range or filter. Exercise
+the shipped template through consecutive appends, and extend matching tables
+and their filters while preserving the workbook's formulas and lookup cells.
+
+## 2026-11-02: Label destructive date boundaries with their timezone
+
+RouterView's purge used UTC calendar dates for both generations and daily summaries, but its button did not identify the timezone. State the timezone at the control and in the setup guide, and exercise the rendered label alongside an independent boundary test so users can predict which rows remain.
+
+
+## 2026-11-03: Guard Bash assertion style, not only individual lines
+
+The remediation fixed macOS Bash 3.2's silently ignored `[[ ... ]]` failures in the scripts it touched, but identical lines in three other suites kept passing without checking anything. When a language trap makes assertions vacuous, add a repository check for the pattern (`tools/tests/test_bash_assertions.sh`) so new and untouched scripts are covered too.
+
+## 2026-11-03: zsh skips the EXIT trap when errexit fires inside a function
+
+Under zsh 5.9 with `set -e`, a failing command inside a function, or a function returning nonzero at top level, ends the script without running `trap … EXIT`, so shell suites left their temp roots in `$TMPDIR` whenever a test failed. `exit` and failing top-level commands still run the trap: run each test function in a subshell, `( "$test" )`, or make assertion helpers `exit`. Avoid `test || exit 1`: the `||` context disables errexit inside the function, so its failing steps are ignored.
+
+## 2026-11-03: Calling blur() from keydown runs onBlur with the old state
+
+HAR Scope's zoom field set its "cancel" state and then called `blur()` on Escape, but `onBlur` runs synchronously in the same handler and still saw the typed value, so Escape applied the edit instead of cancelling it. Signal a cancel that a synchronous handler must see through a ref, and test the cancel key, not only the accept key.
+
+## 2026-11-03: Build test temp directories on pytest's tmp_path
+
+Git Fleet's `make_tmpdir` helper called `tempfile.mkdtemp()` with no cleanup, leaving 42 directories in `$TMPDIR` on every suite run until more than 1,200 had built up. Test helpers that need fresh directories should be fixtures on `tmp_path` or `tmp_path_factory`, so pytest's retention removes them. To prove a suite is clean, run it with `TMPDIR` pointed at a private empty directory and count what is left.

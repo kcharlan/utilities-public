@@ -5892,6 +5892,7 @@ const SequenceView = ({ onInspect, isDark }) => {
   const [isPanning, setIsPanning] = useState(false);
   const [hoveredIndex, setHoveredIndex] = useState(null);
   const [zoomInput, setZoomInput] = useState(null);
+  const cancelZoomEdit = useRef(false);
   const panStart = useRef({ x: 0, y: 0, panX: 0, panY: 0 });
   const canvasRef = useRef(null);
   const [canvasSize, setCanvasSize] = useState({ width: 800, height: 600 });
@@ -6033,12 +6034,13 @@ const SequenceView = ({ onInspect, isDark }) => {
 
   return (
     htmlTag`<div class=${"flex flex-col h-full"}><div class=${"px-4 py-2 bg-white/80 dark:bg-card-dark/80 border-b border-gray-200 dark:border-gray-700 flex items-center gap-3 text-sm"}><select value=${filters.domain || ''} onInput=${(e) => setFilters({ ...filters, domain: e.target.value || null })} class=${"px-2 py-1 rounded border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-xs dark:text-white"}><option value=${""}>All domains</option>${domains.map(d => htmlTag`<option key=${d.domain} value=${d.domain}>${d.domain}</option>`)}</select><select value=${filters.flow || ''} onInput=${(e) => setFilters({ ...filters, flow: e.target.value || null })} class=${"px-2 py-1 rounded border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-xs dark:text-white"}><option value=${""}>All flows</option>${flows.map(f => htmlTag`<option key=${f.id} value=${f.id}>${f.name}</option>`)}</select><label class=${"flex items-center gap-1.5 text-xs text-gray-600 dark:text-gray-400 cursor-pointer"}><input type=${"checkbox"} checked=${showResponses} onInput=${(e) => setShowResponses(e.target.checked)} class=${"rounded"} />Show responses</label><span class=${"text-xs text-gray-400"}>${messages.length} messages</span><div class=${"ml-auto flex items-center gap-2"}><div class=${"flex items-center border border-gray-300 dark:border-gray-600 rounded overflow-hidden"}><button onClick=${() => setZoom(z => Math.max(0.2, z / 1.15))} title=${"Zoom out (-)"} class=${"px-1.5 py-0.5 text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700 border-r border-gray-300 dark:border-gray-600"}><${Icon} name=${"Minus"} size=${12} /></button><input type=${"text"} value=${zoomInput !== null ? zoomInput : Math.round(zoom * 100) + '%'} onInput=${(e) => setZoomInput(e.target.value)} onFocus=${(e) => { setZoomInput(String(Math.round(zoom * 100))); e.target.select(); }} onBlur=${() => {
+                if (cancelZoomEdit.current) { cancelZoomEdit.current = false; setZoomInput(null); return; }
                 const v = parseInt(zoomInput, 10);
                 if (!isNaN(v) && v >= 20 && v <= 300) setZoom(v / 100);
                 setZoomInput(null);
               }} onKeyDown=${(e) => {
                 if (e.key === 'Enter') e.target.blur();
-                if (e.key === 'Escape') { setZoomInput(null); e.target.blur(); }
+                if (e.key === 'Escape') { cancelZoomEdit.current = true; e.target.blur(); }
               }} class=${"w-12 text-center text-xs font-mono bg-transparent text-gray-700 dark:text-gray-200 outline-none py-0.5"} title=${"Type a zoom level (20-300) and press Enter"} /><button onClick=${() => setZoom(z => Math.min(3, z * 1.15))} title=${"Zoom in (+)"} class=${"px-1.5 py-0.5 text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700 border-l border-gray-300 dark:border-gray-600"}><${Icon} name=${"Plus"} size=${12} /></button></div><button onClick=${handleFitView} title=${"Fit to view (Home)"} class=${"px-2 py-0.5 text-xs rounded border border-gray-300 dark:border-gray-600 hover:bg-gray-100 dark:hover:bg-gray-700 dark:text-white"}>Fit</button><button onClick=${() => { setPan({ x: 40, y: 40 }); setZoom(1); }} title=${"Reset zoom (0)"} class=${"px-2 py-0.5 text-xs rounded border border-gray-300 dark:border-gray-600 hover:bg-gray-100 dark:hover:bg-gray-700 dark:text-white"}>Reset</button></div></div><div ref=${canvasRef} class=${`flex-1 seq-canvas ${isPanning ? 'panning' : ''}`} onWheel=${handleWheel} onMouseDown=${handleMouseDown} onMouseMove=${handleMouseMove} onMouseUp=${handleMouseUp} onMouseLeave=${handleMouseUp} onKeyDown=${handleKeyDown} tabIndex=${0} style=${{ outline: 'none' }}>${participants.length === 0 ? (
           htmlTag`<p class=${"text-gray-400 text-sm text-center py-8"}>No sequence data available</p>`
         ) : (

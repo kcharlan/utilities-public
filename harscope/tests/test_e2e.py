@@ -243,6 +243,63 @@ def test_sequence_wheel_and_pointer_pan(server, page, minimal_har_dict):
         expect(scene).not_to_have_attribute('style', before)
 
 
+def test_sequence_zoom_stepper_and_typed_zoom(server, page, minimal_har_dict):
+    """The -/+ buttons step by 1.15x within 20-300%; typed levels outside that range are ignored."""
+    with guard_browser_errors(page):
+        _load_synthetic(page, server, minimal_har_dict)
+        page.get_by_role('button', name='Sequence', exact=True).click()
+        expect(page.locator('.seq-canvas svg').first).to_be_visible()
+        scene = page.locator('.seq-canvas div[style*="transform"]').first
+        zoom_in = page.get_by_title('Zoom in (+)')
+        zoom_out = page.get_by_title('Zoom out (-)')
+        level = page.get_by_title('Type a zoom level (20-300) and press Enter')
+        for button in (zoom_in, zoom_out):  # Lucide Plus and Minus icons render inside the buttons.
+            expect(button.locator('svg path')).not_to_have_count(0)
+
+        def assert_zoom(text, scale):
+            expect(level).to_have_value(text)
+            transform = scene.evaluate('element => element.style.transform')
+            match = re.search(r'scale\(([\d.]+)\)', transform)
+            assert match, transform
+            assert float(match.group(1)) == pytest.approx(scale)
+
+        def type_level(value, key='Enter'):
+            shown = level.input_value()
+            level.click()  # Focus swaps the label for the bare editable number.
+            expect(level).to_have_value(shown.removesuffix('%'))
+            level.fill(value)
+            level.press(key)
+
+        assert_zoom('100%', 1)
+        zoom_in.click()
+        assert_zoom('115%', 1.15)
+        zoom_out.click()
+        assert_zoom('100%', 1)
+        zoom_out.click()
+        assert_zoom('87%', 1 / 1.15)
+        zoom_in.click()
+        assert_zoom('100%', 1)
+
+        type_level('250')
+        assert_zoom('250%', 2.5)
+        for rejected in ['301', '19', 'abc']:
+            type_level(rejected)
+            assert_zoom('250%', 2.5)
+        type_level('120', key='Escape')  # Escape cancels the typed level.
+        assert_zoom('250%', 2.5)
+
+        for _ in range(3):  # 250% -> 287.5% -> capped at 300% -> stays 300%
+            zoom_in.click()
+        assert_zoom('300%', 3)
+
+        type_level('20')
+        assert_zoom('20%', 0.2)
+        zoom_out.click()
+        assert_zoom('20%', 0.2)
+        type_level('300')
+        assert_zoom('300%', 3)
+
+
 def test_view_classes_have_styles(server, page, minimal_har_dict):
     from tools.testkit import assert_classes_styled
     with guard_browser_errors(page):

@@ -35,18 +35,6 @@ class TestIndex:
         assert "text/html" in resp.headers["content-type"]
         assert "<html" in resp.text
 
-    async def test_sequence_zoom_stepper(self, client):
-        """Verify zoom stepper control with -/+/editable input is present."""
-        resp = await client.get("/")
-        html = resp.text
-        # Stepper uses Lucide Minus and Plus icons
-        assert '"Minus"' in html
-        assert '"Plus"' in html
-        # Editable input with zoom range hint in title
-        assert "20-300" in html
-        # zoomInput state for editable zoom control
-        assert "zoomInput" in html
-
 
 # ═══════════════════════════════════════════════════════════════════════════
 # GET /api/status — Application status

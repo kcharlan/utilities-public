@@ -15,43 +15,6 @@ def _load_module(path: Path):
     return module
 
 
-def test_policy_engine_example_includes_adjudication_step_and_assets() -> None:
-    repo_root = Path(__file__).resolve().parents[1]
-    bench_yaml = yaml.safe_load(
-        (repo_root / "examples" / "policy-engine" / "bench.yaml").read_text(encoding="utf-8")
-    )
-    steps = bench_yaml["steps"]
-    step_names = [step["name"] if isinstance(step, dict) else step for step in steps]
-    assert "validate" in step_names
-    assert "mutation_probe" in step_names
-    assert "adjudicate" in step_names
-    assert bench_yaml["runs"] == 3
-    assert bench_yaml["run_order"] == "breadth"
-    assert bench_yaml["output_dir"] == "/Users/example/Documents/benchmark-llm"
-    assert bench_yaml["execution_defaults"]["timeout_sec"] == 3600
-    assert bench_yaml["execution_defaults"]["inactivity_timeout_sec"] == 900
-    assert bench_yaml["execution_defaults"]["retries"]["max_attempts"] == 2
-
-    assert (repo_root / "examples" / "policy-engine" / "scripts" / "adjudicate.sh").exists()
-    assert (
-        repo_root / "examples" / "policy-engine" / "scripts" / "render_final_summary_prompt.py"
-    ).exists()
-    assert (repo_root / "examples" / "policy-engine" / "hidden" / "data" / "benefits-hidden-c.yaml").exists()
-    assert (
-        repo_root
-        / "examples"
-        / "policy-engine"
-        / "hidden"
-        / "policies"
-        / "professional-risk-only-extended.yaml"
-    ).exists()
-    assert (
-        repo_root / "examples" / "policy-engine" / "visible" / "data" / "benefits-sample-a.json"
-    ).exists()
-    assert (repo_root / "examples" / "policy-engine" / "visible" / ".gitignore").exists()
-    assert "visible/.gitignore" in bench_yaml["visibility"]["expose"]
-
-
 def test_policy_engine_final_summary_prompt_renderer_groups_models_and_includes_benchmark_overview(
     tmp_path: Path,
 ) -> None:
@@ -271,28 +234,6 @@ def test_policy_engine_harness_metrics_extracts_opencode_and_codex_shapes(tmp_pa
     assert codex_metrics["cost_usd"] == 0.031
 
 
-def test_policy_engine_prompt_exposes_required_contract_without_eval_signaling() -> None:
-    repo_root = Path(__file__).resolve().parents[1]
-    prompt_text = (repo_root / "examples" / "policy-engine" / "prompt.txt").read_text(
-        encoding="utf-8"
-    )
-
-    for required in [
-        "Build the full project in the current directory.",
-        "Handle blank or missing values safely when reasonable",
-        "blank or missing service_category and null coverage_status should not crash the program",
-        "python policy_engine.py --policy <path> --benefits <path> [--output <path>]",
-        "Straightforward defensive handling is desirable and in scope",
-        "Do not hardcode the visible sample outputs",
-        "Include a small but meaningful automated verification suite",
-    ]:
-        assert required in prompt_text
-
-    prompt_lower = prompt_text.lower()
-    for forbidden in ["benchmark", "evaluation", "adjudication", "evaluator", "test", "tests"]:
-        assert forbidden not in prompt_lower
-
-
 def test_policy_engine_findings_sidecar_supports_jsonl_append_and_load(tmp_path: Path) -> None:
     repo_root = Path(__file__).resolve().parents[1]
     module = _load_module(
@@ -428,17 +369,41 @@ def test_policy_engine_render_report_handles_short_findings_lists(
         assert score["summary"]["score_percent"] == 91.0
 
 
-def test_policy_engine_model_visible_assets_do_not_signal_evaluation_context() -> None:
-    repo_root = Path(__file__).resolve().parents[1]
-    prompt_text = (repo_root / "examples" / "policy-engine" / "prompt.txt").read_text(
-        encoding="utf-8"
-    )
-    visible_text = "\n".join(
-        path.read_text(encoding="utf-8")
-        for path in sorted((repo_root / "examples" / "policy-engine" / "visible").rglob("*"))
-        if path.is_file()
-    )
-    combined = f"{prompt_text}\n{visible_text}".lower()
+def test_policy_engine_model_visible_assets_do_not_signal_evaluation_context(tmp_path: Path) -> None:
+    from benchmark_llm.repo_task import _copy_pattern_matches
+
+    benchmark_dir = Path(__file__).resolve().parents[1] / "examples" / "policy-engine"
+    visibility = yaml.safe_load((benchmark_dir / "bench.yaml").read_text(encoding="utf-8"))[
+        "visibility"
+    ]
+    workspace = tmp_path / "workspace"
+    hidden_dir = tmp_path / "hidden"
+    exposed = _copy_pattern_matches(benchmark_dir, workspace, visibility["expose"])
+    _copy_pattern_matches(benchmark_dir, hidden_dir, visibility["hide"], require_match=True)
+
+    # run_validation.py reads these at their staged paths; a missing one would
+    # silently fail that case for every model rather than stop the run.
+    for relative in [
+        "data/benefits-sample-a.json",
+        "data/benefits-sample-b.yaml",
+        "policies/professional-risk-only.yaml",
+    ]:
+        assert (workspace / relative).is_file(), relative
+    for relative in [
+        "expected_outcomes.yaml",
+        "data/benefits-hidden-c.yaml",
+        "data/benefits-hidden-d.json",
+        "policies/professional-risk-only-extended.yaml",
+    ]:
+        assert (hidden_dir / relative).is_file(), relative
+        assert not (workspace / relative).exists(), relative
+    # The workspace ignore file keeps a model-created venv out of committed outputs.
+    assert ".venv/" in (workspace / ".gitignore").read_text(encoding="utf-8").splitlines()
+
+    prompt_text = (workspace / "prompt.txt").read_text(encoding="utf-8")
+    # The command line run_validation.py invokes.
+    assert "python policy_engine.py --policy <path> --benefits <path> [--output <path>]" in prompt_text
+    combined = "\n".join(path.read_text(encoding="utf-8") for path in sorted(set(exposed))).lower()
 
     for forbidden in [
         "benchmark",

@@ -7,7 +7,8 @@
 
 set -euo pipefail
 
-readonly TEST_SCRIPT_DIR="${0:A:h}"
+readonly TEST_SCRIPT="${0:A}"
+readonly TEST_SCRIPT_DIR="${TEST_SCRIPT:h}"
 readonly SCRIPT_UNDER_TEST="${TEST_SCRIPT_DIR:h}/propagate-updates.zsh"
 
 umask 077
@@ -967,9 +968,36 @@ test_prune_warns_and_preserves_contents_on_removal_error() {
   [[ -f "$root/docker-20200101-010101/marker" ]] || fail 'failed removal lost contents'
 }
 
+# Fails through errexit inside a function, the path on which zsh 5.9 skips the
+# EXIT trap. Only the cleanup regression test below runs it.
+synthetic_failing_case() {
+  write_file "$SUITE_ROOT/synthetic-failing-case/marker" synthetic
+  print -- 'synthetic failing case ran'
+  false
+}
+
+test_failing_case_removes_suite_root() {
+  new_case failing_case_cleanup
+  local private_tmp="$CASE/tmp"
+  mkdir -p "$private_tmp"
+  RUN_STATUS=0
+  TMPDIR="$private_tmp" PROPAGATE_UPDATES_TESTS_INJECT_FAILURE=1 \
+    /bin/zsh "$TEST_SCRIPT" > "$CASE/out" 2>&1 || RUN_STATUS=$?
+  (( RUN_STATUS != 0 )) || fail 'suite with a failing case exited 0'
+  assert_contains "$CASE/out" 'synthetic failing case ran'
+  assert_not_contains "$CASE/out" 'propagate-updates tests passed'
+  [[ -z "$(find "$private_tmp" -mindepth 1 -print -quit)" ]] ||
+    fail "failing case left $(find "$private_tmp" -mindepth 1 -maxdepth 1)"
+}
+
 tests=(${(ok)functions[(I)test_*]})
+if [[ -n "${PROPAGATE_UPDATES_TESTS_INJECT_FAILURE:-}" ]]; then
+  tests=(synthetic_failing_case)
+fi
+# Each case runs in a subshell so a failure stops the suite here, at top level,
+# where the EXIT trap still removes the suite root.
 for test_name in "${tests[@]}"; do
-  "$test_name"
+  ( "$test_name" )
   print -- "ok - $test_name"
 done
 print -- "All ${#tests} propagate-updates tests passed."

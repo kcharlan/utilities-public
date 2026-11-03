@@ -254,8 +254,8 @@ independent recovery copies remain under
 receipt, complete bundle bytes/modes and metadata without executing the app.
 It does not contact the vault or cloud. The local installer validates source, staged and active
 versions and identity, preserves recovery copies, and never stops or relaunches
-a running process. The old visible name or
-version remains until a normal quit/reopen; that restart clears the RAM cache and
+a running process. A copy that is already running keeps the previous
+version until a normal quit/reopen; that restart clears the RAM cache and
 requires normal credential retrieval/authorization again. Preserve the runtime
 state directory. An old copy in `~/Applications` is retired separately, with a
 private backup, only after the canonical installed release is verified.

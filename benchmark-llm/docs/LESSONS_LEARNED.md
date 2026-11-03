@@ -58,3 +58,11 @@
 - Persist command provenance and failure context when prompt-batch or plugin
   execution fails; completed executor calls may already have incurred cost.
   Validate plugin scores before summarization or writing successful artifacts.
+
+- Remove temporary files in a `finally` block, not after the normal return
+  path. `run_command` unlinked its `mkstemp` stdout/stderr logs only after a
+  completed command, so a Ctrl-C, a raised progress callback or a cleanup
+  `PermissionError` left `benchmark-llm-std*.log` files in `$TMPDIR` on every
+  interrupted step (and on every run of the interrupt tests). Regression:
+  `test_interrupted_command_removes_its_temporary_output_logs` in
+  `tests/test_process_cleanup.py`.

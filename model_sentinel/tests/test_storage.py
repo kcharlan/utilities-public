@@ -510,7 +510,7 @@ def test_recent_change_rows_completes_large_query_under_two_seconds(tmp_path: Pa
     assert elapsed < 2.0
 
 
-def test_load_json_value_is_public_with_private_compatibility_alias() -> None:
+def test_load_json_value_parses_json_text_and_passes_none_through() -> None:
     assert storage.load_json_value('{"fake": [1, true]}') == {"fake": [1, True]}
     assert storage.load_json_value(None) is None
 
