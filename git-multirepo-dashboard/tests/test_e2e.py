@@ -311,6 +311,17 @@ def server(server_context):
     return server_context['url']
 
 
+def test_status_version_matches_source(server_context, page):
+    sys.path.insert(0, str(PROJECT_ROOT))
+    try:
+        import git_dashboard
+    finally:
+        sys.path.remove(str(PROJECT_ROOT))
+    response = page.request.get(f"{server_context['url']}/api/status")
+    assert response.ok
+    assert response.json()["version"] == git_dashboard.VERSION
+
+
 def test_fleet_browser_refresh_scans_synthetic_repo(page, server_context, tmp_path):
     import sqlite3
     repo = _create_git_repo(tmp_path, 'synthetic-refresh')

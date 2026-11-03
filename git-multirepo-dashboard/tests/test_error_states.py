@@ -11,6 +11,7 @@ Tests for:
 - HTML template strings for UI components
 """
 import asyncio
+import shutil
 import sqlite3
 import subprocess
 import sys
@@ -101,6 +102,10 @@ def test_scan_fleet_quick_includes_missing_path(test_app, tmp_path):
     matches = [x for x in results if x["id"] == repo_id]
     assert len(matches) == 1, "Missing-path repo must appear in results"
     assert matches[0]["path_exists"] is False
+    for key, expected in {"has_uncommitted": False, "modified_count": 0,
+                          "untracked_count": 0, "staged_count": 0,
+                          "quick_scan_error": None}.items():
+        assert matches[0][key] == expected
 
 
 def test_scan_fleet_quick_valid_path_has_path_exists_true(test_app, tmp_path):
@@ -171,6 +176,108 @@ def test_fleet_response_includes_scan_error(test_app, tmp_path):
 
 
 # ── Repo detail tests ────────────────────────────────────────────────────────
+
+@pytest.mark.parametrize("case, expected", [
+    ("failed_and_recovered", (None, None, None, None, "error")),
+    ("dirty", (True, 0, 1, 0, None)),
+    ("clean", (False, 0, 0, 0, None)),
+    ("missing_dirty", (False, 0, 0, 0, None)),
+    ("missing_failed", (False, 0, 0, 0, None)),
+    ("default_row", (False, 0, 0, 0, None)),
+    ("explicit_null_row", (False, 0, 0, 0, None)),
+    ("empty_error", (True, 2, 3, 4, "")),
+])
+def test_repo_detail_quick_status_matches_fleet(test_app, tmp_path, case, expected):
+    client, db_path = test_app
+    repo = _make_git_repo(tmp_path / "synthetic")
+    repo_id = _insert_repo(db_path, "synthetic", str(repo))
+    if case in ("dirty", "missing_dirty"):
+        (repo / "untracked.txt").write_text("synthetic")
+    if case in ("failed_and_recovered", "missing_failed"):
+        (repo / ".git" / "index").write_bytes(b"synthetic corrupt index")
+    if case in ("dirty", "clean", "missing_dirty", "missing_failed", "failed_and_recovered"):
+        assert client.post("/api/fleet/refresh").status_code == 200
+    elif case == "explicit_null_row":
+        _set_ws(db_path, repo_id, has_uncommitted=None, modified_count=None,
+                untracked_count=None, staged_count=None)
+    elif case == "empty_error":
+        _set_ws(db_path, repo_id, has_uncommitted=1, modified_count=2,
+                untracked_count=3, staged_count=4, quick_scan_error="")
+    else:
+        _set_ws(db_path, repo_id)
+    if case.startswith("missing_"):
+        shutil.rmtree(repo)
+
+    keys = ("has_uncommitted", "modified_count", "untracked_count", "staged_count", "quick_scan_error")
+
+    def check(values):
+        fleet_response = client.get("/api/fleet")
+        detail_response = client.get(f"/api/repos/{repo_id}")
+        assert fleet_response.status_code == detail_response.status_code == 200
+        fleet = next(item for item in fleet_response.json()["repos"] if item["id"] == repo_id)
+        detail = detail_response.json()["working_state"]
+        for key, value in zip(keys, values):
+            if key == "quick_scan_error" and value == "error":
+                assert fleet[key]
+                assert detail[key] == fleet[key]
+            else:
+                assert fleet[key] == value
+                assert detail[key] == value
+
+    check(expected)
+    if case == "failed_and_recovered":
+        (repo / ".git" / "index").unlink()
+        subprocess.run(["git", "-C", str(repo), "reset"], check=True, capture_output=True)
+        assert client.post("/api/fleet/refresh").status_code == 200
+        check((False, 0, 0, 0, None))
+
+
+def test_repo_detail_without_working_state(test_app, tmp_path):
+    client, db_path = test_app
+    repo = _make_git_repo(tmp_path / "no_state")
+    repo_id = _insert_repo(db_path, "no_state", str(repo))
+    detail = client.get(f"/api/repos/{repo_id}")
+    fleet = client.get("/api/fleet")
+    assert detail.status_code == fleet.status_code == 200
+    assert detail.json()["working_state"] is None
+    entry = next(item for item in fleet.json()["repos"] if item["id"] == repo_id)
+    for key, value in {"has_uncommitted": False, "modified_count": 0, "untracked_count": 0,
+                       "staged_count": 0, "quick_scan_error": None}.items():
+        assert entry[key] == value
+
+
+@pytest.mark.parametrize("missing", [False, True])
+def test_repo_detail_status_presentation_preserves_metadata_and_storage(test_app, tmp_path, missing):
+    client, db_path = test_app
+    repo = _make_git_repo(tmp_path / "metadata")
+    repo_id = _insert_repo(db_path, "metadata", str(repo))
+    _set_ws(db_path, repo_id, has_uncommitted=1, modified_count=2, untracked_count=3,
+            staged_count=4, quick_scan_error="synthetic failure", current_branch="sample",
+            last_commit_hash="abc", last_commit_message="synthetic", last_commit_date="2026-01-01",
+            checked_at="2026-01-02", dep_check_error=1,
+            missing_dep_tools='[{"tool":"synthetic"}]', dep_manifests='[{"path":"synthetic"}]')
+    columns = "has_uncommitted, modified_count, untracked_count, staged_count, quick_scan_error"
+    with sqlite3.connect(db_path) as conn:
+        before = conn.execute(f"SELECT {columns} FROM working_state WHERE repo_id=?", (repo_id,)).fetchone()
+    if missing:
+        shutil.rmtree(repo)
+    fleet = client.get("/api/fleet")
+    detail = client.get(f"/api/repos/{repo_id}")
+    assert fleet.status_code == detail.status_code == 200
+    entry = next(item for item in fleet.json()["repos"] if item["id"] == repo_id)
+    ws = detail.json()["working_state"]
+    expected = (False, 0, 0, 0, None) if missing else (None, None, None, None, "synthetic failure")
+    for key, value in zip(("has_uncommitted", "modified_count", "untracked_count", "staged_count", "quick_scan_error"), expected):
+        assert entry[key] == value
+        assert ws[key] == value
+    for key, value in {"current_branch": "sample", "last_commit_hash": "abc",
+                       "last_commit_message": "synthetic", "last_commit_date": "2026-01-01",
+                       "checked_at": "2026-01-02", "dep_check_error": True,
+                       "missing_dep_tools": [{"tool": "synthetic"}],
+                       "dep_manifests": [{"path": "synthetic"}]}.items():
+        assert ws[key] == value
+    with sqlite3.connect(db_path) as conn:
+        assert conn.execute(f"SELECT {columns} FROM working_state WHERE repo_id=?", (repo_id,)).fetchone() == before
 
 def test_repo_detail_includes_path_exists_false(test_app, tmp_path):
     """GET /api/repos/{id} returns path_exists=false when path is deleted."""
