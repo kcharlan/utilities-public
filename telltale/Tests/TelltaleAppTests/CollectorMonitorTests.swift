@@ -119,9 +119,10 @@ private func waitForLock(_ semaphore: DispatchSemaphore) -> Bool { semaphore.wai
             #expect(assessed)
             #expect(!finished)
             release.signal()
-            let releasedByTest = try await writer.value
-            #expect(releasedByTest)
+            let writerResult = await writer.result
             _ = await check.value
+            let releasedByTest = try writerResult.get()
+            #expect(releasedByTest)
             #expect(try h.store.value(.collectorAcknowledgement) == nil)
         }
     }
