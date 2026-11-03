@@ -1,8 +1,6 @@
 import Foundation
 
 public enum LineReader {
-    public enum ReadError: Error { case lineTooLong }
-    public static let maximumLineBytes = 16 * 1024 * 1024
     /// Returns the offset after the last complete line. Read errors propagate to the caller.
     public static func completeLines(of url: URL, from offset: Int, _ body: (Data) -> Void) throws -> Int {
         let handle = try FileHandle(forReadingFrom: url)
@@ -11,17 +9,22 @@ public enum LineReader {
         var consumed = UInt64(exactly: offset).map { $0 <= size } == true ? offset : 0
         try handle.seek(toOffset: UInt64(consumed))
         var buffer = Data()
+        var search = buffer.startIndex
         while let chunk = try handle.read(upToCount: 1 << 20), !chunk.isEmpty {
             buffer.append(chunk)
             var lineStart = buffer.startIndex
-            while let newline = buffer[lineStart...].firstIndex(of: 0x0A) {
-                guard newline - lineStart <= maximumLineBytes else { throw ReadError.lineTooLong }
+            while let newline = buffer[search...].firstIndex(of: 0x0A) {
                 body(buffer[lineStart..<newline])
                 consumed += newline - lineStart + 1
                 lineStart = newline + 1
+                search = lineStart
             }
+            // Bytes up to endIndex have been searched, including any unfinished line.
+            search = buffer.endIndex
+            let searchedRemainder = search - lineStart
             buffer.removeSubrange(buffer.startIndex..<lineStart)
-            guard buffer.count <= maximumLineBytes else { throw ReadError.lineTooLong }
+            // Data can retain nonzero indices after removal; rebase against its actual start.
+            search = buffer.startIndex + searchedRemainder
         }
         return consumed
     }

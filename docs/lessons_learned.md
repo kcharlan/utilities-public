@@ -2383,3 +2383,22 @@ Git Fleet's `make_tmpdir` helper called `tempfile.mkdtemp()` with no cleanup, le
 ## 2026-11-03: Exercise every API consumer of shared status fields
 
 Fleet and repository detail both expose quick status, so exercise each consumer when changing its presentation. Share the rule in `present_quick_status` and cover boundary cases through `test_repo_detail_quick_status_matches_fleet`.
+
+## 2026-11-03: Reproduce log size limits with synthetic inputs
+
+A cap can reject valid local logs at the reader or decoder before provider parsing sees them. Reproduce each boundary with conspicuously synthetic inputs, including large single-segment frames and resumed plain lines, and account for decoder allocations, reader buffers and accumulated parser results. The Telltale `ZstdLargeInputTests`, `LineReaderLargeLineTests` and provider regressions exercise the acceptance contract; their shared `LargeLogSizes` fixtures document its sizing.
+
+## 2026-11-03: Preserve dynamic error types when rendering read failures
+
+Foundation can bridge Swift errors to NSError, so a broad NSError cast can hide a
+Swift error's own description. Check the dynamic NSError type and CocoaError
+explicitly, then prefer a Swift CustomStringConvertible description; exercise
+both protocols, an NSError subclass and the localized fallback.
+
+## 2026-11-03: Test actor responsiveness through lock ordering
+
+A wall-clock deadline around an async sleep also measures unrelated work on the
+same actor. Hold the contested resource until the actor observes the operation
+in flight, then release it and verify the actual write. A bounded watchdog
+prevents a broken synchronous operation from hanging the test; deliberately
+move the write onto the actor to confirm the test catches that regression.
