@@ -24,6 +24,6 @@ if "$tool" --delete --repo "$d/repo" --worktree "$d/wt" --yes; then
   echo 'ignored file was deleted' >&2; exit 1
 fi
 "$tool" --delete --repo "$d/repo" --worktree "$d/wt" --yes --force
-[[ ! -e "$d/wt" ]]
+[[ ! -e "$d/wt" ]] || { echo 'FAIL: worktree-helper/tests/test_delete_safety.sh:27' >&2; exit 1; }
 git -C "$d/repo" rev-parse --verify saved >/dev/null
 echo 'delete safety passed'

@@ -75,6 +75,18 @@ def test_corrupt_counter_is_preserved(raw):
     assert any(str(saved) in warning for warning in result.warnings)
 
 
+@pytest.mark.parametrize("raw", [b"text", b"nan", b"-1", b"inf"], ids=["text", "nan", "-1", "inf"])
+def test_corrupt_lifetime_is_preserved(raw):
+    state.runtime_home().mkdir()
+    path = state.lifetime_path()
+    path.write_bytes(raw)
+    result = state.read_counters()
+    saved, = path.parent.glob(path.name + ".unreadable-*")
+    assert result.counters.lifetime_seconds == 0.0
+    assert saved.read_bytes() == raw
+    assert any(str(saved) in warning for warning in result.warnings)
+
+
 def test_unreadable_home_is_a_warning():
     state.runtime_home().write_text("synthetic")
     assert state.read_counters().warnings

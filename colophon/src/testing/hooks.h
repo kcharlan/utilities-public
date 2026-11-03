@@ -29,8 +29,6 @@ void cp_atomic_created(int fd);
 void cp_atomic_closed(int fd);
 int cp_atomic_fd(void);
 unsigned cp_atomic_close_count(void);
-size_t cp_page_warn_bytes(void);
-bool cp_browser_fallback_fail(void);
 int64_t cp_catalog_budget(const char *name,int64_t fallback);
 #else
 /* Sanitizer instrumentation at -O1 may otherwise emit a local override-named
@@ -52,8 +50,6 @@ CP_RELEASE_INLINE Err cp_monotonic_finish(void) {
     return ERR_SUCCESS;
 }
 CP_RELEASE_INLINE bool cp_fault(const char *point) { (void)point;return false; }
-CP_RELEASE_INLINE size_t cp_page_warn_bytes(void) { return 20u*1024u*1024u; }
-CP_RELEASE_INLINE bool cp_browser_fallback_fail(void) { return false; }
 CP_RELEASE_INLINE int64_t cp_catalog_budget(const char *name,int64_t fallback) {(void)name;return fallback;}
 #undef CP_RELEASE_INLINE
 #endif

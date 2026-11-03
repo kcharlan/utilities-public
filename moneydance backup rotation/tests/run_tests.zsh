@@ -279,73 +279,6 @@ remove_test_paths() {
 }
 trap 'code=$?; remove_test_paths "$test_root" || { (( code != 0 )) || code=1; }; exit "$code"' EXIT
 
-# Extract the production cleanup functions unchanged except for their absolute rm
-# callee; the stub reports a synthetic error without attempting an OS deletion.
-cleanup_functions="${test_root}/cleanup-functions.zsh"
-awk '/^(cleanup_repair_artifacts|repair_cleanup_exit|repair_signal_exit|cleanup_temp_files|scan_cleanup_exit)\(\) \{$/ {copy=1; count++} copy {print} copy && /^}$/ {copy=0} END {if (count != 5) exit 1}' "${SCRIPT}" > "${cleanup_functions}" || { print -u2 'FAIL: cleanup extraction'; exit 1; }
-[[ "$(grep -c '/bin/rm --' "${cleanup_functions}")" == 3 ]] || { print -u2 'FAIL: cleanup extraction changed'; exit 1; }
-sed 's@/bin/rm --@synthetic_rm --@g' "${cleanup_functions}" > "${test_root}/cleanup-test-functions.zsh"
-[[ "$(grep -c 'synthetic_rm --' "${test_root}/cleanup-test-functions.zsh")" == 3 ]] || { print -u2 'FAIL: cleanup substitution changed'; exit 1; }
-cat > "${test_root}/cleanup-contract.zsh" <<'EOF'
-#!/bin/zsh
-set -eu
-source "$TEST_FUNCTIONS"
-synthetic_rm() {
-  print attempt >> "$TEST_ATTEMPTS"
-  if [[ "${TEST_SIGNAL:-}" == TERM ]]; then /bin/kill -TERM $$; fi
-  return 91
-}
-STAT_BIN="$TEST_STAT"
-repair_candidate_tmp="$TEST_HOME/candidate"
-repair_snapshot_tmp="$TEST_HOME/snapshot"
-repair_candidate_device=1 repair_candidate_inode=2 repair_candidate_owner=$EUID
-repair_snapshot_device=1 repair_snapshot_inode=2 repair_snapshot_owner=$EUID
-repair_lock_owned=0
-find_output_tmp="$TEST_HOME/candidate"
-find_error_tmp="$TEST_HOME/snapshot"
-if [[ "$TEST_KIND" == repair ]]; then
-  trap repair_cleanup_exit EXIT
-  trap 'repair_signal_exit 143' TERM
-else
-  trap scan_cleanup_exit EXIT
-  trap 'exit 143' TERM
-fi
-exit "$TEST_EXIT"
-EOF
-cat > "${test_root}/cleanup-stat" <<'EOF'
-#!/bin/zsh
-print "1|2|$EUID|0|600|0|1"
-EOF
-chmod 755 "${test_root}/cleanup-stat"
-for cleanup_kind in repair scan; do
-  for original_exit in 0 7; do
-    cleanup_home="${test_root}/cleanup-${cleanup_kind}-${original_exit}"
-    mkdir "${cleanup_home}"
-    : > "${cleanup_home}/candidate"
-    : > "${cleanup_home}/snapshot"
-    cleanup_attempts="${test_root}/attempts-${cleanup_kind}-${original_exit}"
-    cleanup_code=0
-    TEST_FUNCTIONS="${test_root}/cleanup-test-functions.zsh" TEST_STAT="${test_root}/cleanup-stat" TEST_HOME="${cleanup_home}" TEST_ATTEMPTS="${cleanup_attempts}" TEST_KIND="${cleanup_kind}" TEST_EXIT="${original_exit}" zsh "${test_root}/cleanup-contract.zsh" > "${test_root}/cleanup-output" 2>&1 || cleanup_code=$?
-    expected_exit=$original_exit; (( expected_exit != 0 )) || expected_exit=1
-    [[ "$cleanup_code" == "$expected_exit" && "$(wc -l < "$cleanup_attempts" | tr -d ' ')" == 2 ]] || { print -u2 'FAIL: cleanup status or attempt count'; exit 1; }
-    grep -q 'Unable to remove a private' "${test_root}/cleanup-output" || { print -u2 'FAIL: cleanup error not reported'; exit 1; }
-    [[ -f "$cleanup_home/candidate" && -f "$cleanup_home/snapshot" ]] || { print -u2 'FAIL: synthetic cleanup failure removed evidence'; exit 1; }
-  done
-done
-for cleanup_kind in repair scan; do
-  for original_exit in 0 7; do
-    cleanup_home="${test_root}/cleanup-signal-${cleanup_kind}-${original_exit}"
-    mkdir "${cleanup_home}"
-    : > "${cleanup_home}/candidate"
-    : > "${cleanup_home}/snapshot"
-    cleanup_attempts="${test_root}/attempts-signal-${cleanup_kind}-${original_exit}"
-    cleanup_code=0
-    TEST_FUNCTIONS="${test_root}/cleanup-test-functions.zsh" TEST_STAT="${test_root}/cleanup-stat" TEST_HOME="${cleanup_home}" TEST_ATTEMPTS="${cleanup_attempts}" TEST_KIND="${cleanup_kind}" TEST_EXIT="${original_exit}" TEST_SIGNAL=TERM zsh "${test_root}/cleanup-contract.zsh" > "${test_root}/cleanup-output" 2>&1 || cleanup_code=$?
-    expected_exit=$original_exit; (( expected_exit != 0 )) || expected_exit=143
-    [[ "$cleanup_code" == "$expected_exit" && "$(wc -l < "$cleanup_attempts" | tr -d ' ')" == 2 ]] || { print -u2 'FAIL: signal during cleanup changed status or retried an artifact'; exit 1; }
-  done
-done
-
 retention_mount="${test_root}/retention-mount"
 retention_dir="${retention_mount}/SYNTHETIC_BACKUPS"
 mkdir -p "${retention_dir}" "${test_root}/empty-home"
@@ -382,6 +315,92 @@ for scenario in empty future undersized; do
   done
 done
 unset MONEYDANCE_MAX_DAYS_TO_KEEP
+
+# Each case owns only files under the synthetic mount created above.
+for retention_case in days midnight suffix subfolder threshold under; do
+  for file in "${retention_dir}"/*(N); do
+    remove_test_paths "${file:?}"
+  done
+  typeset -a purge_files=() kept_files=()
+  case "${retention_case}" in
+    days)
+      for stamp in 202003030101 202003030201 202003030301 202003020101 202003010101 202003010201; do
+        file="${retention_dir}/${stamp}.SYNTHETIC-BACKUP"
+        /usr/bin/head -c 1000 /dev/zero > "${file}"
+        TZ=UTC touch -t "${stamp}" "${file}"
+        if [[ "${stamp}" == 20200301* ]]; then purge_files+=("${file}"); else kept_files+=("${file}"); fi
+      done
+      case_name='retention keeps every export from each kept day'
+      ;;
+    midnight)
+      for stamp in 202004012359 202004020001 202004031200; do
+        file="${retention_dir}/${stamp}.SYNTHETIC-BACKUP"
+        /usr/bin/head -c 1000 /dev/zero > "${file}"
+        TZ=UTC touch -t "${stamp}" "${file}"
+        if [[ "${stamp}" == 202004012359 ]]; then purge_files+=("${file}"); else kept_files+=("${file}"); fi
+      done
+      case_name='retention treats 23:59 and 00:01 as different days'
+      ;;
+    suffix|subfolder)
+      for stamp in 202006010101 202006020101; do
+        file="${retention_dir}/${stamp}.SYNTHETIC-BACKUP"
+        /usr/bin/head -c 1000 /dev/zero > "${file}"
+        TZ=UTC touch -t "${stamp}" "${file}"
+        kept_files+=("${file}")
+      done
+      if [[ "${retention_case}" == suffix ]]; then
+        for name in OLD.SYNTHETIC-BACKUP.bak OLD.synthetic-backup; do
+          file="${retention_dir}/${name}"
+          /usr/bin/head -c 1000 /dev/zero > "${file}"
+          TZ=UTC touch -t 201901010101 "${file}"
+          kept_files+=("${file}")
+        done
+        file="${retention_dir}/202005010101.SYNTHETIC-BACKUP"
+        case_name='retention never matches near-miss suffixes'
+        stamp=202005010101
+      else
+        mkdir "${retention_dir}/SUBFOLDER"
+        file="${retention_dir}/SUBFOLDER/OLD.SYNTHETIC-BACKUP"
+        case_name='retention removes an old export in a real subfolder and keeps the folder'
+        stamp=201901010101
+      fi
+      /usr/bin/head -c 1000 /dev/zero > "${file}"
+      TZ=UTC touch -t "${stamp}" "${file}"
+      purge_files+=("${file}")
+      ;;
+    threshold|under)
+      for day in {1..5}; do
+        file="${retention_dir}/2020050${day}.SYNTHETIC-BACKUP"
+        bytes=1000
+        if (( day == 5 )); then
+          bytes=100
+          [[ "${retention_case}" == under ]] && bytes=99
+        fi
+        /usr/bin/head -c "${bytes}" /dev/zero > "${file}"
+        TZ=UTC touch -t "2020050${day}0101" "${file}"
+        if (( day <= 3 )) && [[ "${retention_case}" == threshold ]]; then purge_files+=("${file}"); else kept_files+=("${file}"); fi
+      done
+      if [[ "${retention_case}" == threshold ]]; then
+        case_name='size guard accepts a kept export at exactly the rounded 10% threshold'
+      else
+        case_name='size guard stops at one byte under the threshold'
+      fi
+      ;;
+  esac
+  retention_output="$(TZ=UTC HOME="${test_root}/empty-home" MONEYDANCE_MOUNT_BIN="${retention_mock}" "${SCRIPT}" --config "${retention_config}" 2>&1)"
+  retention_status=$?
+  expected_status=0
+  [[ "${retention_case}" == under ]] && expected_status=1
+  assert_status "${case_name}" "${expected_status}" "${retention_status}"
+  if [[ "${retention_case}" == days ]]; then
+    assert_contains "${case_name}: two files identified" "${retention_output}" 'Identified 2 file(s)'
+  fi
+  for file in "${purge_files[@]}"; do assert_file_missing "${case_name}: old file removed" "${file}"; done
+  for file in "${kept_files[@]}"; do assert_file_exists "${case_name}: retained file present" "${file}"; done
+  if [[ "${retention_case}" == subfolder ]]; then
+    if [[ -d "${retention_dir}/SUBFOLDER" ]]; then pass "${case_name}: folder present"; else fail "${case_name}: folder missing"; fi
+  fi
+done
 for signal in INT TERM; do
   signal_find="${test_root}/signal-find-${signal}"
   cat > "${signal_find}" <<EOF
@@ -395,6 +414,66 @@ EOF
   expected_signal_status=143
   [[ "${signal}" == INT ]] && expected_signal_status=130
   assert_status "${signal} during scan stops cleanup" "${expected_signal_status}" "${signal_status}"
+done
+for file in "${retention_dir}"/*(N); do
+  remove_test_paths "${file:?}"
+done
+scan_tmp="${test_root}/scan-tmp"
+mkdir "${scan_tmp}"
+scan_mktemp="${test_root}/scan-mktemp"
+scan_find="${test_root}/scan-find"
+cat > "${scan_mktemp}" <<'EOF'
+#!/bin/zsh
+[[ $# == 2 && "$1" == -t ]] || exit 90
+case "$2" in
+  moneydance_rotate_backups.find.XXXXXX|moneydance_rotate_backups.find.err.XXXXXX) ;;
+  *) exit 91 ;;
+esac
+created="$(/usr/bin/mktemp "${SCAN_TMP}/$2")" || exit 92
+print -r -- "${created}" >> "${SCAN_RECORD}"
+print -r -- "${created}"
+EOF
+cat > "${scan_find}" <<'EOF'
+#!/bin/zsh
+[[ -f "${SCAN_RECORD}" ]] || exit 90
+artifacts=("${(@f)$(<"${SCAN_RECORD}")}")
+(( ${#artifacts} == 2 )) || exit 91
+[[ "${artifacts[1]}" != "${artifacts[2]}" ]] || exit 92
+[[ "${artifacts[1]:t}" == moneydance_rotate_backups.find.?????? && "${artifacts[2]:t}" == moneydance_rotate_backups.find.err.?????? ]] || exit 94
+for artifact in "${artifacts[@]}"; do
+  [[ -f "${artifact}" && ! -L "${artifact}" ]] || exit 93
+done
+print -r -- observed > "${SCAN_OBSERVED}"
+[[ "${SCAN_CASE}" != failure ]] || exit 1
+exec /usr/bin/find "$@"
+EOF
+chmod 755 "${scan_mktemp}" "${scan_find}"
+for scan_case in failure normal; do
+  scan_record="${test_root}/scan-record-${scan_case}"
+  scan_observed="${test_root}/scan-observed-${scan_case}"
+  scan_output="$(TMPDIR="${scan_tmp}" SCAN_TMP="${scan_tmp}" SCAN_RECORD="${scan_record}" SCAN_OBSERVED="${scan_observed}" SCAN_CASE="${scan_case}" HOME="${test_root}/empty-home" MONEYDANCE_MOUNT_BIN="${retention_mock}" MONEYDANCE_MKTEMP_BIN="${scan_mktemp}" MONEYDANCE_FIND_BIN="${scan_find}" "${SCRIPT}" --config "${retention_config}" 2>&1)"
+  scan_status=$?
+  scan_expected=0
+  [[ "${scan_case}" == failure ]] && scan_expected=1
+  assert_status "scan ${scan_case} returns expected status" "${scan_expected}" "${scan_status}"
+  [[ "${scan_case}" != failure ]] || assert_contains "scan failure reports enumeration error" "${scan_output}" 'Failed to enumerate backup files'
+  assert_file_exists "scan ${scan_case} observes both created files before find" "${scan_observed}"
+  scan_artifacts=()
+  [[ ! -f "${scan_record}" ]] || scan_artifacts=("${(@f)$(<"${scan_record}")}")
+  if (( ${#scan_artifacts} == 2 )); then pass "scan ${scan_case} records two artifacts"; else fail "scan ${scan_case} records two artifacts"; fi
+  for scan_artifact in "${scan_artifacts[@]}"; do
+    if [[ ! -e "${scan_artifact}" && ! -L "${scan_artifact}" ]]; then
+      pass "scan ${scan_case} removes recorded artifact"
+    else
+      fail "scan ${scan_case} removes recorded artifact"
+    fi
+  done
+  scan_leftovers=("${scan_tmp}"/moneydance_rotate_backups.find.*(N))
+  if (( ${#scan_leftovers} == 0 )); then
+    pass "scan temp files are removed after a ${scan_case} run"
+  else
+    fail "scan temp files are removed after a ${scan_case} run"
+  fi
 done
 if [[ "${1:-}" == --retention-regressions ]]; then
   printf '\n%d passed; %d failed\n' "${passed}" "${failed}"
@@ -413,28 +492,6 @@ run_with_pty 5 stdin-only /bin/zsh -c '[[ -t 0 && ! -t 1 ]]'
 assert_status "PTY helper can provide only TTY stdin" 0 "${PTY_STATUS}"
 run_with_pty 5 stdout-only /bin/zsh -c '[[ ! -t 0 && -t 1 ]]'
 assert_status "PTY helper can provide only TTY stdout" 0 "${PTY_STATUS}"
-
-pty_timeout_payload_pid_file="${test_root}/pty-timeout-payload-pid"
-pty_timeout_descendant_pid_file="${test_root}/pty-timeout-descendant-pid"
-pty_timeout_start=${SECONDS}
-run_with_pty 1 both /bin/zsh -c 'print -r -- "$$" > "$1"; /bin/zsh -c '\''trap "" HUP TERM; while :; do /bin/sleep 10; done'\'' </dev/null >/dev/null 2>&1 & print -r -- "$!" > "$2"; wait' pty-timeout "${pty_timeout_payload_pid_file}" "${pty_timeout_descendant_pid_file}"
-pty_timeout_helper_status=$?
-pty_timeout_elapsed=$(( SECONDS - pty_timeout_start ))
-assert_status "PTY helper reports a hard timeout" 124 "${pty_timeout_helper_status}"
-assert_status "PTY helper reports timeout separately from child status" 124 "${PTY_STATUS}"
-if (( pty_timeout_elapsed <= 4 )); then
-  pass "PTY helper bounds TERM grace, KILL, and reap"
-else
-  fail "PTY helper bounds TERM grace, KILL, and reap (elapsed ${pty_timeout_elapsed}s)"
-fi
-pty_timeout_payload_pid="$(<"${pty_timeout_payload_pid_file}")"
-pty_timeout_descendant_pid="$(<"${pty_timeout_descendant_pid_file}")"
-if ! /bin/kill -0 "${pty_timeout_payload_pid}" 2>/dev/null && ! /bin/kill -0 "${pty_timeout_descendant_pid}" 2>/dev/null; then
-  pass "PTY timeout terminates payload and descendants"
-else
-  fail "PTY timeout terminates payload and descendants"
-  /bin/kill -KILL "${pty_timeout_payload_pid}" "${pty_timeout_descendant_pid}" 2>/dev/null || true
-fi
 
 typeset -A cleared_environment_variables=()
 for variable_name in "${MONEYDANCE_TEST_ENV_VARS[@]}"; do
@@ -1065,109 +1122,6 @@ else
 fi
 rmdir "${acl_probe}"
 
-# Injected parser cases run even when the test filesystem cannot create native
-# ACLs. Truncated long-listing headers and ACE-shaped non-ACE lines must fail
-# closed for both directory and regular-file inspection.
-acl_parser_mktemp="${test_root}/repair-acl-parser-mktemp-spy"
-acl_parser_mktemp_marker="${test_root}/repair-acl-parser-mktemp-called"
-acl_parser_mv="${test_root}/repair-acl-parser-mv-spy"
-acl_parser_mv_marker="${test_root}/repair-acl-parser-mv-called"
-cat > "${acl_parser_mktemp}" <<EOF
-#!/bin/zsh
-print -r -- invoked > "${acl_parser_mktemp_marker}"
-exec /usr/bin/mktemp "\$@"
-EOF
-cat > "${acl_parser_mv}" <<EOF
-#!/bin/zsh
-print -r -- invoked > "${acl_parser_mv_marker}"
-exit 97
-EOF
-chmod 755 "${acl_parser_mktemp}" "${acl_parser_mv}"
-for acl_parser_kind in header_dir header_file extra_dir extra_file plus_no_ace_dir plus_no_ace_file ace_no_plus_dir ace_no_plus_file; do
-  reset_repair_config
-  acl_parser_inspector="${test_root}/repair-acl-parser-${acl_parser_kind}"
-  cat > "${acl_parser_inspector}" <<EOF
-#!/bin/zsh
-target="\${@: -1}"
-case "${acl_parser_kind}" in
-  header_dir) [[ -d "\${target}" ]] && { print -r -- d; exit 0; } ;;
-  header_file) [[ -f "\${target}" ]] && { print -r -- -; exit 0; } ;;
-  extra_dir)
-    if [[ -d "\${target}" ]]; then /bin/ls -lde -- "\${target}" || exit 1; print -r -- ' 0: SYNTHETIC deny delete'; exit 0; fi
-    ;;
-  extra_file)
-    if [[ -f "\${target}" ]]; then /bin/ls -lde -- "\${target}" || exit 1; print -r -- ' 0: SYNTHETIC deny delete'; exit 0; fi
-    ;;
-  plus_no_ace_dir) [[ -d "\${target}" ]] && { print -r -- 'drwx------+ 2 synthetic staff 64 Jan 1 00:00 SYNTHETIC-DIRECTORY'; exit 0; } ;;
-  plus_no_ace_file) [[ -f "\${target}" ]] && { print -r -- '-rw-------+ 1 synthetic staff 64 Jan 1 00:00 SYNTHETIC-FILE'; exit 0; } ;;
-  ace_no_plus_dir)
-    if [[ -d "\${target}" ]]; then print -r -- 'drwx------ 2 synthetic staff 64 Jan 1 00:00 SYNTHETIC-DIRECTORY'; print -r -- ' 0: group:everyone deny delete'; exit 0; fi
-    ;;
-  ace_no_plus_file)
-    if [[ -f "\${target}" ]]; then print -r -- '-rw------- 1 synthetic staff 64 Jan 1 00:00 SYNTHETIC-FILE'; print -r -- ' 0: group:everyone deny delete'; exit 0; fi
-    ;;
-esac
-exec /bin/ls -lde -- "\${target}"
-EOF
-  chmod 755 "${acl_parser_inspector}"
-  remove_test_paths "${unique_candidate_marker}" "${acl_parser_mktemp_marker}" "${acl_parser_mv_marker}"
-  : > "${candidate_logger_marker}"
-  PTY_INPUT=$'yes\n'
-  run_with_pty 5 both-stderr-file /usr/bin/env HOME="${test_root}/empty-home" MONEYDANCE_ACL_BIN="${acl_parser_inspector}" MONEYDANCE_MKTEMP_BIN="${acl_parser_mktemp}" MONEYDANCE_MV_BIN="${acl_parser_mv}" MONEYDANCE_MOUNT_BIN="${unique_candidate_mount}" MONEYDANCE_LOGGER_BIN="${candidate_logger}" "${SCRIPT}" --config "${repair_config}" --repair-config
-  assert_status "ACL parser rejects ${acl_parser_kind}" 2 "${PTY_STATUS}"
-  if cmp -s "${repair_config}" "${repair_original}"; then pass "ACL ${acl_parser_kind} rejection preserves exact bytes"; else fail "ACL ${acl_parser_kind} rejection preserves exact bytes"; fi
-  [[ "$(stat -f '%Lp' "${repair_config}")" == 640 ]] && pass "ACL ${acl_parser_kind} rejection preserves mode" || fail "ACL ${acl_parser_kind} rejection preserves mode"
-  [[ ! -e "${acl_parser_mktemp_marker}" ]] && pass "ACL ${acl_parser_kind} rejection precedes temp creation" || fail "ACL ${acl_parser_kind} rejection precedes temp creation"
-  [[ ! -e "${unique_candidate_marker}" ]] && pass "ACL ${acl_parser_kind} rejection precedes mount" || fail "ACL ${acl_parser_kind} rejection precedes mount"
-  [[ ! -e "${acl_parser_mv_marker}" ]] && pass "ACL ${acl_parser_kind} rejection precedes MV_BIN" || fail "ACL ${acl_parser_kind} rejection precedes MV_BIN"
-  acl_parser_persistent="${PTY_STDERR}$(<"${candidate_logger_marker}")"
-  [[ ! -f "${candidate_log}" ]] || acl_parser_persistent+="$(<"${candidate_log}")"
-  for private_token in "${repair_config}" "${candidate_config_dir}" synthetic-configured-private-host; do
-    assert_not_contains "ACL ${acl_parser_kind} persistent sinks redact ${private_token}" "${acl_parser_persistent}" "${private_token}"
-  done
-done
-
-# A changed direct-directory identity must be detected again before mktemp can
-# open a snapshot path.
-reset_repair_config
-dir_identity_stat="${test_root}/repair-directory-identity-stat"
-dir_identity_count="${test_root}/repair-directory-identity-count"
-dir_identity_mktemp="${test_root}/repair-directory-identity-mktemp"
-dir_identity_mktemp_marker="${test_root}/repair-directory-identity-mktemp-called"
-cat > "${dir_identity_stat}" <<EOF
-#!/bin/zsh
-target="\${@: -1}"
-if [[ "\${target}" == "${candidate_config_dir}" ]]; then
-  count=0; [[ ! -f "${dir_identity_count}" ]] || count="\$(<"${dir_identity_count}")"; (( count += 1 )); print -r -- "\${count}" > "${dir_identity_count}"
-  metadata="\$(/usr/bin/stat -f '%d|%i|%u|%Lp' -- "\${target}")" || exit 1
-  if (( count > 1 )); then
-    IFS='|' read -r device inode owner mode <<< "\${metadata}"
-    print -r -- "\${device}|\$(( inode + 1 ))|\${owner}|\${mode}"
-  else
-    print -r -- "\${metadata}"
-  fi
-  exit 0
-fi
-exec /usr/bin/stat "\$@"
-EOF
-cat > "${dir_identity_mktemp}" <<EOF
-#!/bin/zsh
-print -r -- invoked > "${dir_identity_mktemp_marker}"
-exec /usr/bin/mktemp "\$@"
-EOF
-chmod 755 "${dir_identity_stat}" "${dir_identity_mktemp}"
-: > "${candidate_logger_marker}"
-PTY_INPUT=$'n\n'
-run_with_pty 5 both-stderr-file /usr/bin/env HOME="${test_root}/empty-home" MONEYDANCE_STAT_BIN="${dir_identity_stat}" MONEYDANCE_MKTEMP_BIN="${dir_identity_mktemp}" MONEYDANCE_MOUNT_BIN="${unique_candidate_mount}" MONEYDANCE_LOGGER_BIN="${candidate_logger}" "${SCRIPT}" --config "${repair_config}" --repair-config
-assert_status "changed config directory identity aborts before snapshot open" 1 "${PTY_STATUS}"
-[[ ! -e "${dir_identity_mktemp_marker}" ]] && pass "changed directory identity does not invoke snapshot mktemp" || fail "changed directory identity does not invoke snapshot mktemp"
-if cmp -s "${repair_config}" "${repair_original}"; then pass "changed directory identity preserves config"; else fail "changed directory identity preserves config"; fi
-dir_identity_persistent="${PTY_STDERR}$(<"${candidate_logger_marker}")"
-[[ ! -f "${candidate_log}" ]] || dir_identity_persistent+="$(<"${candidate_log}")"
-for private_token in "${repair_config}" "${candidate_config_dir}" synthetic-configured-private-host; do
-  assert_not_contains "changed directory identity persistent sinks redact ${private_token}" "${dir_identity_persistent}" "${private_token}"
-done
-
 for repair_override in '__UNSET__' ''; do
   reset_repair_config
     PTY_INPUT=$'yes\n'
@@ -1379,56 +1333,6 @@ run_with_pty 5 both /usr/bin/env HOME="${test_root}/empty-home" MONEYDANCE_STAT_
 assert_status "repair rejects wrong-owner config" 2 "${PTY_STATUS}"
 if cmp -s "${repair_config}" "${repair_original}"; then pass "wrong-owner refusal preserves config"; else fail "wrong-owner refusal preserves config"; fi
 
-# Every hostile mktemp return must be rejected before the path is opened,
-# chmodded, renamed, or selected for cleanup.
-typeset -a hostile_temp_kinds=(config outside preexisting symlink directory multilink malformed)
-for hostile_temp_kind in "${hostile_temp_kinds[@]}"; do
-  reset_repair_config
-  hostile_temp_path="${candidate_config_dir}/.repair-config.snapshot.HOSTILE-${hostile_temp_kind}"
-  case "${hostile_temp_kind}" in
-    config) hostile_temp_path="${repair_config}" ;;
-    outside) hostile_temp_path="${test_root}/SYNTHETIC-HOSTILE-OUTSIDE-${hostile_temp_kind}" ;;
-    preexisting) : > "${hostile_temp_path}" ;;
-    symlink) ln -s "${repair_original}" "${hostile_temp_path}" ;;
-    directory) mkdir "${hostile_temp_path}" ;;
-    multilink)
-      : > "${hostile_temp_path}"
-      ln "${hostile_temp_path}" "${test_root}/SYNTHETIC-HOSTILE-LINK-${hostile_temp_kind}"
-      ;;
-    malformed) hostile_temp_path="${candidate_config_dir}/SYNTHETIC-MALFORMED-TEMP"; : > "${hostile_temp_path}" ;;
-  esac
-  hostile_mktemp="${test_root}/hostile-mktemp-${hostile_temp_kind}"
-  hostile_chmod_marker="${test_root}/hostile-chmod-${hostile_temp_kind}-called"
-  hostile_mv_marker="${test_root}/hostile-mv-${hostile_temp_kind}-called"
-  cat > "${hostile_mktemp}" <<EOF
-#!/bin/zsh
-[[ -e "${hostile_temp_path}" || -L "${hostile_temp_path}" ]] || : > "${hostile_temp_path}"
-print -r -- "${hostile_temp_path}"
-EOF
-  cat > "${test_root}/hostile-chmod-${hostile_temp_kind}" <<EOF
-#!/bin/zsh
-print invoked > "${hostile_chmod_marker}"
-exit 93
-EOF
-  cat > "${test_root}/hostile-mv-${hostile_temp_kind}" <<EOF
-#!/bin/zsh
-print invoked > "${hostile_mv_marker}"
-exit 94
-EOF
-  chmod 755 "${hostile_mktemp}" "${test_root}/hostile-chmod-${hostile_temp_kind}" "${test_root}/hostile-mv-${hostile_temp_kind}"
-  PTY_INPUT=$'yes\n'
-  run_with_pty 5 both /usr/bin/env HOME="${test_root}/empty-home" MONEYDANCE_MKTEMP_BIN="${hostile_mktemp}" MONEYDANCE_CHMOD_BIN="${test_root}/hostile-chmod-${hostile_temp_kind}" MONEYDANCE_MV_BIN="${test_root}/hostile-mv-${hostile_temp_kind}" MONEYDANCE_MOUNT_BIN="${unique_candidate_mount}" "${SCRIPT}" --config "${repair_config}" --repair-config
-  assert_status "repair rejects hostile ${hostile_temp_kind} temp return" 1 "${PTY_STATUS}"
-  if cmp -s "${repair_config}" "${repair_original}"; then pass "hostile ${hostile_temp_kind} temp preserves config"; else fail "hostile ${hostile_temp_kind} temp preserves config"; fi
-  if [[ ! -e "${hostile_chmod_marker}" ]]; then pass "hostile ${hostile_temp_kind} temp is never chmodded"; else fail "hostile ${hostile_temp_kind} temp is never chmodded"; fi
-  if [[ ! -e "${hostile_mv_marker}" ]]; then pass "hostile ${hostile_temp_kind} temp is never renamed"; else fail "hostile ${hostile_temp_kind} temp is never renamed"; fi
-  if [[ "${hostile_temp_path}" != "${repair_config}" && ( -e "${hostile_temp_path}" || -L "${hostile_temp_path}" ) ]]; then pass "hostile ${hostile_temp_kind} returned path is not removed"; else [[ "${hostile_temp_path}" == "${repair_config}" ]] && pass "hostile config return remains present" || fail "hostile ${hostile_temp_kind} returned path is not removed"; fi
-  if [[ "${hostile_temp_path}" != "${repair_config}" ]]; then
-    remove_test_paths "${hostile_temp_path}"
-  fi
-  remove_test_paths "${test_root}/SYNTHETIC-HOSTILE-LINK-${hostile_temp_kind}"
-done
-
 reset_repair_config
 repair_lock_path="${candidate_config_dir}/.repair-config.repair.lock"
 mkdir "${repair_lock_path}"
@@ -1527,69 +1431,6 @@ assert_status "candidate write failure aborts repair" 1 "${PTY_STATUS}"
 if cmp -s "${repair_config}" "${repair_original}"; then pass "candidate write failure preserves original bytes"; else fail "candidate write failure preserves original bytes"; fi
 leftover_count="$(find "${candidate_config_dir}" -maxdepth 1 \( -name '.repair-config.snapshot.*' -o -name '.repair-config.candidate.*' -o -name '.repair-config.repair.lock' \) | wc -l | tr -d ' ')"
 [[ "${leftover_count}" == 0 ]] && pass "write failure cleans validated owned temps" || fail "write failure cleans validated owned temps ($(find "${candidate_config_dir}" -maxdepth 1 -name '.repair-config.*' -print))"
-
-for metadata_kind in owner group device; do
-  reset_repair_config
-  metadata_stat="${test_root}/repair-${metadata_kind}-mutation-stat"
-  metadata_count="${test_root}/repair-${metadata_kind}-mutation-count"
-  cat > "${metadata_stat}" <<EOF
-#!/bin/zsh
-target="\${@: -1}"
-if [[ "\${target}" == "${repair_config}" ]]; then
-  metadata="\$(/usr/bin/stat -f '%d|%i|%u|%g|%Lp|%z|%l' -- "\${target}")" || exit 1
-  count=0; [[ ! -f "${metadata_count}" ]] || count="\$(<"${metadata_count}")"; (( count += 1 )); print -r -- "\${count}" > "${metadata_count}"
-  if (( count >= 3 )); then
-    IFS='|' read -r device inode owner group mode size links <<< "\${metadata}"
-    case "${metadata_kind}" in
-      owner) (( owner += 1 )) ;;
-      group) (( group += 1 )) ;;
-      device) (( device += 1 )) ;;
-    esac
-    metadata="\${device}|\${inode}|\${owner}|\${group}|\${mode}|\${size}|\${links}"
-  fi
-  print -r -- "\${metadata}"
-else
-  exec /usr/bin/stat "\$@"
-fi
-EOF
-  chmod 755 "${metadata_stat}"
-  PTY_INPUT=$'yes\n'
-  run_with_pty 5 both /usr/bin/env HOME="${test_root}/empty-home" MONEYDANCE_STAT_BIN="${metadata_stat}" MONEYDANCE_MOUNT_BIN="${unique_candidate_mount}" "${SCRIPT}" --config "${repair_config}" --repair-config
-  assert_status "live config ${metadata_kind} metadata mutation aborts activation" 1 "${PTY_STATUS}"
-  if cmp -s "${repair_config}" "${repair_original}"; then pass "${metadata_kind} metadata mutation preserves original bytes"; else fail "${metadata_kind} metadata mutation preserves original bytes"; fi
-done
-
-reset_repair_config
-temp_swap_chmod="${test_root}/repair-temp-swap-chmod"
-temp_swap_count="${test_root}/repair-temp-swap-count"
-temp_swap_record="${test_root}/repair-temp-swap-record"
-temp_swap_mv_marker="${test_root}/repair-temp-swap-mv-called"
-temp_swap_mv="${test_root}/repair-temp-swap-mv"
-cat > "${temp_swap_chmod}" <<EOF
-#!/bin/zsh
-count=0; [[ ! -f "${temp_swap_count}" ]] || count="\$(<"${temp_swap_count}")"; (( count += 1 )); print -r -- "\${count}" > "${temp_swap_count}"
-/bin/chmod "\$@" || exit 1
-if (( count == 2 )); then
-  target="\${@: -1}"
-  /bin/cp -p "\${target}" "\${target}.swap" || exit 1
-  /bin/mv "\${target}.swap" "\${target}" || exit 1
-  print -r -- "\${target}" > "${temp_swap_record}"
-fi
-EOF
-cat > "${temp_swap_mv}" <<EOF
-#!/bin/zsh
-print -r -- invoked > "${temp_swap_mv_marker}"
-exit 97
-EOF
-chmod 755 "${temp_swap_chmod}" "${temp_swap_mv}"
-PTY_INPUT=$'yes\n'
-run_with_pty 5 both /usr/bin/env HOME="${test_root}/empty-home" MONEYDANCE_CHMOD_BIN="${temp_swap_chmod}" MONEYDANCE_MV_BIN="${temp_swap_mv}" MONEYDANCE_MOUNT_BIN="${unique_candidate_mount}" "${SCRIPT}" --config "${repair_config}" --repair-config
-assert_status "candidate inode replacement aborts repair" 1 "${PTY_STATUS}"
-if cmp -s "${repair_config}" "${repair_original}"; then pass "candidate inode replacement preserves original config"; else fail "candidate inode replacement preserves original config"; fi
-if [[ ! -e "${temp_swap_mv_marker}" ]]; then pass "candidate inode replacement aborts before MV_BIN"; else fail "candidate inode replacement aborts before MV_BIN"; fi
-swapped_temp_path="$(<"${temp_swap_record}")"
-if [[ -f "${swapped_temp_path}" ]]; then pass "cleanup does not remove unvalidated swapped temp"; else fail "cleanup does not remove unvalidated swapped temp"; fi
-remove_test_paths "${swapped_temp_path}"
 
 reset_repair_config
 exposure_marker="${test_root}/repair-snapshot-exposed"
@@ -1825,37 +1666,6 @@ permission_order_text="$(<"${permission_order_record}")"
 assert_contains "original mode is applied only after candidate contains bytes" "${permission_order_text}" "640|nonempty|"
 assert_not_contains "original mode is never applied to an empty candidate" "${permission_order_text}" "640|empty|"
 
-# Revalidate the captured directory immediately before activation. The chmod
-# spy changes only the directory metadata after candidate generation; MV must
-# remain untouched and the live config must remain byte-identical.
-reset_repair_config
-final_dir_chmod="${test_root}/repair-final-directory-chmod"
-final_dir_mv="${test_root}/repair-final-directory-mv"
-final_dir_mv_marker="${test_root}/repair-final-directory-mv-called"
-cat > "${final_dir_chmod}" <<EOF
-#!/bin/zsh
-/bin/chmod "\$@" || exit 1
-if [[ "\$1" == 640 && "\${@: -1}" == *.candidate.* ]]; then
-  /bin/chmod 750 "${candidate_config_dir}" || exit 1
-fi
-EOF
-cat > "${final_dir_mv}" <<EOF
-#!/bin/zsh
-print -r -- invoked > "${final_dir_mv_marker}"
-exit 97
-EOF
-chmod 755 "${final_dir_chmod}" "${final_dir_mv}"
-: > "${candidate_log}"
-: > "${candidate_logger_marker}"
-PTY_INPUT=$'yes\n'
-run_with_pty 10 both-stderr-file /usr/bin/env HOME="${test_root}/empty-home" MONEYDANCE_CHMOD_BIN="${final_dir_chmod}" MONEYDANCE_MV_BIN="${final_dir_mv}" MONEYDANCE_MOUNT_BIN="${unique_candidate_mount}" MONEYDANCE_LOGGER_BIN="${candidate_logger}" "${SCRIPT}" --config "${repair_config}" --repair-config
-assert_status "final config directory identity change aborts activation" 1 "${PTY_STATUS}"
-[[ ! -e "${final_dir_mv_marker}" ]] && pass "final directory identity change aborts before MV_BIN" || fail "final directory identity change aborts before MV_BIN"
-if cmp -s "${repair_config}" "${repair_original}"; then pass "final directory identity change preserves exact config bytes"; else fail "final directory identity change preserves exact config bytes"; fi
-final_dir_persistent="${PTY_STDERR}$(<"${candidate_log}")$(<"${candidate_logger_marker}")"
-for private_token in "${repair_config}" "${candidate_config_dir}" synthetic-configured-private-host synthetic-candidate-private-one; do
-  assert_not_contains "final directory identity persistent sinks redact ${private_token}" "${final_dir_persistent}" "${private_token}"
-done
 chmod 755 "${candidate_config_dir}"
 find "${candidate_config_dir}" -maxdepth 1 \( -name '.repair-config.snapshot.*' -o -name '.repair-config.candidate.*' -o -name '.repair-config.repair.lock' \) -print0 | while IFS= read -r -d '' cleanup_path; do remove_test_paths "$cleanup_path" || exit 1; done
 

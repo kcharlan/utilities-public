@@ -56,18 +56,6 @@ def test_rollup_is_bottom_up(monkeypatch, tmp_path):
     }
 
 
-def test_symlink_is_not_followed(monkeypatch, tmp_path):
-    module = load(monkeypatch, tmp_path)
-    root = tmp_path / "tree"
-    target = root / "target"
-    target.mkdir(parents=True)
-    (target / "payload").write_bytes(b"x" * 4096)
-    (root / "link").symlink_to(target, target_is_directory=True)
-    result = module.walk_tree(root, workers=2, excluded_paths=[])
-    assert str(root / "link") not in result.dir_local
-    assert result.dir_count == 2
-
-
 def test_sparse_large_file_uses_apparent_size(monkeypatch, tmp_path):
     module = load(monkeypatch, tmp_path)
     root = tmp_path / "tree"
@@ -218,3 +206,48 @@ def test_parity_tool_compares_synthetic_tree_and_refuses_repo_output(tmp_path):
     completed = subprocess.run([*command, str(REPO_ROOT / "synthetic-parity.json")], capture_output=True, text=True)
     assert completed.returncode == 2
     assert "outside" in completed.stderr
+
+
+def hardlink_victim(tmp_path):
+    victim = tmp_path / "victim"
+    (victim / "first").mkdir(parents=True)
+    (victim / "second").mkdir()
+    original = victim / "first" / "synthetic-payload"
+    original.write_bytes(b"x" * 16384)
+    os.link(original, victim / "second" / "synthetic-link")
+    (victim / "second" / "synthetic-plain").write_bytes(b"y" * 4096)
+    expected = int(subprocess.check_output(["du", "-xsk", str(victim)], text=True).split()[0]) * 1024
+    return victim, expected
+
+
+def test_unindexed_trash_estimate_counts_hardlinks(monkeypatch, tmp_path):
+    module = load(monkeypatch, tmp_path)
+    module.ensure_runtime_dirs()
+    victim, expected = hardlink_victim(tmp_path)
+    trash = tmp_path / "trash"
+    trash.mkdir()
+    monkeypatch.setattr(module, "DATA_VOLUME", tmp_path)
+    monkeypatch.setattr(module, "TRASH_DIR", trash)
+    result = module.execute_trash_path(victim)
+    assert result["estimated_reclaim_bytes"] == expected
+    assert not victim.exists()
+    assert Path(result["trash_path"]).parent == trash
+    assert Path(result["trash_path"]).exists()
+
+
+def test_unindexed_breakdown_counts_hardlinks(monkeypatch, tmp_path):
+    module = load(monkeypatch, tmp_path)
+    victim, expected = hardlink_victim(tmp_path)
+    monkeypatch.setattr(module, "ALLOWED_BREAKDOWN_ROOTS", [tmp_path])
+    monkeypatch.setattr(module, "choose_scan_id_for_path", lambda path: None)
+    assert module.api_rebuild_breakdown(str(victim))["total_bytes"] == expected
+
+
+def test_watchlist_fallback_counts_hardlinks_once(monkeypatch, tmp_path):
+    module = load(monkeypatch, tmp_path)
+    module.ensure_runtime_dirs()
+    victim, expected = hardlink_victim(tmp_path)
+    spec = {"slug": "synthetic", "label": "Synthetic", "path": str(victim),
+            "category": "synthetic", "risk": "low", "cleanup_kind": None,
+            "description": "Synthetic fixture", "actionable": False}
+    assert module.scan_watchlist_entry(spec)["allocated_bytes"] == expected

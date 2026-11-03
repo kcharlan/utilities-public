@@ -272,8 +272,12 @@ def server_context(tmp_path_factory):
     port = _find_free_port()
     tmp_dir = tmp_path_factory.mktemp("e2e_db")
     db_path = tmp_dir / "test_dashboard.db"
+    server_home = tmp_path_factory.mktemp("e2e_server_home")
 
     env = dict(os.environ)
+    env["HOME"] = str(server_home)
+    env["GIT_CONFIG_GLOBAL"] = os.devnull
+    env["GIT_CONFIG_SYSTEM"] = os.devnull
     env["GIT_DASHBOARD_NO_BROWSER"] = "1"
     env["GIT_DASHBOARD_DB"] = str(db_path)
 
@@ -290,7 +294,7 @@ def server_context(tmp_path_factory):
         stderr = proc.stderr.read().decode(errors="replace")
         pytest.fail(f"Server failed to start on port {port}.\nstdout: {stdout}\nstderr: {stderr}")
 
-    yield {"url": f"http://localhost:{port}", "db_path": db_path}
+    yield {"url": f"http://localhost:{port}", "db_path": db_path, "home": server_home}
 
     proc.send_signal(signal.SIGTERM)
     try:
@@ -657,9 +661,9 @@ def test_scan_dir_opens_directory_browser_modal(server, page):
     assert modal_title.is_visible(), "Directory browser modal did not open"
 
 
-def test_directory_browser_shows_path_input(server, page):
+def test_directory_browser_shows_path_input(server_context, page):
     """Directory browser modal has a path input field."""
-    page.goto(server)
+    page.goto(server_context['url'])
     page.wait_for_load_state("networkidle")
 
     page.locator("header >> text=Scan Dir").click()
@@ -667,9 +671,7 @@ def test_directory_browser_shows_path_input(server, page):
 
     path_input = page.locator("input[placeholder='/path/to/directory']")
     assert path_input.is_visible(), "Path input not visible in directory browser"
-    # Should default to home directory expanded path
-    value = path_input.input_value()
-    assert len(value) > 0, "Path input should have a default value (home dir)"
+    expect(path_input).to_have_value(str(server_context['home'].resolve()))
 
 
 def test_directory_browser_lists_directories(server, page, tmp_path):
@@ -742,15 +744,10 @@ def test_directory_browser_navigate_parent(server, page, tmp_path):
     page.wait_for_timeout(500)
 
     # Click the parent (..) entry — uses the arrow + ".." text
-    parent_link = page.locator("text=.. ")
-    if parent_link.count() > 0 and parent_link.first.is_visible():
-        parent_link.first.click()
-        page.wait_for_timeout(500)
-
-        # After going up, "deep_child" should appear in the listing
-        body_text = page.locator("body").inner_text()
-        assert "deep_child" in body_text, \
-            f"Expected 'deep_child' in listing after going up, got: {body_text[:500]}"
+    parent_link = page.get_by_text("← ..", exact=True)
+    expect(parent_link).to_be_visible()
+    parent_link.click()
+    expect(page.get_by_text("deep_child", exact=True)).to_be_visible()
 
 
 def test_directory_browser_shows_git_repos(server, page, tmp_path):
@@ -1088,6 +1085,43 @@ def test_fleet_overview_with_repos_shows_cards(server, page, tmp_path):
         f"Expected 'card_repo' in fleet view, got: {body_text[:500]}"
 
 
+def test_keyboard_card_enter_opens_detail_and_escape_returns(server, page, tmp_path):
+    """Keyboard users can see focus, open a card, and return to the fleet."""
+    _create_git_repo(tmp_path, "keyboard_repo")
+    page.goto(server)
+    assert page.evaluate("""async path => (await fetch('/api/repos', {
+        method: 'POST', headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({path})
+    })).ok""", str(tmp_path))
+    page.reload()
+    card = page.locator('.project-card[aria-label="View keyboard_repo details"]')
+    expect(card).to_be_visible()
+    expect(card).to_have_attribute("role", "button")
+    expect(card).to_have_accessible_name(re.compile("keyboard_repo"))
+    for _ in range(30):
+        page.keyboard.press("Tab")
+        if card.evaluate("element => element === document.activeElement"):
+            break
+    else:
+        pytest.fail("Project card was not reachable by Tab")
+    assert card.evaluate("element => element.matches(':focus-visible')")
+    assert card.evaluate("element => getComputedStyle(element).outlineStyle") != "none"
+    page.keyboard.press("Enter")
+    expect(page).to_have_url(re.compile(r"#/repo/"))
+    expect(page.get_by_role("button", name="Back to fleet")).to_be_visible()
+    page.keyboard.press("Escape")
+    expect(page).to_have_url(re.compile(r"#/fleet$"))
+    expect(card).to_be_visible()
+    for _ in range(30):
+        page.keyboard.press("Tab")
+        if card.evaluate("element => element === document.activeElement"):
+            break
+    else:
+        pytest.fail("Project card was not reachable by Tab after returning")
+    page.keyboard.press("Space")
+    expect(page).to_have_url(re.compile(r"#/repo/"))
+
+
 def test_project_card_click_navigates_to_detail(server, page, tmp_path):
     """Clicking a project card navigates to the repo detail view."""
     _create_git_repo(tmp_path, "clickable_repo")
@@ -1112,11 +1146,9 @@ def test_project_card_click_navigates_to_detail(server, page, tmp_path):
 
     # Find and click the project card
     card = page.locator(".project-card").first
-    if card.count() > 0:
-        card.click()
-        page.wait_for_timeout(500)
-        assert "#/repo/" in page.url, \
-            f"Expected #/repo/ in URL after clicking card, got: {page.url}"
+    expect(card).to_be_visible()
+    card.click()
+    expect(page).to_have_url(re.compile(r"#/repo/"))
 
 
 # ═════════════════════════════════════════════════════════════════════════════
@@ -1195,53 +1227,39 @@ def test_repo_detail_back_navigation(server, page, tmp_path):
 # ═════════════════════════════════════════════════════════════════════════════
 
 def test_tool_status_banner_visible_and_dismissible(server, page):
-    """If tool status banner shows, it's visible below the nav and can be dismissed."""
+    """The tool status banner is visible below the nav and can be dismissed."""
+    page.route('**/api/status', lambda route: route.fulfill(json={"tools": {"synthetic": False}, "version": "synthetic"}))
     page.goto(server)
     page.wait_for_load_state("networkidle")
     page.wait_for_timeout(500)
 
-    banner_dismiss = page.locator("button[aria-label='Dismiss']")
-    if banner_dismiss.count() > 0:
-        assert banner_dismiss.is_visible(), (
-            "Tool status banner dismiss button exists but is not visible — "
-            "likely hidden behind the fixed header"
-        )
-
-        # Verify banner text is visible (not behind fixed header)
-        banner_text = banner_dismiss.locator("..").locator("div").first
-        bbox = banner_text.bounding_box()
-        assert bbox is not None, "Banner text has no bounding box"
-        assert bbox["y"] >= 90, (
-            f"Banner text is at y={bbox['y']}, should be >= 90 (below fixed header+nav)"
-        )
-
-        # Click dismiss
-        banner_dismiss.click()
-        page.wait_for_timeout(300)
-        assert banner_dismiss.count() == 0 or not banner_dismiss.is_visible(), \
-            "Banner dismiss button still visible after clicking"
+    banner_dismiss = page.get_by_role("button", name="Dismiss", exact=True)
+    expect(banner_dismiss).to_be_visible()
+    banner_text = banner_dismiss.locator("..").locator("div").first
+    expect(banner_text).to_be_visible()
+    bbox = banner_text.bounding_box()
+    assert bbox is not None, "Banner text has no bounding box"
+    assert bbox["y"] >= 90, (
+        f"Banner text is at y={bbox['y']}, should be >= 90 (below fixed header+nav)"
+    )
+    banner_dismiss.click()
+    expect(banner_dismiss).not_to_be_visible()
 
 
 def test_tool_status_banner_stays_dismissed_on_nav(server, page):
     """After dismissing the banner, it stays dismissed when switching tabs."""
+    page.route('**/api/status', lambda route: route.fulfill(json={"tools": {"synthetic": False}, "version": "synthetic"}))
     page.goto(server)
     page.wait_for_load_state("networkidle")
     page.wait_for_timeout(500)
 
-    banner_dismiss = page.locator("button[aria-label='Dismiss']")
-    if banner_dismiss.count() > 0:
-        banner_dismiss.click()
-        page.wait_for_timeout(300)
-
-        # Switch tabs
-        page.locator("nav >> text=Analytics").click()
-        page.wait_for_timeout(500)
-        page.locator("nav >> text=Fleet Overview").click()
-        page.wait_for_timeout(500)
-
-        # Banner should still be dismissed
-        assert banner_dismiss.count() == 0 or not banner_dismiss.is_visible(), \
-            "Banner reappeared after tab switch"
+    banner_dismiss = page.get_by_role("button", name="Dismiss", exact=True)
+    expect(banner_dismiss).to_be_visible()
+    banner_dismiss.click()
+    expect(banner_dismiss).not_to_be_visible()
+    page.locator("nav >> text=Analytics").click()
+    page.locator("nav >> text=Fleet Overview").click()
+    expect(banner_dismiss).not_to_be_visible()
 
 
 # ═════════════════════════════════════════════════════════════════════════════
@@ -1807,158 +1825,6 @@ def test_dependencies_tab_shows_fleet_deps(server, page):
 
 
 # ═════════════════════════════════════════════════════════════════════════════
-# 11. API Endpoints (via browser fetch)
-# ═════════════════════════════════════════════════════════════════════════════
-
-def test_api_status_returns_tools_and_version(server, page):
-    """/api/status returns valid JSON with tools and version."""
-    page.goto(server)
-    result = page.evaluate("""
-        async () => {
-            const r = await fetch('/api/status');
-            return { status: r.status, body: await r.json() };
-        }
-    """)
-    assert result["status"] == 200
-    assert "tools" in result["body"]
-    assert "version" in result["body"]
-    assert isinstance(result["body"]["tools"], dict), "tools should be a dict"
-
-
-def test_api_fleet_returns_repos_and_kpis(server, page):
-    """/api/fleet returns valid JSON with repos and kpis."""
-    page.goto(server)
-    result = page.evaluate("""
-        async () => {
-            const r = await fetch('/api/fleet');
-            return { status: r.status, body: await r.json() };
-        }
-    """)
-    assert result["status"] == 200
-    assert "repos" in result["body"]
-    assert "kpis" in result["body"]
-    assert isinstance(result["body"]["repos"], list), "repos should be a list"
-    assert isinstance(result["body"]["kpis"], dict), "kpis should be a dict"
-
-
-def test_api_repos_list(server, page):
-    """/api/repos returns valid JSON with repos array."""
-    page.goto(server)
-    result = page.evaluate("""
-        async () => {
-            const r = await fetch('/api/repos');
-            return { status: r.status, body: await r.json() };
-        }
-    """)
-    assert result["status"] == 200
-    assert "repos" in result["body"]
-    assert isinstance(result["body"]["repos"], list)
-
-
-def test_api_browse_default_path(server, page):
-    """/api/browse with default path returns current, parent, and dirs."""
-    page.goto(server)
-    result = page.evaluate("""
-        async () => {
-            const r = await fetch('/api/browse');
-            return { status: r.status, body: await r.json() };
-        }
-    """)
-    assert result["status"] == 200
-    assert "current" in result["body"]
-    assert "parent" in result["body"]
-    assert "dirs" in result["body"]
-    assert isinstance(result["body"]["dirs"], list)
-
-
-@pytest.mark.allows_http_error(400, 1, r"/api/browse\?path=/nonexistent/path$")
-def test_api_browse_invalid_path(server, page):
-    """/api/browse with invalid path returns 400."""
-    page.goto(server)
-    result = page.evaluate("""
-        async () => {
-            const r = await fetch('/api/browse?path=/nonexistent/path');
-            return { status: r.status, body: await r.json() };
-        }
-    """)
-    assert result["status"] == 400
-
-
-@pytest.mark.allows_http_error(400, 1, r"/api/repos$")
-def test_api_repos_post_invalid_path(server, page):
-    """POST /api/repos with nonexistent path returns 400."""
-    page.goto(server)
-    result = page.evaluate("""
-        async () => {
-            const r = await fetch('/api/repos', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ path: '/definitely/not/a/real/path' })
-            });
-            return { status: r.status, body: await r.json() };
-        }
-    """)
-    assert result["status"] == 400
-
-
-@pytest.mark.allows_http_error(404, 1, r"/api/repos/nonexistent_id_12345$")
-def test_api_delete_nonexistent_repo(server, page):
-    """DELETE /api/repos/{id} with nonexistent ID returns 404."""
-    page.goto(server)
-    result = page.evaluate("""
-        async () => {
-            const r = await fetch('/api/repos/nonexistent_id_12345', {
-                method: 'DELETE'
-            });
-            return { status: r.status };
-        }
-    """)
-    assert result["status"] == 404
-
-
-def test_api_fleet_scan_post(server, page):
-    """POST /api/fleet/scan with type=full triggers or returns 409."""
-    page.goto(server)
-    result = page.evaluate("""
-        async () => {
-            const r = await fetch('/api/fleet/scan', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ type: 'full' })
-            });
-            return { status: r.status, body: await r.json() };
-        }
-    """)
-    # Should be 200 (started) or 409 (already running)
-    assert result["status"] in (200, 409), \
-        f"Expected 200 or 409, got {result['status']}"
-
-
-def test_api_analytics_heatmap(server, page):
-    """/api/analytics/heatmap returns valid JSON."""
-    page.goto(server)
-    result = page.evaluate("""
-        async () => {
-            const r = await fetch('/api/analytics/heatmap');
-            return { status: r.status, body: await r.json() };
-        }
-    """)
-    assert result["status"] == 200
-
-
-def test_api_analytics_allocation(server, page):
-    """/api/analytics/allocation returns valid JSON."""
-    page.goto(server)
-    result = page.evaluate("""
-        async () => {
-            const r = await fetch('/api/analytics/allocation');
-            return { status: r.status, body: await r.json() };
-        }
-    """)
-    assert result["status"] == 200
-
-
-# ═════════════════════════════════════════════════════════════════════════════
 # 12. Register → Detail → Delete workflow
 # ═════════════════════════════════════════════════════════════════════════════
 
@@ -2116,18 +1982,15 @@ def test_project_card_has_delete_button_on_hover(server, page, tmp_path):
     page.wait_for_timeout(2000)
 
     card = page.locator(".project-card").first
-    if card.count() > 0:
-        card.hover()
-        page.wait_for_timeout(300)
-
-        # Should have a delete button with aria-label containing "Remove"
-        remove_btn = card.locator("button[aria-label*='Remove']")
-        assert remove_btn.count() > 0, "No Remove button on hover"
-        assert remove_btn.is_visible(), "Remove button not visible on hover"
+    expect(card).to_be_visible()
+    card.hover()
+    remove_btn = card.locator("button[aria-label*='Remove']")
+    expect(remove_btn).to_be_visible()
 
 
 def test_delete_repo_from_card(server, page, tmp_path):
     """Clicking the delete button on a card removes the repo from the fleet."""
+    _create_git_repo(tmp_path, "aaa_delete_decoy")
     _create_git_repo(tmp_path, "del_card_repo")
 
     page.goto(server)
@@ -2147,27 +2010,24 @@ def test_delete_repo_from_card(server, page, tmp_path):
     page.wait_for_load_state("networkidle")
     page.wait_for_timeout(2000)
 
+    # Sort by name so a known decoy precedes the target regardless of dates.
+    page.get_by_role("button", name="Last active").click()
+    page.get_by_text("Name A-Z", exact=True).click()
+    expect(page.locator(".project-card").first).to_contain_text("aaa_delete_decoy")
+
     # Confirm the repo is visible
     body_text = page.locator("body").inner_text()
     assert "del_card_repo" in body_text, "Repo not found before delete"
 
     # Hover the card and click delete
-    card = page.locator(".project-card").first
-    if card.count() > 0:
-        card.hover()
-        page.wait_for_timeout(300)
-
-        # Handle the confirm dialog
-        page.on("dialog", lambda dialog: dialog.accept())
-
-        remove_btn = card.locator("button[aria-label*='Remove']")
-        remove_btn.click()
-        page.wait_for_timeout(1000)
-
-        # Repo should be gone
-        body_text = page.locator("body").inner_text()
-        assert "del_card_repo" not in body_text, \
-            "Repo still visible after delete"
+    card = page.locator('.project-card[aria-label="View del_card_repo details"]')
+    expect(card).to_be_visible()
+    card.hover()
+    page.on("dialog", lambda dialog: dialog.accept())
+    remove_btn = card.locator("button[aria-label*='Remove']")
+    expect(remove_btn).to_be_visible()
+    remove_btn.click()
+    expect(page.get_by_text("del_card_repo", exact=True)).not_to_be_visible()
 
 
 def test_delete_button_always_in_dom(server, page, tmp_path):
@@ -2193,23 +2053,12 @@ def test_delete_button_always_in_dom(server, page, tmp_path):
     page.wait_for_timeout(2000)
 
     card = page.locator(".project-card").first
-    if card.count() > 0:
-        # Delete button should exist in DOM even without hovering
-        remove_btn = card.locator("button.card-delete-btn")
-        assert remove_btn.count() > 0, \
-            "Delete button not in DOM — must always be rendered for CSS :hover to work"
-
-        # Without hover, button should be hidden via CSS opacity
-        opacity = remove_btn.evaluate("el => getComputedStyle(el).opacity")
-        assert opacity == "0", \
-            f"Delete button should be invisible (opacity 0) without hover, got {opacity}"
-
-        # After hover, button should become visible
-        card.hover()
-        page.wait_for_timeout(300)
-        opacity = remove_btn.evaluate("el => getComputedStyle(el).opacity")
-        assert opacity == "1", \
-            f"Delete button should be visible (opacity 1) on hover, got {opacity}"
+    expect(card).to_be_visible()
+    remove_btn = card.locator("button.card-delete-btn")
+    expect(remove_btn).to_have_count(1)
+    expect(remove_btn).to_have_css("opacity", "0")
+    card.hover()
+    expect(remove_btn).to_have_css("opacity", "1")
 
 
 def test_delete_sequential_cards_without_mouse_move(server, page, tmp_path):
@@ -2384,12 +2233,12 @@ def test_branch_names_not_corrupted(server, page, tmp_path):
 
     # Navigate to repo detail
     card = page.locator(".project-card").first
-    if card.count() > 0:
-        card.click()
-        page.wait_for_timeout(1000)
+    expect(card).to_be_visible()
+    card.click()
+    page.wait_for_timeout(1000)
 
-        # Check branches via API
-        branches_data = page.evaluate("""
+    # Check branches via API
+    branches_data = page.evaluate("""
             async () => {
                 // Get repo id from URL hash
                 const hash = window.location.hash;
@@ -2399,18 +2248,14 @@ def test_branch_names_not_corrupted(server, page, tmp_path):
                 const res = await fetch('/api/repos/' + repoId + '/branches');
                 return res.json();
             }
-        """)
-
-        if "branches" in branches_data:
-            for b in branches_data["branches"]:
-                name = b["name"]
-                assert "%x00" not in name, \
-                    f"Branch name contains literal %x00: {name}"
-                assert "%00" not in name, \
-                    f"Branch name contains encoded null: {name}"
-                # Branch names shouldn't contain ISO dates
-                assert "T" not in name or ":" not in name or len(name) < 30, \
-                    f"Branch name looks like it has a date appended: {name}"
+    """)
+    assert branches_data["branches"], "Expected at least one scanned branch"
+    for b in branches_data["branches"]:
+        name = b["name"]
+        assert "%x00" not in name, f"Branch name contains literal %x00: {name}"
+        assert "%00" not in name, f"Branch name contains encoded null: {name}"
+        assert "T" not in name or ":" not in name or len(name) < 30, \
+            f"Branch name looks like it has a date appended: {name}"
 
 
 def test_branch_stale_not_zero_days_for_recent(server, page, tmp_path):

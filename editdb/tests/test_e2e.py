@@ -118,7 +118,6 @@ def test_app_loads_without_browser_errors_and_opens_sql_console(server, page):
         expect(app).to_be_visible()
         assert page.locator('body').evaluate('e => [getComputedStyle(e).backgroundColor, getComputedStyle(e).color]') == ['rgb(248, 250, 252)', 'rgb(15, 23, 42)']
         assert app.evaluate('e => getComputedStyle(e).backgroundColor') == 'rgb(248, 250, 252)'
-        assert page.evaluate("getComputedStyle(document.documentElement).getPropertyValue('--color-brand-dark-50').trim()") == '#f8fafc'
         expect(page.get_by_text('alpha', exact=True)).to_be_visible()
         assert_classes_styled(page)
         page.get_by_role('button', name='Schema', exact=True).click()

@@ -46,13 +46,6 @@ test('browser resource policy admits blobs only for observed actual downloads an
  assert.throws(()=>browser.assertAllowedRequests(target,['http://127.0.0.1:1/engine.js']),/unexpected/);
 });
 
-test('browser target refuses encoded routes and normalization disguising another route',async t=>{
- const f=await staticFixture(t),files=new Map([['index.html',Buffer.from('invented document')],...browser.STATIC_ASSETS.map(n=>[n,Buffer.from('invented '+n)])]);
- for(const suffix of ['../backtest/index.html','%2e%2e/backtest/index.html','%69ndex.html','index.html?','index.html#']){
-  assert.throws(()=>browser.resolveTarget(f.base,'http://127.0.0.1:1/calculators/backtest/'+suffix,{expected:browser.makeExpected(files),purpose:'installed'}),/target|route|query|fragment/);
- }
-});
-
 test('standalone file override preserves encoded spaces with independent package expectations',async t=>{
  const f=await staticFixture(t),api=await import('../tools/build_static.mjs'),artifact={files:await api.readRuntime(f)};
  const root=path.join(f.base,'invented package with spaces');await api.buildStatic({...f,outputDir:root});

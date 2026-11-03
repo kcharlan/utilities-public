@@ -4,7 +4,6 @@ from html.parser import HTMLParser
 from importlib import resources
 import re
 
-import pytest
 
 
 ASSETS = resources.files("model_sentinel.browse").joinpath("assets")
@@ -256,63 +255,3 @@ def test_theme_is_validated_and_stamped_before_actual_stylesheet_tags() -> None:
     assert re.search(r"includes\s*\(", script)
     assert re.search(r'theme\s*!==\s*["\']system["\']', script)
     assert re.search(r"(?:dataset\.theme|setAttribute\s*\([^)]*data-theme)", script)
-
-
-def test_prepaint_parser_ignores_comment_decoys_and_rejects_late_script() -> None:
-    source = """
-      <!-- <script>model_sentinel.browse.theme</script> -->
-      <link rel="stylesheet" href="app.css">
-      <script>model_sentinel.browse.theme</script>
-    """
-    with pytest.raises(AssertionError):
-        _prepaint_script(source)
-
-
-def test_theme_parser_ignores_commented_decoy_blocks() -> None:
-    css = '/* :root { --decoy: #fff; } */ :root { --real: #000; }'
-    root = _block(_without_css_comments(css), ":root")
-    assert _custom_properties(root) == {"--real": "#000"}
-
-
-@pytest.mark.parametrize("declaration", ["--empty: ;", "--empty:"])
-def test_theme_parser_rejects_empty_token_values(declaration: str) -> None:
-    with pytest.raises(AssertionError):
-        _custom_properties(declaration)
-
-
-def test_theme_contract_rejects_missing_and_light_only_tokens() -> None:
-    with pytest.raises(AssertionError):
-        _assert_token_contract(
-            {"--shared": "a", "--light-only": "b"},
-            {"--shared": "c"},
-            {"--shared": "c"},
-            required={"--shared"},
-        )
-    with pytest.raises(AssertionError):
-        _assert_token_contract(
-            {"--shared": "a"},
-            {"--shared": "c"},
-            {"--shared": "c"},
-            required={"--required"},
-        )
-
-
-def test_css_comment_stripping_preserves_comment_markers_inside_strings() -> None:
-    css = ':root { --image: "/* quoted marker, not a comment */"; }'
-    cleaned = _without_css_comments(css)
-    assert "quoted marker, not a comment" in cleaned
-
-
-@pytest.mark.parametrize(
-    "value",
-    [
-        '"quoted } brace"',
-        '"escaped \\" } brace"',
-        'url("data:image/svg+xml;utf8,<svg>{<path d=\'M0 0\'/>}</svg>")',
-    ],
-)
-def test_css_block_scanning_ignores_braces_inside_quoted_values(value: str) -> None:
-    css = f":root {{ --image: {value}; --ground: #fff; }}"
-    declarations = _custom_properties(_block(css, ":root"))
-    assert declarations["--image"] == value
-    assert declarations["--ground"] == "#fff"

@@ -19,6 +19,17 @@ test('ledger groups flows, balances, and sales without changing column labels', 
   const headings = page.locator('.amort thead .col-heads th');
   await expect(headings).toHaveCount(11);
   await expect(headings.nth(9)).toHaveText('Gross sold');
+  await page.evaluate(() => {
+    Object.assign(state.params, { buffer_initial: 100, floor: 100, expense: 50,
+      investment_income: 0, external_income: 0, investments_initial: 1000,
+      tax_rate: 0, sale_tax_rate: 0, modifier: 0, inflation: 0,
+      unit: 'months', num_periods: 2 });
+    state.pins = [];
+    rerender();
+  });
+  await expect(page.locator('#amort-body tr[data-month="1"] td').nth(9)).toHaveText('$50');
+  await page.evaluate(() => { state.params.expense = 0; rerender(); });
+  await expect(page.locator('#amort-body tr[data-month="1"] td').nth(9)).toHaveText('—');
   expect(await headings.evaluateAll(cells => cells.every(cell => cell.attributes.length === 0))).toBe(true);
   expect(await page.locator('.amort colgroup col').evaluateAll(cols => cols.map(col => col.style.width)))
     .toEqual(['48px', '52px', '150px', '', '', '', '', '', '', '', '']);
@@ -26,10 +37,14 @@ test('ledger groups flows, balances, and sales without changing column labels', 
 
 test('ledger anchors the identity columns and keeps row treatments aligned while scrolling', async ({ page }) => {
   await page.setViewportSize({ width: 1024, height: 800 });
-  await page.evaluate(() => {
+  const initialRowTop = await page.evaluate(() => {
     const scroller = document.querySelector('.table-scroll');
+    const rowTop = document.querySelector('#amort-body tr[data-month="1"]').getBoundingClientRect().top;
     scroller.scrollLeft = 200;
+    scroller.scrollTop = 200;
+    return rowTop;
   });
+  await expect.poll(() => page.locator('.table-scroll').evaluate(scroller => scroller.scrollTop)).toBe(200);
   const geometry = await page.evaluate(() => {
     const scroller = document.querySelector('.table-scroll');
     const first = document.querySelector('#amort-body tr[data-month="1"]');
@@ -38,6 +53,12 @@ test('ledger anchors the identity columns and keeps row treatments aligned while
     const group = document.querySelector('.col-groups th');
     return {
       scrollLeft: scroller.scrollLeft,
+      scrollTop: scroller.scrollTop,
+      scrollHeight: scroller.scrollHeight,
+      clientHeight: scroller.clientHeight,
+      rowTop: first.getBoundingClientRect().top,
+      scrollerTop: scroller.getBoundingClientRect().top,
+      headerTop: group.getBoundingClientRect().top,
       scrollerLeft: scroller.getBoundingClientRect().left,
       dateLeft: date.getBoundingClientRect().left,
       groupLeft: group.getBoundingClientRect().left,
@@ -47,6 +68,10 @@ test('ledger anchors the identity columns and keeps row treatments aligned while
     };
   });
   expect(geometry.scrollLeft).toBe(200);
+  expect(geometry.scrollHeight).toBeGreaterThan(geometry.clientHeight);
+  expect(geometry.scrollTop).toBe(200);
+  expect(Math.abs(initialRowTop - geometry.rowTop - 200)).toBeLessThanOrEqual(1);
+  expect(Math.abs(geometry.headerTop - geometry.scrollerTop)).toBeLessThanOrEqual(1);
   expect(Math.abs(geometry.dateLeft - geometry.scrollerLeft - 100)).toBeLessThanOrEqual(1);
   expect(Math.abs(geometry.groupLeft - geometry.scrollerLeft)).toBeLessThanOrEqual(1);
   expect(geometry.datePosition).toBe('sticky');

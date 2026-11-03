@@ -10,6 +10,7 @@ from tests.test_cli import _write_config_files
 @pytest.mark.parametrize("bad_catalog", [
     [{"id": "duplicate"}, {"id": "duplicate"}],
     [{"id": "overflow", "context_length": float("inf")}],
+    [{"name": "Synthetic model without id"}],
     [],
 ])
 def test_failed_catalog_preserves_baseline_and_scans_next_provider(

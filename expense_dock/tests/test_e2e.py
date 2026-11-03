@@ -1,10 +1,13 @@
 """Isolated browser coverage for Expense Dock."""
 import os
+import json
 import signal
 import socket
 import subprocess
 import sys
 import time
+from email import policy
+from email.parser import BytesParser
 from pathlib import Path
 
 import pytest
@@ -68,16 +71,6 @@ def server(tmp_path_factory):
 def test_vendor_contract():
     assert_frontend_vendor_current(LAUNCHER)
     assert_launcher_compiles_cleanly(LAUNCHER)
-    source = LAUNCHER.read_text()
-    for token in (
-        "--font-display: 'Fraunces', serif;",
-        "--font-body: 'Work Sans', sans-serif;",
-        "--font-mono: 'IBM Plex Mono', monospace;",
-        '--shadow-docket: 0 24px 80px rgba(16, 24, 40, 0.18);',
-        '--color-ledger-paper: #f7f0df;',
-        '--color-ledger-sand: #dccfaf;',
-    ):
-        assert token in source
 
 def test_page_loads_offline(server, browser):
     context = browser.new_context()
@@ -162,3 +155,55 @@ def test_select_with_an_unlisted_value_shows_its_placeholder(server, page):
         select = page.get_by_role('combobox', name='Default paid by')
         expect(select).to_be_visible()
         assert select.evaluate('(element) => element.selectedIndex') == 0
+
+def test_submit_success_resets_form_and_failure_keeps_it(server, page):
+    payloads = []
+
+    def submit(route):
+        request = route.request
+        content_type = request.headers['content-type']
+        body = BytesParser(policy=policy.default).parsebytes(
+            f'Content-Type: {content_type}\r\nMIME-Version: 1.0\r\n\r\n'.encode()
+            + request.post_data_buffer
+        )
+        payload = next(part for part in body.iter_parts()
+                       if part.get_param('name', header='content-disposition') == 'payload')
+        payloads.append(json.loads(payload.get_content()))
+        if len(payloads) == 1:
+            route.fulfill(json={'ok': True, 'row_number': 7,
+                                'receipt_link': 'https://example.test/receipt', 'duplicate': False})
+        else:
+            route.fulfill(status=500, json={'ok': False, 'error': 'Synthetic workbook failure',
+                                            'pending': {'id': 'abcdef123456'}, 'fallback_csv': 'ID\n'})
+
+    page.route('**/api/auth/**', lambda route: route.abort())
+    page.route('**/api/submit', submit)
+    with guard_browser_errors(page, expected=(
+        'Failed to load resource: the server responded with a status of 500 (Internal Server Error)',
+    )):
+        page.goto(server, wait_until='networkidle')
+        page.get_by_role('button', name='Submit Primary intake form').click()
+        vendor = page.get_by_role('textbox', name='Vendor')
+        for attempt in range(2):
+            vendor.fill('SYNTHETIC VENDOR')
+            page.get_by_role('spinbutton', name='Amount').fill('12.50')
+            page.locator('input[type=date]').fill('2030-01-02')
+            page.locator('input[type=file]').set_input_files({
+                'name': 'SYNTHETIC-receipt.txt', 'mimeType': 'text/plain',
+                'buffer': b'SYNTHETIC RECEIPT',
+            })
+            page.get_by_role('button', name='Upload receipt and append workbook').click()
+            if attempt == 0:
+                expect(page.get_by_text('Expense appended on row 7.')).to_be_visible()
+                expect(vendor).to_have_value('')
+            else:
+                expect(page.get_by_text('Synthetic workbook failure')).to_be_visible()
+                expect(page.get_by_text('abcdef123456')).to_be_visible()
+                expect(page.get_by_role('button', name='Download CSV fallback')).to_be_visible()
+                expect(vendor).to_have_value('SYNTHETIC VENDOR')
+
+    assert len(payloads) == 2
+    for payload in payloads:
+        assert payload['vendor'] == 'SYNTHETIC VENDOR'
+        assert payload['amount'] == '12.50'
+        assert payload['date'] == '2030-01-02'

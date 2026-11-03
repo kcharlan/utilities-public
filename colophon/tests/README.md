@@ -22,7 +22,8 @@ malformed optional SQL enums while rejecting invalid row indexes. Raw enum
 states distinguish valid integers, absent NULLs and invalid dynamic types.
 Privacy canaries exercise unrelated tables/settings and excluded prompt/thinking
 text. Wrappers strip all three ignored Antigravity environment names and deny
-real Gemini root reads/writes. A separate mutation invocation proves removing
+real Gemini root reads/writes. A separate CLI-category mutation invocation proves
+removing
 that explicit deny fails the policy regression under existing canonical scratch.
 
 Antigravity corpus units pin every descriptor status, mixed error/cancellation
@@ -73,11 +74,12 @@ mixed/disabled providers, and preservation of unopened Codex cache bytes,
 modes and recovery names during ordinary and rebuild runs. The reader
 browser case prevents Claude rows from offering Codex actions. Wrappers
 strip `CLAUDE_CONFIG_DIR`, deny real Claude-owned config/desktop/swap reads
-and writes, and mutation-check each explicit deny under synthetic scratch.
+and writes; the CLI category mutation-checks each explicit deny under synthetic
+scratch.
 
 Run `make test` for all retained C units, fresh synthetic CLI and integration
 checks, Chromium browser cases, and local
-asset/stable-sort guards (twelve asset digests).
+asset/stable-sort guards (nine provenance and third-party asset digests).
 Run `make sanitize` for the same categories with ASan/UBSan, `make tsan` for
 the retained C units with TSan, and `make check-assets` for local digest checks.
 These checks are independent acceptance checks, not captured-corpus parity or
@@ -122,7 +124,7 @@ The sandbox allows active project/binary/dependency reads, denies project and
 real runtime writes, and denies reads/writes of protected historical checkouts.
 Regression checks read active source/binary bytes, write only scratch data and
 evaluate source and real-home write policies without creating canaries. The
-wrapper proves the explicit `PROJECT_DIR` deny independently under canonical
+CLI category proves the explicit `PROJECT_DIR` deny independently under canonical
 scratch: the protected profile passes and removal of that deny fails. Both
 profiles run in separate sandbox invocations, with output trapped under `/tmp`.
 Fixtures create fresh
@@ -171,4 +173,10 @@ files are invented under the case's scratch HOME through this project's
 venv sqlite3. Tests preserve database/WAL bytes, leave unopened Codex caches
 untouched across rebuild, and prevent credential/unrelated-kv canaries from
 entering runtime artifacts. The wrapper strips OpenCode environment overrides
-and mutation-checks all five real-home OpenCode read/write denies separately.
+and, in the CLI category, mutation-checks all five real-home OpenCode read/write
+denies separately.
+
+Pricing regressions independently check dated user-ledger rates, resistance to
+later repricing, cached-input and output costs, and catalog recording without
+duplicate entries. Ledger units cover validation, private file modes, concurrent
+changes, and nonfatal write failures.

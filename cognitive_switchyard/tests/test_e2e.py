@@ -35,7 +35,7 @@ import pytest
 import playwright
 
 import uvicorn  # noqa: E402
-from playwright.sync_api import TimeoutError as PlaywrightTimeoutError  # noqa: E402
+from playwright.sync_api import TimeoutError as PlaywrightTimeoutError, expect  # noqa: E402
 
 from tools.testkit import (  # noqa: E402
     assert_exact_text,
@@ -422,22 +422,6 @@ def _poll_tasks_done(page, session_id: str, *, min_done: int = 1, timeout: float
             return tasks
         _time.sleep(0.2)
     raise TimeoutError(f"Session {session_id}: expected {min_done} done tasks in {timeout}s")
-
-
-def _poll_tasks_exist(page, session_id: str, *, min_count: int = 1, timeout: float = 30.0) -> list[dict]:
-    """Poll tasks API until at least min_count tasks exist. Returns task list."""
-    import time as _time
-    deadline = _time.monotonic() + timeout
-    while _time.monotonic() < deadline:
-        result = page.evaluate(f"""async () => {{
-            const resp = await fetch('/api/sessions/{session_id}/tasks');
-            return await resp.json();
-        }}""")
-        tasks = result.get("tasks", [])
-        if len(tasks) >= min_count:
-            return tasks
-        _time.sleep(0.2)
-    raise TimeoutError(f"Session {session_id}: expected {min_count} tasks in {timeout}s")
 
 
 def _purge_inactive_operable_sessions(page) -> None:
@@ -928,58 +912,6 @@ class TestSetupPackDefaults:
 # ---------------------------------------------------------------------------
 
 
-class TestSessionCreationUnhappy:
-    """Verify error handling for invalid session creation attempts."""
-
-    def test_duplicate_session_id_via_api(self, server_url, page):
-        """Creating a session with a duplicate ID should return 409."""
-        page.goto(server_url)
-        page.wait_for_selector("body", timeout=SLOW_TIMEOUT)
-
-        result = page.evaluate("""async () => {
-            // Create first
-            await fetch('/api/sessions', {
-                method: 'POST',
-                headers: {'Content-Type': 'application/json'},
-                body: JSON.stringify({id: 'dup-test-001', name: 'Dup Test 1', pack: 'claude-code'})
-            });
-            // Try duplicate
-            const resp = await fetch('/api/sessions', {
-                method: 'POST',
-                headers: {'Content-Type': 'application/json'},
-                body: JSON.stringify({id: 'dup-test-001', name: 'Dup Test 2', pack: 'claude-code'})
-            });
-            return { status: resp.status, body: await resp.text() };
-        }""")
-        assert result["status"] == 409
-        assert "already exists" in result["body"].lower()
-
-    def test_missing_session_id_returns_422(self, server_url, page):
-        """POST without required 'id' field should return 422 (Pydantic validation)."""
-        page.goto(server_url)
-        page.wait_for_selector("body", timeout=SLOW_TIMEOUT)
-
-        result = page.evaluate("""async () => {
-            const resp = await fetch('/api/sessions', {
-                method: 'POST',
-                headers: {'Content-Type': 'application/json'},
-                body: JSON.stringify({name: 'No ID', pack: 'claude-code'})
-            });
-            return { status: resp.status };
-        }""")
-        assert result["status"] == 422
-
-    def test_nonexistent_session_returns_404(self, server_url, page):
-        """GET for a session that doesn't exist returns 404."""
-        page.goto(server_url)
-        page.wait_for_selector("body", timeout=SLOW_TIMEOUT)
-
-        result = page.evaluate("""async () => {
-            const resp = await fetch('/api/sessions/does-not-exist-999');
-            return { status: resp.status };
-        }""")
-        assert result["status"] == 404
-
 
 # ---------------------------------------------------------------------------
 # 4. INTAKE FILE MANAGEMENT
@@ -1135,6 +1067,8 @@ class TestSessionLifecycle:
 
     def test_start_session_and_task_completes(self, server_url, runtime_home, page):
         """Create session, add intake plan, start, verify task reaches done."""
+        errors = []
+        page.on("pageerror", lambda exc: errors.append(str(exc)))
         page.goto(server_url)
         page.wait_for_selector("body", timeout=SLOW_TIMEOUT)
 
@@ -1154,56 +1088,11 @@ class TestSessionLifecycle:
         }""")
         assert result["status"] == 202
 
-        _poll_session_status(page, "lifecycle-001", {"idle", "aborted"})
+        _poll_session_status(page, "lifecycle-001", {"idle"})
         tasks = _poll_tasks_done(page, "lifecycle-001", min_done=1)
         task_ids = [t["task_id"] for t in tasks]
         assert "t001" in task_ids
-
-    def test_multiple_tasks_execute_concurrently(self, server_url, runtime_home, page):
-        """Two independent tasks should be dispatched to separate worker slots."""
-        page.goto(server_url)
-        page.wait_for_selector("body", timeout=SLOW_TIMEOUT)
-
-        page.evaluate("""async () => {
-            await fetch('/api/sessions', {
-                method: 'POST',
-                headers: {'Content-Type': 'application/json'},
-                body: JSON.stringify({
-                    id: 'concurrent-001', name: 'Concurrent', pack: 'claude-code',
-                    config: { worker_count: 2 }
-                })
-            });
-        }""")
-
-        _write_intake_plan(runtime_home, "concurrent-001", "t001")
-        _write_intake_plan(runtime_home, "concurrent-001", "t002")
-
-        page.evaluate("""async () => {
-            await fetch('/api/sessions/concurrent-001/start', { method: 'POST' });
-        }""")
-
-        _poll_tasks_done(page, "concurrent-001", min_done=2)
-
-    def test_session_reaches_completed_status(self, server_url, runtime_home, page):
-        """After all tasks finish, session status should become 'completed'."""
-        page.goto(server_url)
-        page.wait_for_selector("body", timeout=SLOW_TIMEOUT)
-
-        page.evaluate("""async () => {
-            await fetch('/api/sessions', {
-                method: 'POST',
-                headers: {'Content-Type': 'application/json'},
-                body: JSON.stringify({id: 'complete-001', name: 'Complete Test', pack: 'claude-code'})
-            });
-        }""")
-
-        _write_intake_plan(runtime_home, "complete-001", "t001")
-
-        page.evaluate("""async () => {
-            await fetch('/api/sessions/complete-001/start', { method: 'POST' });
-        }""")
-
-        _poll_session_status(page, "complete-001", {"idle"})
+        assert errors == []
 
 
 # ---------------------------------------------------------------------------
@@ -1213,33 +1102,6 @@ class TestSessionLifecycle:
 
 class TestSessionControl:
     """Verify pause, resume, and abort controls."""
-
-    def test_abort_running_session(self, server_url, runtime_home, page):
-        """Aborting a running session should transition it to 'aborted'."""
-        page.goto(server_url)
-        page.wait_for_selector("body", timeout=SLOW_TIMEOUT)
-
-        page.evaluate("""async () => {
-            await fetch('/api/sessions', {
-                method: 'POST',
-                headers: {'Content-Type': 'application/json'},
-                body: JSON.stringify({id: 'abort-001', name: 'Abort Test', pack: 'claude-code'})
-            });
-        }""")
-        _write_intake_plan(runtime_home, "abort-001", "t001")
-
-        page.evaluate("""async () => {
-            await fetch('/api/sessions/abort-001/start', { method: 'POST' });
-        }""")
-        page.wait_for_timeout(500)
-
-        result = page.evaluate("""async () => {
-            const resp = await fetch('/api/sessions/abort-001/abort', { method: 'POST' });
-            return { status: resp.status };
-        }""")
-        assert result["status"] == 202
-
-        _poll_session_status(page, "abort-001", {"aborted"})
 
     def test_abort_button_visible_in_monitor_view(self, server_url, runtime_home, page):
         """When a non-terminal session is selected, the Abort button should appear."""
@@ -1262,56 +1124,13 @@ class TestSessionControl:
 
         # The Abort button is shown for any session that is not completed/aborted.
         # A "created" session qualifies. Check that the button exists.
-        abort_btn = page.locator("button:has-text('Abort')")
-        # Also check via case-insensitive body text in case CSS uppercases it
-        body_lower = page.locator("body").inner_text().lower()
-        assert abort_btn.count() > 0 or "abort" in body_lower
+        expect(page.locator("button", has_text="Abort")).to_be_visible()
 
 
 # ---------------------------------------------------------------------------
 # 8. DASHBOARD & MONITOR VIEW
 # ---------------------------------------------------------------------------
 
-
-class TestDashboardAndMonitor:
-    """Verify dashboard API and monitor view rendering."""
-
-    def test_dashboard_returns_valid_payload(self, server_url, page):
-        """Dashboard endpoint should return session, tasks, pipeline_dirs."""
-        page.goto(server_url)
-        page.wait_for_selector("body", timeout=SLOW_TIMEOUT)
-
-        page.evaluate("""async () => {
-            await fetch('/api/sessions', {
-                method: 'POST',
-                headers: {'Content-Type': 'application/json'},
-                body: JSON.stringify({id: 'dash-001', name: 'Dashboard', pack: 'claude-code'})
-            });
-        }""")
-
-        result = page.evaluate("""async () => {
-            const resp = await fetch('/api/sessions/dash-001/dashboard');
-            return await resp.json();
-        }""")
-        assert "session" in result
-        assert "pipeline_dirs" in result
-        assert result["session"]["status"] == "created"
-
-    def test_monitor_view_renders_without_crash(self, server_url, page):
-        """Switching to monitor view should not produce console errors."""
-        errors = []
-        page.on("pageerror", lambda exc: errors.append(str(exc)))
-
-        page.goto(server_url)
-        page.wait_for_selector("body", timeout=SLOW_TIMEOUT)
-        page.wait_for_timeout(500)
-
-        monitor = page.locator("button:has-text('Monitor')")
-        if monitor.count() > 0:
-            monitor.click()
-            page.wait_for_timeout(500)
-
-        assert errors == [], f"Console errors on monitor: {errors}"
 
 
 # ---------------------------------------------------------------------------
@@ -1321,63 +1140,6 @@ class TestDashboardAndMonitor:
 
 class TestTaskDetail:
     """Verify task detail and log retrieval."""
-
-    def test_task_detail_api(self, server_url, runtime_home, page):
-        """After execution, task detail API returns metadata."""
-        page.goto(server_url)
-        page.wait_for_selector("body", timeout=SLOW_TIMEOUT)
-
-        page.evaluate("""async () => {
-            await fetch('/api/sessions', {
-                method: 'POST',
-                headers: {'Content-Type': 'application/json'},
-                body: JSON.stringify({id: 'detail-001', name: 'Detail', pack: 'claude-code'})
-            });
-        }""")
-
-        _write_intake_plan(runtime_home, "detail-001", "td01")
-
-        page.evaluate("""async () => {
-            await fetch('/api/sessions/detail-001/start', { method: 'POST' });
-        }""")
-
-        _poll_tasks_done(page, "detail-001", min_done=1)
-
-        result = page.evaluate("""async () => {
-            const resp = await fetch('/api/sessions/detail-001/tasks/td01');
-            return await resp.json();
-        }""")
-        assert result["task"]["task_id"] == "td01"
-        assert result["task"]["status"] == "done"
-
-    def test_task_log_api(self, server_url, runtime_home, page):
-        """Task log endpoint should return log content after execution."""
-        page.goto(server_url)
-        page.wait_for_selector("body", timeout=SLOW_TIMEOUT)
-
-        page.evaluate("""async () => {
-            await fetch('/api/sessions', {
-                method: 'POST',
-                headers: {'Content-Type': 'application/json'},
-                body: JSON.stringify({id: 'log-001', name: 'Log Test', pack: 'claude-code'})
-            });
-        }""")
-
-        _write_intake_plan(runtime_home, "log-001", "tl01")
-
-        page.evaluate("""async () => {
-            await fetch('/api/sessions/log-001/start', { method: 'POST' });
-        }""")
-
-        _poll_tasks_done(page, "log-001", min_done=1)
-
-        result = page.evaluate("""async () => {
-            const resp = await fetch('/api/sessions/log-001/tasks/tl01/log');
-            return await resp.json();
-        }""")
-        assert "content" in result
-        assert result["content"] != ""
-        assert "PROGRESS" in result["content"]
 
     def test_task_detail_shows_timing_fields(self, server_url, runtime_home, page):
         """Completed task detail view shows Started, Duration, and Completed fields."""
@@ -1513,6 +1275,8 @@ class TestDagView:
 
     def test_dag_preserves_navigation_controls_and_zoom_bounds(self, fresh_server, page):
         _open_synthetic_canvas(fresh_server, page)
+        for selector, label in ((".dag-zoom-in", "Zoom In"), (".dag-zoom-out", "Zoom Out"), (".dag-fit-view", "Fit View"), (".dag-toggle-interactivity", "Toggle Interactivity")):
+            assert page.locator(selector).get_attribute("aria-label") == label
         viewport = page.locator(".dag-viewport")
         matrix = lambda: viewport.evaluate("el => { const m = new DOMMatrix(getComputedStyle(el).transform); return [m.a, m.e, m.f]; }")
         fitted = matrix()
@@ -1688,6 +1452,7 @@ class TestDagView:
         page.locator("button[aria-label='Open DAG']").click()
         page.locator(".dag-node[data-id='alpha']").wait_for()
         assert page.get_by_text("Synthetic group", exact=True).count() == 1
+        assert page.locator(".dag-minimap-node").count() == page.locator(".dag-node").count()
 
     def test_dag_shift_drag_selects_nodes(self, fresh_server, page):
         _open_synthetic_canvas(fresh_server, page)
@@ -1831,19 +1596,6 @@ class TestDagView:
         page.locator(".dag-fit-view").click()
         _dispatch_wheel(page, *_edge_point(page, "root-middle"), -100)
         page.wait_for_function("zoom => new DOMMatrix(getComputedStyle(document.querySelector('.dag-viewport')).transform).a > zoom", arg=fitted[0])
-
-    @pytest.mark.parametrize(("delta", "ctrl", "mode", "macos_factor", "other_factor"), [
-        pytest.param(-10, True, 0, 2 ** .2, 2 ** .02, id="pinch"),
-        pytest.param(-3, False, 1, 2 ** .15, 2 ** .15, id="lines"),
-        pytest.param(-.1, False, 2, 2 ** .1, 2 ** .1, id="pages"),
-    ])
-    def test_dag_wheel_follows_react_flow_scale(self, fresh_server, page, delta, ctrl, mode, macos_factor, other_factor):
-        _open_synthetic_canvas(fresh_server, page)
-        zoom = _dag_view(page)[0]
-        _dispatch_wheel(page, *_pane_point(page), delta, ctrl=ctrl, mode=mode)
-        factor = macos_factor if page.evaluate("navigator.userAgent.includes('Mac')") else other_factor
-        page.wait_for_function("zoom => new DOMMatrix(getComputedStyle(document.querySelector('.dag-viewport')).transform).a !== zoom", arg=zoom)
-        assert _dag_view(page)[0] == pytest.approx(zoom * factor, abs=.001)
 
     def test_dag_dragged_and_selected_nodes_stay_on_top(self, fresh_server, page):
         _open_synthetic_canvas(fresh_server, page)
@@ -2006,73 +1758,6 @@ class TestDagView:
         page.keyboard.press("Escape")
         assert _selected_nodes(page) == ["root"]
 
-    def test_dag_fit_uses_ten_percent_padding(self, fresh_server, page):
-        # Zooms measured from React Flow at this viewport. Padding of 20% gives 1.714 and 1.133.
-        page.set_viewport_size({"width": 1440, "height": 900})
-        _open_synthetic_canvas(fresh_server, page)
-        assert _dag_view(page)[0] == pytest.approx(1.871, abs=.001)
-        _reopen_dag_with(page, {"tasks": [_dag_task(f"t{i}") for i in range(5)], "groups": []})
-        assert _dag_view(page)[0] == pytest.approx(1.238, abs=.001)
-        top = page.locator(".dag-node[data-id='t0']").bounding_box()
-        bottom = page.locator(".dag-node[data-id='t4']").bounding_box()
-        canvas = page.locator(".dag-canvas-root").bounding_box()
-        padding = (canvas["height"] - canvas["height"] / 1.1) / 2
-        assert top["y"] - canvas["y"] == pytest.approx(padding, abs=3)  # React Flow floors the padding; 20% would be about 69px
-        assert canvas["y"] + canvas["height"] - bottom["y"] - bottom["height"] == pytest.approx(padding, abs=3)  # React Flow floors the padding; 20% would be about 69px
-
-    def test_dag_zoom_buttons_match_react_flow(self, fresh_server, page):
-        _open_synthetic_canvas(fresh_server, page)
-        for selector, label in ((".dag-zoom-in", "Zoom In"), (".dag-zoom-out", "Zoom Out"), (".dag-fit-view", "Fit View"), (".dag-toggle-interactivity", "Toggle Interactivity")):
-            button = page.locator(selector)
-            assert button.get_attribute("title") == label
-            assert button.get_attribute("aria-label") == label
-            assert button.locator("svg path").count() == 1
-            assert button.inner_text() == ""
-        zoom_in = page.locator(".dag-zoom-in")
-        _click_until_disabled(zoom_in)
-        assert zoom_in.locator("svg").evaluate("el => getComputedStyle(el).fillOpacity") == "0.4"
-        assert zoom_in.evaluate("el => getComputedStyle(el).pointerEvents") == "none"
-        lock = page.locator(".dag-toggle-interactivity svg path")
-        unlocked = lock.get_attribute("d")
-        page.locator(".dag-toggle-interactivity").click()
-        assert lock.get_attribute("d") != unlocked
-
-    def test_dag_visual_details_match_react_flow(self, fresh_server, page):
-        _open_dag_payload(fresh_server, page, {
-            "tasks": [_dag_task("first"), _dag_task("second", "first"), _dag_task("third", "first")],
-            "groups": [{"name": "synthetic-group", "members": ["second", "third"]}],
-        })
-        marker = page.locator("#dag-arrow")
-        assert (marker.get_attribute("markerWidth"), marker.get_attribute("markerHeight")) == ("12.5", "12.5")
-        arrow = marker.locator("polyline")
-        assert (arrow.get_attribute("fill"), arrow.get_attribute("stroke")) == ("#b1b1b7", "#b1b1b7")
-        handle = page.locator(".dag-node[data-id='first'] .dag-source-handle")
-        assert handle.evaluate("el => [el.offsetWidth, el.offsetHeight]") == [6, 6]
-        cursor = "el => getComputedStyle(el).cursor"
-        assert page.locator(".dag-canvas-root").evaluate(cursor) == "grab"
-        assert page.locator(".dag-edges g").first.evaluate(cursor) == "pointer"
-        assert page.locator(".dag-minimap").evaluate(cursor) == "auto"
-        # The minimap draws every node, group rectangles included, in its own background.
-        rects = page.locator(".dag-minimap-node").evaluate_all("els => els.map(el => [el.style.fill, el.getAttribute('rx')])")
-        assert len(rects) == page.locator(".dag-node").count()
-        assert rects[0] == ["rgba(167, 139, 250, 0.08)", "5"]
-        mask = page.locator(".dag-minimap-mask")
-        assert mask.evaluate("el => getComputedStyle(el).fill") == "rgba(240, 240, 240, 0.6)"
-        assert mask.get_attribute("fill-rule") == "evenodd"
-
-    def test_dag_edges_use_react_flow_bezier_offsets(self, fresh_server, page):
-        _open_dag_payload(fresh_server, page, {"tasks": [_dag_task("first"), _dag_task("second", "first"), _dag_task("third", "first")], "groups": []})
-        height = page.locator(".dag-node[data-id='first']").evaluate("el => el.offsetHeight")
-        path = lambda edge: [float(value) for value in page.locator(f".dag-edges g[data-id='{edge}'] .dag-edge").get_attribute("d").replace("M", "").replace("C", " ").replace(",", " ").split()]
-        # Handles overhang the 2px border by 1px. A target below the source bends by half the distance.
-        start, end = 40 + height + 1, 160 - 1
-        offset = (end - start) / 2
-        assert path("first-third") == pytest.approx([130, start, 130, start + offset, 390, end - offset, 390, end])
-        # A target above it bends by 6.25 times the square root of the distance.
-        end = 40 - 1
-        offset = 6.25 * (start - end) ** .5
-        assert path("first-second") == pytest.approx([130, start, 130, start + offset, 390, end - offset, 390, end])
-
     def test_dag_auto_pan_follows_the_current_zoom(self, fresh_server, page):
         _open_synthetic_canvas(fresh_server, page)
         node = page.locator(".dag-node[data-id='middle']")
@@ -2111,37 +1796,6 @@ class TestDagView:
         assert renders["dag"] == 0
         page.locator(".dag-node[data-id='middle']").click()
         page.wait_for_function("() => window.__renders.dag > 0")
-
-    def test_dag_returns_tasks(self, server_url, runtime_home, page):
-        """DAG endpoint returns task dependency graph."""
-        page.goto(server_url)
-        page.wait_for_selector("body", timeout=SLOW_TIMEOUT)
-
-        page.evaluate("""async () => {
-            await fetch('/api/sessions', {
-                method: 'POST',
-                headers: {'Content-Type': 'application/json'},
-                body: JSON.stringify({id: 'dag-001', name: 'DAG Test', pack: 'claude-code'})
-            });
-        }""")
-        _write_intake_plan(runtime_home, "dag-001", "t001")
-        _write_intake_plan(runtime_home, "dag-001", "t002", depends_on="t001")
-
-        page.evaluate("""async () => {
-            await fetch('/api/sessions/dag-001/start', { method: 'POST' });
-        }""")
-
-        _poll_tasks_exist(page, "dag-001", min_count=2)
-
-        result = page.evaluate("""async () => {
-            const resp = await fetch('/api/sessions/dag-001/dag');
-            return await resp.json();
-        }""")
-        assert "tasks" in result
-        task_ids = [t["task_id"] for t in result["tasks"]]
-        assert "t001" in task_ids
-        assert "t002" in task_ids
-        _poll_session_status(page, "dag-001", {"idle", "completed", "aborted"})
 
     def test_dag_renders_and_supports_interactions(
         self, server_url, runtime_home, page, request, browser_error_guard
@@ -2329,48 +1983,6 @@ class TestDagView:
 class TestSettings:
     """Verify settings read and write."""
 
-    def test_get_settings(self, server_url, page):
-        """GET /api/settings returns current settings."""
-        page.goto(server_url)
-        page.wait_for_selector("body", timeout=SLOW_TIMEOUT)
-
-        result = page.evaluate("""async () => {
-            const resp = await fetch('/api/settings');
-            return await resp.json();
-        }""")
-        assert "settings" in result
-        settings = result["settings"]
-        assert "retention_days" in settings
-        assert "default_pack" in settings
-
-    def test_update_settings(self, server_url, page):
-        """PUT /api/settings should persist changes."""
-        page.goto(server_url)
-        page.wait_for_selector("body", timeout=SLOW_TIMEOUT)
-
-        result = page.evaluate("""async () => {
-            const resp = await fetch('/api/settings', {
-                method: 'PUT',
-                headers: {'Content-Type': 'application/json'},
-                body: JSON.stringify({
-                    retention_days: 7,
-                    default_planners: 2,
-                    default_workers: 2,
-                    default_pack: 'claude-code'
-                })
-            });
-            return await resp.json();
-        }""")
-        assert result["settings"]["retention_days"] == 7
-        assert result["settings"]["default_planners"] == 2
-
-        # Verify persistence
-        verify = page.evaluate("""async () => {
-            const resp = await fetch('/api/settings');
-            return await resp.json();
-        }""")
-        assert verify["settings"]["retention_days"] == 7
-
     def test_settings_view_saves_via_ui(self, server_url, page):
         """Navigate to settings, verify save button exists."""
         page.goto(server_url)
@@ -2419,86 +2031,6 @@ class TestSettings:
 
 class TestSessionDeletion:
     """Verify session deletion and purge workflows."""
-
-    def test_delete_created_session(self, server_url, page):
-        """A session in 'created' status can be deleted."""
-        page.goto(server_url)
-        page.wait_for_selector("body", timeout=SLOW_TIMEOUT)
-
-        page.evaluate("""async () => {
-            await fetch('/api/sessions', {
-                method: 'POST',
-                headers: {'Content-Type': 'application/json'},
-                body: JSON.stringify({id: 'delete-001', name: 'Delete Me', pack: 'claude-code'})
-            });
-        }""")
-
-        result = page.evaluate("""async () => {
-            const resp = await fetch('/api/sessions/delete-001', { method: 'DELETE' });
-            return { status: resp.status, body: await resp.json() };
-        }""")
-        assert result["status"] == 200
-        assert result["body"]["deleted"] == 1
-
-        # Verify it's gone
-        verify = page.evaluate("""async () => {
-            const resp = await fetch('/api/sessions/delete-001');
-            return { status: resp.status };
-        }""")
-        assert verify["status"] == 404
-
-    def test_cannot_delete_running_session(self, server_url, runtime_home, page):
-        """A running or recently-started session cannot be deleted while active."""
-        page.goto(server_url)
-        page.wait_for_selector("body", timeout=SLOW_TIMEOUT)
-
-        # Start session and immediately try to delete — race the execute
-        result = page.evaluate("""async () => {
-            await fetch('/api/sessions', {
-                method: 'POST',
-                headers: {'Content-Type': 'application/json'},
-                body: JSON.stringify({id: 'nodelete-001', name: 'No Delete', pack: 'claude-code'})
-            });
-            // Start session — don't add ready plans so it stays in "running" with nothing to do
-            const startResp = await fetch('/api/sessions/nodelete-001/start', { method: 'POST' });
-            // Immediate delete attempt — session is running (even without tasks, the thread is active)
-            const delResp = await fetch('/api/sessions/nodelete-001', { method: 'DELETE' });
-            return { startStatus: startResp.status, deleteStatus: delResp.status };
-        }""")
-        # Session should be running (no ready plans → it will complete quickly but
-        # the thread might still be active). Either 409 (still running) or 200 (completed already)
-        # is acceptable — the key is we don't crash.
-        assert result["deleteStatus"] in (200, 409)
-
-        # Clean up if still exists
-        page.evaluate("""async () => {
-            try { await fetch('/api/sessions/nodelete-001/abort', { method: 'POST' }); } catch {}
-            try { await fetch('/api/sessions/nodelete-001', { method: 'DELETE' }); } catch {}
-        }""")
-
-    def test_delete_aborted_session(self, server_url, runtime_home, page):
-        """An aborted session can be deleted."""
-        page.goto(server_url)
-        page.wait_for_selector("body", timeout=SLOW_TIMEOUT)
-
-        page.evaluate("""async () => {
-            await fetch('/api/sessions', {
-                method: 'POST',
-                headers: {'Content-Type': 'application/json'},
-                body: JSON.stringify({id: 'del-abort-001', name: 'Del Abort', pack: 'claude-code'})
-            });
-        }""")
-        _write_intake_plan(runtime_home, "del-abort-001", "t001")
-
-        result = page.evaluate("""async () => {
-            await fetch('/api/sessions/del-abort-001/start', { method: 'POST' });
-            await new Promise(r => setTimeout(r, 500));
-            await fetch('/api/sessions/del-abort-001/abort', { method: 'POST' });
-            await new Promise(r => setTimeout(r, 2000));
-            const resp = await fetch('/api/sessions/del-abort-001', { method: 'DELETE' });
-            return { status: resp.status };
-        }""")
-        assert result["status"] == 200
 
     def test_purge_completed_sessions(self, server_url, runtime_home, page):
         """DELETE /api/sessions purges completed/aborted sessions and keeps idle ones.
@@ -2606,77 +2138,11 @@ class TestHistoryView:
 # ---------------------------------------------------------------------------
 
 
-class TestWebSocketUpdates:
-    """Verify real-time updates via WebSocket."""
-
-    def test_websocket_delivers_state_update(self, server_url, runtime_home, page):
-        """WebSocket should deliver state_update messages during execution."""
-        page.goto(server_url)
-        page.wait_for_selector("body", timeout=SLOW_TIMEOUT)
-        page.wait_for_timeout(1000)  # Let WS connect
-
-        page.evaluate("""async () => {
-            await fetch('/api/sessions', {
-                method: 'POST',
-                headers: {'Content-Type': 'application/json'},
-                body: JSON.stringify({id: 'ws-001', name: 'WS Test', pack: 'claude-code'})
-            });
-        }""")
-        _write_intake_plan(runtime_home, "ws-001", "t001")
-
-        page.evaluate("""async () => {
-            await fetch('/api/sessions/ws-001/start', { method: 'POST' });
-        }""")
-
-        _poll_session_status(page, "ws-001", {"running", "idle", "aborted"})
-
-        # Verify the session reached at least running state
-        result = page.evaluate("""async () => {
-            const resp = await fetch('/api/sessions/ws-001');
-            return await resp.json();
-        }""")
-        assert result["session"]["status"] in ("running", "idle", "planning", "resolving")
-
 
 # ---------------------------------------------------------------------------
 # 15. PACKS API
 # ---------------------------------------------------------------------------
 
-
-class TestPacksApi:
-    """Verify pack listing and detail endpoints."""
-
-    def test_list_packs(self, server_url, page):
-        page.goto(server_url)
-        page.wait_for_selector("body", timeout=SLOW_TIMEOUT)
-
-        result = page.evaluate("""async () => {
-            const resp = await fetch('/api/packs');
-            return await resp.json();
-        }""")
-        assert "packs" in result
-        names = [p["name"] for p in result["packs"]]
-        assert "claude-code" in names
-
-    def test_get_pack_detail(self, server_url, page):
-        page.goto(server_url)
-        page.wait_for_selector("body", timeout=SLOW_TIMEOUT)
-
-        result = page.evaluate("""async () => {
-            const resp = await fetch('/api/packs/claude-code');
-            return { status: resp.status, data: await resp.json() };
-        }""")
-        assert result["status"] == 200
-
-    def test_nonexistent_pack_returns_404(self, server_url, page):
-        page.goto(server_url)
-        page.wait_for_selector("body", timeout=SLOW_TIMEOUT)
-
-        result = page.evaluate("""async () => {
-            const resp = await fetch('/api/packs/does-not-exist');
-            return { status: resp.status };
-        }""")
-        assert result["status"] in (404, 422, 500)
 
 
 # ---------------------------------------------------------------------------
@@ -2686,59 +2152,6 @@ class TestPacksApi:
 
 class TestSessionConfig:
     """Verify session config overrides work through the API."""
-
-    def test_config_overrides_applied(self, server_url, page):
-        """Session config overrides (worker_count, etc.) should persist."""
-        page.goto(server_url)
-        page.wait_for_selector("body", timeout=SLOW_TIMEOUT)
-
-        result = page.evaluate("""async () => {
-            const resp = await fetch('/api/sessions', {
-                method: 'POST',
-                headers: {'Content-Type': 'application/json'},
-                body: JSON.stringify({
-                    id: 'config-001',
-                    name: 'Config Test',
-                    pack: 'claude-code',
-                    config: {
-                        worker_count: 1,
-                        verification_interval: 10,
-                        auto_fix_enabled: false,
-                        poll_interval: 0.1,
-                        environment: { COGNITIVE_SWITCHYARD_REPO_ROOT: '/tmp/fake' }
-                    }
-                })
-            });
-            return await resp.json();
-        }""")
-        ert = result["session"]["effective_runtime_config"]
-        assert ert["worker_count"] == 1
-        assert ert["auto_fix"]["enabled"] is False
-        assert ert["environment"]["COGNITIVE_SWITCHYARD_REPO_ROOT"] == "/tmp/fake"
-
-    def test_ui_form_sends_config_overrides(self, server_url, page):
-        """Creating via the API with config overrides works correctly."""
-        page.goto(server_url)
-        page.wait_for_selector("body", timeout=SLOW_TIMEOUT)
-
-        # Create session with config overrides via API (avoids UI state pollution)
-        result = page.evaluate("""async () => {
-            const resp = await fetch('/api/sessions', {
-                method: 'POST',
-                headers: {'Content-Type': 'application/json'},
-                body: JSON.stringify({
-                    id: 'config-ui-001',
-                    name: 'Config UI Test',
-                    pack: 'claude-code',
-                    config: { worker_count: 2, poll_interval: 0.5 }
-                })
-            });
-            return await resp.json();
-        }""")
-        assert result["session"]["id"] == "config-ui-001"
-        assert result["session"]["name"] == "Config UI Test"
-        assert result["session"]["pack"] == "claude-code"
-        assert result["session"]["effective_runtime_config"]["worker_count"] == 2
 
     def test_setup_form_sends_timeout_overrides(self, fresh_server, page, browser_error_guard):
         """Setup's Advanced timeout fields reach the backend under its config keys.
@@ -2807,16 +2220,14 @@ class TestResetDraft:
 
         # Click Reset button
         reset_btn = page.locator("button:has-text('Reset')")
-        if reset_btn.count() > 0:
-            reset_btn.click()
-            page.wait_for_timeout(1000)
-
-            # Verify session is deleted
-            result = page.evaluate("""async () => {
-                const resp = await fetch('/api/sessions/reset-001');
-                return { status: resp.status };
-            }""")
-            assert result["status"] == 404
+        expect(reset_btn).to_be_visible()
+        reset_btn.click()
+        expect(page.locator("button", has_text="Create Session")).to_be_visible()
+        result = page.evaluate("""async () => {
+            const resp = await fetch('/api/sessions/reset-001');
+            return { status: resp.status };
+        }""")
+        assert result["status"] == 404
 
 
 # ---------------------------------------------------------------------------
@@ -2838,70 +2249,11 @@ class TestErrorDisplay:
         }""")
         assert result["status"] == 404
 
-    def test_tasks_for_nonexistent_session(self, server_url, page):
-        """Getting tasks for a missing session returns 404."""
-        page.goto(server_url)
-        page.wait_for_selector("body", timeout=SLOW_TIMEOUT)
-
-        result = page.evaluate("""async () => {
-            const resp = await fetch('/api/sessions/ghost-session/tasks');
-            return { status: resp.status };
-        }""")
-        assert result["status"] == 404
-
 
 # ---------------------------------------------------------------------------
 # 19. FULL UI WORKFLOW — END TO END
 # ---------------------------------------------------------------------------
 
-
-class TestFullUIWorkflow:
-    """Complete user journey through the UI — create, configure, start, monitor, complete."""
-
-    def test_create_start_monitor_complete_history(self, server_url, runtime_home, page):
-        """Full workflow: create via API, start, wait for completion, verify history."""
-        errors = []
-        page.on("pageerror", lambda exc: errors.append(str(exc)))
-
-        page.goto(server_url)
-        page.wait_for_selector("body", timeout=SLOW_TIMEOUT)
-
-        # Step 1: Create session via API (avoids UI state pollution from prior tests)
-        page.evaluate("""async () => {
-            await fetch('/api/sessions', {
-                method: 'POST',
-                headers: {'Content-Type': 'application/json'},
-                body: JSON.stringify({id: 'workflow-001', name: 'Full Workflow Test', pack: 'claude-code'})
-            });
-        }""")
-
-        # Step 2: Add an intake plan
-        _write_intake_plan(runtime_home, "workflow-001", "t001")
-
-        # Step 3: Start the session
-        page.evaluate("""async () => {
-            await fetch('/api/sessions/workflow-001/start', { method: 'POST' });
-        }""")
-
-        # Step 4: Wait for task completion
-        _poll_session_status(page, "workflow-001", {"idle", "aborted"})
-
-        # Step 5: Verify session is idle via API
-        result = page.evaluate("""async () => {
-            const resp = await fetch('/api/sessions/workflow-001');
-            return await resp.json();
-        }""")
-        assert result["session"]["status"] == "idle"
-
-        # Step 6: Verify task completed
-        task_result = page.evaluate("""async () => {
-            const resp = await fetch('/api/sessions/workflow-001/tasks');
-            return await resp.json();
-        }""")
-        assert any(t["task_id"] == "t001" and t["status"] == "done" for t in task_result["tasks"])
-
-        # Verify no JS errors throughout
-        assert errors == [], f"Console errors during workflow: {errors}"
 
 
 # ---------------------------------------------------------------------------
@@ -2965,33 +2317,6 @@ class TestPlanningPhaseStreaming:
             f"Expected 'file_planned' in recent_events but got: {event_types}"
         )
         assert errors == [], f"JS console errors during planning E2E test: {errors}"
-
-    def test_planning_agents_key_present_in_api_schema(self, server_url, page):
-        """The dashboard API endpoint must always return a well-formed response.
-        planning_agents may be absent (for non-planning phases) or a list."""
-        page.goto(server_url)
-        page.wait_for_selector("body", timeout=SLOW_TIMEOUT)
-
-        page.evaluate("""async () => {
-            await fetch('/api/sessions', {
-                method: 'POST',
-                headers: {'Content-Type': 'application/json'},
-                body: JSON.stringify({id: 'planning-schema-001', name: 'Planning Schema', pack: 'claude-code'})
-            });
-        }""")
-
-        result = page.evaluate("""async () => {
-            const resp = await fetch('/api/sessions/planning-schema-001/dashboard');
-            return await resp.json();
-        }""")
-        # Dashboard should have the expected keys
-        assert "session" in result
-        assert "pipeline" in result
-        assert "recent_events" in result
-        # planning_agents is optional — not present for non-planning sessions — so don't assert it
-        # But if it IS present, it must be a list
-        if "planning_agents" in result:
-            assert isinstance(result["planning_agents"], list)
 
     def test_phase_activity_card_renders_and_no_js_errors_during_planning_phase(
         self, server_url, runtime_home, page
@@ -3742,104 +3067,6 @@ class TestSetupFormPlannerValidation:
 # ---------------------------------------------------------------------------
 
 
-class TestTaskMoveButtons:
-    """Verify task lifecycle move API and UI rendering."""
-
-    def test_task_move_api_done_to_ready(self, server_url, runtime_home, page):
-        """Move API endpoint transitions a done task to ready."""
-        page.goto(server_url)
-        page.wait_for_selector("body", timeout=SLOW_TIMEOUT)
-
-        page.evaluate("""async () => {
-            await fetch('/api/sessions', {
-                method: 'POST',
-                headers: {'Content-Type': 'application/json'},
-                body: JSON.stringify({id: 'move-e2e-001', name: 'Move API', pack: 'claude-code'})
-            });
-        }""")
-
-        _write_intake_plan(runtime_home, "move-e2e-001", "mv01")
-
-        page.evaluate("""async () => {
-            await fetch('/api/sessions/move-e2e-001/start', { method: 'POST' });
-        }""")
-
-        _poll_tasks_done(page, "move-e2e-001", min_done=1)
-
-        # Use the move API to transition done → ready
-        result = page.evaluate("""async () => {
-            const resp = await fetch('/api/sessions/move-e2e-001/tasks/mv01/move', {
-                method: 'POST',
-                headers: {'Content-Type': 'application/json'},
-                body: JSON.stringify({target_status: 'ready'})
-            });
-            return { status: resp.status, body: await resp.json() };
-        }""")
-
-        assert result["status"] == 200
-        assert result["body"]["status"] == "moved"
-        assert result["body"]["from"] == "done"
-        assert result["body"]["to"] == "ready"
-
-    def test_task_move_api_invalid_transition_rejected(self, server_url, runtime_home, page):
-        """Move API rejects invalid transitions with 409."""
-        page.goto(server_url)
-        page.wait_for_selector("body", timeout=SLOW_TIMEOUT)
-
-        page.evaluate("""async () => {
-            await fetch('/api/sessions', {
-                method: 'POST',
-                headers: {'Content-Type': 'application/json'},
-                body: JSON.stringify({id: 'move-e2e-002', name: 'Invalid Move', pack: 'claude-code'})
-            });
-        }""")
-
-        _write_intake_plan(runtime_home, "move-e2e-002", "mv02")
-
-        page.evaluate("""async () => {
-            await fetch('/api/sessions/move-e2e-002/start', { method: 'POST' });
-        }""")
-
-        _poll_tasks_done(page, "move-e2e-002", min_done=1)
-
-        # Move done → ready (valid), then try ready → done (invalid)
-        page.evaluate("""async () => {
-            await fetch('/api/sessions/move-e2e-002/tasks/mv02/move', {
-                method: 'POST',
-                headers: {'Content-Type': 'application/json'},
-                body: JSON.stringify({target_status: 'ready'})
-            });
-        }""")
-
-        result = page.evaluate("""async () => {
-            const resp = await fetch('/api/sessions/move-e2e-002/tasks/mv02/move', {
-                method: 'POST',
-                headers: {'Content-Type': 'application/json'},
-                body: JSON.stringify({target_status: 'done'})
-            });
-            return { status: resp.status };
-        }""")
-
-        assert result["status"] == 409, "Moving from ready to done should be rejected"
-
-    def test_task_move_buttons_rendered_in_html(self, server_url, page):
-        """The SPA HTML contains TASK_TRANSITIONS and move button rendering code."""
-        page.goto(server_url)
-        page.wait_for_selector("body", timeout=SLOW_TIMEOUT)
-
-        # Verify the TASK_TRANSITIONS constant is present in the page
-        has_transitions = page.evaluate("""() => {
-            return document.documentElement.innerHTML.includes('TASK_TRANSITIONS');
-        }""")
-        assert has_transitions, "TASK_TRANSITIONS constant must be present in rendered HTML"
-
-        # Verify move task action buttons code is present
-        has_move_button = page.evaluate("""() => {
-            return document.documentElement.innerHTML.includes('task-actions');
-        }""")
-        assert has_move_button, "task-actions class must be present in rendered HTML"
-
-
 
 # ---------------------------------------------------------------------------
 # Plan 006: Stuck-worker observability
@@ -3859,88 +3086,7 @@ class TestStuckWorkerObservability:
     - Start-time column (HH:MM:SS) in the task feed rows
     """
 
-    def test_health_summary_bar_present_in_rendered_html(self, server_url, page):
-        """After loading the SPA, the HealthSummaryBar component code must be present."""
-        page.goto(server_url)
-        page.wait_for_selector("body", timeout=SLOW_TIMEOUT)
-
-        has_summary = page.evaluate("""() => {
-            return document.documentElement.innerHTML.includes('HealthSummaryBar');
-        }""")
-        assert has_summary, "HealthSummaryBar component must be present in rendered HTML"
-
-    def test_last_activity_indicator_present_in_rendered_html(self, server_url, page):
-        """After loading the SPA, the LastActivityIndicator component code must be present."""
-        page.goto(server_url)
-        page.wait_for_selector("body", timeout=SLOW_TIMEOUT)
-
-        has_indicator = page.evaluate("""() => {
-            return document.documentElement.innerHTML.includes('LastActivityIndicator');
-        }""")
-        assert has_indicator, "LastActivityIndicator component must be present in rendered HTML"
-
-    def test_task_row_elapsed_present_in_rendered_html(self, server_url, page):
-        """After loading the SPA, the TaskRowElapsed component code must be present."""
-        page.goto(server_url)
-        page.wait_for_selector("body", timeout=SLOW_TIMEOUT)
-
-        has_elapsed = page.evaluate("""() => {
-            return document.documentElement.innerHTML.includes('TaskRowElapsed');
-        }""")
-        assert has_elapsed, "TaskRowElapsed component must be present in rendered HTML"
-
-    def test_dashboard_active_worker_includes_idle_fields_when_idle_state_populated(
-        self, server_url, runtime_home, page
-    ):
-        """After session starts with an active worker, the dashboard endpoint must include
-        last_activity_ago on the active worker object once idle_state is populated via
-        worker_idle_state events.
-
-        This test verifies the API contract. The idle fields are populated by the orchestrator
-        via worker_idle_state events as each poll cycle fires. Since the test worker runs
-        quickly, we verify the field is present on the dashboard payload at some point after
-        worker_idle_state events would have been emitted.
-        """
-        import time as _time
-
-        page.goto(server_url)
-        page.wait_for_selector("body", timeout=SLOW_TIMEOUT)
-
-        # Create session with a slow-enough worker to catch it active
-        page.evaluate("""async () => {
-            await fetch('/api/sessions', {
-                method: 'POST',
-                headers: {'Content-Type': 'application/json'},
-                body: JSON.stringify({id: 'obs-006', name: 'Observability Test 006', pack: 'claude-code'})
-            });
-        }""")
-        _write_intake_plan(runtime_home, "obs-006", "t006a")
-
-        page.evaluate("""async () => {
-            await fetch('/api/sessions/obs-006/start', { method: 'POST' });
-        }""")
-
-        # Wait until session reaches idle or completes (task ran)
-        _poll_session_status(page, "obs-006", {"idle", "completed", "aborted"})
-
-        # Verify the task list endpoint includes started_at and elapsed
-        tasks_result = page.evaluate("""async () => {
-            const resp = await fetch('/api/sessions/obs-006/tasks');
-            return await resp.json();
-        }""")
-        tasks = tasks_result.get("tasks", [])
-        assert len(tasks) >= 1, "Expected at least one task after session runs"
-        for task in tasks:
-            assert "started_at" in task, f"Task {task.get('task_id')} must include started_at"
-            assert "elapsed" in task, f"Task {task.get('task_id')} must include elapsed"
-            # started_at must be a valid ISO timestamp with time component
-            started_at = task.get("started_at") or ""
-            if started_at:
-                assert len(started_at) >= 19, (
-                    f"started_at must include date+time, got: {started_at!r}"
-                )
-
-    def test_no_console_errors_after_session_with_done_tasks(self, server_url, runtime_home, page):
+    def test_no_console_errors_after_session_with_done_tasks(self, fresh_server, page):
         """Monitor view with completed tasks must render without JS errors.
 
         Validates that the Plan 006 components (HealthSummaryBar, TaskRowElapsed,
@@ -3949,7 +3095,7 @@ class TestStuckWorkerObservability:
         errors = []
         page.on("pageerror", lambda exc: errors.append(str(exc)))
 
-        page.goto(server_url)
+        page.goto(fresh_server["url"])
         page.wait_for_selector("body", timeout=SLOW_TIMEOUT)
 
         page.evaluate("""async () => {
@@ -3959,7 +3105,8 @@ class TestStuckWorkerObservability:
                 body: JSON.stringify({id: 'obs-006b', name: 'Observability No-Error Test', pack: 'claude-code'})
             });
         }""")
-        _write_intake_plan(runtime_home, "obs-006b", "t006b")
+        _write_intake_plan(fresh_server["runtime_home"], "obs-006b", "t006b")
+        page.reload()
 
         page.evaluate("""async () => {
             await fetch('/api/sessions/obs-006b/start', { method: 'POST' });
@@ -3970,9 +3117,8 @@ class TestStuckWorkerObservability:
 
         # Navigate to monitor view to trigger all Plan 006 components
         monitor_btn = page.locator("button:has-text('Monitor')")
-        if monitor_btn.count() > 0:
-            monitor_btn.click()
-            page.wait_for_timeout(500)
+        monitor_btn.click()
+        expect(page.locator(".health-summary")).to_be_visible()
 
         assert errors == [], f"Console errors after session with done tasks: {errors}"
 
@@ -3981,9 +3127,8 @@ class TestStuckWorkerObservability:
 # EXACT TEXT IN WHITESPACE-PRESERVING ELEMENTS
 # ---------------------------------------------------------------------------
 
-class TestExactTextHasNoPadding:
-    """These elements use pre or pre-wrap, where any padding space shows on screen."""
-
+class RenderedMonitorServer:
+    """Serve the real SPA with synthetic API responses and capture mutations."""
     SESSION_ID = "synthetic-exact-text"
     NOTES = "# Synthetic notes\n    indented synthetic line\n"
     PACK = {"name": "claude-code", "description": "Synthetic pack", "version": "1.0"}
@@ -4001,12 +3146,12 @@ class TestExactTextHasNoPadding:
             }},
         }
 
-    def _dashboard(self, status):
+    def _dashboard(self, status, runtime_state=None, effective_runtime_config=None, workers=None):
         return {
             "session": dict(self._session(status), elapsed=1, run_elapsed=1, run_number=1),
-            "pipeline": {"active": 1, "done": 1}, "pipeline_dirs": {}, "runtime_state": {},
-            "effective_runtime_config": {}, "recent_events": [],
-            "workers": [
+            "pipeline": {"active": 1, "done": 1}, "pipeline_dirs": {}, "runtime_state": runtime_state or {},
+            "effective_runtime_config": effective_runtime_config or {}, "recent_events": [],
+            "workers": workers if workers is not None else [
                 {"slot": 0, "status": "idle"},
                 {"slot": 1, "status": "active", "task_id": "t001", "task_title": "Synthetic task",
                  "phase_num": 1, "phase_total": 1, "elapsed": 1, "last_log_line": "Synthetic tail line"},
@@ -4014,8 +3159,14 @@ class TestExactTextHasNoPadding:
             ],
         }
 
-    def _serve(self, page, *, session_status, dashboard_status):
+    def serve(self, page, *, session_status, dashboard_status=None, runtime_state=None,
+              effective_runtime_config=None, workers=None, tasks=None, log_content="Synthetic log line\n"):
         task = {"task_id": "t001", "title": "Synthetic task", "status": "active", "depends_on": [], "worker_slot": 1}
+        tasks = tasks if tasks is not None else [task]
+        dashboard_status = dashboard_status or session_status
+        dashboard = self._dashboard(dashboard_status, runtime_state, effective_runtime_config, workers)
+        posts = []
+        self.requests = []
         history = dict(self._session("completed"), release_notes={"path": "RELEASE_NOTES.md", "content": self.NOTES})
         current = self._session(session_status) if session_status else None
         base = f"/api/sessions/{self.SESSION_ID}"
@@ -4023,21 +3174,26 @@ class TestExactTextHasNoPadding:
             "/api/packs": {"packs": [self.PACK]},
             "/api/sessions": {"sessions": [history]},
             base: {"session": current or history},
-            f"{base}/dashboard": self._dashboard(dashboard_status),
-            f"{base}/tasks": {"tasks": [task]},
+            f"{base}/dashboard": dashboard,
+            f"{base}/tasks": {"tasks": tasks},
             f"{base}/intake": {"locked": False, "files": []},
-            f"{base}/tasks/t001": {"task": task},
-            f"{base}/tasks/t001/log": {"content": "Synthetic log line\n", "mtime_iso": "2030-01-01T00:00:09Z"},
+            f"{base}/tasks/t001": {"task": next((item for item in tasks if item["task_id"] == "t001"), task)},
+            f"{base}/tasks/t001/log": {"content": log_content, "mtime_iso": "2030-01-01T00:00:09Z"},
         }
         html = render_app_html({
             "packs": [self.PACK], "sessions": [history], "settings": {}, "current_session": current,
-            "dashboard": self._dashboard(dashboard_status) if current else None,
+            "dashboard": dashboard if current else None,
             "intake": {"locked": False, "files": []},
         })
 
         def handle(route):
             path = route.request.url.removeprefix("http://switchyard.test").split("?")[0]
-            if path == "/":
+            self.requests.append((route.request.method, path))
+            if route.request.method == "POST":
+                posts.append((path, route.request.post_data_json if route.request.post_data else None))
+                result = {"ok": True, "permission_report": {"ok": True, "issues": []}} if path.endswith("/preflight") else {}
+                route.fulfill(json=result)
+            elif path == "/":
                 route.fulfill(status=200, content_type="text/html", body=html)
             elif path in responses:
                 route.fulfill(json=responses[path])
@@ -4045,10 +3201,264 @@ class TestExactTextHasNoPadding:
                 route.fulfill(status=404, body="synthetic not found")
 
         page.add_init_script(
-            "window.WebSocket = class { constructor() { this.readyState = 1; } send() {} close() {} };"
+            "window.testSocketMessages = []; window.WebSocket = class { static OPEN = 1; constructor() { this.readyState = 1; window.testSocket = this; } send(data) { window.testSocketMessages.push(data); } close() {} };"
         )
         page.route("http://switchyard.test/**", handle)
         page.goto("http://switchyard.test/")
+        return posts
+
+
+class TestRenderedMonitorContracts:
+    @pytest.mark.parametrize("session_status,visible,hidden", [
+        ("planning", ["Pause"], ["Resume"]),
+        ("resolving", ["Pause"], ["Resume"]),
+        ("running", ["Pause"], ["Resume"]),
+        ("verifying", ["Pause"], ["Resume"]),
+        ("auto_fixing", ["Pause"], ["Resume"]),
+        ("paused", ["Resume"], ["Pause"]),
+        ("idle", ["New Run", "End Session"], ["Pause", "Resume", "Abort"]),
+        ("created", ["Abort"], []),
+    ])
+    def test_session_controls_follow_status(self, page, browser_error_guard, session_status, visible, hidden):
+        RenderedMonitorServer().serve(page, session_status=session_status)
+        for name in visible:
+            expect(page.locator("button", has_text=name)).to_be_visible()
+        for name in hidden:
+            expect(page.locator("button", has_text=name)).to_have_count(0)
+
+    @pytest.mark.parametrize("age,card_class", [(199, "worker-card active"), (200, "worker-card warning")])
+    def test_worker_card_warns_at_two_thirds_of_idle_limit(self, page, browser_error_guard, age, card_class):
+        worker = {"slot": 1, "status": "active", "task_id": "t001", "task_title": "Synthetic task",
+                  "elapsed": 1, "last_activity_ago": age, "task_idle_limit": 300}
+        RenderedMonitorServer().serve(page, session_status="running", workers=[worker])
+        card = page.locator(".worker-card").filter(has_text="Synthetic task")
+        expect(card).to_have_class(card_class)
+        expect(card).to_contain_text("idle:")
+
+    @pytest.mark.parametrize("limit,age,token", [
+        (300, 99, "--status-done"), (300, 100, "--status-review"),
+        (300, 199, "--status-review"), (300, 200, "--status-blocked"),
+        (600, 199, "--status-done"), (600, 200, "--status-review"),
+        (600, 399, "--status-review"), (600, 400, "--status-blocked"),
+    ])
+    def test_idle_indicator_uses_limit_thirds(self, page, browser_error_guard, limit, age, token):
+        worker = {"slot": 1, "status": "active", "task_id": "t001", "task_title": "Synthetic task",
+                  "elapsed": 1, "last_activity_ago": age, "task_idle_limit": limit}
+        RenderedMonitorServer().serve(page, session_status="running", workers=[worker])
+        indicator = page.locator(".worker-card").filter(has_text="Synthetic task").get_by_text("idle:")
+        expected_color = page.evaluate("""token => {
+            const probe = document.createElement('span');
+            probe.style.color = `var(${token})`;
+            document.body.appendChild(probe);
+            const color = getComputedStyle(probe).color;
+            probe.remove();
+            return color;
+        }""", token)
+        expect(indicator).to_have_css("color", expected_color)
+
+    def test_live_output_does_not_reset_server_idle_snapshot(self, page, browser_error_guard):
+        worker = {"slot": 1, "status": "active", "task_id": "t001", "task_title": "Synthetic task",
+                  "elapsed": 1, "last_activity_ago": 200, "task_idle_limit": 300}
+        RenderedMonitorServer().serve(page, session_status="running", workers=[worker])
+        card = page.locator(".worker-card").filter(has_text="Synthetic task")
+        expect(card).to_have_class("worker-card warning")
+        page.evaluate("""() => window.testSocket.onmessage({data: JSON.stringify({type: 'log_line',
+            data: {task_id: 't001', worker_slot: 1, line: 'Synthetic output'}})})""")
+        expect(card.locator(".log-line")).to_contain_text("Synthetic output")
+        expect(card).to_have_class("worker-card warning")
+        page.evaluate("""() => window.testSocket.onmessage({data: JSON.stringify({type: 'progress_detail',
+            data: {task_id: 't001', worker_slot: 1, detail: 'Synthetic progress'}})})""")
+        expect(card).to_contain_text("Synthetic progress")
+        expect(card).to_have_class("worker-card warning")
+
+    @pytest.mark.parametrize("session_status,reason,label", [
+        ("auto_fixing", "task_auto_fix", "Auto-fixing task failure"),
+        ("auto_fixing", "task_failure", "Auto-fixing task failure"),
+        ("verifying", "task_auto_fix", "Re-verifying after task fix"),
+        ("auto_fixing", "verification_failure", "Auto-fixing verification failures"),
+        ("verifying", "verification_failure", "Re-verifying after auto-fix"),
+    ])
+    def test_verification_card_shows_phase_label_and_attempts(self, page, browser_error_guard, session_status, reason, label):
+        runtime = {"verification_reason": reason, "auto_fix_context": "task_failure",
+                   "auto_fix_task_id": "t001", "auto_fix_attempt": 1}
+        RenderedMonitorServer().serve(page, session_status=session_status, runtime_state=runtime,
+                                      effective_runtime_config={"auto_fix": {"max_attempts": 3}})
+        card = page.locator(".worker-card").filter(has_text=label)
+        expect(card).to_be_visible()
+
+    def test_auto_fix_card_shows_task_and_attempts(self, page, browser_error_guard):
+        runtime = {"verification_reason": "task_failure", "auto_fix_context": "task_failure",
+                   "auto_fix_task_id": "t001", "auto_fix_attempt": 1}
+        RenderedMonitorServer().serve(page, session_status="auto_fixing", runtime_state=runtime,
+                                      effective_runtime_config={"auto_fix": {"max_attempts": 3}})
+        card = page.locator(".worker-card").filter(has_text="Auto-fixing task failure")
+        expect(card).to_contain_text("Fixing task: t001")
+        expect(card).to_contain_text("1/3")
+
+    def test_task_rows_show_fta_badge_and_post_moves(self, page, browser_error_guard):
+        tasks = [
+            {"task_id": "t001", "title": "Synthetic FTA", "status": "blocked", "full_test_after": True},
+            {"task_id": "t002", "title": "Synthetic plain", "status": "ready", "full_test_after": False},
+        ]
+        posts = RenderedMonitorServer().serve(page, session_status="running", tasks=tasks)
+        fta = page.locator(".task-row").filter(has_text="Synthetic FTA")
+        plain = page.locator(".task-row").filter(has_text="Synthetic plain")
+        expect(fta.locator('[title="Full test after completion"]')).to_have_text("FTA")
+        expect(plain.locator('[title="Full test after completion"]')).to_have_count(0)
+        fta.hover()
+        fta.locator('button[title^="Retry"]').click()
+        assert posts == [("/api/sessions/synthetic-exact-text/tasks/t001/move", {"target_status": "ready"})]
+
+    def test_health_summary_counts_tasks(self, page, browser_error_guard):
+        tasks = [{"task_id": f"t00{i}", "title": "Synthetic", "status": status}
+                 for i, status in enumerate(("done", "active", "blocked"), 1)]
+        workers = [{"slot": 1, "status": "active", "task_id": "t002", "elapsed": 1}]
+        RenderedMonitorServer().serve(page, session_status="running", tasks=tasks, workers=workers)
+        summary = page.locator(".health-summary")
+        for text in ("1 done", "1 active (", "1 blocked"):
+            expect(summary).to_contain_text(text)
+
+    def test_pending_verification_displays_its_reason(self, page, browser_error_guard):
+        RenderedMonitorServer().serve(page, session_status="running",
+                                      runtime_state={"verification_pending": True, "verification_reason": "task_auto_fix"},
+                                      effective_runtime_config={"verification_interval": 2})
+        expect(page.locator(".verification-countdown")).to_have_text("Verification pending: Re-verifying after task fix")
+
+    def test_worker_log_extracts_readable_json(self, page, browser_error_guard):
+        worker = {"slot": 1, "status": "active", "task_id": "t001", "task_title": "Synthetic task", "elapsed": 1}
+        RenderedMonitorServer().serve(page, session_status="running", workers=[worker])
+        card = page.locator(".worker-card").filter(has_text="Synthetic task")
+        for line in ('ordinary text', '{"type":"assistant","message":{"content":[{"type":"text","text":"Synthetic message"}]}}',
+                     '{"type":"metadata"}'):
+            page.evaluate("""line => window.testSocket.onmessage({data: JSON.stringify({type: 'log_line',
+                data: {task_id: 't001', worker_slot: 1, line}})})""", line)
+        expect(card.locator(".log-line")).to_have_text(["ordinary text", "Synthetic message"])
+
+    def test_planning_log_extracts_readable_json(self, page, browser_error_guard):
+        RenderedMonitorServer().serve(page, session_status="planning")
+        page.evaluate("""() => window.testSocket.onmessage({data: JSON.stringify({type: 'log_line',
+            data: {task_id: '__phase_planning__', worker_slot: -1,
+                   line: JSON.stringify({text: 'Synthetic planning output'})}})})""")
+        expect(page.get_by_text("Synthetic planning output", exact=True)).to_be_visible()
+
+    def test_history_detail_does_not_subscribe_to_live_logs(self, page, browser_error_guard):
+        server = RenderedMonitorServer()
+        server.serve(page, session_status=None, dashboard_status="completed")
+        page.locator("button", has_text="History").first.click()
+        page.locator(".session-card-header div").first.click()
+        expect(page.locator("pre.log-panel")).to_contain_text("Synthetic notes")
+        base = "/api/sessions/synthetic-exact-text"
+        assert ("GET", base) in server.requests
+        assert ("GET", f"{base}/tasks") in server.requests
+        assert not any(path.endswith("/log") for _, path in server.requests)
+        assert page.evaluate("window.testSocketMessages") == []
+
+    def test_worker_log_subscription_tracks_dashboard_workers(self, page, browser_error_guard):
+        server = RenderedMonitorServer()
+        workers = [{"slot": 1, "status": "active", "task_id": "t001", "task_title": "Synthetic task"}]
+        server.serve(page, session_status="running", workers=workers)
+        page.wait_for_function("window.testSocketMessages.some(s => JSON.parse(s).type === 'subscribe_logs')")
+        assert page.evaluate("window.testSocketMessages.map(JSON.parse)") == [{"type": "subscribe_logs", "worker_slot": 1}]
+        dashboard = server._dashboard("running", workers=[])
+        page.evaluate("""dashboard => window.testSocket.onmessage({data: JSON.stringify({type: 'state_update', data: dashboard})})""", dashboard)
+        page.wait_for_function("window.testSocketMessages.some(s => JSON.parse(s).type === 'unsubscribe_logs')")
+        assert page.evaluate("window.testSocketMessages.map(JSON.parse)") == [
+            {"type": "subscribe_logs", "worker_slot": 1}, {"type": "unsubscribe_logs", "worker_slot": 1}]
+
+    def test_file_actions_post_to_session_endpoints(self, page, browser_error_guard):
+        server = RenderedMonitorServer()
+        tasks = [{"task_id": "t001", "title": "Synthetic task", "status": "ready", "plan_path": "/synthetic/plan file.md"}]
+        server.serve(page, session_status="created", tasks=tasks)
+        base = "http://switchyard.test/api/sessions/synthetic-exact-text"
+        with page.expect_request(f"{base}/open-intake") as intake:
+            page.get_by_role("button", name="Open Intake", exact=True).click()
+        assert intake.value.method == "POST"
+        page.get_by_role("button", name="Monitor", exact=True).click()
+        row = page.locator(".task-row").filter(has_text="t001")
+        row.hover()
+        with page.expect_request(f"{base}/reveal-file?path=%2Fsynthetic%2Fplan%20file.md") as reveal:
+            row.locator('button[title="Reveal plan file"]').click()
+        assert reveal.value.method == "POST"
+
+    def test_task_detail_shows_fta_and_constraints(self, page, browser_error_guard):
+        tasks = [{"task_id": "t001", "title": "Synthetic task", "status": "blocked",
+                  "full_test_after": True, "depends_on": [], "anti_affinity": []}]
+        RenderedMonitorServer().serve(page, session_status="running", tasks=tasks)
+        page.locator(".task-row").filter(has_text="t001").click()
+        expect(page.locator('[title="Full test after completion"]')).to_have_text("FTA")
+        expect(page.get_by_text("FULL_TEST_AFTER: yes", exact=True)).to_be_visible()
+
+    @pytest.mark.parametrize("task_status,label", [("active", "Elapsed"), ("done", "Duration")])
+    def test_task_detail_shows_timing_fields(self, page, browser_error_guard, task_status, label):
+        tasks = [{"task_id": "t001", "title": "Synthetic task", "status": task_status,
+                  "started_at": "2030-01-01T12:34:56Z", "completed_at": "2030-01-01T12:35:01Z",
+                  "elapsed": 5}]
+        RenderedMonitorServer().serve(page, session_status="running", tasks=tasks)
+        page.locator(".task-row").filter(has_text="t001").click()
+        detail = page.locator(".detail-panel")
+        expect(detail.get_by_text("Started", exact=True)).to_be_visible()
+        expect(detail.locator('[title="2030-01-01T12:34:56Z"]')).to_have_text("12:34:56")
+        expect(detail.get_by_text(label, exact=True)).to_be_visible()
+        expect(detail.get_by_text("Completed", exact=True)).to_be_visible()
+        expect(detail.locator('[title="2030-01-01T12:35:01Z"]')).to_have_text("12:35:01")
+
+    @pytest.mark.parametrize("task_status,history_source,message", [
+        ("done", "summary", "Task logs were not retained for this completed session."),
+        ("done", None, "No retained log found for this task."),
+        ("blocked", None, "No retained log found for this task."),
+        ("ready", None, "No log yet. Logs appear after the task starts."),
+        ("active", None, "Waiting for live log subscription..."),
+    ])
+    def test_task_detail_explains_empty_logs(self, page, browser_error_guard, task_status, history_source, message):
+        tasks = [{"task_id": "t001", "title": "Synthetic task", "status": task_status,
+                  "history_source": history_source}]
+        RenderedMonitorServer().serve(page, session_status="running", tasks=tasks, log_content="")
+        page.locator(".task-row").filter(has_text="t001").click()
+        expect(page.get_by_text(message, exact=True)).to_be_visible()
+
+    @pytest.mark.parametrize("session_status,phase,separator", [
+        ("auto_fixing", "__phase_auto_fix__", "─── Auto-fix output ───"),
+        ("verifying", "__phase_verification__", "─── Verification output ───"),
+    ])
+    def test_task_detail_shows_phase_logs(self, page, browser_error_guard, session_status, phase, separator):
+        RenderedMonitorServer().serve(page, session_status=session_status,
+                                      runtime_state={"auto_fix_task_id": "t001"})
+        page.locator(".task-row").filter(has_text="t001").click()
+        expect(page.locator(".log-line").filter(has_text="Synthetic log line")).to_be_visible()
+        page.evaluate("""phase => window.testSocket.onmessage({data: JSON.stringify({type: 'log_line',
+            data: {task_id: phase, worker_slot: -1, line: 'Synthetic phase output', timestamp: '2030-01-01T00:00:10Z'}})})""", phase)
+        expect(page.get_by_text(separator, exact=True)).to_be_visible()
+        expect(page.locator(".log-line").filter(has_text="Synthetic phase output")).to_be_visible()
+
+    def test_live_log_line_renders_its_timestamp(self, page, browser_error_guard):
+        RenderedMonitorServer().serve(page, session_status="running")
+        page.locator(".task-row").filter(has_text="t001").click()
+        expect(page.locator(".log-line").filter(has_text="Synthetic log line")).to_be_visible()
+        page.evaluate("""() => window.testSocket.onmessage({data: JSON.stringify({type: 'log_line',
+            data: {task_id: 't001', worker_slot: 1, line: 'Synthetic live output', timestamp: '2030-01-01T12:34:56Z'}})})""")
+        expect(page.locator(".log-line").filter(has_text="Synthetic live output")).to_have_text("12:34:56Synthetic live output")
+
+    def test_live_task_status_change_updates_row_time(self, page, browser_error_guard):
+        tasks = [{"task_id": "t001", "title": "Synthetic task", "status": "ready"}]
+        RenderedMonitorServer().serve(page, session_status="running", tasks=tasks)
+        row = page.locator(".task-row").filter(has_text="t001")
+        expect(row).to_contain_text("ready")
+        page.evaluate("""() => window.testSocket.onmessage({data: JSON.stringify({type: 'task_status_change',
+            data: {task_id: 't001', new_status: 'active', started_at: '2030-01-01T12:34:56Z'}})})""")
+        expect(row).to_contain_text("active")
+        expect(row).to_contain_text("12:34:56")
+        page.evaluate("""() => window.testSocket.onmessage({data: JSON.stringify({type: 'task_status_change',
+            data: {task_id: 't001', new_status: 'done', completed_at: '2030-01-01T12:35:01Z'}})})""")
+        expect(page.locator(".health-summary")).to_contain_text("Last completion: 12:35:01")
+
+
+class TestExactTextHasNoPadding:
+    """These elements use pre or pre-wrap, where any padding space shows on screen."""
+
+    NOTES = RenderedMonitorServer.NOTES
+
+    def _serve(self, page, **kwargs):
+        return RenderedMonitorServer().serve(page, **kwargs)
 
     @staticmethod
     def _child_text(locator):

@@ -65,14 +65,20 @@ def extract_columns(result: Dict[str, Any], rows: List[Dict[str, Any]]) -> List[
     
     # 1. Prefer explicit columns from the 'columns' key
     col_keys = list(columns_map.keys())
-    
-    # 2. Fallback: Scan all rows if explicit columns are missing
+
+    keys: Set[str] = set()
+    for r in rows:
+        keys.update(r.keys())
+
+    # 2. Infer missing declarations or append undeclared row keys.
     if not col_keys:
         logger.info("No 'columns' definition found in JSON. Inferring from data rows...")
-        keys: Set[str] = set()
-        for r in rows:
-            keys.update(r.keys())
         col_keys = sorted(keys)
+    else:
+        extra_keys = sorted(keys.difference(col_keys))
+        if extra_keys:
+            logger.warning("Row fields missing from declared columns: %s", ", ".join(extra_keys))
+            col_keys.extend(extra_keys)
 
     # 3. Ensure 'date' is the first column if it exists
     if "date" in col_keys:

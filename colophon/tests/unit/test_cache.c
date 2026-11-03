@@ -145,6 +145,43 @@ TEST(cache_rebuild_swap_ownership_and_restore) {
     }
 }
 
+static void cache_failed_swap_preserves_entry(const char *fault, const char *message, bool interrupt) {
+    CacheFixture f;
+    fixture(&f);
+    populate(&f);
+    char *before = NULL, *after = NULL;
+    size_t n = 0, m = 0;
+    ASSERT_EQ(ERR_OK, file_read_all(f.entry, &before, &n).code);
+    ASSERT_EQ(ERR_OK, cache_open(f.home, true, &f.cache).code);
+    f.record.reader.physical_lines++;
+    ASSERT_EQ(ERR_OK, cache_put(&f.cache, &f.record).code);
+    volatile sig_atomic_t flag = 0;
+    ASSERT_EQ(0, setenv("COLOPHON_TEST_FAULT", fault, 1));
+    Err e = cache_commit(&f.cache, &f.live, interrupt ? &flag : NULL);
+    ASSERT_EQ(0, unsetenv("COLOPHON_TEST_FAULT"));
+    ASSERT_EQ(ERR_IO, e.code);
+    ASSERT_STREQ(message, e.message);
+    ASSERT_FALSE(f.cache.committed);
+    if (interrupt)
+        ASSERT_EQ(1, flag);
+    ASSERT_EQ(ERR_OK, cache_abort(&f.cache).code);
+    ASSERT_EQ(ERR_OK, file_read_all(f.entry, &after, &m).code);
+    ASSERT_EQ(n, m);
+    ASSERT_TRUE(!memcmp(before, after, n));
+    ASSERT_TRUE(access(f.old, F_OK));
+    free(before);
+    free(after);
+    cleanup(&f);
+}
+
+TEST(cache_install_rename_failure_restores_prior_cache) {
+    cache_failed_swap_preserves_entry("cache_install_rename", "synthetic injected cache_install_rename", false);
+}
+
+TEST(cache_backup_interrupt_keeps_prior_cache) {
+    cache_failed_swap_preserves_entry("cache_backup_interrupt", "interrupted", true);
+}
+
 TEST(cache_open_failure_closes_owned_stage) {
     for (int cleanup_failure = 0; cleanup_failure < 2; cleanup_failure++) {
         CacheFixture f;

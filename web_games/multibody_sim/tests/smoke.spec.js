@@ -2,8 +2,7 @@ const { test, expect } = require('@playwright/test');
 
 async function openApp(page) {
   await page.goto('/index.html');
-  await page.waitForFunction(() => !!window.__multibodyTestApi);
-  await page.waitForTimeout(300);
+  await page.waitForFunction(() => window.__multibodyTestApi);
 }
 
 async function switchToUserMode(page) {
@@ -102,8 +101,6 @@ test('screensaver body count control regenerates exact count', async ({ page }) 
   await page.fill('#screensaverNInput', '7');
   await page.dispatchEvent('#screensaverNInput', 'input');
   await page.waitForFunction(() => window.__multibodyTestApi.getSnapshot().bodies === 7);
-  const count = await page.evaluate(() => window.__multibodyTestApi.getSnapshot().bodies);
-  expect(count).toBe(7);
 });
 
 test('singularity max is respected for generated screensaver setup', async ({ page }) => {

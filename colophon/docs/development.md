@@ -32,8 +32,8 @@ make check-assets
 make check-sort
 ```
 
-`make test` runs the stable-sort guard, twelve asset digests, all retained
-C units, synthetic CLI/integration cases and Chromium cases.
+`make test` runs the stable-sort guard, nine provenance and third-party asset
+digests, all retained C units, synthetic CLI/integration cases and Chromium cases.
 `make sanitize` runs those same categories under ASan/UBSan;
 `make tsan` covers all retained C units, including concurrency assertions.
 Category targets are `make test-unit`, `make test-cli` and `make test-browser`.
@@ -92,7 +92,8 @@ allowed only `/tmp` scratch writes. Both wrappers now explicitly select
 their fresh scratch directory as `TMPDIR`. Preserve this setting and the
 sandbox boundary instead of widening writes to system temporary directories.
 
-The pytest wrapper also evaluates the source-write policy under a canonical
+With the CLI category, the pytest wrapper also evaluates the source-write policy
+under a canonical
 scratch `PROJECT_DIR` and verifies that removing its explicit deny makes the
 regression fail. Separate sandbox invocations avoid macOS's nested-sandbox
 restriction. Policy evaluation leaves real homes and source untouched; all
@@ -101,7 +102,8 @@ mutation profiles and captured output live in trapped scratch directories.
 Both wrappers unset `OPENCODE_DB` and `XDG_DATA_HOME` as well as
 `CLAUDE_CONFIG_DIR`; per-case helpers remove them before intentional overrides.
 The profile denies real OpenCode data, state, config, cache and Desktop roots.
-Each of the five explicit read/write denies is independently mutation-tested
+With the CLI category, each of the five explicit read/write denies is
+independently mutation-tested
 under an existing synthetic ancestor in canonical scratch. Keep `HOME` and
 runtime isolated for every direct smoke run, including offline/rebuild runs.
 

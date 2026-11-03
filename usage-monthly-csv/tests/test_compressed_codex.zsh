@@ -7,7 +7,7 @@ SCRIPT=${SCRIPT:-${0:A:h:h}/usage-monthly-csv}
 export npm_config_cache=${npm_config_cache:-$HOME/.npm}
 export npm_config_offline=true
 test_home=$(mktemp -d)
-trap 'rm -rf -- "$test_home"' EXIT
+trap 'rm -r -- "$test_home"' EXIT
 
 # Capture only the named command, never the user's complete shell configuration.
 export TEST_CCUSAGE_DEFINITION="$test_home/system-ccusage.zsh"

@@ -57,26 +57,3 @@ Err test_cache_prune_barrier(void){
         struct timespec pause={0,10000000};if(nanosleep(&pause,NULL)&&errno==EINTR)return err_make(ERR_IO,"synthetic prune barrier interrupted");
     }
 }
-/* Mirrors source test_missing_install_path_does_not_prove_backup_ownership:
- * preserve the owned directory, replace its name with a foreign directory,
- * then the caller delivers an interrupt at the completed backup boundary. */
-Err test_cache_replace_backup(const char *home, const char *old) {
-    size_t n = strlen(home) + sizeof "/synthetic-preserved-original";
-    size_t marker_size = strlen(old) + sizeof "/synthetic-marker";
-    char *preserved = malloc(n), *marker = malloc(marker_size);
-    if (!preserved || !marker) {
-        free(preserved);
-        free(marker);
-        return err_make(ERR_NOMEM, "synthetic cache fault allocation failed");
-    }
-    snprintf(preserved, n, "%s/synthetic-preserved-original", home);
-    snprintf(marker, marker_size, "%s/synthetic-marker", old);
-    Err e = ERR_SUCCESS;
-    if (rename(old, preserved) || mkdir(old, 0700))
-        e = err_make(ERR_IO, "synthetic backup replacement failed: %s", strerror(errno));
-    if (!e.code)
-        e = atomic_write(marker, "synthetic foreign directory", 27);
-    free(preserved);
-    free(marker);
-    return e;
-}

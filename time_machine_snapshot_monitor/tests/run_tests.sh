@@ -169,8 +169,16 @@ if [ -n "${FAKE_DISKUTIL_RECORD:-}" ]; then
     /usr/bin/printf '%s\n' "$*" >>"$FAKE_DISKUTIL_RECORD"
 fi
 exit_status=${FAKE_DISKUTIL_EXIT:-0}
+if [ -n "${FAKE_DISKUTIL_FAIL_PATH:-}" ]; then
+    case "$*" in *"$FAKE_DISKUTIL_FAIL_PATH"*) exit_status=1 ;; esac
+fi
 if [ "$exit_status" -eq 0 ] && [ "${FAKE_DISKUTIL_CLEAR_MOUNTS:-0}" -eq 1 ] && [ -n "${FAKE_MOUNT_OUTPUT:-}" ]; then
-    : >"$FAKE_MOUNT_OUTPUT"
+    if [ -n "${FAKE_DISKUTIL_FAIL_PATH:-}" ]; then
+        /usr/bin/awk -v fail_path="$FAKE_DISKUTIL_FAIL_PATH" 'index($0, fail_path)' "$FAKE_MOUNT_OUTPUT" >"$FAKE_MOUNT_OUTPUT.tmp"
+        /bin/mv "$FAKE_MOUNT_OUTPUT.tmp" "$FAKE_MOUNT_OUTPUT"
+    else
+        : >"$FAKE_MOUNT_OUTPUT"
+    fi
 fi
 exit "$exit_status"
 EOF
@@ -325,6 +333,40 @@ test_hourly_skip_counters_and_alert_thresholds() {
     assert_equals "running counter reaches five" "5" "$(/bin/cat "$runtime/state/running_skip_count")"
 }
 
+test_unknown_status_counter_alerts_on_fourth_check() {
+    runtime="$TMP_ROOT/runtime"
+    remove_test_tree "$runtime"
+    /bin/mkdir -p "$runtime/state"
+    /usr/bin/printf '5\n' >"$runtime/state/running_skip_count"
+    unknown_fixture="$TMP_ROOT/counter-unknown"
+    empty_mounts="$TMP_ROOT/unknown-mounts"
+    alerter_record="$TMP_ROOT/unknown-alerts"
+    mount_calls="$TMP_ROOT/unknown-mount-calls"
+    output="$TMP_ROOT/unknown.out"
+    /usr/bin/printf '    Percent = 0;\n' >"$unknown_fixture"
+    : >"$empty_mounts"
+    : >"$alerter_record"
+    : >"$mount_calls"
+
+    count=1
+    while [ "$count" -le 3 ]; do
+        run_fake_cli "$output" "$unknown_fixture" "$empty_mounts" "$alerter_record" "$mount_calls" --check
+        assert_status "unknown check $count exits successfully" 0 "$?"
+        if [ "$count" -eq 1 ]; then
+            assert_equals "unknown check resets running counter" "0" "$(/bin/cat "$runtime/state/running_skip_count")"
+        fi
+        assert_equals "unknown status counter reaches $count" "$count" "$(/bin/cat "$runtime/state/status_error_count")"
+        assert_equals "unknown check $count does not alert" "" "$(/bin/cat "$alerter_record")"
+        assert_equals "unknown check $count does not inspect mounts" "" "$(/bin/cat "$mount_calls")"
+        count=$((count + 1))
+    done
+
+    run_fake_cli "$output" "$unknown_fixture" "$empty_mounts" "$alerter_record" "$mount_calls" --check
+    assert_status "fourth unknown check exits successfully" 0 "$?"
+    assert_equals "unknown status counter reaches four" "4" "$(/bin/cat "$runtime/state/status_error_count")"
+    assert_contains "fourth unknown check alerts" "$(/bin/cat "$alerter_record")" "could not determine Time Machine status"
+}
+
 test_idle_resets_counters_and_detects_stale_mount() {
     runtime="$TMP_ROOT/runtime"
     /bin/mkdir -p "$runtime/state"
@@ -451,6 +493,36 @@ test_repair_safety_and_normal_unmount() {
     assert_status "failed normal unmount returns 5" 5 "$failed_status"
 }
 
+test_partial_repair_reports_remaining_mounts() {
+    remove_test_tree "$TMP_ROOT/runtime"
+    idle_fixture="$TMP_ROOT/partial-idle"
+    stale_mounts="$TMP_ROOT/partial-mounts"
+    alerter_record="$TMP_ROOT/partial-alerts"
+    mount_calls="$TMP_ROOT/partial-mount-calls"
+    diskutil_record="$TMP_ROOT/partial-diskutil"
+    output="$TMP_ROOT/partial.out"
+    /usr/bin/printf '    Running = 0;\n' >"$idle_fixture"
+    /usr/bin/printf '%s\n' \
+        '/dev/fake-a on /Volumes/com.apple.TimeMachine.localsnapshots/Mount A/Data (apfs, local, read-only)' \
+        '/dev/fake-b on /Volumes/com.apple.TimeMachine.localsnapshots/Mount B/Data (apfs, local, read-only)' >"$stale_mounts"
+    : >"$alerter_record"
+    : >"$mount_calls"
+    : >"$diskutil_record"
+    export FAKE_DISKUTIL_RECORD="$diskutil_record" FAKE_DISKUTIL_FAIL_PATH='Mount B' FAKE_DISKUTIL_CLEAR_MOUNTS=1
+    run_fake_cli "$output" "$idle_fixture" "$stale_mounts" "$alerter_record" "$mount_calls" --repair
+    partial_status=$?
+    unset FAKE_DISKUTIL_RECORD FAKE_DISKUTIL_FAIL_PATH FAKE_DISKUTIL_CLEAR_MOUNTS
+    assert_status "partial repair returns 5" 5 "$partial_status"
+    diskutil_text=$(/bin/cat "$diskutil_record")
+    assert_contains "partial repair attempts Mount A" "$diskutil_text" 'unmount /Volumes/com.apple.TimeMachine.localsnapshots/Mount A/Data'
+    assert_contains "partial repair attempts Mount B" "$diskutil_text" 'unmount /Volumes/com.apple.TimeMachine.localsnapshots/Mount B/Data'
+    assert_contains "partial repair reports one remaining mount" "$(/bin/cat "$output")" 'Repair incomplete: 1 mounted snapshot(s) remain.'
+    case "$diskutil_text" in
+        *force*) fail "partial repair never forces unmount" "$diskutil_text" ;;
+        *) pass "partial repair never forces unmount" ;;
+    esac
+}
+
 test_notification_action_rechecks_and_repairs() {
     runtime="$TMP_ROOT/runtime"
     remove_test_tree "$runtime"
@@ -500,8 +572,9 @@ test_status_and_notification_self_test() {
 
     export TMSM_TEST_HOME="$TMP_ROOT/status-home"
     run_fake_cli "$output" "$idle_fixture" "$stale_mounts" "$alerter_record" "$mount_calls" --status
+    status_exit=$?
     unset TMSM_TEST_HOME
-    assert_status "--status exits successfully" 0 "$?"
+    assert_status "--status exits successfully" 0 "$status_exit"
     status_text=$(/bin/cat "$output")
     assert_contains "--status reports Time Machine state" "$status_text" "Time Machine status: idle"
     assert_contains "--status reports mounted snapshot count" "$status_text" "Mounted local snapshots: 1"
@@ -812,6 +885,19 @@ test_installer_and_uninstaller_are_idempotent() {
     assert_file_exists "default uninstaller preserves runtime logs" "$marker"
 
     /usr/bin/env \
+        TMSM_HOME="$test_home" TMSM_RUNTIME_DIR="$test_home/Library" \
+        TMSM_INSTALL_DIR="$install_dir" TMSM_PUBLIC_LINK="$public_link" TMSM_PLIST_PATH="$plist" \
+        LAUNCHCTL_BIN="$FAKE_BIN/launchctl" \
+        "$PROJECT_DIR/uninstall.sh" --purge >"$output" 2>&1
+    assert_status "purge refuses unsafe runtime path" 6 "$?"
+    assert_contains "unsafe purge explains refusal" "$(/bin/cat "$output")" 'Refusing unsafe purge path'
+    if [ -d "$test_home/Library/Scripts" ]; then
+        pass "unsafe purge preserves Scripts directory"
+    else
+        fail "unsafe purge preserves Scripts directory"
+    fi
+
+    /usr/bin/env \
         TMSM_HOME="$test_home" \
         TMSM_RUNTIME_DIR="$runtime" \
         TMSM_INSTALL_DIR="$install_dir" \
@@ -826,6 +912,7 @@ test_installer_and_uninstaller_are_idempotent() {
     else
         fail "purging uninstaller removes only runtime directory" "runtime still exists"
     fi
+    assert_file_exists "purge preserves installed command" "$install_dir/bin/tm-snapshot-monitor"
 }
 
 test_installer_refuses_unrelated_public_file() {
@@ -858,9 +945,11 @@ test_no_argument_dispatches_check
 test_tm_status_tristate
 test_snapshot_mount_filtering
 test_hourly_skip_counters_and_alert_thresholds
+test_unknown_status_counter_alerts_on_fourth_check
 test_idle_resets_counters_and_detects_stale_mount
 test_log_rotation_is_bounded
 test_repair_safety_and_normal_unmount
+test_partial_repair_reports_remaining_mounts
 test_notification_action_rechecks_and_repairs
 test_status_and_notification_self_test
 test_notification_failure_records_real_status

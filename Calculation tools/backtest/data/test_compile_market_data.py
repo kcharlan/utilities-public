@@ -279,7 +279,8 @@ class ReconciliationTests(unittest.TestCase):
     def setUp(self) -> None:
         self.shiller = {
             year: {"stock_tr": 0.10 + ((year % 3) - 1) * 0.02,
-                   "bond10_tr": 0.05 + ((year % 4) - 1.5) * 0.01}
+                   "bond10_tr": 0.05 + ((year % 4) - 1.5) * 0.01,
+                   "cpi_change": 0.02 + ((year % 5) - 2) * 0.005}
             for year in range(1928, 2023)
         }
         self.damodaran = {year: values.copy() for year, values in self.shiller.items()}
@@ -288,7 +289,8 @@ class ReconciliationTests(unittest.TestCase):
         output = io.StringIO()
         with mock.patch("sys.stdout", output):
             metrics = compiler.reconcile(self.shiller, self.damodaran)
-        self.assertEqual(set(metrics), {"stock_tr", "bond10_tr"})
+        self.assertEqual(set(metrics), {"stock_tr", "bond10_tr", "cpi_change"})
+        self.assertIn("cpi_change", output.getvalue())
         self.assertEqual(metrics["stock_tr"]["mae"], 0.0)
         self.assertEqual(metrics["bond10_tr"]["bias"], 0.0)
         self.assertIn("1928-2022", output.getvalue())
@@ -322,6 +324,18 @@ class ReconciliationTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "1928-2022"):
             compiler.reconcile(self.shiller, self.damodaran)
 
+    def test_fails_when_cpi_series_disagrees(self) -> None:
+        for values in self.shiller.values():
+            values["cpi_change"] += 0.004
+        with mock.patch("sys.stdout", io.StringIO()), self.assertRaisesRegex(ValueError, "cpi_change"):
+            compiler.reconcile(self.shiller, self.damodaran)
+
+    def test_cpi_reconciliation_ignores_year_to_year_timing_noise(self) -> None:
+        for year, values in self.shiller.items():
+            values["cpi_change"] += 0.031 if year % 2 else -0.031
+        with mock.patch("sys.stdout", io.StringIO()):
+            compiler.reconcile(self.shiller, self.damodaran)
+
     def test_threshold_boundaries_are_inclusive(self) -> None:
         exact_limits = {
             series: {
@@ -332,6 +346,7 @@ class ReconciliationTests(unittest.TestCase):
             }
             for series in ("stock_tr", "bond10_tr")
         }
+        exact_limits["cpi_change"] = {"abs_bias": 0.0, "abs_geometric_mean_difference": 0.0}
         with (
             mock.patch.object(compiler, "RECONCILIATION_THRESHOLDS", exact_limits),
             mock.patch("sys.stdout", io.StringIO()),

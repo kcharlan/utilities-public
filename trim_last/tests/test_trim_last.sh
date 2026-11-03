@@ -56,6 +56,7 @@ if REAL_FFMPEG="$real_ffmpeg" RACE_DEST="$d/race_trim.mp4" PATH="$d/race_bin:$PA
 fi
 [[ -d race_trim.mp4 && ! -e race_trim.mp4/race_trim.mp4 ]] || exit 1
 [[ $(shasum race.mp4 | cut -d' ' -f1) == "$hash" ]] || exit 1
+[[ -z $(find . -name '.trim-last.*' -print) ]] || { echo 'temporary directory remains after race' >&2; exit 1; }
 if "$script" 1 missing.mp4; then echo 'missing input accepted' >&2; exit 1; fi
 printf 'invalid media\n' > bad.mp4
 if "$script" 1 bad.mp4; then echo 'invalid input accepted' >&2; exit 1; fi
@@ -64,5 +65,21 @@ cp clip.mp4 unsupported.foo
 printf 'existing output' > unsupported_trim.foo
 if "$script" -f 1 unsupported.foo; then echo 'encoding failure accepted' >&2; exit 1; fi
 [[ $(cat unsupported_trim.foo) == 'existing output' ]]
+[[ -z $(find . -name '.trim-last.*' -print) ]] || { echo 'temporary directory remains after encoding failure' >&2; exit 1; }
 "$script" 1 clip.mp4
 [[ -s clip_trim.mp4 ]]
+
+dur() { ffprobe -v error -show_entries format=duration -of csv=p=0 "$1"; }
+ffmpeg -v error -f lavfi -i color=c=red:s=16x16:d=3 -f lavfi -i color=c=blue:s=16x16:d=2 \
+  -filter_complex '[0][1]concat=n=2:v=1:a=0' -c:v libx264 -pix_fmt yuv420p redblue.mp4
+"$script" 2 redblue.mp4
+dur redblue_trim.mp4 | awk '{ exit !($1 >= 1.85 && $1 <= 2.15) }'
+ffmpeg -v error -i redblue_trim.mp4 -frames:v 1 -f rawvideo -pix_fmt rgb24 - | \
+  od -An -tu1 -N3 | awk '{ exit !(NF == 3 && $1 < 60 && $3 > 190) }'
+"$script" -s _all 10 redblue.mp4
+dur redblue_all.mp4 | awk '{ exit !($1 >= 4.85 && $1 <= 5.15) }'
+trim_hash=$(shasum redblue_trim.mp4 | cut -d' ' -f1)
+"$script" -f 1 redblue.mp4
+[[ $(shasum redblue_trim.mp4 | cut -d' ' -f1) != "$trim_hash" ]] || { echo 'forced output did not change' >&2; exit 1; }
+dur redblue_trim.mp4 | awk '{ exit !($1 >= 0.85 && $1 <= 1.15) }'
+[[ -z $(find . -name '.trim-last.*' -print) ]] || { echo 'temporary directory remains at end' >&2; exit 1; }

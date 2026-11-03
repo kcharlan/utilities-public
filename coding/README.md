@@ -17,3 +17,12 @@ These folders are curated infrastructure snapshots. Historical tickets,
 packet runs, logs, completed deployment notes, and other project-specific
 execution artifacts are intentionally excluded. Generated queue, plan, audit,
 and log directories are also not tracked.
+
+## Tests
+
+From the repository root, run:
+
+```sh
+zsh coding/tests/test_autocommit.zsh
+bash coding/tests/test_blocked.sh
+```

@@ -95,18 +95,6 @@ void cp_atomic_created(int fd){atomic_observed_fd=fd;atomic_observed_closes=0;}
 void cp_atomic_closed(int fd){if(fd==atomic_observed_fd)atomic_observed_closes++;}
 int cp_atomic_fd(void){return atomic_observed_fd;}
 unsigned cp_atomic_close_count(void){return atomic_observed_closes;}
-size_t cp_page_warn_bytes(void) {
-    const char *s = getenv("COLOPHON_TEST_PAGE_WARN_BYTES");
-    if (!s)
-        return 20u * 1024u * 1024u;
-    char *end;
-    unsigned long long n = strtoull(s, &end, 10);
-    return *s && !*end ? (size_t)n : 20u * 1024u * 1024u;
-}
-bool cp_browser_fallback_fail(void) {
-    const char *s = getenv("COLOPHON_TEST_BROWSER_FALLBACK");
-    return s && !strcmp(s, "fail");
-}
 static int64_t override(const char *name) {
     const char *s = getenv(name);
     if (!s)

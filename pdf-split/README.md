@@ -37,7 +37,7 @@ rollback also fails, it reports the retained temporary directory and backup
 paths so the original outputs can be recovered manually.
 
 Run `bash tests/test_pdf_split.sh` for synthetic input-safety checks; it also
-requires Node.js to generate the test PDF.
+requires Node.js to generate the test PDFs and `jq` to inspect them.
 
 ## How it works
 
@@ -47,6 +47,7 @@ requires Node.js to generate the test PDF.
 - When the next candidate exceeds the limit, the last fitting range is written
   as the next numbered output file.
 - A single page that exceeds the requested size is written as its own chunk.
+- Higher-numbered output files from earlier runs are left in place.
 - Temporary files are removed when the script exits.
 
 ## Tips

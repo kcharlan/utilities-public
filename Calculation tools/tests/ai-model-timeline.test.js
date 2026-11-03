@@ -2,6 +2,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 const vm = require('node:vm');
+const {isDeepStrictEqual} = require('node:util');
 const test = require('node:test');
 
 const htmlPath = path.join(__dirname, '..', 'ai-model-timeline.html');
@@ -35,10 +36,8 @@ function loadCore() {
 }
 
 const data = extractData();
-const latestUpdate = require('../docs/ai_model_timeline_update_sources_2026_10_30.json');
-const currentVersion = row => latestUpdate.corrections.find(change => JSON.stringify(change.before) === JSON.stringify(row))?.after || row;
 
-test('October 23 Kimi launch appears in the latest monthly report with weights still pending', () => {
+test('October 23 Kimi launch appears in the October 2026 report with weights still pending', () => {
   const kimi = data.filter(row => row.lab === 'Moonshot' && row.date === '2026-10-23');
   assert.deepEqual(kimi.map(row => row.model).sort(), ['Kimi K3.1 Pro', 'Kimi K3.1 Pro Highspeed']);
   for (const row of kimi) {
@@ -48,26 +47,23 @@ test('October 23 Kimi launch appears in the latest monthly report with weights s
   }
   const core = loadCore();
   const bounds = {earliest:'2024-01-10', latest:data.reduce((max, row) => row.date > max ? row.date : max, '')};
-  const range = core.resolveRange(core.presetSpec('month', bounds), bounds);
-  assert.equal(range.end, '2026-10-29');
+  const range = core.resolveRange({kind:'month', ym:'2026-10'}, bounds);
   const report = core.formatReportText(core.groupByMonth(kimi, 'desc', () => 0),
     {range, tiers:new Set(allTiers), allTiers, terms:['kimi k3.1']});
   assert.match(report, /Oct 23, 2026 · Moonshot · Kimi K3\.1 Pro · flagship/);
   assert.match(report, /Oct 23, 2026 · Moonshot · Kimi K3\.1 Pro Highspeed · flagship/);
 });
 
-test('Meta Wonder models remain in the current month and appear in the dated report', () => {
+test('Meta Wonder models appear in the October 2026 report', () => {
   const core = loadCore();
   const bounds = {earliest:'2024-01-10', latest:data.reduce((max, row) => row.date > max ? row.date : max, '')};
-  assert.equal(bounds.latest, '2026-10-29');
   const meta = data.filter(row => row.lab === 'Meta' && row.date === '2026-10-12');
   assert.deepEqual(meta.map(row => row.model).sort(), ['Muse Wonder', 'Muse Wonder Full']);
   for (const row of meta) {
     assert.equal(row.source, 'https://research.meta.ai/blog/muse-wonder');
     assert.equal(row.tier, 'flagship');
   }
-  const range = core.resolveRange(core.presetSpec('month', bounds), bounds);
-  assert.equal(range.end, '2026-10-29');
+  const range = core.resolveRange({kind:'month', ym:'2026-10'}, bounds);
   const report = core.formatReportText(core.groupByMonth(meta, 'desc', () => 0),
     {range, tiers:new Set(allTiers), allTiers, terms:['meta']});
   assert.match(report, /Oct 12, 2026 · Meta · Muse Wonder Full · flagship/);
@@ -279,10 +275,10 @@ test('has valid, unique release records and secure source URLs', () => {
 test('static header metadata and initial chart domain cover the dataset', () => {
   const latest = data.reduce((max, row) => row.date > max ? row.date : max, '');
   const labs = new Set(data.map(row => row.lab));
-  assert.equal(latest, '2026-10-29');
   assert.match(html, new RegExp(`<span data-release-count>${data.length}<\\/span>`));
   assert.match(html, new RegExp(`<span data-lab-count>${labs.size}<\\/span>`));
-  assert.match(html, /<span data-latest-date>October 29, 2026<\/span>/);
+  const latestLabel = new Date(`${latest}T00:00:00Z`).toLocaleDateString('en-US', {timeZone:'UTC', month:'long', day:'numeric', year:'numeric'});
+  assert.ok(html.includes(`<span data-latest-date>${latestLabel}</span>`));
   assert.equal((html.match(/· checked October 30, 2026 ·/g) || []).length, 1);
   assert.equal((html.match(/Verification checked October 30, 2026/g) || []).length, 1);
   // Proportional range padding replaces the former fixed ±15-day x0 domain,
@@ -334,6 +330,9 @@ test('TimelineCore resolves presets, steps within bounds and rejects non-overlap
   const priorYear = core.resolveRange(core.stepSpec(core.presetSpec('year', fixtureBounds), -1, fixtureBounds), fixtureBounds);
   assert.deepEqual([priorYear.start, priorYear.end, priorYear.label], ['2025-01-01', '2025-12-31', '2025']);
   assert.deepEqual([resolved('last12').start, resolved('last12').end], ['2025-10-01', '2026-09-24']);
+  for (const kind of ['month', 'quarter', 'last12']) {
+    assert.equal(resolved(kind).canNext, false, `${kind} cannot step beyond the latest data`);
+  }
   const earliest = core.resolveRange({kind:'quarter', y:2024, q:1}, fixtureBounds);
   assert.equal(earliest.start, '2024-01-10');
   assert.equal(earliest.canPrev, false);
@@ -470,120 +469,56 @@ test('recent-release summary follows the latest dated rows', () => {
   assert.doesNotMatch(summary, /The latest cluster spans Antigravity/);
 });
 
-test('new October data anchors calendar presets and preserves historical records', () => {
-  const core = loadCore();
-  const bounds = {earliest:'2024-01-10', latest:data.reduce((v,row) => row.date > v ? row.date : v, '')};
-  for (const [kind, start, label] of [['month','2026-10-01','October 2026'], ['quarter','2026-10-01','Q4 2026'], ['last12','2025-11-01','Last 12 months']]) {
-    const result = core.resolveRange(core.presetSpec(kind, bounds), bounds);
-    assert.equal(result.start, start);
-    assert.equal(result.end, bounds.latest);
-    if (kind !== 'last12') assert.equal(result.label, label);
-    assert.equal(result.canNext, false);
-  }
-  const originalRows = require('./fixtures/ai-model-timeline-2026-10-08.json');
-  const {corrections} = require('../docs/ai_model_timeline_update_sources_2026_10_12.json');
-  for (const original of originalRows) {
-    const corrected = corrections.find(change => JSON.stringify(change.before) === JSON.stringify(original));
-    assert.deepEqual(data.find(row => row.model === original.model && row.lab === original.lab && row.date === original.date), currentVersion(corrected?.after || original));
-  }
-});
-
-test('October 8 evidence manifest exactly accounts for additions and preserved data', () => {
-  const baseline = require('./fixtures/ai-model-timeline-2026-10-08.json');
-  const manifest = JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'docs', 'ai_model_timeline_update_sources_2026_10_08.json'), 'utf8'));
+test('every update manifest is reflected in the embedded data', () => {
+  const docs = path.join(__dirname, '..', 'docs');
+  const names = fs.readdirSync(docs).filter(name => /^ai_model_timeline_update_sources_\d{4}_\d{2}_\d{2}\.json$/.test(name)).sort();
+  assert.ok(names.length, 'at least one update manifest exists');
+  const manifests = names.map(name => JSON.parse(fs.readFileSync(path.join(docs, name), 'utf8')));
   const key = row => [row.model, row.lab, row.date].join('\u0000');
-  const additions = new Set(manifest.additions.map(key));
-  const original = baseline.filter(row => !additions.has(key(row)));
-  assert.equal(manifest.preservedHistoricalRows, original.length);
-  assert.equal(original.length, 404);
-  assert.equal(manifest.additions.length, 19);
-  assert.equal(baseline.length, original.length + manifest.additions.length);
-  for (const row of [...original, ...manifest.additions]) {
-    assert.deepEqual(baseline.find(candidate => key(candidate) === key(row)), row);
+  const current = (row, i) => {
+    let value = row;
+    for (const manifest of manifests.slice(i + 1)) {
+      for (const change of (manifest.corrections ?? [])) {
+        if (isDeepStrictEqual(change.before, value)) value = change.after;
+      }
+    }
+    return value;
+  };
+  const present = row => assert.deepEqual(data.find(candidate => key(candidate) === key(row)), row, key(row));
+  let snapshot = require('./fixtures/ai-model-timeline-2026-10-08.json');
+  for (const row of snapshot) present(current(row, 0));
+  const initialAdditions = new Set(manifests[0].additions.map(key));
+  for (const row of manifests[0].additions) {
+    assert.deepEqual(snapshot.find(candidate => key(candidate) === key(row)), row, key(row));
   }
-});
-
-test('October 12 evidence manifest exactly accounts for all additions and corrections', () => {
-  const original = require('./fixtures/ai-model-timeline-2026-10-08.json');
-  const manifest = require('../docs/ai_model_timeline_update_sources_2026_10_12.json');
-  const key = row => [row.model, row.lab, row.date].join('\u0000');
-  assert.equal(manifest.checked, '2026-10-12');
-  assert.equal(manifest.preservedHistoricalRows, 423);
-  assert.equal(original.length, 423);
-  assert.equal(manifest.additions.length, 43);
-  assert.equal(manifest.corrections.length, 1);
-  for (const change of manifest.corrections) {
-    assert.deepEqual(original.find(row => key(row) === key(change.before)), change.before);
-  }
-  const expected = original.map(row => manifest.corrections.find(change => key(change.before) === key(row))?.after || row).concat(manifest.additions);
-  assert.equal(expected.length, 466);
-  for (const row of expected) assert.deepEqual(data.find(candidate => key(candidate) === key(row)), currentVersion(row));
-});
-
-test('October 14 evidence manifest exactly accounts for new events and preserves the October 12 dataset', () => {
-  const original = require('./fixtures/ai-model-timeline-2026-10-08.json');
-  const previous = require('../docs/ai_model_timeline_update_sources_2026_10_12.json');
-  const manifest = require('../docs/ai_model_timeline_update_sources_2026_10_14.json');
-  const key = row => [row.model, row.lab, row.date].join('\u0000');
-  const baseline = original.map(row => previous.corrections.find(change => key(change.before) === key(row))?.after || row).concat(previous.additions);
-  assert.equal(manifest.checked, '2026-10-14');
-  assert.equal(manifest.latestRelease, '2026-10-13');
-  assert.equal(manifest.baselineManifest, 'ai_model_timeline_update_sources_2026_10_12.json');
-  assert.equal(manifest.preservedHistoricalRows, baseline.length);
-  assert.equal(manifest.additions.length, 6);
-  assert.deepEqual(manifest.corrections, []);
-  const expected = baseline.concat(manifest.additions);
-  assert.equal(expected.length, 472, 'the October 14 snapshot remains fully accounted for');
-  for (const row of expected) assert.deepEqual(data.find(candidate => key(candidate) === key(row)), currentVersion(row));
-  assert.match(data.find(row => row.model === 'Natura-1 (research announcement)')?.note || '', /external user access were not established/);
-  assert.match(data.find(row => row.model === 'GLM-Legal (beta announcement)')?.note || '', /access is by application/);
-});
-
-test('October 22 manifest accounts for its historical snapshot and preserves every prior row', () => {
-  const original = require('./fixtures/ai-model-timeline-2026-10-08.json');
-  const october12 = require('../docs/ai_model_timeline_update_sources_2026_10_12.json');
-  const october14 = require('../docs/ai_model_timeline_update_sources_2026_10_14.json');
-  const manifest = require('../docs/ai_model_timeline_update_sources_2026_10_22.json');
-  const key = row => [row.model, row.lab, row.date].join('\u0000');
-  const baseline = original.map(row => october12.corrections.find(change => key(change.before) === key(row))?.after || row)
-    .concat(october12.additions, october14.additions);
-  assert.equal(manifest.checked, '2026-10-22');
-  assert.equal(manifest.latestRelease, '2026-10-21');
-  assert.equal(manifest.baselineManifest, 'ai_model_timeline_update_sources_2026_10_14.json');
-  assert.equal(manifest.preservedHistoricalRows, baseline.length);
-  assert.equal(baseline.length, 472);
-  assert.equal(manifest.additions.length, 32);
-  assert.deepEqual(manifest.corrections, []);
-  const expected = baseline.concat(manifest.additions);
-  assert.equal(expected.length, 504);
-  for (const row of expected) assert.deepEqual(data.find(candidate => key(candidate) === key(row)), currentVersion(row));
-  assert.equal(expected.reduce((latest, row) => row.date > latest ? row.date : latest, ''), manifest.latestRelease);
-  for (const row of manifest.additions) assert.ok(row.date <= manifest.checked, `${row.model} is not a future release`);
-});
-
-test('October 25 manifest accounts for every new row while preserving the October 22 snapshot', () => {
-  const manifest = require('../docs/ai_model_timeline_update_sources_2026_10_25.json');
-  const key = row => [row.model, row.lab, row.date].join('\u0000');
-  const next = require('../docs/ai_model_timeline_update_sources_2026_10_26.json');
-  const current = require('../docs/ai_model_timeline_update_sources_2026_10_28.json');
-  const addedKeys = new Set([...manifest.additions, ...next.additions, ...current.additions, ...latestUpdate.additions].map(key));
-  const baseline = data.filter(row => !addedKeys.has(key(row)));
-  assert.equal(manifest.checked, '2026-10-25');
-  assert.equal(manifest.latestRelease, '2026-10-23');
-  assert.equal(manifest.baselineManifest, 'ai_model_timeline_update_sources_2026_10_22.json');
-  assert.equal(manifest.preservedHistoricalRows, 504);
-  assert.equal(baseline.length, manifest.preservedHistoricalRows);
-  assert.equal(manifest.additions.length, 9);
-  assert.deepEqual(manifest.corrections, []);
-  assert.equal(data.length, baseline.length + manifest.additions.length + next.additions.length + current.additions.length + latestUpdate.additions.length);
-  for (const row of manifest.additions) {
-    assert.deepEqual(data.find(candidate => key(candidate) === key(row)), currentVersion(row));
-    assert.ok(row.date <= manifest.checked, `${row.model} is not a future release`);
-  }
-  assert.equal([...baseline, ...manifest.additions].reduce((latest, row) => row.date > latest ? row.date : latest, ''), manifest.latestRelease);
+  assert.equal(snapshot.filter(row => !initialAdditions.has(key(row))).length, manifests[0].preservedHistoricalRows);
+  manifests.forEach((manifest, i) => {
+    const dateParts = names[i].match(/(\d{4})_(\d{2})_(\d{2})\.json$/);
+    assert.equal(manifest.checked, dateParts.slice(1).join('-'), names[i]);
+    if (i > 0) {
+      for (const change of (manifest.corrections ?? [])) {
+        const index = snapshot.findIndex(row => isDeepStrictEqual(row, change.before));
+        assert.notEqual(index, -1, `${names[i]}: correction before row exists`);
+        snapshot = snapshot.map((row, rowIndex) => rowIndex === index ? change.after : row);
+      }
+      snapshot = snapshot.concat(manifest.additions);
+    }
+    assert.equal(snapshot.reduce((latest, row) => row.date > latest ? row.date : latest, ''), manifest.latestRelease, names[i]);
+    for (const row of manifest.additions) {
+      assert.ok(row.date <= manifest.checked, `${names[i]}: ${row.model} is not a future release`);
+      present(current(row, i));
+    }
+    for (const change of (manifest.corrections ?? [])) present(current(change.after, i));
+    if (manifest.baselineManifest) assert.equal(manifest.baselineManifest, names[i - 1]);
+    const additions = new Set(manifests.slice(i).flatMap((later, offset) =>
+      later.additions.map(row => key(current(row, i + offset)))));
+    assert.equal(data.filter(row => !additions.has(key(row))).length, manifest.preservedHistoricalRows, names[i]);
+  });
 });
 
 test('latest additions retain preview, weight-release, and announcement date distinctions', () => {
+  assert.match(data.find(row => row.model === 'Natura-1 (research announcement)')?.note || '', /external user access were not established/);
+  assert.match(data.find(row => row.model === 'GLM-Legal (beta announcement)')?.note || '', /access is by application/);
   const get = model => data.find(row => row.model === model);
   for (const [before, after] of [
     ['Beam (restricted preview)', 'Beam (open weights / public API beta)'],
@@ -720,44 +655,9 @@ test('SVG placement integration coalesces redraws and restores labels when zoom 
   assert.ok(extractInlineScript().includes('scheduleLabelPlacement();\n}'),'redraw invokes placement for zoom, filter and resize updates');
 });
 
-test('October 26 manifest preserves the previous snapshot and accounts for new releases', () => {
-  const manifest = require('../docs/ai_model_timeline_update_sources_2026_10_26.json');
-  const key = row => [row.model, row.lab, row.date].join('\u0000');
-  const current = require('../docs/ai_model_timeline_update_sources_2026_10_28.json');
-  const additions = new Set([...manifest.additions, ...current.additions, ...latestUpdate.additions].map(key));
-  assert.equal(manifest.baselineManifest, 'ai_model_timeline_update_sources_2026_10_25.json');
-  assert.equal(data.filter(row => !additions.has(key(row))).length, manifest.preservedHistoricalRows);
-  assert.equal(manifest.latestRelease, '2026-10-26');
-  assert.deepEqual(manifest.corrections, []);
-  for (const row of manifest.additions) {
-    assert.deepEqual(data.find(candidate => key(candidate) === key(row)), currentVersion(row));
-    assert.ok(row.date <= manifest.checked);
-  }
-});
-
-test('October 28 manifest preserves the previous dataset', () => {
-  const manifest = require('../docs/ai_model_timeline_update_sources_2026_10_28.json');
-  const key = row => [row.model, row.lab, row.date].join('\u0000');
-  const additions = new Set([...manifest.additions, ...latestUpdate.additions].map(key));
-  assert.equal(manifest.baselineManifest, 'ai_model_timeline_update_sources_2026_10_26.json');
-  assert.equal(data.filter(row => !additions.has(key(row))).length, manifest.preservedHistoricalRows);
-  for (const row of manifest.additions) assert.deepEqual(data.find(candidate => key(candidate) === key(row)), currentVersion(row));
-});
-
 test('October 30 update records the new releases and Mistral weights milestone', () => {
   const get = model => data.find(row => row.model === model);
   assert.equal(get('Granite Switch 4.1 family')?.date, '2026-10-14');
-  assert.equal(get('Granite Switch 4.1.1')?.date, '2026-10-29');
   assert.equal(get('Nemotron 3.5 Transcribe')?.date, '2026-10-28');
-  assert.equal(get('Mistral Large 4 (open weights)')?.date, '2026-10-29');
   assert.match(get('Mistral Large 4 (public preview)')?.note || '', /released October 29/);
-});
-
-test('October 30 manifest accounts for additions and the corrected preview', () => {
-  const key = row => [row.model, row.lab, row.date].join('\u0000');
-  const additions = new Set(latestUpdate.additions.map(key));
-  assert.equal(data.filter(row => !additions.has(key(row))).length, latestUpdate.preservedHistoricalRows);
-  assert.equal(latestUpdate.baselineManifest, 'ai_model_timeline_update_sources_2026_10_28.json');
-  for (const row of latestUpdate.additions) assert.deepEqual(data.find(candidate => key(candidate) === key(row)), row);
-  for (const change of latestUpdate.corrections) assert.deepEqual(data.find(candidate => key(candidate) === key(change.after)), change.after);
 });

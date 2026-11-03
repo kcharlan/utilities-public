@@ -11,7 +11,7 @@ set -euo pipefail
 # Configuration & Defaults
 # ------------------------------------------------------------------------------
 SCRIPT_NAME="media-dater"
-VERSION="1.0.1"
+VERSION="1.0.2"
 
 # Defaults
 VERBOSE=false
@@ -175,10 +175,9 @@ main() {
             first=false
         done
         find_cmd+=(\))
-    else
-        # Default ignore generic system files if no extension filter
-        find_cmd+=(! -name ".*")
     fi
+    # Ignore hidden files, including when filtering by extension.
+    find_cmd+=(! -name ".*")
     
     # Always use files only
     find_cmd+=(-type f)
@@ -196,20 +195,13 @@ main() {
     local count=0
     local skipped=0
     
-    # Regex to detect already renamed files:
-    # Starts with PREFIX, followed by 8 digits (date), _, 6 digits (time)
-    # We escape the prefix for regex usage just in case it has special chars.
-    local safe_prefix
-    safe_prefix=$(printf '%s' "$PREFIX" | sed 's/[.["*^$]/\\&/g')
-    local pattern="^${safe_prefix}[0-9]{8}_[0-9]{6}"
-
     # We read from find using process substitution <(...)
     # -print0 handles spaces/newlines correctly
     while IFS= read -r -d '' file; do
         local filename
         filename=$(basename "$file")
         
-        if [[ "$filename" =~ $pattern ]]; then
+        if [[ "$filename" == "$PREFIX"* && "${filename#"$PREFIX"}" =~ ^[0-9]{8}_[0-9]{6} ]]; then
             # Log only if verbose to avoid clutter
             if [[ "$VERBOSE" == "true" ]]; then
                 echo "[SKIP] $filename (Already matches pattern)"

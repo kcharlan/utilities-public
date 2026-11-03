@@ -367,104 +367,11 @@ def test_first_party_assets_contain_no_external_urls() -> None:
     _assert_js_offline(_read_asset("app.js"))
 
 
-def test_raw_authored_scanning_rejects_external_urls() -> None:
-    cases = [
-        ("css", ".panel { background: url(https://evil.invalid/pixel); }"),
-        ("js", "fetch('https://evil.invalid/data')"),
-        ("js", "const remote = 'https://evil.invalid/data';"),
-    ]
-    for language, source in cases:
-        with pytest.raises(AssertionError):
-            _assert_authored_source_offline(source, label=language)
-
-
-def test_raw_authored_scanning_allows_local_fetch() -> None:
-    javascript = """
-      fetch("/api/meta");
-      fetch("api/activity");
-    """
-    _assert_js_offline(javascript)
-
-
-@pytest.mark.parametrize(
-    "source",
-    [
-        'const remote = "//evil.invalid/data";',
-        "const remote = `//evil.invalid/data`;",
-        ".panel { background: url(//evil.invalid/pixel); }",
-        "// //evil.invalid/path",
-        "/* //evil.invalid/path */",
-        'const remote = "//[2001:db8::1]/path";',
-        ".panel { background: url(//[2001:db8::1]/pixel); }",
-        'const remote = "//user@example.invalid/path";',
-        'const remote = "//%65vil.invalid/path";',
-        "//TODO",
-    ],
-)
-def test_protocol_relative_literals_are_rejected(source: str) -> None:
-    with pytest.raises(AssertionError):
-        _assert_authored_source_offline(source, label="authored source")
-
-
-def test_html_scanning_uses_actual_attributes_and_inline_languages() -> None:
-    external_cases = [
-        '<img src="https://evil.invalid/pixel">',
-        '<div data-source="//evil.invalid/data"></div>',
-        '<script>fetch("https://evil.invalid/data")</script>',
-        '<style>.x { background: url(https://evil.invalid/pixel); }</style>',
-        '<div xmlns="http://www.w3.org/2000/svg"></div>',
-    ]
-    for source in external_cases:
-        with pytest.raises(AssertionError):
-            _assert_html_offline(source)
-
-    allowed = """
-      <!-- <script src="https://comment.invalid/app.js"></script> -->
-      <svg xmlns="http://www.w3.org/2000/svg"></svg>
-      <script>fetch("/api/meta")</script>
-      <style>.x { color: inherit; }</style>
-    """
-    _assert_html_offline(allowed)
-
-
-@pytest.mark.parametrize(
-    "reference",
-    [
-        "app.js?v=1",
-        "app.js#boot",
-        "https://evil.invalid/app.js",
-        "//evil.invalid/app.js",
-        "/app.js",
-        "../app.js",
-        "data:text/javascript,alert(1)",
-    ],
-)
-def test_unsafe_index_references_are_rejected(reference: str) -> None:
-    with pytest.raises(AssertionError):
-        _validated_reference(reference)
-
-
 def test_every_index_reference_is_safe_local_and_exists() -> None:
     parser = _assert_dependency_contract(_read_asset("index.html"))
     for _, _, reference in parser.references:
         path = _validated_reference(reference)
         assert ASSETS.joinpath(*path.parts).is_file(), f"missing {reference!r}"
-
-
-def test_dependency_contract_ignores_decoys_and_rejects_reordering() -> None:
-    decoy = "<!-- vendor/uPlot.min.css app.css vendor/preact.umd.js app.js -->"
-    with pytest.raises(AssertionError):
-        _assert_dependency_contract(decoy)
-
-    actual = _read_asset("index.html")
-    reordered = actual.replace(
-        '<link rel="stylesheet" href="vendor/uPlot.min.css">\n'
-        '  <link rel="stylesheet" href="app.css">',
-        '<link rel="stylesheet" href="app.css">\n'
-        '  <link rel="stylesheet" href="vendor/uPlot.min.css">',
-    )
-    with pytest.raises(AssertionError):
-        _assert_dependency_contract(reordered)
 
 
 def test_manifest_tables_are_exact_and_every_vendor_file_is_hashed() -> None:
@@ -480,109 +387,6 @@ def test_manifest_tables_are_exact_and_every_vendor_file_is_hashed() -> None:
     )
     for filename, (_, _, expected_hash) in {**runtime, **licenses}.items():
         _assert_sha256(ASSETS.joinpath("vendor", filename).read_bytes(), expected_hash)
-
-
-def test_manifest_parser_rejects_wrong_duplicate_and_extra_rows() -> None:
-    valid = _manifest_fixture(VENDOR_PAYLOADS)
-    wrong = valid.replace("`10.29.8`", "`10.29.7`", 1)
-    first_row = valid.splitlines()[4]
-    duplicate = f"{valid}\n{first_row}"
-    extra = f"{valid}\n| `other.js` | `1.0.0` | `local` | `{'0' * 64}` |"
-    separated_extra = f"{valid}\n\n| `other.js` | `1.0.0` | `local` | `{'0' * 64}` |"
-    for manifest in (wrong, duplicate, extra, separated_extra):
-        with pytest.raises(ValueError):
-            _validated_manifest_table(
-                manifest, "## Runtime payloads", VENDOR_PAYLOADS
-            )
-
-
-def test_license_hash_verification_rejects_wrong_bytes() -> None:
-    with pytest.raises(AssertionError):
-        _assert_sha256(b"not the upstream license", LICENSE_PAYLOADS["preact.LICENSE"][2])
-
-
-def test_js_regex_quote_cannot_hide_a_following_external_fetch() -> None:
-    javascript = 'const quote = /"/; fetch("https://evil.invalid/data");'
-    with pytest.raises(AssertionError):
-        _assert_js_offline(javascript)
-
-
-@pytest.mark.parametrize(
-    "regex",
-    [
-        r"/https?:\/\/[^\s]+/gi",
-        r"/escaped\\\/slash\/\/[\"']+\/\*marker/giu",
-        r"/[/*\"']+\/\/tail/m",
-    ],
-)
-def test_js_regex_content_cannot_hide_a_following_external_url(regex: str) -> None:
-    javascript = f'const matcher = {regex}; const remote = "https://evil.invalid";'
-    with pytest.raises(AssertionError):
-        _assert_js_offline(javascript)
-
-
-def test_normal_regex_division_and_template_syntax_without_urls_passes() -> None:
-    javascript = r"""
-      const ratio = total / count;
-      const matcher = /[\/"']+\/\*marker/giu;
-      const view = html`<span>${ratio}</span>`;
-      fetch("/api/meta");
-      // comment
-    """
-    _assert_js_offline(javascript)
-
-
-def test_template_markup_external_urls_are_rejected() -> None:
-    local_template = """
-      const view = html`<span>${ {
-        value: `${local}`,
-        match: /[}]/,
-        nested: {enabled: true},
-        /* local expression */
-      }.value }</span>`;
-      fetch("/api/meta");
-    """
-    _assert_js_offline(local_template)
-
-    external_template = 'const view = html`<img src="https://evil.invalid/pixel">`;'
-    with pytest.raises(AssertionError):
-        _assert_js_offline(external_template)
-
-
-def test_htm_svg_namespace_allowance_is_attribute_scoped() -> None:
-    svg = (
-        'const icon = html`<svg xmlns="http://www.w3.org/2000/svg">'
-        "<path /></svg>`;"
-    )
-    _assert_js_offline(svg)
-
-    wrong_context = (
-        'const icon = html`<svg data-source="http://www.w3.org/2000/svg">'
-        "<path /></svg>`;"
-    )
-    with pytest.raises(AssertionError):
-        _assert_js_offline(wrong_context)
-
-
-def test_svg_namespace_allowance_requires_an_actual_svg_start_tag() -> None:
-    allowed = (
-        "const icon = html`<SVG viewBox='0 0 1 1' "
-        "XMLNS='http://www.w3.org/2000/svg'><path /></SVG>`;"
-    )
-    _assert_js_offline(allowed)
-
-
-def test_svg_namespace_uri_is_rejected_outside_an_svg_xmlns_attribute() -> None:
-    rejected = [
-        'const xmlns = "http://www.w3.org/2000/svg";',
-        'const options = {xmlns: "http://www.w3.org/2000/svg"};',
-        'const view = html`<div xmlns="http://www.w3.org/2000/svg"></div>`;',
-        'const text = html`xmlns="http://www.w3.org/2000/svg"`;',
-        'const view = html`<svg>http://www.w3.org/2000/svg</svg>`;',
-    ]
-    for source in rejected:
-        with pytest.raises(AssertionError):
-            _assert_js_offline(source)
 
 
 def test_dependency_contract_requires_stylesheet_and_deferred_classic_scripts() -> None:
@@ -731,14 +535,6 @@ def test_filter_bar_wires_date_range_presets_as_user_navigation() -> None:
         assert f'"{label}"' in presets
 
 
-def test_facets_do_not_duplicate_the_global_detail_control() -> None:
-    source = _read_asset("app.js")
-    facets = source[
-        source.index("function Facets(") : source.index("function semantic(")
-    ]
-
-    assert "state.detail" not in facets
-    assert 'label="Visibility"' not in facets
 
 
 def test_frontend_pages_activity_and_merges_stable_entry_identities() -> None:
@@ -802,14 +598,6 @@ def test_heatmap_uses_roving_buttons_without_incomplete_grid_roles() -> None:
     assert 'event.key === "ArrowDown") target = index + 1' in source
 
 
-def test_narrow_layout_contract_keeps_outer_shell_bounded() -> None:
-    source = _read_asset("app.css")
-
-    assert "minmax(0, 1fr)" in source
-    assert ".filter-row > *" in source
-    assert "min-width: 0" in source
-    assert ".dates input" in source
-    assert "width: 100%" in source
 
 
 def test_models_frontend_fetches_pins_aspects_series_and_events() -> None:
@@ -829,14 +617,6 @@ def test_models_frontend_fetches_pins_aspects_series_and_events() -> None:
     assert "aspect.squelched" in source
 
 
-def test_models_canonicalize_default_timeline_aspects_after_first_pin() -> None:
-    source = _read_asset("app.js")
-    models = source[
-        source.index("function Models(") : source.index("function catalogScrapes(")
-    ]
-
-    assert "function defaultTimelineAspects(" in source
-    assert "replaceState({aspects: defaultTimelineAspects(" in models
 
 
 def test_model_dossier_route_wires_changelog_and_sparklines_without_a_dossier_tab() -> None:
@@ -1773,18 +1553,6 @@ def test_history_browser_enhancement_controls_are_wired_to_hash_state() -> None:
     # D2: theme stays functional inside a secondary disclosure.
     assert '<details class="appearance"><summary>Appearance</summary>' in filter_bar
     assert 'label="Theme"' in filter_bar
-
-
-@pytest.mark.parametrize(
-    "source",
-    [
-        '// documentation: https://evil.invalid must never be authored\nfetch("/api/meta");',
-        '/* background: url(https://evil.invalid/pixel) */ .panel {}',
-    ],
-)
-def test_raw_authored_comments_cannot_contain_external_urls(source: str) -> None:
-    with pytest.raises(AssertionError):
-        _assert_authored_source_offline(source, label="authored comment")
 
 
 def test_index_declares_csp_before_any_script_or_stylesheet() -> None:

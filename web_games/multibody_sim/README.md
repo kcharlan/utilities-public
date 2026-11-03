@@ -35,7 +35,7 @@ open index.html
 or serve locally:
 
 ```bash
-npx http-server -p 4173 -c-1
+./node_modules/.bin/http-server . -a 127.0.0.1 -p 4173 -c-1
 # then open http://127.0.0.1:4173/index.html
 ```
 
@@ -377,7 +377,7 @@ node --check /tmp/multibody_sim_check.mjs
 Serve locally:
 
 ```bash
-npx http-server -p 4173 -c-1
+./node_modules/.bin/http-server . -a 127.0.0.1 -p 4173 -c-1
 ```
 
 Prepare the test dependencies and managed Chromium, then run the complete

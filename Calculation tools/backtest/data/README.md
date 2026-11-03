@@ -231,9 +231,10 @@ the old cache. If restoration itself fails, the compiler raises a failure and
 retains the unresolved old backup bytes in the private candidate directory for
 manual recovery. No pruning is part of this port.
 
-The unchanged financial controls include Damodaran's 1928–2025 geometric anchor
-and independent-source MAE, bias, standard-deviation-ratio and geometric-mean
-thresholds. Return calculations, rounding, splice choice, monthly completeness,
+The financial controls include Damodaran's 1928–2025 geometric anchor and
+independent-source stock/bond MAE, bias, standard-deviation-ratio and geometric-mean
+thresholds. CPI reconciliation limits absolute bias and absolute geometric-mean
+difference to 0.0030 each. Return calculations, rounding, splice choice, monthly completeness,
 chronology and finite-value checks remain binding. Aggregate reconciliation
 logging remains; setup reports status/count/hash without row/private path dumps.
 

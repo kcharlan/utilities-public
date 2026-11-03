@@ -6,6 +6,26 @@ import sqlite3
 from test_csv_import import build_client, load_module
 
 
+def test_purge_deletes_only_rows_before_the_chosen_utc_date(monkeypatch, tmp_path):
+    module = load_module(monkeypatch, tmp_path / 'home')
+    client, db_path = build_client(module, tmp_path)
+    with sqlite3.connect(db_path) as db:
+        for day in ('09', '10', '11'):
+            date = f'2026-01-{day}'
+            db.execute(
+                'INSERT INTO generations (id, created_at, created_date, created_hour, model, model_short, ingested_at) VALUES (?, ?, ?, 12, ?, ?, ?)',
+                (f'fake-day-{day}', f'{date}T12:00:00+00:00', date, 'fake-model', 'fake-model', f'{date}T12:00:00+00:00'),
+            )
+            db.execute('INSERT INTO daily_summaries (date, model) VALUES (?, ?)', (date, 'fake-model'))
+
+    response = client.post('/api/purge?before=2026-01-10')
+    assert response.status_code == 200
+    assert response.json()['deleted_generations'] == 1
+    with sqlite3.connect(db_path) as db:
+        assert {row[0] for row in db.execute('SELECT id FROM generations')} == {'fake-day-10', 'fake-day-11'}
+        assert {row[0] for row in db.execute('SELECT date FROM daily_summaries')} == {'2026-01-10', '2026-01-11'}
+
+
 def test_purge_creates_readable_backup_first(monkeypatch, tmp_path):
     module = load_module(monkeypatch, tmp_path / 'home')
     client, db_path = build_client(module, tmp_path)

@@ -3934,6 +3934,14 @@
     window.addEventListener('resize', resizeCanvas);
 
     window.__multibodyTestApi = {
+      getBodies() {
+        return state.bodies.map((body) => ({
+          id: body.id,
+          mass: body.mass,
+          vel: { x: body.vel.x, y: body.vel.y },
+          isSingularity: body.isSingularity
+        }));
+      },
       getSnapshot() {
         return {
           mode: state.mode,

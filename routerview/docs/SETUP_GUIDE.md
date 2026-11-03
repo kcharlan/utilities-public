@@ -62,7 +62,7 @@ Use **Settings → Rebuild Timestamps** only when previously imported rows have 
 
 ## Purging Old Data
 
-Use **Settings → Purge Data** to delete all generations and daily summaries strictly before a chosen date. Rows on the chosen date are retained.
+Use **Settings → Purge Data** to delete all generations and daily summaries strictly before a chosen date (UTC calendar date). Rows on the chosen date are retained.
 
 ## Troubleshooting
 

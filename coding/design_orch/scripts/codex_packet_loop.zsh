@@ -2240,4 +2240,6 @@ main() {
   esac
 }
 
-main "$@"
+if [[ $ZSH_EVAL_CONTEXT == toplevel ]]; then
+  main "$@"
+fi

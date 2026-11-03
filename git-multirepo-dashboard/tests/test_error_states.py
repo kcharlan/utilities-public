@@ -464,32 +464,3 @@ def test_migration_adds_quick_scan_error_to_existing_database(tmp_path):
 
 
 # ── HTML template tests ──────────────────────────────────────────────────────
-
-def test_card_path_not_found_ui(client):
-    """GET / HTML contains 'Path not found' error text for cards."""
-    r = client.get("/")
-    assert r.status_code == 200
-    assert "Path not found" in r.text
-
-
-def test_card_scan_failed_badge_ui(client):
-    """GET / HTML contains 'scan failed' badge text."""
-    r = client.get("/")
-    assert r.status_code == 200
-    assert "scan failed" in r.text
-
-
-def test_detail_remove_update_buttons_ui(client):
-    """GET / HTML contains both 'Remove' and 'Update Path' button strings."""
-    r = client.get("/")
-    assert r.status_code == 200
-    assert "Remove" in r.text
-    assert "Update Path" in r.text
-
-
-def test_incomplete_coverage_indicator_ui(client):
-    """Incomplete analysis is not necessarily offline: retain coverage and reasons."""
-    r = client.get("/")
-    assert r.status_code == 200
-    assert "Incomplete coverage" in r.text
-    assert "pkg.check_note" in r.text

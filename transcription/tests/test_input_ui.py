@@ -91,6 +91,35 @@ def test_path_mode_keeps_upload_prefixed_file(stub_whisper):
     assert path.exists()
 
 
+def test_wildcard_grid_excludes_unchecked_and_drops_stale_list(tmp_path, stub_whisper):
+    for name in ('a.wav', 'b.wav'):
+        (tmp_path / name).write_bytes(b'RIFF')
+    at = launch('app')
+    at.radio[0].set_value('Path (wildcards)').run()
+    at.text_input[0].set_value(str(tmp_path / '*.wav')).run()
+    preview = at.session_state['preview_df'].copy()
+    preview.loc[preview['File'] == 'b.wav', 'Include'] = False
+    at.session_state['preview_df'] = preview
+    at.run()
+    start(at, 'app')
+    assert not at.exception
+    entries = list(at.session_state['transcripts'].values())
+    assert len(entries) == 1
+    assert entries[0].filename == 'a.wav'
+    assert entries[0].text == 'synthetic transcript'
+    counters = state.read_counters().counters
+    assert counters.cumulative_seconds == 3.5
+    assert counters.lifetime_seconds == 3.5
+
+    at.run()  # Let the input adopt the submitted pattern as its default.
+    at.text_input[0].set_value(str(tmp_path / 'nomatch*.wav')).run()
+    start(at, 'app')
+    assert not at.exception
+    assert any('No files selected' in warning.value for warning in at.warning)
+    assert state.read_counters().counters == counters
+    assert len(at.session_state['transcripts']) == 1
+
+
 @pytest.mark.parametrize('interface', ['app', 'divider'])
 def test_upload_writes_nothing_to_cwd(interface, stub_whisper, allocations, monkeypatch):
     import librosa
@@ -176,6 +205,7 @@ def test_app_fallback_uses_key(stub_whisper, monkeypatch):
     at, calls = fallback('app', monkeypatch, True)
     assert len(calls) == 2 and calls[1]['model'] == 'whisper-1'
     assert any('fallback transcript' in x.value for x in at.text_area)
+    assert any('OpenAI' in warning.value and 'audio' in warning.value.lower() for warning in at.warning)
 
 
 def test_divider_never_calls_openai(stub_whisper, monkeypatch):

@@ -1160,15 +1160,6 @@ def read_source(
     )
 
 
-def read_raw_transactions(
-    path: Path, brokerage: str, *, source_account: str | None = None
-) -> list[RawTransaction]:
-    """Compatibility wrapper for callers that only need QIF transactions."""
-    return list(
-        read_source(path, brokerage, source_account=source_account).transactions
-    )
-
-
 def cook_transactions(
     raw: Sequence[RawTransaction], brokerage: str, section: dict, config: Path
 ) -> list[CookedTransaction]:

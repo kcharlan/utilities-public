@@ -236,6 +236,8 @@ def mode_and_path_controls() -> Tuple[str, str, pd.DataFrame]:
             )
             # Keep the edited state
             st.session_state.preview_df = edited
+        else:
+            st.session_state.preview_df = pd.DataFrame(columns=["Include", "File", "Full Path"])
 
     return mode, wildcard, st.session_state.preview_df
 

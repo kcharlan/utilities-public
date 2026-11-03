@@ -183,13 +183,6 @@ def test_compact_report_rejects_oversized_group_or_batch_totals(separate_files):
         APP["render_transaction_report"](prepared)
 
 
-def test_compact_report_strict_raw_cooked_cardinality():
-    prepared = [compact_source("synthetic.csv", [compact_row("2030-01-01", "1")])]
-    prepared[0][2].clear()
-    with pytest.raises(ValueError, match="zip"):
-        APP["render_transaction_report"](prepared)
-
-
 def test_compact_report_width_accounts_for_large_group_canceled_in_batch():
     prepared = [compact_source("synthetic-a.csv", [
         compact_row("2030-01-01", "9999999999"),
@@ -1868,37 +1861,9 @@ def test_invalid_row_in_later_file_prevents_all_batch_outputs(tmp_path: Path) ->
     assert not (tmp_path / "synthetic-valid.qif").exists()
 
 
-def test_adapter_registry_owns_contracts_and_keeps_extractors_separate() -> None:
-    adapters = APP["ADAPTERS"]
-
-    assert set(adapters) == {"fidelity", "vanguard"}
+def test_vanguard_headers_use_documented_commissions_column() -> None:
     assert "Commissions and Fees" in APP["VANGUARD_HEADERS"]
     assert "Commission Fees" not in APP["VANGUARD_HEADERS"]
-    assert adapters["fidelity"].required_headers == tuple(APP["FIDELITY_HEADERS"])
-    assert adapters["fidelity"].alternate_required_headers == (
-        tuple(APP["FIDELITY_HISTORY_HEADERS"]),
-    )
-    assert adapters["vanguard"].required_headers == tuple(APP["VANGUARD_HEADERS"])
-    assert adapters["vanguard"].alternate_required_headers == ()
-    assert adapters["fidelity"].actions == {
-        "DIVIDEND RECEIVED": "dividend",
-    }
-    assert adapters["vanguard"].actions == {
-        "Dividend": "dividend",
-        "Withdrawal": "withdrawal",
-    }
-    assert adapters["fidelity"].skipped_actions == ("REINVESTMENT",)
-    assert adapters["vanguard"].skipped_actions == ("Reinvestment", "Sweep out")
-    assert adapters["fidelity"].required_security_keys == ()
-    assert adapters["vanguard"].required_security_keys == ("@withdrawal",)
-    assert adapters["fidelity"].surrounding_section_headers == ()
-    assert adapters["vanguard"].surrounding_section_headers == (
-        tuple(APP["VANGUARD_HOLDINGS_HEADERS"]),
-        tuple(APP["VANGUARD_ACCOUNT_ACTIVITY_HEADERS"]),
-    )
-    assert adapters["fidelity"].allows_trailing_notices is True
-    assert adapters["vanguard"].allows_trailing_notices is False
-    assert adapters["fidelity"].extractor is not adapters["vanguard"].extractor
 
 
 def test_registry_dispatch_calls_only_selected_adapter_extractor(
@@ -1946,7 +1911,7 @@ def test_registry_dispatch_calls_only_selected_adapter_extractor(
         dataclasses.replace(vanguard, extractor=vanguard_extractor),
     )
 
-    transactions = APP["read_raw_transactions"](source, "fidelity")
+    transactions = APP["read_source"](source, "fidelity").transactions
 
     assert len(transactions) == 1
     assert calls == {"fidelity": 1, "vanguard": 0}

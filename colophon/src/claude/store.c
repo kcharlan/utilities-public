@@ -186,7 +186,7 @@ Err claude_store_commit(ClaudeStore *store,ClaudeScan *s,volatile sig_atomic_t *
      * evidence aborts the entire root, leaving its earlier page snapshot. */
     for(size_t i=0;i<store->count;i++){
       ClaudeStored *entry=&store->entries[i];
-      if(entry->candidate&&str_equal(entry->record.search_root,root->path)&&(!claude_path_deleted(entry->record.key.path.p)||cp_fault("claude_commit_recheck")))eligible=false;
+      if(entry->candidate&&str_equal(entry->record.search_root,root->path)&&!claude_path_deleted(entry->record.key.path.p))eligible=false;
     }
     if(!eligible)continue;
     for(size_t i=0;i<store->count;i++){

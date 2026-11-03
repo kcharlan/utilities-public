@@ -21,11 +21,11 @@ import yfinance
 
 PROJECT_DIR = Path(__file__).resolve().parents[1]
 LAUNCHER = PROJECT_DIR / "etf_montecarlo"
-NON_PORTFOLIO_SHARE_SENTINEL = float.fromhex("0x1p-500")
-PAYMENT_SENTINELS = tuple(float.fromhex(value) for value in ("0x1p-30", "0x1.8p-30", "0x1p-29"))
-SYNTHETIC_TRIALS = len("SYNTHETIC-TRIALS")
-SYNTHETIC_YEARS = len("TEST")
-SYNTHETIC_SEED = int.from_bytes(b"TEST", "big")
+SYNTHETIC_SHARES = 2.0
+PAYMENT_SENTINELS = (1.0, 1.5, 2.0)
+SYNTHETIC_TRIALS = 16
+SYNTHETIC_YEARS = 4
+SYNTHETIC_SEED = 1234
 AS_OF = date(2030, 12, 31)
 
 
@@ -44,7 +44,7 @@ def synthetic_config(*, output: str = "", placeholders: bool = False) -> dict[st
     return {
         "schema_version": 1,
         "holdings": [
-            {"symbol": symbol, "shares": NON_PORTFOLIO_SHARE_SENTINEL}
+            {"symbol": symbol, "shares": SYNTHETIC_SHARES}
             for symbol in symbols
         ],
         "history": {"years": SYNTHETIC_YEARS},
@@ -298,8 +298,9 @@ def test_explicitly_trusted_system_path_alias_is_accepted(
     assert stat.S_IMODE((target / "runtime" / "config.json").stat().st_mode) == 0o600
 
 
-def test_config_path_with_symlinked_ancestor_is_rejected_without_touching_target(
-    tmp_path: Path
+@pytest.mark.parametrize("role", ["config", "output"])
+def test_symlinked_ancestor_is_rejected_without_touching_target(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, role: str
 ) -> None:
     module = load_module()
     target_root = tmp_path / "target-root"
@@ -309,12 +310,21 @@ def test_config_path_with_symlinked_ancestor_is_rejected_without_touching_target
     assert stat.S_IMODE(target_parent.stat().st_mode) == 0o755
     ancestor_link = tmp_path / "ancestor-link"
     ancestor_link.symlink_to(target_root, target_is_directory=True)
-    config_path = ancestor_link / "private" / "config.json"
+    target_name = "config.json" if role == "config" else "results.csv"
+    linked_path = ancestor_link / "private" / target_name
+    config_path = linked_path if role == "config" else tmp_path / "config.json"
+    if role == "output":
+        write_config(config_path, synthetic_config(output=str(linked_path)))
+        monkeypatch.setattr(
+            module,
+            "fetch_dividend_history",
+            lambda *_args, **_kwargs: pytest.fail("finance access should be blocked"),
+        )
 
     assert module.main(["--config", str(config_path)]) == 1
     assert "symbolic link" in module.LAST_ERROR_FOR_TESTS
     assert stat.S_IMODE(target_parent.stat().st_mode) == 0o755
-    assert not (target_parent / "config.json").exists()
+    assert not (target_parent / target_name).exists()
 
 
 def test_private_config_and_output_canonical_alias_are_rejected(tmp_path: Path) -> None:
@@ -414,37 +424,12 @@ def test_output_symlink_is_rejected_even_with_overwrite(
     assert target.read_text(encoding="utf-8") == "SYNTHETIC TARGET\n"
 
 
-def test_output_path_with_symlinked_ancestor_is_rejected_before_finance_access(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    module = load_module()
-    config_path = tmp_path / "private" / "config.json"
-    target_parent = tmp_path / "target-results"
-    target_parent.mkdir(mode=0o755)
-    target_parent.chmod(0o755)
-    assert stat.S_IMODE(target_parent.stat().st_mode) == 0o755
-    ancestor_link = tmp_path / "results-link"
-    ancestor_link.symlink_to(target_parent, target_is_directory=True)
-    output_path = ancestor_link / "results.csv"
-    write_config(config_path, synthetic_config(output=str(output_path)))
-    monkeypatch.setattr(
-        module,
-        "fetch_dividend_history",
-        lambda *_args, **_kwargs: pytest.fail("finance access should be blocked"),
-    )
-
-    assert module.main(["--config", str(config_path)]) == 1
-    assert "symbolic link" in module.LAST_ERROR_FOR_TESTS
-    assert stat.S_IMODE(target_parent.stat().st_mode) == 0o755
-    assert not (target_parent / "results.csv").exists()
-
-
 def test_finance_boundary_uses_yfinance_dividend_history(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     module = load_module()
     calls: list[str] = []
-    index = pd.to_datetime(["2029-01-02", "2030-02-03"])
+    index = pd.to_datetime(["2029-01-02", "2030-02-03"]).tz_localize("America/New_York")
     series = pd.Series(PAYMENT_SENTINELS[:2], index=index)
 
     class FakeTicker:
@@ -528,30 +513,71 @@ def test_simulation_uses_window_aware_frequency(monkeypatch: pytest.MonkeyPatch)
 
 def test_empirical_dividend_bootstrap_is_deterministic() -> None:
     module = load_module()
-    amounts = np.asarray(PAYMENT_SENTINELS, dtype=float)
+    amounts = np.asarray([1.0, 2.0, 3.0])
 
     first = module.bootstrap_annual_income(
         amounts,
-        payments_per_year=len("TEST"),
-        trials=SYNTHETIC_TRIALS,
+        payments_per_year=4,
+        trials=50,
         rng=np.random.default_rng(SYNTHETIC_SEED),
     )
     second = module.bootstrap_annual_income(
         amounts,
-        payments_per_year=len("TEST"),
-        trials=SYNTHETIC_TRIALS,
+        payments_per_year=4,
+        trials=50,
         rng=np.random.default_rng(SYNTHETIC_SEED),
     )
 
     assert np.array_equal(first, second)
-    assert first.shape == (SYNTHETIC_TRIALS,)
-    assert np.isfinite(first).all()
-    assert (first > 0).all()
+    assert first.shape == (50,)
+    assert ((first >= 4) & (first <= 12)).all()
+    assert (first == np.floor(first)).all()
+    constant = module.bootstrap_annual_income(
+        np.asarray([2.5]), payments_per_year=4, trials=50,
+        rng=np.random.default_rng(SYNTHETIC_SEED),
+    )
+    assert np.array_equal(constant, np.full(50, 10.0))
+
+
+def test_simulate_scales_by_shares_and_sums_portfolio(monkeypatch: pytest.MonkeyPatch) -> None:
+    module = load_module()
+    histories = {
+        "TEST0000": module.DividendHistory("TEST0000", tuple(
+            module.DividendPayment(date(year, month, 1), 1.0)
+            for year in (2029, 2030) for month in (3, 6, 9, 12)
+        )),
+        "TEST0001": module.DividendHistory("TEST0001", tuple(
+            module.DividendPayment(date(year, month, 1), 0.5)
+            for year in (2029, 2030) for month in (6, 12)
+        )),
+    }
+    monkeypatch.setattr(module, "fetch_dividend_history", histories.__getitem__)
+    settings = module.Settings(
+        (module.Holding("TEST0000", 3.0), module.Holding("TEST0001", 2.0)),
+        2, 5, 0, None,
+    )
+
+    simulations, portfolio = module.simulate(settings, as_of=date(2030, 12, 31))
+
+    assert [simulation.payments_per_year for simulation in simulations] == [4, 2]
+    assert np.array_equal(simulations[0].per_share_samples, np.full(5, 4.0))
+    assert np.array_equal(simulations[1].per_share_samples, np.full(5, 1.0))
+    assert np.array_equal(simulations[0].scaled_samples, np.full(5, 12.0))
+    assert np.array_equal(simulations[1].scaled_samples, np.full(5, 2.0))
+    assert np.array_equal(portfolio, np.full(5, 14.0))
+
+    rows = module.build_summary_rows(simulations, portfolio)
+    portfolio_rows = [row for row in rows if row.scope == "portfolio"]
+    assert {row.percentile for row in portfolio_rows} == {"P5", "P25", "P50", "P75", "P95"}
+    assert all(row.annual_income_scaled == 14.0 for row in portfolio_rows)
+    holding_p50 = next(row for row in rows if row.symbol == "TEST0000" and row.percentile == "P50")
+    assert holding_p50.annual_income_per_share == 4.0
+    assert holding_p50.annual_income_scaled == 12.0
 
 
 def test_percentiles_report_all_required_bands() -> None:
     module = load_module()
-    samples = np.asarray([float.fromhex(f"0x1p-{power}") for power in range(40, 35, -1)])
+    samples = np.asarray([1.0, 2.0, 3.0, 4.0, 5.0])
 
     result = module.income_percentiles(samples)
 
@@ -598,6 +624,12 @@ def test_valid_run_writes_atomic_percentile_csv_and_portfolio_distribution(
     assert set(row["scope"] for row in rows) == {"holding", "portfolio"}
     assert set(row["percentile"] for row in rows) == {"P5", "P25", "P50", "P75", "P95"}
     assert all(row["annual_income_scaled"] for row in rows)
+    shares = {holding["symbol"]: holding["shares"] for holding in synthetic_config()["holdings"]}
+    for row in rows:
+        if row["scope"] == "holding":
+            assert float(row["annual_income_scaled"]) == pytest.approx(
+                float(row["annual_income_per_share"]) * shares[row["symbol"]], rel=1e-10, abs=0
+            )
     captured = capsys.readouterr()
     assert "Annual dividend income Monte Carlo" in captured.out
     assert "TEST0000" in captured.out
@@ -622,7 +654,7 @@ def test_no_overwrite_atomic_install_preserves_target_created_after_preflight(
         module.SummaryRow(
             scope="holding",
             symbol="TEST0000",
-            payments_per_year=len("TEST"),
+            payments_per_year=4,
             percentile="P50",
             annual_income_per_share=PAYMENT_SENTINELS[0],
             annual_income_scaled=PAYMENT_SENTINELS[1],

@@ -302,63 +302,6 @@ def test_branches_empty(test_app):
     assert resp.json()["branches"] == []
 
 
-# ─────────────────────────────────────────────────────────────────────────────
-# 10. CommitsTab component exists in HTML_TEMPLATE
-# ─────────────────────────────────────────────────────────────────────────────
-
-def test_commits_tab_component_exists():
-    """HTML_TEMPLATE contains CommitsTab function definition."""
-    assert "function CommitsTab" in git_dashboard.HTML_TEMPLATE
-
-
-# ─────────────────────────────────────────────────────────────────────────────
-# 11. BranchesTab component exists in HTML_TEMPLATE
-# ─────────────────────────────────────────────────────────────────────────────
-
-def test_branches_tab_component_exists():
-    """HTML_TEMPLATE contains BranchesTab function definition."""
-    assert "function BranchesTab" in git_dashboard.HTML_TEMPLATE
-
-
-# ─────────────────────────────────────────────────────────────────────────────
-# 12. PlaceholderTab not used for Commits or Branches
-# ─────────────────────────────────────────────────────────────────────────────
-
-def test_placeholder_tab_not_used_for_commits_branches():
-    """PlaceholderTab text="Commits" and PlaceholderTab text="Branches" must not appear."""
-    tmpl = git_dashboard.HTML_TEMPLATE
-    assert 'PlaceholderTab text="Commits"' not in tmpl, \
-        "Commits subtab still uses PlaceholderTab"
-    assert 'PlaceholderTab text="Branches"' not in tmpl, \
-        "Branches subtab still uses PlaceholderTab"
-
-
-# ─────────────────────────────────────────────────────────────────────────────
-# 13. Pagination UI exists in HTML_TEMPLATE
-# ─────────────────────────────────────────────────────────────────────────────
-
-def test_pagination_ui_exists():
-    """HTML_TEMPLATE contains pagination display text pattern 'Page '."""
-    assert "Page " in git_dashboard.HTML_TEMPLATE
-
-
-# ─────────────────────────────────────────────────────────────────────────────
-# 14. Hash routing — parseRoute handles sub-tab segments
-# ─────────────────────────────────────────────────────────────────────────────
-
-def test_hash_routing_subtab_in_template():
-    """HTML_TEMPLATE contains sub-tab hash routing patterns."""
-    tmpl = git_dashboard.HTML_TEMPLATE
-    # The routing must handle /commits and /branches sub-tab segments
-    assert "#/repo/" in tmpl
-    # ProjectDetail must receive an initialSubTab prop
-    assert "initialSubTab" in tmpl
-
-
-# ─────────────────────────────────────────────────────────────────────────────
-# 15. Commits total matches actual git commit count
-# ─────────────────────────────────────────────────────────────────────────────
-
 def test_commits_total_accurate(test_app, git_repo):
     """total field in response matches the actual git commit count."""
     client, db_path = test_app

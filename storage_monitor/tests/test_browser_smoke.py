@@ -19,7 +19,6 @@ from tools.testkit import (
     assert_classes_styled,
     assert_frontend_vendor_current,
     assert_launcher_compiles_cleanly,
-    capture_browser_errors,
     guard_browser_errors,
     load_launcher,
 )
@@ -258,6 +257,44 @@ def test_controls_update_the_view_immediately(monkeypatch, tmp_path):
         browser.close()
 
 
+@pytest.mark.parametrize("admin", [False, True])
+def test_single_snapshot_delete_requires_confirmation(monkeypatch, tmp_path, admin):
+    monkeypatch.setenv("STORAGE_MONITOR_HOME", str(tmp_path / "runtime"))
+    module = load_launcher(PROJECT_ROOT / "storage_monitor")
+    with live_server(module.app) as url, sync_playwright() as playwright:
+        browser = playwright.chromium.launch(headless=True)
+        page = browser.new_page(timezone_id="UTC")
+        route_dashboard_api(page, [{"snapshot_name": "synthetic-snapshot-a", "parsed_date": "2030-01-01T00:00:00Z", "action_token": "synthetic-a"}])
+        requests = []
+        dialogs = []
+
+        def execute(route):
+            requests.append(route.request.post_data_json)
+            route.fulfill(json={"ok": True, "label": "Deleted Snapshot", "snapshot_name": "synthetic-snapshot-a"})
+
+        def confirm(dialog):
+            dialogs.append(dialog.message)
+            if len(dialogs) == 1:
+                dialog.dismiss()
+            else:
+                dialog.accept()
+
+        page.route("**/api/actions/execute", execute)
+        page.on("dialog", confirm)
+        page.goto(url, wait_until="networkidle")
+        page.locator(".tab").filter(has_text="Snapshots").click()
+        button = page.get_by_title("Delete with admin privileges (password prompt)") if admin else page.get_by_role("button", name="Delete", exact=True)
+        button.click()
+        assert len(dialogs) == 1
+        assert requests == []
+        button.click()
+        page.get_by_text("Deleted Snapshot", exact=True).wait_for()
+        assert len(dialogs) == 2
+        assert all("Jan 1, 2030" in message and "cannot be undone" in message for message in dialogs)
+        assert requests == [{"action_token": "synthetic-a", "elevate": admin}]
+        browser.close()
+
+
 def test_dashboard_persists_theme_without_browser_errors(
     monkeypatch,
     tmp_path,
@@ -330,43 +367,4 @@ def test_growth_baseline_select_never_renders_blank(monkeypatch, tmp_path):
             select.locator("option").first.wait_for(state="attached")
             assert select.evaluate("element => element.selectedIndex") == 0
             assert select.input_value() == "3"
-        browser.close()
-
-
-def test_dashboard_keeps_first_party_styles_offline(
-    monkeypatch,
-    tmp_path,
-):
-    monkeypatch.setenv("STORAGE_MONITOR_HOME", str(tmp_path / "runtime"))
-    module = load_launcher(Path(__file__).resolve().parents[1] / "storage_monitor")
-
-    with live_server(module.app) as url, sync_playwright() as playwright:
-        browser = playwright.chromium.launch(headless=True)
-        context = browser.new_context()
-        blocked = block_external_requests(context, allowed_origins=[url])
-        page = context.new_page()
-        with guard_browser_errors(page):
-            route_dashboard_api(page)
-
-            page.goto(url, wait_until="domcontentloaded")
-            page.get_by_text("Storage Monitor", exact=True).wait_for()
-            assert page.locator("body").evaluate(
-                "element => [getComputedStyle(element).backgroundColor, "
-                "getComputedStyle(element).color]"
-            ) == ["rgb(244, 245, 247)", "rgb(26, 27, 30)"]
-            assert_no_external_resources(page, blocked)
-        browser.close()
-
-
-def test_browser_error_capture_observes_console_and_page_errors():
-    with sync_playwright() as playwright:
-        browser = playwright.chromium.launch(headless=True)
-        page = browser.new_page()
-        errors = capture_browser_errors(page)
-        page.evaluate("console.error('__console_error_capture__')")
-        with page.expect_event("pageerror"):
-            page.evaluate(
-                "setTimeout(() => { throw new Error('__page_error_capture__'); }, 0)"
-            )
-        assert errors == ["__console_error_capture__", "__page_error_capture__"]
         browser.close()

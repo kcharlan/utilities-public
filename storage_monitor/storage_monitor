@@ -185,7 +185,7 @@ def initialize_scan_db(paths: RuntimePaths) -> None:
         connection.commit()
 
 RUNTIME_PATHS = build_runtime_paths()
-VERSION = "0.4.2"
+VERSION = "0.4.3"
 DATA_VOLUME = Path("/System/Volumes/Data")
 HOME_DIR = Path.home()
 APPLICATIONS_DIR = Path("/Applications")
@@ -1339,6 +1339,18 @@ def rollup_subtree_totals(dir_local: Dict[str, int], root: str) -> Dict[str, int
     return totals
 
 
+def walk_with_ownership(
+    root: Path, *, scan_id: int, excluded_paths: List[Path], progress_callback=None,
+) -> Tuple[WalkResult, Dict[str, int], List[Tuple[str, Tuple[Any, ...]]]]:
+    result = walk_tree(root, workers=SCAN_WORKER_COUNT, excluded_paths=excluded_paths, progress_callback=progress_callback)
+    attributions, _, changes = resolve_hardlink_ownership(
+        scan_id, result.hardlink_candidates, build_walk_translation(), full_scan=True,
+    )
+    for parent, allocated in attributions:
+        result.dir_local[parent] = result.dir_local.get(parent, 0) + allocated
+    return result, rollup_subtree_totals(result.dir_local, str(root)), changes
+
+
 def build_walk_translation() -> List[Tuple[str, str, str]]:
     mappings: List[Tuple[str, str, str]] = []
     data_home = DATA_VOLUME / "Users" / HOME_DIR.name
@@ -1615,16 +1627,8 @@ def scan_watchlist_entry(spec: Dict[str, Any], scan_id: Optional[int] = None) ->
             ).fetchone()
         allocated = int(row["allocated_bytes"]) if row else None
     if exists and path.is_dir() and allocated is None:
-        fallback = walk_tree(path, workers=SCAN_WORKER_COUNT, excluded_paths=[])
-        _, _, changes = resolve_hardlink_ownership(-1, fallback.hardlink_candidates, build_walk_translation(), full_scan=True)
-        for operation, payload in changes:
-            if operation == "upsert":
-                owner = payload[3]
-                for candidate in fallback.hardlink_candidates:
-                    if translate_walk_path(candidate[2], build_walk_translation())[0] == owner:
-                        fallback.dir_local[candidate[3]] = fallback.dir_local.get(candidate[3], 0) + candidate[4]
-                        break
-        allocated = rollup_subtree_totals(fallback.dir_local, str(path)).get(str(path))
+        _, totals, _ = walk_with_ownership(path, scan_id=-1, excluded_paths=[])
+        allocated = totals.get(str(path))
     apparent = allocated
     if exists and path.is_file():
         file_sizes = stat_file_sizes(path)
@@ -1810,15 +1814,11 @@ def collect_scan_report(scan_id: int) -> Dict[str, Any]:
             row = connection.execute("SELECT COUNT(*) AS count FROM nodes WHERE scan_id = (SELECT id FROM scan_runs WHERE active=1 LIMIT 1)").fetchone()
             estimate = int(row["count"] or 400000)
         progress("Volume walk", 0, "Starting volume walk")
-        result = walk_tree(
-            DATA_VOLUME.resolve(), workers=SCAN_WORKER_COUNT, excluded_paths=EXCLUDED_BREAKDOWN_PATHS,
+        result, totals, changes = walk_with_ownership(
+            DATA_VOLUME.resolve(), scan_id=scan_id, excluded_paths=EXCLUDED_BREAKDOWN_PATHS,
             progress_callback=lambda count: progress("Volume walk", min(0.95, count / max(1, estimate)), f"{count:,} directories scanned"),
         )
         translation = build_walk_translation()
-        attributions, _, changes = resolve_hardlink_ownership(scan_id, result.hardlink_candidates, translation, full_scan=True)
-        for parent, allocated in attributions:
-            result.dir_local[parent] = result.dir_local.get(parent, 0) + allocated
-        totals = rollup_subtree_totals(result.dir_local, str(DATA_VOLUME.resolve()))
         progress("Index persistence", 0, "Persisting volume index")
         persist_full_walk(scan_id, result, totals, translation, changes)
         progress("Index persistence", 1, "Volume index persisted")
@@ -1986,8 +1986,8 @@ def execute_trash_path(path: Path) -> Dict[str, Any]:
         if indexed:
             allocated = int(indexed["allocated_bytes"])
         else:
-            walked = walk_tree(path, workers=SCAN_WORKER_COUNT, excluded_paths=[])
-            allocated = rollup_subtree_totals(walked.dir_local, str(path))[str(path)]
+            _, totals, _ = walk_with_ownership(path, scan_id=-1, excluded_paths=[])
+            allocated = totals[str(path)]
         sizes = {"allocated_bytes": allocated, "apparent_bytes": allocated}
     shutil.move(str(path), str(destination))
     return {
@@ -2802,8 +2802,7 @@ def api_rebuild_breakdown(path: str) -> Dict[str, Any]:
         if scan_id is not None:
             response = store_breakdown_for_path(scan_id, validated)
         else:
-            walked = walk_tree(validated, workers=SCAN_WORKER_COUNT, excluded_paths=EXCLUDED_BREAKDOWN_PATHS)
-            totals = rollup_subtree_totals(walked.dir_local, str(validated))
+            _, totals, _ = walk_with_ownership(validated, scan_id=-1, excluded_paths=EXCLUDED_BREAKDOWN_PATHS)
             items = [
                 {"path": child, "label": os.path.basename(child), "allocated_bytes": size}
                 for child, size in totals.items()
@@ -4120,6 +4119,12 @@ const html = htm.bind(preact.h);
           + ' at ' + d.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
       };
 
+      const deleteSnapshot = (snap, elevate = false) => {
+        if (window.confirm(`Delete snapshot ${formatSnapshotDate(snap.parsed_date)}? This cannot be undone.`)) {
+          onExecute(snap.action_token, { elevate });
+        }
+      };
+
       const thinSnapshots = async () => {
         const amount = window.prompt('How many GB should macOS try to reclaim?', '10');
         if (amount === null) return;
@@ -4147,7 +4152,7 @@ const html = htm.bind(preact.h);
               html`<div key=${snap.snapshot_name} style=${{
                 display: 'flex', alignItems: 'center', gap: 10, padding: '6px 12px',
                 borderBottom: '1px solid var(--border)',
-              }}><input type=${"checkbox"} checked=${selected.has(snap.snapshot_name)} onInput=${() => toggleSelect(snap.snapshot_name)} aria-label=${`Select snapshot ${snap.parsed_date || snap.snapshot_name}`} /><span style=${{ flex: 1 }}>${formatSnapshotDate(snap.parsed_date)}</span><span style=${{ fontSize: 12, color: 'var(--text-secondary)' }}>${formatRelativeTime(snap.parsed_date)}</span>${snap.purgeable === true && html`<span style=${{ fontSize: 10, padding: '1px 5px', borderRadius: 4, background: 'var(--success-bg)', color: 'var(--success)' }}>Purgeable</span>`}${snap.limiting_container_shrink === true && html`<span title=${"Deleting this snapshot can lower the container shrink floor"} style=${{ fontSize: 10, padding: '1px 5px', borderRadius: 4, background: 'var(--warning-bg)', color: 'var(--warning)' }}>Limits container shrink</span>`}<button onClick=${() => onExecute(snap.action_token)} disabled=${busyToken === snap.action_token} style=${{ padding: '2px 8px', borderRadius: 4, fontSize: 11, border: 'none', cursor: 'pointer', background: 'var(--danger-bg)', color: 'var(--danger)' }}>${busyToken === snap.action_token ? '...' : 'Delete'}</button><button onClick=${() => onExecute(snap.action_token, { elevate: true })} disabled=${busyToken === snap.action_token} title=${"Delete with admin privileges (password prompt)"} style=${{ padding: '2px 8px', borderRadius: 4, fontSize: 11, border: '1px solid var(--danger)', cursor: 'pointer', background: 'transparent', color: 'var(--danger)' }}>🔒</button></div>`
+              }}><input type=${"checkbox"} checked=${selected.has(snap.snapshot_name)} onInput=${() => toggleSelect(snap.snapshot_name)} aria-label=${`Select snapshot ${snap.parsed_date || snap.snapshot_name}`} /><span style=${{ flex: 1 }}>${formatSnapshotDate(snap.parsed_date)}</span><span style=${{ fontSize: 12, color: 'var(--text-secondary)' }}>${formatRelativeTime(snap.parsed_date)}</span>${snap.purgeable === true && html`<span style=${{ fontSize: 10, padding: '1px 5px', borderRadius: 4, background: 'var(--success-bg)', color: 'var(--success)' }}>Purgeable</span>`}${snap.limiting_container_shrink === true && html`<span title=${"Deleting this snapshot can lower the container shrink floor"} style=${{ fontSize: 10, padding: '1px 5px', borderRadius: 4, background: 'var(--warning-bg)', color: 'var(--warning)' }}>Limits container shrink</span>`}<button onClick=${() => deleteSnapshot(snap)} disabled=${busyToken === snap.action_token} style=${{ padding: '2px 8px', borderRadius: 4, fontSize: 11, border: 'none', cursor: 'pointer', background: 'var(--danger-bg)', color: 'var(--danger)' }}>${busyToken === snap.action_token ? '...' : 'Delete'}</button><button onClick=${() => deleteSnapshot(snap, true)} disabled=${busyToken === snap.action_token} title=${"Delete with admin privileges (password prompt)"} style=${{ padding: '2px 8px', borderRadius: 4, fontSize: 11, border: '1px solid var(--danger)', cursor: 'pointer', background: 'transparent', color: 'var(--danger)' }}>🔒</button></div>`
             ))}</div></div>`
       );
     }

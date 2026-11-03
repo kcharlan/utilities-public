@@ -42,9 +42,6 @@ static bool launch(char *const *argv,const char *script,bool quiet){
     return WIFEXITED(status)&&WEXITSTATUS(status)==0;
 }
 static bool apple(const char *name,const char *url){
-    /* Failure hook protects tests from every osascript launch, including named
-     * registrations explicitly selected by BROWSER. */
-    if(cp_browser_fallback_fail())return false;
     JsonWriter script={0};
     if(!strcmp(name,"default"))jsonw_raw(&script,
         "\n                        use framework \"AppKit\"\n                        use AppleScript version \"2.4\"\n                        use scripting additions\n\n"
@@ -129,7 +126,7 @@ bool browser_open(const char *output){
     free(absolute);if(url.error.code!=ERR_OK){jsonw_free(&url);return false;}
     const char *setting=getenv("BROWSER");bool opened=false,invalid=false;
     if(setting){char *copy=strdup(setting);if(copy){char *p=copy;do{char *end=strchr(p,':');if(end)*end=0;if(*p&&entry(p,url.data,&invalid)){opened=true;break;}if(invalid||!end)break;p=end+1;}while(true);free(copy);}}
-    if(!opened&&!invalid&&!cp_browser_fallback_fail()){
+    if(!opened&&!invalid){
         const char *apps[]={"default","google chrome","firefox","safari"};for(int i=0;i<4&&!opened;i++)opened=apple(apps[i],url.data);
         const char *term=getenv("TERM");if(term&&*term){const char *names[]={"www-browser","links","elinks","lynx","w3m"};for(int i=0;i<5&&!opened;i++)if(executable(names[i])){if(i==2)opened=elinks(names[i],url.data);else{char *argv[]={(char *)names[i],url.data,NULL};opened=launch(argv,NULL,false);}}}
     }jsonw_free(&url);return opened;

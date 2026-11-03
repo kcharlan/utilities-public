@@ -1,5 +1,24 @@
 # Lessons learned
 
+## 2026-11-02: Treat filename prefixes as literal text
+
+User-selected prefixes can contain regex metacharacters. Compare the prefix as
+literal text before matching the dated suffix, and exercise discovery filters
+with hidden files as well as ordinary files at multiple depths.
+
+## 2026-11-02: Preserve row fields beyond declared export columns
+
+An upstream column declaration can lag behind its rows, so writing only the
+declared fields silently loses data. Include sorted undeclared row keys, warn
+with their names rather than values, and exercise both missing-value modes with
+exact synthetic CSV output.
+
+## 2026-11-02: Canonicalize accepted dates at the input boundary
+
+ISO parsers can accept compact and week-date spellings as well as calendar dates.
+Store the parsed date in canonical form before using it in filenames or other
+outputs, and test each accepted spelling against the resulting value.
+
 ## 2026-11-02: Drain request handlers before closing shared databases
 
 Stopping an HTTP accept loop does not finish daemon request threads. Model
@@ -79,6 +98,10 @@ import so the aggregate uses the data actually stored by the active path.
 Writing cells below an Excel table does not extend its range or filter. Exercise
 the shipped template through consecutive appends, and extend matching tables
 and their filters while preserving the workbook's formulas and lookup cells.
+
+## 2026-11-02: Label destructive date boundaries with their timezone
+
+RouterView's purge used UTC calendar dates for both generations and daily summaries, but its button did not identify the timezone. State the timezone at the control and in the setup guide, and exercise the rendered label alongside an independent boundary test so users can predict which rows remain.
 
 ## 2026-10-31: Compare old and new in a browser when moving React code to Preact
 
@@ -2213,6 +2236,14 @@ suffix and age alone do not establish ownership: cleanup must also match the
 report names the application creates, while preserving protected paths. Test
 both owned and unrelated aged files in a synthetic shared directory.
 
+## 2026-11-02: Use provider-specific stable identifiers for saved catalogs
+
+Model Sentinel's generic model identity fallbacks accepted a display name as an
+OpenRouter model ID, allowing a malformed catalog to replace a saved baseline.
+Require the provider's ID field in its profile, while retaining generic and
+custom profile fallbacks. Exercise rejection through a saved scan and verify
+that other providers still save successfully.
+
 ### 2026-11-02 — Preserve loaded jobs after failed unloads
 
 A backup alone does not make deleting a loaded job's plist safe when unloading
@@ -2277,3 +2308,57 @@ Passing SQLite bytes directly to a CSV writer produces a Python bytes
 representation instead of a portable encoding. Reuse the API's value encoder
 and serialize BLOB objects as JSON text in CSV cells; test both export formats
 with binary bytes, large integers, Unicode and nulls.
+
+### Ad hoc walks must resolve hard-link ownership
+
+Storage Monitor's native walker emits hard-linked files as candidates rather than adding their bytes to directory totals. Every standalone walk must resolve those candidates before rolling up totals, just as a full scan does. Regression fixtures should compare an unindexed estimate with `du` before the directory moves, while retaining a watchlist fallback check for the shared path.
+
+### 2026-11-02 — Validate identifying fields before replacing reports
+
+An absent upstream date silently produced an unusable CSV. Reject rows missing
+both supported date fields and test that the prior output remains byte-identical
+after failure, while allowing optional fields to remain empty.
+
+### 2026-11-02 — Apply literal-text protection to every spreadsheet output
+
+A workbook writer can preserve user strings as literal cells while a CSV fallback emits the same values as formulas. Apply the protection to each output path and test a parsed CSV row, including every user text field and the unchanged non-text columns.
+
+### 2026-11-02 — Confirm each permanent snapshot deletion
+
+Single-item and administrator deletion paths need the same irreversible-action
+confirmation as bulk deletion. Exercise cancellation and acceptance through the
+browser, checking that cancellation sends no request and acceptance sends one.
+
+### 2026-11-02 — Accept qpdf repairs without hiding errors
+
+qpdf returns exit 3 for successful operations with warnings, which can stop a
+shell script before it publishes repaired output. Apply its warning exit policy
+to each processing call, and test with a synthetic damaged cross-reference table
+whose warning status is verified before checking the output pages.
+
+### 2026-11-02 — Clear derived selections when wildcard matches disappear
+
+A live file preview that only refreshes for nonempty matches can submit stale
+selections after the pattern changes. Clear the selection on an empty result and
+test both the warning and unchanged persisted counters through the UI.
+
+### macOS `mktemp -t` can ignore the test's `TMPDIR`
+
+On macOS, `mktemp -t` may select the Darwin user temporary directory before `TMPDIR`. A test that checks only its own `TMPDIR` can therefore pass without observing the application's files. When testing cleanup, inject a narrowly scoped creator that uses an explicit absolute template, record the paths, and verify they exist at the operation boundary before asserting their removal.
+
+### 2026-11-02 — Guard entry points when sourcing shell scripts
+
+Guard a script's main call when its functions are also sourced. Source the
+complete script in tests so a trailing line cannot cause main to run unexpectedly.
+
+## 2026-11-02: Name icon-only controls in the rendered interface
+
+RouterView's Settings icon had no accessible name, so users of assistive technology could not identify it and role-based browser tests could not find it. Give icon-only controls an accessible label and exercise the real control by role.
+
+### macOS Bash 3.2 assertions need explicit failure handlers
+
+A standalone `[[ ... ]]` can fail without stopping a script under macOS Bash
+3.2 even with `set -e`. Add an explicit failure handler to each assertion and
+probe actual failing inputs to confirm later commands do not run. For destructive
+UI actions, select the named target and arrange a deterministic decoy first so
+positional selection fails the test.

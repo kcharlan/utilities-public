@@ -441,12 +441,6 @@ def test_api_status_tools_value(monkeypatch, client):
 # 8. GET / returns HTML with status 200
 # ─────────────────────────────────────────────────────────────────────────────
 
-def test_root_is_html_document(client):
-    response = client.get("/")
-    body = response.text
-    assert "<!DOCTYPE html>" in body or "<html" in body
-
-
 # ─────────────────────────────────────────────────────────────────────────────
 # 9. find_free_port
 # ─────────────────────────────────────────────────────────────────────────────

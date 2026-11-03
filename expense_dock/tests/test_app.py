@@ -7,6 +7,7 @@ import sys
 from datetime import date, datetime
 from pathlib import Path
 
+import pytest
 from openpyxl import Workbook, load_workbook
 from openpyxl.worksheet.table import Table
 
@@ -67,6 +68,27 @@ def test_existing_runtime_permissions_are_hardened(monkeypatch, tmp_path):
     assert stat.S_IMODE(pending.stat().st_mode) == 0o700
     assert stat.S_IMODE(config.stat().st_mode) == 0o600
     assert stat.S_IMODE(queued.stat().st_mode) == 0o600
+
+
+@pytest.mark.parametrize("name", ["config.json", "token_cache.json", "pending"])
+def test_symlinked_runtime_files_are_refused(monkeypatch, tmp_path, name):
+    runtime_home = tmp_path / "runtime_home"
+    runtime_home.mkdir()
+    target = tmp_path / "synthetic_target"
+    if name == "pending":
+        target.mkdir()
+        os.chmod(target, 0o755)
+    else:
+        target.write_text("SYNTHETIC", encoding="utf-8")
+        os.chmod(target, 0o644)
+    mode = stat.S_IMODE(target.stat().st_mode)
+    (runtime_home / name).symlink_to(target)
+    module = load_module(monkeypatch, runtime_home)
+
+    with pytest.raises(RuntimeError):
+        module.ensure_runtime_dirs()
+
+    assert stat.S_IMODE(target.stat().st_mode) == mode
 
 
 def test_atomic_sensitive_writes_are_private(monkeypatch, tmp_path):

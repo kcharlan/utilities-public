@@ -6,9 +6,7 @@ from pathlib import Path
 from model_sentinel.browse.aspects import build_aspect_catalog
 from model_sentinel.browse.readonly import open_readonly
 from model_sentinel.normalize import (
-    _profile_field_candidate,
     normalize_models,
-    profile_field_candidate,
 )
 from model_sentinel.provider_profiles import resolve_profile
 from model_sentinel.reporting import make_report_detail_policy
@@ -126,8 +124,6 @@ def _add_out_of_order_saved_scrapes(database_path: Path) -> None:
         )
 
 
-def test_profile_field_candidate_is_published_without_removing_private_alias() -> None:
-    assert profile_field_candidate is _profile_field_candidate
 
 
 def test_catalog_resolves_column_price_path_and_does_not_rescale_canonical_value(

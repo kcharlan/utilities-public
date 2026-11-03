@@ -34,7 +34,7 @@ function fixture(t) {
   const darwin=fakeDarwinTemp(base,bin);
   const write=(name,bytes,mode=0o644)=>{const file=path.join(project,name);fs.mkdirSync(path.dirname(file),{recursive:true});fs.writeFileSync(file,bytes,{mode});fs.chmodSync(file,mode);};
   fs.mkdirSync(path.join(repo,'tools'));
-  for(const name of ['deploy_telltale.mjs','deployment_files.mjs','deploy_brew_version.mjs','transaction.mjs','check_no_temp_leaks.sh'])fs.copyFileSync(path.join(repoRoot,'tools',name),path.join(repo,'tools',name));
+  for(const name of ['deploy_telltale.mjs','deployment_files.mjs','deploy_brew_version.mjs','transaction.mjs','macos_app_deployment.mjs','check_no_temp_leaks.sh'])fs.copyFileSync(path.join(repoRoot,'tools',name),path.join(repo,'tools',name));
   for(const name of ['install.sh','resolve_signing_identity.sh'])write('tools/'+name,fs.readFileSync(path.join(repoRoot,'telltale/tools',name)),0o755);
   write('Package.swift','// conspicuously synthetic package\n');write('Resources/Info.plist',plist);
   for(const name of fonts)write(name,'conspicuously synthetic '+path.basename(name)+'\n');
@@ -68,7 +68,7 @@ test('deploy contract restates TelltaleRelease and the tracked Info.plist',()=>{
 
 test('app source inventory includes maintained installer/signing, fonts and root dependencies',()=>{
   for(const name of ['Package.swift','Makefile','Sources/a.swift','Tests/a.sh','Resources/Info.plist',...fonts,'Resources/Fonts/SOURCE.md','tools/install.sh','tools/resolve_signing_identity.sh']) assert.equal(buildInput('telltale/'+name),true,name);
-  for(const name of ['tools/check_no_temp_leaks.sh','tools/deployment_files.mjs','tools/deploy_brew_version.mjs','tools/deploy_telltale.mjs']) assert.equal(buildInput(name),true,name);
+  for(const name of ['tools/check_no_temp_leaks.sh','tools/macos_app_deployment.mjs','tools/deployment_files.mjs','tools/deploy_brew_version.mjs','tools/deploy_telltale.mjs']) assert.equal(buildInput(name),true,name);
   for(const name of ['README.md','docs/telltale_design_spec.md','.gitignore','.build/a','build/release/a']) assert.equal(buildInput('telltale/'+name),false,name);
   for(const name of fonts) assert.ok(requiredInputs.includes('telltale/'+name),name);
 });
@@ -224,6 +224,10 @@ test('forward deployment refuses a non-main branch before touching destinations'
 });
 test('app inventory rejects drift in the transaction helper', t => {
   const f=fixture(t); fs.writeFileSync(path.join(f.repo,'tools/transaction.mjs'),'synthetic drift');
+  assert.throws(()=>sourceInventory(f.repo),/working bytes differ/);
+});
+test('app inventory rejects drift in the shared app deployer', t => {
+  const f=fixture(t); fs.writeFileSync(path.join(f.repo,'tools/macos_app_deployment.mjs'),'synthetic drift');
   assert.throws(()=>sourceInventory(f.repo),/working bytes differ/);
 });
 test('rollback replaces a damaged installed app with the verified backup',t=>{

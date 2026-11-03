@@ -16,7 +16,7 @@
 #include <time.h>
 #include <unistd.h>
 
-#define SMW_VERSION "1.0.0"
+#define SMW_VERSION "1.0.1"
 #define SMW_PROTOCOL 1
 #define BULK_SIZE (256 * 1024)
 #define FLUSH_SIZE (64 * 1024)

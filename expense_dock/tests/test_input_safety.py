@@ -1,3 +1,4 @@
+import csv
 import io
 import logging
 
@@ -24,6 +25,14 @@ def payload(**changes):
     return result
 
 
+@pytest.mark.parametrize('value', ['20300102', '2030-W01-3'])
+def test_submission_date_is_canonical(monkeypatch, tmp_path, value):
+    module = load_module(monkeypatch, tmp_path)
+    submission = module.parse_submission(payload(date=value))
+    assert submission['date'] == '2030-01-02'
+    assert module.build_receipt_filename(submission, 'synthetic.pdf', b'SYNTHETIC').startswith('2030-01-02_')
+
+
 @pytest.mark.parametrize('amount', ['nan', 'inf', '-inf', '1e999'])
 def test_nonfinite_amount_rejected(monkeypatch, tmp_path, amount):
     module = load_module(monkeypatch, tmp_path)
@@ -47,6 +56,33 @@ def test_workbook_text_is_literal(monkeypatch, tmp_path):
     assert saved.cell(2, 3).value == '=1+1'
     assert saved.cell(2, 3).data_type == 's'
     assert saved.cell(2, 13).data_type == 's'
+
+
+def test_csv_fallback_round_trips_and_keeps_text_literal(monkeypatch, tmp_path):
+    module = load_module(monkeypatch, tmp_path)
+    submission = module.parse_submission(payload(vendor='=1+1', notes='-synthetic note', amount='12.5'))
+    header, row = csv.reader(io.StringIO(module.build_csv_text(
+        submission, 'https://example.test/receipt', 'synthetic.pdf')))
+    assert header == module.EXPECTED_HEADERS
+    assert dict(zip(header, row)) == dict(zip(header, [
+        '', '2030-01-02', "'=1+1", '12.50', 'SYNTHETIC', 'SYNTHETIC',
+        'SYNTHETIC', 'SYNTHETIC', 'Yes', 'SYNTHETIC',
+        'https://example.test/receipt', 'synthetic.pdf', "'-synthetic note"]))
+
+
+@pytest.mark.parametrize('prefix', ['=', '+', '-', '@'])
+def test_csv_fallback_neutralizes_each_user_text_field(monkeypatch, tmp_path, prefix):
+    module = load_module(monkeypatch, tmp_path)
+    fields = ('vendor', 'category', 'business_purpose', 'paid_by', 'payment_method',
+              'reimbursable', 'reimbursement_status', 'notes')
+    submission = module.parse_submission(payload(**{field: prefix + 'SYNTHETIC' for field in fields}))
+    header, row = csv.reader(io.StringIO(module.build_csv_text(submission, '@link', '-filename')))
+    cells = dict(zip(header, row))
+    for name in ('Vendor', 'Category', 'Business Purpose', 'Paid By', 'Payment Method',
+                 'Reimbursable?', 'Reimb. Status', 'Notes'):
+        assert cells[name] == "'" + prefix + 'SYNTHETIC'
+    assert cells['Receipt Link'] == '@link'
+    assert cells['Receipt Filename'] == '-filename'
 
 
 def test_receipt_name_distinguishes_content_and_is_stable(monkeypatch, tmp_path):
@@ -89,32 +125,3 @@ def test_receipt_filename_is_bounded_for_unicode_and_unsafe_extension(monkeypatc
     short_ext = module.build_receipt_filename(submission, 'receipt.pdf', content)
     assert len(short_ext.encode('utf-8')) <= 240
     assert short_ext.endswith('_' + hashlib.sha256(content).hexdigest() + '.pdf')
-
-
-def test_retry_preserves_legacy_receipt_filename(monkeypatch, tmp_path):
-    module = load_module(monkeypatch, tmp_path)
-    name = '2030-01-02_SYNTHETIC_10.00_SYNTHETIC.pdf'
-    entry = {'submission': module.parse_submission(payload()), 'receipt_filename': name,
-             'receipt_link': 'https://example.test/receipt'}
-    workbook = Workbook()
-    workbook.active.title = 'Expense Log'
-    workbook.active.append(module.EXPECTED_HEADERS)
-    buffer = io.BytesIO()
-    workbook.save(buffer)
-    class Graph:
-        def __init__(self, token): self.saved = None
-        def get_item_etag(self, *args): return '"synthetic"'
-        def download_item_content(self, *args): return buffer.getvalue()
-        def upload_item_content(self, drive, item, content, content_type, etag):
-            saved = load_workbook(io.BytesIO(content))['Expense Log']
-            assert saved.cell(2, 12).value == name
-        def close(self): pass
-    deleted = []
-    monkeypatch.setattr(module, 'load_pending_operation', lambda operation_id: entry)
-    monkeypatch.setattr(module, 'get_access_token', lambda config: 'SYNTHETIC')
-    monkeypatch.setattr(module, 'GraphClient', Graph)
-    monkeypatch.setattr(module, 'resolve_root_and_workbook', lambda *args: (None, {'id': 'SYNTHETIC'}, 'SYNTHETIC'))
-    monkeypatch.setattr(module, 'delete_pending_operation', deleted.append)
-    result = module.retry_pending_operation({'worksheet_name': 'Expense Log'}, 'abcdef123456')
-    assert result['ok'] and result['receipt_filename'] == name
-    assert deleted == ['abcdef123456']

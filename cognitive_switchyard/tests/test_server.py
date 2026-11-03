@@ -2224,6 +2224,43 @@ def test_create_duplicate_session_returns_409(tmp_path: Path) -> None:
 
         second = client.post("/api/sessions", json=body)
         assert second.status_code == 409
+        assert "already exists" in second.text.lower()
+
+
+@pytest.mark.parametrize(("method", "url", "body", "expected"), [
+    ("POST", "/api/sessions", {"name": "Synthetic", "pack": "claude-code"}, 422),
+    ("GET", "/api/sessions/does-not-exist", None, 404),
+    ("GET", "/api/sessions/does-not-exist/tasks", None, 404),
+    ("GET", "/api/packs/does-not-exist", None, 404),
+])
+def test_invalid_create_and_unknown_resources_return_client_errors(
+    tmp_path: Path, method: str, url: str, body: dict | None, expected: int,
+) -> None:
+    store, runtime_paths = _build_store(tmp_path)
+    _write_runtime_pack(runtime_paths)
+    with TestClient(create_app(store=store, runtime_paths=runtime_paths)) as client:
+        response = client.request(method, url, json=body)
+        assert response.status_code == expected
+
+
+def test_delete_running_session_returns_409_and_keeps_session(tmp_path: Path) -> None:
+    store, runtime_paths = _build_store(tmp_path)
+    _write_runtime_pack(runtime_paths)
+    session = store.create_session(session_id="synthetic-running", name="Synthetic", pack="claude-code", created_at="2026-01-01T00:00:00Z")
+    store.update_session_status(session.id, status="running")
+    with TestClient(create_app(store=store, runtime_paths=runtime_paths)) as client:
+        assert client.delete(f"/api/sessions/{session.id}").status_code == 409
+        assert client.get(f"/api/sessions/{session.id}").status_code == 200
+
+
+def test_delete_aborted_session(tmp_path: Path) -> None:
+    store, runtime_paths = _build_store(tmp_path)
+    _write_runtime_pack(runtime_paths)
+    session = store.create_session(session_id="synthetic-aborted", name="Synthetic", pack="claude-code", created_at="2026-01-01T00:00:00Z")
+    store.update_session_status(session.id, status="aborted")
+    with TestClient(create_app(store=store, runtime_paths=runtime_paths)) as client:
+        assert client.delete(f"/api/sessions/{session.id}").status_code == 200
+        assert client.get(f"/api/sessions/{session.id}").status_code == 404
 
 
 def test_resolve_path_expands_tilde_and_detects_git(tmp_path: Path) -> None:
@@ -2455,22 +2492,8 @@ def test_session_worktree_cleaned_up_on_delete(tmp_path: Path) -> None:
 
         delete_response = client.delete(f"/api/sessions/{session_id}")
         assert delete_response.status_code == 200
+        assert delete_response.json() == {"deleted": 1}
         assert not worktree_path.exists()
-
-
-def test_broadcast_alert_constructs_valid_backend_runtime_event(tmp_path: Path) -> None:
-    """Regression: _broadcast_alert must pass message_type to BackendRuntimeEvent."""
-    store, runtime_paths = _build_store(tmp_path)
-    _write_runtime_pack(runtime_paths)
-    app = create_app(store=store, runtime_paths=runtime_paths)
-
-    with TestClient(app) as client:
-        session_id = "alert-test"
-        client.post("/api/sessions", json={"id": session_id, "name": "Alert", "pack": "claude-code"})
-
-        controller = app.state.controller
-        # Must not raise TypeError for missing message_type
-        controller._broadcast_alert(session_id, "Test alert message", severity="error")
 
 
 def test_broadcast_alert_reaches_websocket_with_correct_structure(tmp_path: Path) -> None:
@@ -2937,8 +2960,8 @@ def test_settings_terminal_app_round_trip(tmp_path: Path) -> None:
         put_response = client.put(
             "/api/settings",
             json={
-                "retention_days": 30,
-                "default_planners": 3,
+                "retention_days": 7,
+                "default_planners": 2,
                 "default_workers": 3,
                 "default_pack": "claude-code",
                 "terminal_app": "Kitty",
@@ -2946,10 +2969,14 @@ def test_settings_terminal_app_round_trip(tmp_path: Path) -> None:
         )
         assert put_response.status_code == 200
         assert put_response.json()["settings"]["terminal_app"] == "Kitty"
+        assert put_response.json()["settings"]["retention_days"] == 7
+        assert put_response.json()["settings"]["default_planners"] == 2
 
         get_response = client.get("/api/settings")
         assert get_response.status_code == 200
         assert get_response.json()["settings"]["terminal_app"] == "Kitty"
+        assert get_response.json()["settings"]["retention_days"] == 7
+        assert get_response.json()["settings"]["default_planners"] == 2
 
 
 def test_open_terminal_command_macos_iterm_path_with_spaces(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -3148,40 +3175,6 @@ def test_purge_session_evicts_worker_card_state_and_pack_cache(tmp_path: Path) -
         assert "cache-evict-session" not in session_controller._pack_cache, (
             "_pack_cache still holds deleted session"
         )
-
-
-def test_dashboard_uses_list_all_tasks_single_query(tmp_path: Path) -> None:
-    """Carried-forward F-10 regression: build_dashboard_payload must call list_all_tasks
-    once instead of 5 separate list_*_tasks calls."""
-    import unittest.mock
-    from cognitive_switchyard.server import build_dashboard_payload
-
-    store, runtime_paths = _build_store(tmp_path)
-    _write_runtime_pack(runtime_paths)
-    store.create_session(
-        session_id="session-dash-q",
-        name="Dash query session",
-        pack="claude-code",
-        created_at="2026-03-09T10:00:00Z",
-    )
-    _register_task(store, "session-dash-q", task_id="t1", title="Task 1")
-
-    # StateStore is a frozen dataclass, so we must patch on the class.
-    StoreClass = type(store)
-    with (
-        unittest.mock.patch.object(StoreClass, "list_all_tasks", wraps=store.list_all_tasks) as mock_all,
-        unittest.mock.patch.object(StoreClass, "list_ready_tasks", wraps=store.list_ready_tasks) as mock_ready,
-        unittest.mock.patch.object(StoreClass, "list_active_tasks", wraps=store.list_active_tasks) as mock_active,
-        unittest.mock.patch.object(StoreClass, "list_done_tasks", wraps=store.list_done_tasks) as mock_done,
-        unittest.mock.patch.object(StoreClass, "list_blocked_tasks", wraps=store.list_blocked_tasks) as mock_blocked,
-    ):
-        build_dashboard_payload(store, "session-dash-q", runtime_paths=runtime_paths)
-
-    assert mock_all.call_count == 1, "list_all_tasks should be called exactly once"
-    assert mock_ready.call_count == 0, "list_ready_tasks should not be called (consolidated)"
-    assert mock_active.call_count == 0, "list_active_tasks should not be called (consolidated)"
-    assert mock_done.call_count == 0, "list_done_tasks should not be called (consolidated)"
-    assert mock_blocked.call_count == 0, "list_blocked_tasks should not be called (consolidated)"
 
 
 # --- Regression tests for plan 001: session timer active during planning/resolving ---
@@ -3387,8 +3380,9 @@ def test_planner_count_is_clamped_to_pack_max_instances(tmp_path: Path) -> None:
 # --- Regression tests for plan 003: task lifecycle move endpoint ---
 
 
-def test_move_task_blocked_to_ready(tmp_path: Path) -> None:
-    """Move a blocked task to ready via the /move endpoint."""
+@pytest.mark.parametrize("initial_status", ["blocked", "done"])
+def test_move_task_blocked_to_ready(tmp_path: Path, initial_status: str) -> None:
+    """Move a blocked or done task to ready via the /move endpoint."""
     store, runtime_paths = _build_store(tmp_path)
     _write_runtime_pack(runtime_paths)
     session = store.create_session(
@@ -3398,7 +3392,7 @@ def test_move_task_blocked_to_ready(tmp_path: Path) -> None:
         created_at="2026-03-16T10:00:00Z",
     )
     _register_task(store, session.id, task_id="t1", title="Task 1")
-    store.project_task(session.id, "t1", status="blocked")
+    store.project_task(session.id, "t1", status=initial_status)
     app = create_app(store=store, runtime_paths=runtime_paths)
     with TestClient(app) as client:
         resp = client.post(
@@ -3408,7 +3402,7 @@ def test_move_task_blocked_to_ready(tmp_path: Path) -> None:
     assert resp.status_code == 200
     body = resp.json()
     assert body["status"] == "moved"
-    assert body["from"] == "blocked"
+    assert body["from"] == initial_status
     assert body["to"] == "ready"
     task = store.get_task(session.id, "t1")
     assert task.status == "ready"

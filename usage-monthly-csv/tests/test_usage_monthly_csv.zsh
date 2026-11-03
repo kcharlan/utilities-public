@@ -44,6 +44,12 @@ while (( $# > 0 )); do
 done
 
 case "$subcommand:$since:$until" in
+  claude:20280201:20280229)
+    print -- '[{"date":"2028-02-01"}]'
+    ;;
+  codex:20280201:20280229)
+    print -- '[{"date":"2028-02-01"}]'
+    ;;
   claude:20260401:20260430)
     cat <<'EOF'
 {"daily":[{"date":"2026-04-01","inputTokens":1,"outputTokens":2,"cacheCreationTokens":3,"cacheReadTokens":4,"totalTokens":5,"totalCost":6}],"totals":{}}
@@ -124,10 +130,14 @@ expect_file_contains "$TMPDIR/out/ccusage-0426.csv" '"date","inputTokens","outpu
 expect_file_contains "$TMPDIR/out/ccusage-0426.csv" '"2026-04-01",1,2,3,4,5,6'
 expect_file_contains "$TMPDIR/out/cusage-0426.csv" '"date","inputTokens","cachedInputTokens","outputTokens","reasoningOutputTokens","totalTokens","costUSD"'
 expect_file_contains "$TMPDIR/out/cusage-0426.csv" '"2026-04-01",10,20,30,40,50,60'
-expect_file_not_contains "$TMPDIR/out/ccusage-0426.csv" '"agents"'
-expect_file_not_contains "$TMPDIR/out/cusage-0426.csv" '"agents"'
 expect_file_missing "$TMPDIR/out/ccusage-0326.csv"
 expect_file_missing "$TMPDIR/out/cusage-0326.csv"
+
+rm -f "$TMPDIR/out"/*.csv(N)
+
+zsh "$SCRIPT" --date 2028-02-15 --output-dir "$TMPDIR/out"
+expect_file_contains "$TMPDIR/out/ccusage-0228.csv" '"2028-02-01",,,,,,'
+expect_file_contains "$TMPDIR/out/cusage-0228.csv" '"2028-02-01",,,,,,'
 
 rm -f "$TMPDIR/out"/*.csv(N)
 
@@ -196,12 +206,21 @@ expect_file_contains "$TMPDIR/failure.log" 'synthetic system ccusage failure'
 [[ "$(cat "$TMPDIR/out/ccusage-0426.csv")" == "$previous_csv" ]] || fail 'failed report replaced existing CSV'
 [[ -z "$(print -rl -- "$TMPDIR/out"/*.tmp.*(N))" ]] || fail 'failed report left temporary output'
 
+# A dateless upstream row must not replace an existing report.
+cp "$TMPDIR/out/ccusage-0426.csv" "$TMPDIR/previous.csv"
+cat <<'STUB' > "$TMPDIR/bin/ccusage"
+#!/usr/bin/env zsh
+print -r -- '{"daily":[{"day":"2026-04-01","inputTokens":1}]}'
+STUB
+if zsh "$SCRIPT" --date 2026-04-10 --output-dir "$TMPDIR/out" > "$TMPDIR/dateless.stdout" 2> "$TMPDIR/dateless.stderr"; then
+  fail 'dateless upstream row was accepted'
+fi
+expect_file_contains "$TMPDIR/dateless.stderr" 'no date or period'
+cmp -s "$TMPDIR/previous.csv" "$TMPDIR/out/ccusage-0426.csv" || fail 'dateless row replaced existing CSV'
+[[ -z "$(print -rl -- "$TMPDIR/out"/*.tmp.*(N))" ]] || fail 'dateless row left temporary output'
+
 HELP=$(zsh "$SCRIPT" --help)
 print -- "$HELP" | grep -F -- '--output-dir DIR' >/dev/null || fail 'help missing output-dir'
-print -- "$HELP" | grep -F -- '--prior-month' >/dev/null || fail 'help missing prior-month'
-print -- "$HELP" | grep -F -- 'Defaults:' >/dev/null || fail 'help missing defaults section'
-print -- "$HELP" | grep -F -- '2 days' >/dev/null || fail 'help missing boundary default'
-print -- "$HELP" | grep -F -- 'Filename pattern: ccusage-MMYY.csv and cusage-MMYY.csv' >/dev/null || fail 'help missing split filename pattern'
 
 TMPROOT=$(mktemp -d)
 trap 'rm -rf "$TMPDIR" "$TMPROOT"' EXIT

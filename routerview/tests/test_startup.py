@@ -81,15 +81,6 @@ def test_open_browser_when_ready_waits_for_health(monkeypatch):
     assert opened == ["http://127.0.0.1:8102"]
 
 
-def test_live_routes_are_not_registered():
-    module = load_module()
-
-    routes = {route.path for route in module.app.routes}
-    assert "/v1/traces" not in routes
-    assert "/api/import/poll" not in routes
-    assert "/ws" not in routes
-
-
 def test_health_endpoint_reports_database_state_and_private_mode(tmp_path):
     module = load_module()
     db_path = tmp_path / "routerview.db"

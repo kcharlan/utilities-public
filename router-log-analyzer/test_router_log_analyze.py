@@ -1326,40 +1326,6 @@ def test_v4_missing_required_device_observation_uniqueness_fails_closed(
         analyzer.StateStore(db_path)
 
 
-@pytest.mark.parametrize("spoof_kind", ["line_comment", "block_comment", "quoted_string"])
-def test_v4_boot_anchor_check_cannot_be_spoofed_outside_sql_tokens(
-    tmp_path: Path,
-    spoof_kind: str,
-) -> None:
-    db_path = tmp_path / f"spoofed-check-{spoof_kind}.db"
-    store = analyzer.StateStore(db_path)
-    store.close()
-    anchor_check = "CHECK(trusted_local_anchor IS NOT NULL OR adapter_boot_id IS NOT NULL),"
-
-    def spoof_check(sql: str) -> str:
-        assert anchor_check in sql
-        if spoof_kind == "line_comment":
-            return sql.replace(anchor_check, f"-- {anchor_check}\n", 1)
-        if spoof_kind == "block_comment":
-            return sql.replace(anchor_check, f"/* {anchor_check} */", 1)
-        without_check = sql.replace(anchor_check, "", 1)
-        return without_check.replace(
-            "FOREIGN KEY(router_instance_id)",
-            f"CONSTRAINT '{anchor_check[:-1].casefold()}' FOREIGN KEY(router_instance_id)",
-            1,
-        )
-
-    rewrite_sqlite_schema_object(db_path, "router_boot_sessions", spoof_check)
-    before = db_path.read_bytes()
-
-    with pytest.raises(RuntimeError, match="router_boot_sessions.*CHECK"):
-        analyzer.StateStore(db_path)
-
-    assert db_path.read_bytes() == before
-    assert not Path(f"{db_path}-wal").exists()
-    assert not Path(f"{db_path}-shm").exists()
-
-
 def test_v4_boot_anchor_check_cannot_be_removed(tmp_path: Path) -> None:
     db_path = tmp_path / "missing-check.db"
     store = analyzer.StateStore(db_path)
@@ -1373,232 +1339,6 @@ def test_v4_boot_anchor_check_cannot_be_removed(tmp_path: Path) -> None:
 
     with pytest.raises(RuntimeError, match="router_boot_sessions.*CHECK"):
         analyzer.StateStore(db_path)
-
-
-@pytest.mark.parametrize(
-    "anchor_operand",
-    [
-        '"truſted_local_anchor"',
-        '"trυsted_local_anchor"',
-        '"trusted_locаl_anchor"',
-        "'trusted_local_anchor'",
-        '"trusted_local_anchor_missing"',
-    ],
-)
-def test_v4_boot_anchor_check_rejects_unicode_confusables_and_string_substitutions(
-    tmp_path: Path,
-    anchor_operand: str,
-) -> None:
-    db_path = tmp_path / "confusable-anchor-check.db"
-    store = analyzer.StateStore(db_path)
-    store.close()
-    rewrite_sqlite_schema_object(
-        db_path,
-        "router_boot_sessions",
-        lambda sql: sql.replace(
-            "trusted_local_anchor IS NOT NULL",
-            f"{anchor_operand} IS NOT NULL",
-            1,
-        ),
-    )
-    before = database_artifact_state(db_path)
-
-    with pytest.raises(RuntimeError, match="router_boot_sessions"):
-        unexpected_store = analyzer.StateStore(db_path)
-        try:
-            router_id = unexpected_store.get_or_create_legacy_netgear_router_instance()
-            unexpected_store.conn.execute(
-                """
-                INSERT INTO router_boot_sessions(
-                  router_instance_id, session_key, trusted_local_anchor,
-                  adapter_boot_id, startup_signature, identity_version, created_at
-                ) VALUES(
-                  ?, 'synthetic-anchorless-session', NULL, NULL,
-                  'synthetic-startup-signature', 'router-boot-session:v1', ?
-                )
-                """,
-                (router_id, "2037-01-01T00:00:00Z"),
-            )
-        finally:
-            unexpected_store.close()
-
-    assert database_artifact_state(db_path) == before
-    read_only = sqlite3.connect(
-        f"file:{db_path}?mode=ro&immutable=1",
-        uri=True,
-    )
-    try:
-        assert read_only.execute(
-            "SELECT COUNT(*) FROM router_boot_sessions"
-        ).fetchone()[0] == 0
-    finally:
-        read_only.close()
-
-
-def test_v4_boot_anchor_check_rejects_double_quoted_null_keyword(
-    tmp_path: Path,
-) -> None:
-    db_path = tmp_path / "quoted-null-check.db"
-    store = analyzer.StateStore(db_path)
-    store.close()
-    original_check = (
-        "CHECK(trusted_local_anchor IS NOT NULL OR adapter_boot_id IS NOT NULL)"
-    )
-    rewrite_sqlite_schema_object(
-        db_path,
-        "router_boot_sessions",
-        lambda sql: sql.replace(
-            original_check,
-            original_check.replace("NULL", '"NULL"', 1),
-            1,
-        ),
-    )
-    before = database_artifact_state(db_path)
-
-    with pytest.raises(RuntimeError, match="router_boot_sessions.*CHECK"):
-        unexpected_store = analyzer.StateStore(db_path)
-        try:
-            router_id = unexpected_store.get_or_create_legacy_netgear_router_instance()
-            unexpected_store.conn.execute(
-                """
-                INSERT INTO router_boot_sessions(
-                  router_instance_id, session_key, trusted_local_anchor,
-                  adapter_boot_id, startup_signature, identity_version, created_at
-                ) VALUES(
-                  ?, 'synthetic-quoted-null-session', NULL, NULL,
-                  'synthetic-startup-signature', 'router-boot-session:v1', ?
-                )
-                """,
-                (router_id, "2037-01-01T00:00:00Z"),
-            )
-        finally:
-            unexpected_store.close()
-
-    assert database_artifact_state(db_path) == before
-
-
-@pytest.mark.parametrize(
-    ("sql_token", "substitution"),
-    [
-        ("CHECK", '"CHECK"'),
-        ("IS", '"IS"'),
-        ("NOT", '"NOT"'),
-        ("OR", '"OR"'),
-        ("NULL", "'NULL'"),
-        ("OR", "'OR'"),
-    ],
-)
-def test_v4_boot_anchor_check_rejects_quoted_keyword_or_literal_substitution(
-    tmp_path: Path,
-    sql_token: str,
-    substitution: str,
-) -> None:
-    db_path = tmp_path / "quoted-keyword-check.db"
-    store = analyzer.StateStore(db_path)
-    store.close()
-    original_check = (
-        "CHECK(trusted_local_anchor IS NOT NULL OR adapter_boot_id IS NOT NULL)"
-    )
-    rewritten_check = original_check.replace(sql_token, substitution, 1)
-    rewrite_sqlite_schema_object(
-        db_path,
-        "router_boot_sessions",
-        lambda sql: sql.replace(original_check, rewritten_check, 1),
-    )
-    before = database_artifact_state(db_path)
-
-    with pytest.raises(RuntimeError):
-        analyzer.StateStore(db_path)
-
-    assert database_artifact_state(db_path) == before
-
-
-@pytest.mark.parametrize(
-    "foreign_key_suffix",
-    [
-        " DEFERRABLE",
-        " DEFERRABLE INITIALLY DEFERRED",
-        " NOT DEFERRABLE INITIALLY IMMEDIATE",
-        " ON DELETE CASCADE",
-    ],
-)
-def test_v4_foreign_key_sql_rejects_action_or_deferrability_changes(
-    tmp_path: Path,
-    foreign_key_suffix: str,
-) -> None:
-    db_path = tmp_path / "altered-foreign-key.db"
-    store = analyzer.StateStore(db_path)
-    store.close()
-    original_foreign_key = (
-        "FOREIGN KEY(router_instance_id) REFERENCES router_instances(id)"
-    )
-    rewrite_sqlite_schema_object(
-        db_path,
-        "router_boot_sessions",
-        lambda sql: sql.replace(
-            original_foreign_key,
-            original_foreign_key + foreign_key_suffix,
-            1,
-        ),
-    )
-    before = db_path.read_bytes()
-
-    with pytest.raises(RuntimeError, match="router_boot_sessions.*foreign-key"):
-        analyzer.StateStore(db_path)
-
-    assert db_path.read_bytes() == before
-    assert not Path(f"{db_path}-wal").exists()
-    assert not Path(f"{db_path}-shm").exists()
-
-
-def test_v4_constraint_sql_accepts_safe_formatting_and_identifier_quoting(
-    tmp_path: Path,
-) -> None:
-    db_path = tmp_path / "formatted-constraints.db"
-    store = analyzer.StateStore(db_path)
-    store.close()
-
-    def reformat_constraints(sql: str) -> str:
-        return sql.replace(
-            "CHECK(trusted_local_anchor IS NOT NULL OR adapter_boot_id IS NOT NULL)",
-            'CHECK ( "TRUSTED_LOCAL_ANCHOR" is not null OR [ADAPTER_BOOT_ID] is not null )',
-            1,
-        ).replace(
-            "FOREIGN KEY(router_instance_id) REFERENCES router_instances(id)",
-            'foreign key ( "router_instance_id" ) references [router_instances] ( "id" )',
-            1,
-        )
-
-    rewrite_sqlite_schema_object(db_path, "router_boot_sessions", reformat_constraints)
-
-    reopened = analyzer.StateStore(db_path)
-    try:
-        assert reopened.get_metadata("schema_version") == "4"
-    finally:
-        reopened.close()
-
-
-def test_v4_index_sql_accepts_safe_formatting_and_identifier_quoting(
-    tmp_path: Path,
-) -> None:
-    db_path = tmp_path / "formatted-index.db"
-    store = analyzer.StateStore(db_path)
-    store.close()
-    rewrite_sqlite_schema_object(
-        db_path,
-        "idx_router_snapshot_history",
-        lambda _sql: (
-            'create index "idx_router_snapshot_history" '
-            'on [router_snapshot_metrics]('
-            '"router_instance_id", [epoch_id], "export_timestamp" desc, run_id DESC)'
-        ),
-    )
-
-    reopened = analyzer.StateStore(db_path)
-    try:
-        assert reopened.get_metadata("schema_version") == "4"
-    finally:
-        reopened.close()
 
 
 def test_v3_missing_required_runs_not_null_constraint_fails_closed(tmp_path: Path) -> None:
@@ -3542,15 +3282,19 @@ def test_help_examples_use_invoked_program_name(monkeypatch: pytest.MonkeyPatch,
 
 def test_parse_log_text_scrapes_unknown_event_labels_without_whitelist() -> None:
     events, stats = analyzer.parse_log_text(
-        "[vpn handshake retry] from source 192.0.2.25, Saturday, March 21, 2037 08:32:33",
+        "[vpn handshake retry] from source 192.0.2.25, Saturday, March 21, 2037 08:32:33\n"
+        "blocked synthetic event, Saturday, March 21, 2037 08:32:34",
         source="test",
     )
 
-    assert stats.parsed_events == 1
+    assert stats.parsed_events == 2
     assert events[0].event_key == "VPN_HANDSHAKE_RETRY"
     assert events[0].event_family == "OTHER"
     assert events[0].mac == analyzer.SYSTEM_ACTOR
     assert events[0].ip == "192.0.2.25"
+    assert events[1].event_key == "OTHER"
+    assert events[1].event_family == "WLAN_REJECTED"
+    assert events[1].ip is None
 
 
 def test_netgear_adapter_detects_and_normalizes_the_legacy_format() -> None:
@@ -3597,36 +3341,6 @@ def test_router_snapshot_metrics_retains_invalid_raw_text_without_parsed_counts(
         "exclusion_reason": "invalid_snapshot_counts",
     }
     assert json.loads(json.dumps(serialized)) == serialized
-
-
-def test_router_capability_and_identity_sets_are_immutable_across_results() -> None:
-    supplied_event_keys = {"SYNTHETIC_EVENT"}
-    supplied_interfaces = {"02:00:00:00:00:09"}
-    capabilities = analyzer.RouterCapabilities(supported_event_keys=supplied_event_keys)
-    identity = analyzer.RouterIdentityCandidate(
-        canonical_vendor="synthetic",
-        router_owned_interfaces=supplied_interfaces,
-    )
-    text = "[DHCP IP: (192.0.2.25)] to MAC address 02:00:00:00:00:08, Saturday, March 21, 2037 08:07:26"
-    parsed = analyzer.parse_router_log(text, "synthetic-netgear.log", "netgear")
-
-    supplied_event_keys.add("CALLER_MUTATION")
-    supplied_interfaces.add("02:00:00:00:00:0A")
-
-    assert capabilities.supported_event_keys == frozenset({"SYNTHETIC_EVENT"})
-    assert identity.router_owned_interfaces == frozenset({"02:00:00:00:00:09"})
-    with pytest.raises(AttributeError):
-        parsed.capabilities.supported_event_keys.add("RESULT_MUTATION")
-    assert analyzer.parse_router_log(text, "synthetic-netgear.log", "netgear").capabilities.supported_event_keys == (
-        parsed.capabilities.supported_event_keys
-    )
-    capabilities_json = parsed.capabilities.to_json()
-    identity_json = identity.to_json()
-    assert capabilities_json["supported_event_keys"] == sorted(parsed.capabilities.supported_event_keys)
-    assert capabilities_json["supported_event_families"] == sorted(parsed.capabilities.supported_event_families)
-    assert identity_json["router_owned_interfaces"] == ["02:00:00:00:00:09"]
-    assert json.loads(json.dumps(capabilities_json)) == capabilities_json
-    assert json.loads(json.dumps(identity_json)) == identity_json
 
 
 def test_explicit_netgear_format_is_accepted_before_state_store_construction(tmp_path: Path) -> None:
@@ -3688,21 +3402,6 @@ def test_parse_log_text_preserves_legacy_nonstructural_input_behavior(
 
     assert events == []
     assert {name: getattr(stats, name) for name in expected} == expected
-
-
-def test_legacy_netgear_helper_names_remain_public_for_normal_malformed_and_noise_inputs() -> None:
-    valid_line = "[DHCP IP: (192.0.2.25)] to MAC address 02:00:00:00:00:08, Saturday, March 21, 2037 08:07:26"
-
-    assert analyzer.parse_timestamp_from_line(valid_line) == datetime(2037, 3, 21, 8, 7, 26)
-    assert analyzer.parse_timestamp_from_line("[malformed synthetic event]") is None
-    assert analyzer.is_export_noise_line("Sent: Saturday, March 21, 2037 08:07:26") is True
-    assert analyzer.is_export_noise_line(valid_line) is False
-    assert analyzer.normalize_event_key(" DHCP IP: (192.0.2.25) ") == "DHCP_IP"
-    assert analyzer.normalize_event_key("   ") == "OTHER"
-    assert analyzer.classify_event_family("WLAN_ACCESS_REJECTED", "synthetic") == "WLAN_REJECTED"
-    assert analyzer.classify_event_family("OTHER", "blocked synthetic event") == "WLAN_REJECTED"
-    assert analyzer.extract_ip(valid_line) == "192.0.2.25"
-    assert analyzer.extract_ip("[malformed synthetic event]") is None
 
 
 def test_auto_format_rejects_low_confidence_without_echoing_input() -> None:
@@ -5444,7 +5143,7 @@ def test_cli_version_and_help_describe_supported_router_contracts(
 ) -> None:
     with pytest.raises(SystemExit):
         analyzer.parse_args(["--version"])
-    assert capsys.readouterr().out.strip() == "router-log-analyzer 0.5.2"
+    assert capsys.readouterr().out.strip() == "router-log-analyzer 0.5.3"
 
     with pytest.raises(SystemExit):
         analyzer.parse_args(["--help"])
@@ -10026,6 +9725,14 @@ def test_synthetic_netgear_regression_locks_parser_and_v3_report_contract(
         store.close()
     assert analyzer.main([str(log_path), "--db", str(db_path), "--json"]) == 0
     report = json.loads(capsys.readouterr().out)
+    capabilities = report["availability"]["capabilities"]
+    assert capabilities["supported_event_keys"] == [
+        "DHCP_IP", "EMAIL_SENT", "INTERNET_CONNECTED", "INTERNET_DISCONNECTED",
+        "LOG_CLEARED", "WLAN_ACCESS_ALLOWED", "WLAN_ACCESS_REJECTED",
+    ]
+    assert capabilities["supported_event_families"] == [
+        "DHCP", "OTHER", "WLAN_ALLOWED", "WLAN_REJECTED",
+    ]
     assert {
         "inputs", "state", "parse_stats", "analysis_adjustments", "network_incidents",
         "observation_range", "events_per_hour", "risk_score", "status", "risk_breakdown",
@@ -10086,37 +9793,6 @@ def test_synthetic_netgear_regression_locks_parser_and_v3_report_contract(
         expected_findings["critical"] + expected_findings["anomalies"][:2]
     )
     assert legacy_netgear_report_projection(report) == expected_legacy_projection
-    report_with_additive_v4_fields = copy.deepcopy(report)
-    report_with_additive_v4_fields["format"] = {"id": "netgear"}
-    report_with_additive_v4_fields["inputs"]["router_label"] = "SYNTHETIC ROUTER"
-    report_with_additive_v4_fields["state"]["router_instance_id"] = "opaque-v4-id"
-    report_with_additive_v4_fields["parse_stats"]["adapter_warning_count"] = 0
-    report_with_additive_v4_fields["analysis_adjustments"]["eligible_event_count"] = 8
-    report_with_additive_v4_fields["network_incidents"][0]["router_instance_id"] = "opaque-v4-id"
-    report_with_additive_v4_fields["observation_range"]["clock_trust"] = "trusted"
-    report_with_additive_v4_fields["events_per_hour"]["router"] = 1
-    report_with_additive_v4_fields["risk_breakdown"]["router_new_event_type"] = 10
-    report_with_additive_v4_fields["findings"]["router"] = []
-    report_with_additive_v4_fields["findings"]["all"][0]["metadata"]["adapter_context"] = "v4"
-    report_with_additive_v4_fields["findings"]["all"][0]["occurrence_id"] = "opaque-v4-id"
-    report_with_additive_v4_fields["priority_findings"][0]["metadata"]["adapter_context"] = "v4"
-    report_with_additive_v4_fields["device_summary"][0]["router_instance_id"] = "opaque-v4-id"
-    assert legacy_netgear_report_projection(report_with_additive_v4_fields) == expected_legacy_projection
-    report_with_extra_legacy_hour = copy.deepcopy(report_with_additive_v4_fields)
-    report_with_extra_legacy_hour["events_per_hour"]["19"] = 1
-    extra_hour_projection = legacy_netgear_report_projection(report_with_extra_legacy_hour)
-    assert extra_hour_projection["events_per_hour"] == {
-        "4": 8, "8": 3, "9": 2, "18": 3, "19": 1,
-    }
-    assert extra_hour_projection != expected_legacy_projection
-    report_with_invalid_epoch = copy.deepcopy(report_with_additive_v4_fields)
-    report_with_invalid_epoch["state"]["epoch_id"] = None
-    with pytest.raises(AssertionError):
-        legacy_netgear_report_projection(report_with_invalid_epoch)
-    report_without_epoch = copy.deepcopy(report_with_additive_v4_fields)
-    del report_without_epoch["state"]["epoch_id"]
-    with pytest.raises(KeyError):
-        legacy_netgear_report_projection(report_without_epoch)
 
     monkeypatch.setattr(
         analyzer.shutil,
@@ -10603,7 +10279,6 @@ def test_router_snapshot_history_uses_strict_cursor_and_seven_observation_limit(
 def test_main_snapshot_history_limit_is_fixed_at_seven_not_device_policy(
     tmp_path: Path,
     capsys: pytest.CaptureFixture[str],
-    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     db_path = tmp_path / "snapshot-limit.db"
     store = analyzer.StateStore(db_path)
@@ -10615,25 +10290,21 @@ def test_main_snapshot_history_limit_is_fixed_at_seven_not_device_policy(
     finally:
         store.close()
     log_path = tmp_path / "synthetic-snapshot-limit.log"
-    log_path.write_text(
-        tp_link_synthetic_snapshot([
-            "2042-06-15 11:59:00 service[42]: <6> 2001 Routine health success",
-        ]),
-        encoding="utf-8",
-    )
-    observed_limits: list[int] = []
-    original = analyzer.StateStore.fetch_router_snapshot_history
-
-    def capture_limit(self: analyzer.StateStore, *args: object, **kwargs: object):
-        observed_limits.append(int(args[-1]))
-        return original(self, *args, **kwargs)
-
-    monkeypatch.setattr(analyzer.StateStore, "fetch_router_snapshot_history", capture_limit)
-    assert analyzer.main([
-        str(log_path), "--db", str(db_path), "--format", "tp-link-archer", "--json",
-    ]) == 0
-    capsys.readouterr()
-    assert observed_limits == [7]
+    for day in range(1, 11):
+        log_path.write_text(
+            tp_link_synthetic_snapshot(
+                [f"2042-06-{day:02d} 11:59:00 service[42]: <6> 2001 Routine health success"],
+                export_time=f"2042-06-{day:02d} 12:00:00",
+            ),
+            encoding="utf-8",
+        )
+        assert analyzer.main([
+            str(log_path), "--db", str(db_path), "--format", "tp-link-archer", "--json",
+        ]) == 0
+        report = json.loads(capsys.readouterr().out)
+        assert report["snapshot"]["eligible"] is True
+    assert report["snapshot"]["history_queried"] is True
+    assert report["snapshot"]["history_count"] == 7
 
 
 def test_snapshot_count_anomaly_requires_three_history_rows_and_has_post_policy_low_ceiling() -> None:

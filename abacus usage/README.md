@@ -45,9 +45,15 @@ input file. It has no third-party dependencies.
 
 The converter reads the column order from `result.columns`; when that field is
 missing, it infers columns from `result.log`. It places `date` first when
-present, rounds numeric values to two decimal places, ignores row fields that
-are not output columns, and fills missing non-date values with `0` by default.
-Missing dates remain blank.
+present, rounds numeric values to two decimal places, appends undeclared row
+fields in sorted order with a warning, and fills missing non-date values with
+`0` by default. Missing dates remain blank.
+
+Run the synthetic converter test from the repository root:
+
+```bash
+bash "abacus usage/tests/test_de_abacus.sh"
+```
 
 ## Command-line options
 

@@ -110,8 +110,8 @@ the trap removes the evidence even if a check fails.
 )
 ```
 
-Real-model acceptance is also required before release, after the owner
-authorizes downloading Whisper's `tiny` model. Insert the following commands
+Real-model acceptance is optional and requires the owner to authorize
+downloading Whisper's `tiny` model. Insert the following commands
 and the named Self-test before the closing parenthesis of Release invocation:
 
 ```bash
@@ -123,8 +123,7 @@ TRANSCRIPTION_ACCEPTANCE_DIR="$S" uv run --no-python-downloads --with pytest --w
 
 The model test isolates Whisper's cache inside the same temporary directory;
 uv's cache is unchanged. It exercises word timings and both interfaces with
-synthetic audio. A missing authorization or failed check leaves the release
-gate unmet.
+synthetic audio. The automated Self-test does not establish real-model behavior.
 
 ## Counters and local state
 

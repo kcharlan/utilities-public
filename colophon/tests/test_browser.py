@@ -131,63 +131,64 @@ def test_antigravity_cached_tokens_cost_and_mixed_layout(page, native, unknown, 
         assert page.evaluate('document.documentElement.scrollWidth <= innerWidth')
         assert requests == []
 
-@pytest.mark.parametrize('width', [1280, 375])
-def test_antigravity_mixed_availability_words_fit(page, native, width):
-    ag_cached_pricing(native)
-    def unavailable(payload):
-        for provider in ('codex','claude'):
-            payload['meta']['sources'][provider]['costs']['available'] = False
-    source_page(native,unavailable)
-    with guard_browser_errors(page):
-        requests = open_native(page,native.page)
-        page.set_viewport_size({'width':width,'height':812})
-        page.goto(native.page.as_uri() + '#v=overview&p=all&src=all')
-        cost=page.locator('[data-kpi="cost"] .kpi-value')
-        expect(cost).to_contain_text('unpriced')
-        expect(cost).to_contain_text('codex costs unavailable')
-        expect(cost).to_contain_text('claude costs unavailable')
-        broken=cost.evaluate("""element => {
-          const walker=document.createTreeWalker(element,NodeFilter.SHOW_TEXT),broken=[];
-          while(walker.nextNode()) for(const match of walker.currentNode.textContent.matchAll(/[A-Za-z]+/g)) {
-            const range=document.createRange();range.setStart(walker.currentNode,match.index);range.setEnd(walker.currentNode,match.index+match[0].length);
-            if(range.getClientRects().length!==1)broken.push(match[0]);
-          } return broken;
-        }""")
-        assert broken == []
-        assert page.evaluate('document.documentElement.scrollWidth <= innerWidth')
-        evidence = os.environ.get('COLOPHON_SCREENSHOT_DIR')
-        if evidence:
-            page.screenshot(path=str(Path(evidence) / f'antigravity-partial-availability-{width}.png'),full_page=True)
-        assert requests == []
+def broken_words(locator):
+    return locator.evaluate(r"""element => {
+      const walker = document.createTreeWalker(element, NodeFilter.SHOW_TEXT), broken = [];
+      while (walker.nextNode()) for (const match of walker.currentNode.textContent.matchAll(/\S+/g)) {
+        const range = document.createRange();
+        range.setStart(walker.currentNode, match.index);
+        range.setEnd(walker.currentNode, match.index + match[0].length);
+        if (range.getClientRects().length !== 1) broken.push(match[0]);
+      }
+      return broken;
+    }""")
 
 
+def css_color(page, token):
+    return page.evaluate("""token => {
+      const probe = document.createElement('span');
+      probe.style.color = `var(${token})`;
+      document.body.appendChild(probe);
+      const color = getComputedStyle(probe).color;
+      probe.remove();
+      return color;
+    }""", token)
+
+
+@pytest.mark.parametrize('scenario', ['mixed', 'unavailable'])
 @pytest.mark.parametrize('width', [1280, 375])
-def test_antigravity_unavailable_cost_words_remain_unbroken(page, native, width):
-    # Explicit unavailable-source fixture: ordinary Antigravity accounting now
-    # has independent catalog availability, with unknown models shown unpriced.
-    antigravity_page(native, lambda payload: payload['meta']['sources']['antigravity']['costs'].update(available=False,reason='synthetic unavailable catalog'))
-    def words_fit(locator):
-        expect(locator).to_have_text('costs unavailable')
-        words = locator.evaluate("""element => {
-          const walker=document.createTreeWalker(element, NodeFilter.SHOW_TEXT), words=[];
-          while(walker.nextNode()) {
-            const node=walker.currentNode;
-            for(const match of node.textContent.matchAll(/\\S+/g)) {
-              const range=document.createRange(); range.setStart(node,match.index); range.setEnd(node,match.index+match[0].length);
-              words.push({word:match[0], lines:range.getClientRects().length});
-            }
-          }
-          return words;
-        }""")
-        assert words == [{'word':'costs','lines':1}, {'word':'unavailable','lines':1}]
+def test_antigravity_availability_words_fit(page, native, scenario, width):
+    if scenario == 'mixed':
+        ag_cached_pricing(native)
+        def unavailable(payload):
+            for provider in ('codex', 'claude'):
+                payload['meta']['sources'][provider]['costs']['available'] = False
+        source_page(native, unavailable)
+    else:
+        antigravity_page(native, lambda payload: payload['meta']['sources']['antigravity']['costs'].update(available=False, reason='synthetic unavailable catalog'))
     with guard_browser_errors(page):
         requests = open_native(page, native.page)
-        page.set_viewport_size({'width':width, 'height':812})
-        page.goto(native.page.as_uri() + '#v=overview&p=all&src=antigravity')
-        words_fit(page.locator('[data-kpi="cost"] .kpi-value'))
-        page.goto(native.page.as_uri() + '#v=session&p=all&src=antigravity&s=' + AG_ID)
-        words_fit(page.locator('[data-reader-stat="cost"] .reader-stat-value'))
+        page.set_viewport_size({'width': width, 'height': 812})
+        source = 'all' if scenario == 'mixed' else 'antigravity'
+        page.goto(native.page.as_uri() + '#v=overview&p=all&src=' + source)
+        cost = page.locator('[data-kpi="cost"] .kpi-value')
+        if scenario == 'mixed':
+            for text in ('unpriced', 'codex costs unavailable', 'claude costs unavailable'):
+                expect(cost).to_contain_text(text)
+        else:
+            expect(cost).to_have_text('costs unavailable')
+        assert broken_words(cost) == []
         assert page.evaluate('document.documentElement.scrollWidth <= innerWidth')
+        if scenario == 'mixed':
+            evidence = os.environ.get('COLOPHON_SCREENSHOT_DIR')
+            if evidence:
+                page.screenshot(path=str(Path(evidence) / f'antigravity-partial-availability-{width}.png'), full_page=True)
+        else:
+            page.goto(native.page.as_uri() + '#v=session&p=all&src=antigravity&s=' + AG_ID)
+            reader = page.locator('[data-reader-stat="cost"] .reader-stat-value')
+            expect(reader).to_have_text('costs unavailable')
+            assert broken_words(reader) == []
+            assert page.evaluate('document.documentElement.scrollWidth <= innerWidth')
         assert requests == []
 
 
@@ -240,10 +241,10 @@ def test_opencode_source_hash_descendants_actions_and_version(page, native):
         row["children"] = [child["id"], foreign["id"]]
         payload["subagents"].update({child["id"]: child, foreign["id"]: foreign})
     payload = opencode_page(native, mutate)
-    assert payload["meta"]["version"] == "0.5.3"
+    assert payload["meta"]["version"] == "0.5.4"
     with guard_browser_errors(page):
         requests = open_native(page, native.page)
-        expect(page.locator('[data-version]')).to_have_text("colophon 0.5.3")
+        expect(page.locator('[data-version]')).to_have_text("colophon 0.5.4")
         page.goto(native.page.as_uri() + "#v=session&p=all&a=1&h=0&sort=cost&src=opencode&s=" + OPENCODE_SESSION)
         reader = page.locator("[data-reader]")
         expect(reader).to_have_attribute("data-provider", "opencode")
@@ -287,8 +288,8 @@ def test_opencode_provider_shares_colors_ties_and_phone(page, native):
         expect(page.locator('[data-day="2026-01-03"]')).to_have_attribute("data-provider", "claude")
         page.evaluate("window.__colophonTest.state.writeState({...window.__colophonTest.state.readState(), src:'opencode'})")
         expect(page.locator('[data-day="2026-01-02"]')).to_have_attribute("data-provider", "opencode")
-        assert page.locator('.brand').evaluate("e => getComputedStyle(e).color") == "rgb(215, 166, 255)"
-        assert page.locator('[data-day="2026-01-02"]').evaluate("e => getComputedStyle(e).backgroundColor") in ["rgb(46, 33, 66)", "rgb(83, 58, 122)", "rgb(143, 104, 198)", "rgb(215, 166, 255)"]
+        assert page.locator('.brand').evaluate("e => getComputedStyle(e).color") == css_color(page, '--o')
+        assert page.locator('[data-day="2026-01-02"]').evaluate("e => getComputedStyle(e).backgroundColor") in [css_color(page, f'--heat-o-{level}') for level in range(1, 5)]
         expect(page.locator('[data-token-boundary]')).to_have_count(0)
         page.set_viewport_size({"width": 375, "height": 812})
         assert page.evaluate("document.documentElement.scrollWidth <= innerWidth")
@@ -1144,7 +1145,7 @@ def test_source_metric_colors_splits_and_cost_states(page, native, monkeypatch):
         page.get_by_role("button", name="Calendar tokens", exact=True).click()
         cell = page.locator('[data-day="2026-01-02"]')
         expect(cell).to_have_attribute("data-provider", "claude")
-        assert cell.evaluate("e => getComputedStyle(e).backgroundColor") in ["rgb(28, 53, 80)", "rgb(42, 90, 133)", "rgb(92, 148, 200)", "rgb(156, 200, 255)"]
+        assert cell.evaluate("e => getComputedStyle(e).backgroundColor") in [css_color(page, f'--heat-c-{level}') for level in range(1, 5)]
         page.get_by_role("button", name="Calendar sessions", exact=True).click()
         expect(page.locator('[data-day="2026-01-02"]')).to_have_attribute("data-provider", "codex")
         model = page.locator('[data-model="synthetic-claude-model"]')
@@ -1153,7 +1154,7 @@ def test_source_metric_colors_splits_and_cost_states(page, native, monkeypatch):
         page.get_by_role("button", name="Claude", exact=True).click()
         expect(page.locator('[data-kpi="cost"]')).to_contain_text("$2.00")
         assert "unavailable" not in page.locator('[data-kpi="cost"]').inner_text()
-        assert page.locator(".brand").evaluate("e => getComputedStyle(e).color") == "rgb(156, 200, 255)"
+        assert page.locator(".brand").evaluate("e => getComputedStyle(e).color") == css_color(page, '--c')
         page.get_by_role("button", name="Codex", exact=True).click()
         expect(page.locator('[data-kpi="cost"]')).to_contain_text("costs unavailable")
         page.get_by_role("button", name="All", exact=True).click()
@@ -1162,7 +1163,6 @@ def test_source_metric_colors_splits_and_cost_states(page, native, monkeypatch):
         page.set_viewport_size({"width": 375, "height": 812})
         assert page.evaluate("document.documentElement.scrollWidth <= innerWidth"), page.evaluate("[...document.querySelectorAll('body *')].filter(e => e.getBoundingClientRect().right > innerWidth).map(e => [e.className, e.getBoundingClientRect().right])")
         assert page.locator(".hour-grid .axis").evaluate_all("nodes => nodes.every(e => e.getBoundingClientRect().height <= 13)")
-        assert page.locator('[data-kpi="cost"] .cost-note').evaluate("e => parseFloat(getComputedStyle(e).fontSize)") == 9
         page.screenshot(path=native.root / "task6-phone.png", full_page=True)
         assert len(captures) == 2 and all(path.is_file() for path in captures)
         assert requests == []
@@ -1494,6 +1494,34 @@ def test_untrusted_identifiers_do_not_resolve_prototypes_and_actions_are_escaped
         expect(page.locator('[data-reader]')).to_have_count(0)
 
 
-def test_page_sets_content_security_policy(native):
+def test_hostile_prompt_text_renders_inert(page, native):
+    hostile = 'Synthetic hostile kite </script><script>window.syntheticInjected=1</script><img src=x onerror="window.syntheticInjected=2">'
+    rows = native.session_rows()
+    rows[3]["payload"]["message"] = hostile
+    native.write_session(rows)
+    result = native.build()
+    assert result.returncode == 0, result.stderr
+    payload = native.payload()
+    session = next(item for item in payload["sessions"] if item["id"] == SESSION)
+    assert session["turns"][0]["requests"][0]["text"] == hostile
+    with guard_browser_errors(page):
+        requests = open_native(page, native.page)
+        page.locator(f'[data-session-id="{SESSION}"]').click()
+        expect(page.locator('[data-reader]')).to_contain_text(hostile)
+        assert page.evaluate("window.syntheticInjected") is None
+        expect(page.locator('img[src="x"]')).to_have_count(0)
+        assert requests == []
+
+
+def test_page_sets_content_security_policy(page, native):
     source_page(native)
-    assert 'http-equiv="Content-Security-Policy"' in native.page.read_text()
+    open_native(page, native.page)
+    content = page.locator('meta[http-equiv="Content-Security-Policy"]').get_attribute("content")
+    directives = {}
+    for directive in content.split(";"):
+        parts = directive.split()
+        if parts:
+            directives.setdefault(parts[0].lower(), parts[1:])
+    assert directives["default-src"] == ["'none'"]
+    assert directives["base-uri"] == ["'none'"]
+    assert directives["form-action"] == ["'none'"]

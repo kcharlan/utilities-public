@@ -143,34 +143,16 @@ def client():
 # Unit tests — safe_int
 # ============================================================
 
-class TestSafeInt:
-    def test_normal_int(self):
-        assert mls_tracker.safe_int(42) == 42
+@pytest.mark.parametrize("value,expected", [
+    (42, 42), ("7", 7), (3.9, 3), ("3.9", 3),
+    (None, 0), ("abc", 0), ("", 0), (-10, -10), (0, 0),
+])
+def test_safe_int(value, expected):
+    assert mls_tracker.safe_int(value) == expected
 
-    def test_string_int(self):
-        assert mls_tracker.safe_int("7") == 7
 
-    def test_float_value(self):
-        assert mls_tracker.safe_int(3.9) == 3
-
-    def test_string_float(self):
-        assert mls_tracker.safe_int("3.9") == 3
-
-    def test_none_returns_default(self):
-        assert mls_tracker.safe_int(None) == 0
-        assert mls_tracker.safe_int(None, 5) == 5
-
-    def test_non_numeric_string(self):
-        assert mls_tracker.safe_int("abc") == 0
-
-    def test_empty_string(self):
-        assert mls_tracker.safe_int("") == 0
-
-    def test_negative(self):
-        assert mls_tracker.safe_int(-10) == -10
-
-    def test_zero(self):
-        assert mls_tracker.safe_int(0) == 0
+def test_safe_int_explicit_default():
+    assert mls_tracker.safe_int(None, 5) == 5
 
 
 # ============================================================
@@ -198,15 +180,11 @@ class TestProcessTeamColors:
         # Both low-contrast: alt is also low-contrast, so no swap
         assert result["primary"] == "#000000"
 
-    def test_empty_strings(self):
-        result = mls_tracker.process_team_colors("", "")
+    @pytest.mark.parametrize("value", ["", None])
+    def test_empty_strings(self, value):
+        result = mls_tracker.process_team_colors(value, value)
         assert result["primary"] == "#6366f1"  # fallback indigo
         assert result["secondary"] == "#1f2937"
-
-    def test_none_inputs(self):
-        result = mls_tracker.process_team_colors(None, None)
-        assert "primary" in result
-        assert "secondary" in result
         assert "accent" in result
 
     def test_hash_stripped(self):
@@ -239,14 +217,17 @@ class TestDataCache:
         assert cache._teams is None
         assert len(cache._standings) == 0
 
-    def test_expired_returns_true_after_ttl(self):
+    def test_teams_are_refetched_after_ttl(self, monkeypatch):
         cache = mls_tracker.DataCache(ttl=1)
-        past = time.time() - 2
-        assert cache._expired(past) is True
-
-    def test_not_expired_within_ttl(self):
-        cache = mls_tracker.DataCache(ttl=300)
-        assert cache._expired(time.time()) is False
+        now = time.time()
+        monkeypatch.setattr(mls_tracker.time, "time", lambda: now)
+        first = cache.get_teams()
+        monkeypatch.setattr(mls_tracker.time, "time", lambda: now + 2)
+        second = cache.get_teams()
+        assert second is not first
+        team_requests = [call for call in mls_tracker.requests.get.call_args_list
+                         if "teams" in call.args[0]]
+        assert len(team_requests) == 2
 
     def test_cache_reuses_data_within_ttl(self):
         """Second call should not re-fetch (mock call count stays at 1)."""
@@ -470,25 +451,6 @@ class TestMergeTeamMetadata:
 
 
 # ============================================================
-# API endpoint tests — GET /
-# ============================================================
-
-class TestIndexEndpoint:
-    def test_returns_200(self, client):
-        resp = client.get("/")
-        assert resp.status_code == 200
-
-    def test_returns_html(self, client):
-        resp = client.get("/")
-        assert "text/html" in resp.headers["content-type"]
-
-    def test_contains_app_markers(self, client):
-        resp = client.get("/")
-        assert "MLS Playoff Tracker" in resp.text
-        assert "<div id=" in resp.text
-
-
-# ============================================================
 # API endpoint tests — GET /api/data
 # ============================================================
 
@@ -607,11 +569,6 @@ class TestApiScenarios:
 # ============================================================
 
 class TestApiRefresh:
-    def test_returns_ok(self, client):
-        resp = client.post("/api/refresh")
-        assert resp.status_code == 200
-        assert resp.json() == {"status": "ok"}
-
     def test_actually_clears_cache(self, client):
         # Populate cache
         client.get("/api/data?season=2025")

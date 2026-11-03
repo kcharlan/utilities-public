@@ -50,10 +50,10 @@ def test_action_tokens_are_authenticated_and_run_specific(monkeypatch, tmp_path)
     module = load(monkeypatch, tmp_path)
     token = module.encode_action_token({"kind": "trash_path", "path": "/synthetic/a"})
     forged = base64.urlsafe_b64encode(json.dumps({"kind": "trash_path", "path": "/synthetic/b"}).encode()).decode()
-    with pytest.raises(Exception):
+    with pytest.raises(ValueError):
         module.decode_action_token(forged)
     other = load(monkeypatch, tmp_path)
-    with pytest.raises(Exception):
+    with pytest.raises(ValueError):
         other.decode_action_token(token)
 
 

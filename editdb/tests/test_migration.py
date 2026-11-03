@@ -126,3 +126,36 @@ def test_rebuild_preserves_hidden_rowid(database):
     assert response.status_code == 200, response.text
     with sqlite3.connect(path) as db:
         assert db.execute('SELECT rowid, label FROM items').fetchall() == [(47, 'value')]
+
+
+def test_rebuild_of_without_rowid_table_keeps_rows_and_key(database):
+    client, path = database
+    with sqlite3.connect(path) as db:
+        db.executescript("""
+            DROP VIEW item_view; DROP TABLE items;
+            CREATE TABLE items (a TEXT, b INTEGER, label TEXT, PRIMARY KEY(a, b)) WITHOUT ROWID;
+            INSERT INTO items VALUES ('x', 1, 'one'), ('x', 2, 'two');
+        """)
+    response = migrate(client, [('a', 'a', 'TEXT', False), ('b', 'b', 'INTEGER', False),
+                                ('label', 'label', 'BLOB', False)])
+    assert response.status_code == 200, response.text
+    with sqlite3.connect(path) as db:
+        assert db.execute('SELECT a, b, label FROM items ORDER BY b').fetchall() == [('x', 1, 'one'), ('x', 2, 'two')]
+        assert db.execute("SELECT wr FROM pragma_table_list WHERE name='items'").fetchone() == (1,)
+        with pytest.raises(sqlite3.IntegrityError):
+            db.execute("INSERT INTO items VALUES ('x', 1, 'dup')")
+
+
+def test_rebuild_of_referenced_parent_keeps_child_foreign_keys(database):
+    client, path = database
+    with sqlite3.connect(path) as db:
+        db.executescript('CREATE TABLE notes (id INTEGER PRIMARY KEY, item_id INTEGER REFERENCES items(id)); INSERT INTO notes VALUES (1, 1);')
+    response = migrate(client, [('id', 'id', 'INTEGER', False), ('label', 'label', 'TEXT', False),
+                                ('amount', 'amount', 'REAL', False), ('spare', 'spare', 'TEXT', False)])
+    assert response.status_code == 200, response.text
+    with sqlite3.connect(path) as db:
+        assert [row[2] for row in db.execute('PRAGMA foreign_key_list(notes)')] == ['items']
+        assert db.execute('PRAGMA foreign_key_check').fetchall() == []
+        db.execute('PRAGMA foreign_keys = ON')
+        with pytest.raises(sqlite3.IntegrityError):
+            db.execute('INSERT INTO notes VALUES (2, 999)')
