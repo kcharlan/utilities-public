@@ -2384,9 +2384,9 @@ Git Fleet's `make_tmpdir` helper called `tempfile.mkdtemp()` with no cleanup, le
 
 Fleet and repository detail both expose quick status, so exercise each consumer when changing its presentation. Share the rule in `present_quick_status` and cover boundary cases through `test_repo_detail_quick_status_matches_fleet`.
 
-## 2026-11-03: Reproduce log size limits with synthetic inputs
+## 2026-11-03: Don't cap local log readers below real sizes
 
-A cap can reject valid local logs at the reader or decoder before provider parsing sees them. Reproduce each boundary with conspicuously synthetic inputs, including large single-segment frames and resumed plain lines, and account for decoder allocations, reader buffers and accumulated parser results. The Telltale `ZstdLargeInputTests`, `LineReaderLargeLineTests` and provider regressions exercise the acceptance contract; their shared `LargeLogSizes` fixtures document its sizing.
+An audit added line, file and zstd-window caps to Telltale's log readers. Real Codex rollouts already exceeded them, and because a failed read keeps no cursor, the collector retried those files every run and showed a sticky "can't read Codex's logs" alert. A size cap on a local file the user's own tools wrote only turns valid input into a permanent failure; leave such reads bounded by the decoder's own limits and available memory. If a limit is ever needed, measure the real maxima first, set the limit well above them, and test above it with conspicuously synthetic inputs, including large single-segment zstd frames and resumed plain lines. Telltale's `ZstdLargeInputTests`, `LineReaderLargeLineTests` and provider regressions do this; `LargeLogSizes` records how their sizes were chosen.
 
 ## 2026-11-03: Preserve dynamic error types when rendering read failures
 

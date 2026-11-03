@@ -237,8 +237,6 @@ public struct CodexUsageSource: UsageSource {
             return .busy
         } catch let error as ReadOnlySQLite.FormatProblem {
             return .problem("\(part): \(error.detail)")
-        } catch let error as ReadOnlySQLite.Failure {
-            return .failure("\(part): couldn't be read (\(readFailureReason(error)))")
         } catch {
             return .failure("\(part): couldn't be read (\(readFailureReason(error)))")
         }
