@@ -92,12 +92,20 @@ struct PopoverView: View {
                 }
             }
             Divider()
-            HStack(spacing: 8) {
-                IntervalMenu(controller: controller, openCustom: openCustomInterval ?? openSettings)
-                Spacer(minLength: 0)
-                Text(nextCheckText).font(.system(size: 11)).foregroundStyle(.secondary).lineLimit(1).help(nextCheckText)
-                Button(action: openSettings) { Image(systemName: "gearshape") }.help("Settings…").accessibilityLabel("Settings…")
-                Button { NSApp.terminate(nil) } label: { Image(systemName: "power") }.help("Quit Brew Version").accessibilityLabel("Quit Brew Version")
+            // Schedule on top; version, Settings and Quit below, as in Telltale's bottom row.
+            VStack(alignment: .leading, spacing: 6) {
+                HStack(spacing: 8) {
+                    IntervalMenu(controller: controller, openCustom: openCustomInterval ?? openSettings)
+                    Spacer(minLength: 0)
+                    Text(nextCheckText).font(.system(size: 11)).foregroundStyle(.secondary).lineLimit(1).help(nextCheckText)
+                }
+                HStack(spacing: 8) {
+                    Text(BrewVersionRelease.versionLine).font(.system(size: 11)).foregroundStyle(.tertiary)
+                        .help(AppBundle.buildHelp(info: Bundle.main.infoDictionary) ?? "").accessibilityIdentifier("version")
+                    Spacer(minLength: 0)
+                    Button(action: openSettings) { Image(systemName: "gearshape") }.help("Settings…").accessibilityLabel("Settings…")
+                    Button { NSApp.terminate(nil) } label: { Image(systemName: "power") }.help("Quit Brew Version").accessibilityLabel("Quit Brew Version")
+                }
             }.buttonStyle(.borderless)
         }.font(.system(size: 13)).padding(12).frame(width: 340)
     }

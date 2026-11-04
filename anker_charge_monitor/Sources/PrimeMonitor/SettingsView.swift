@@ -116,7 +116,7 @@ struct SettingsView: View {
                 }
             }.formStyle(.grouped).toggleStyle(.switch)
             VStack(spacing: 3) {
-                Text("\(PrimeMonitorRelease.displayName) \(PrimeMonitorRelease.version)")
+                Text(PrimeMonitorRelease.versionLine)
                 Text("anker-solix-api 8a5222b, 9e72894")
             }.font(.caption).foregroundStyle(.secondary).frame(maxWidth: .infinity).padding(.vertical, 12)
         }.frame(width: 460)

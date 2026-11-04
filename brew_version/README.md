@@ -149,7 +149,8 @@ changes are covered by the named regression tests:
   30-second total resource timeout for individual lookups.
 
 The release version comes from the tracked Info.plist through
-`BrewVersionRelease.version`; a core test verifies that they agree.
+`BrewVersionRelease.version`; a core test verifies that they agree. The popover
+footer and Settings both show `BrewVersionRelease.versionLine`.
 
 ## Taps
 
@@ -386,7 +387,8 @@ Use Watch to move an item to Watching. Click its header to collapse the list,
 or turn it off in Settings. Below the header, the section shows when the list
 was last updated; set how often it refreshes in Settings. The footer's watch
 interval menu accepts the presets or a whole number of minutes from 10 through
-1,440; the footer shows the next check.
+1,440; the footer shows the next check. Below them, the footer shows the app
+version (hover it for the build number) beside the Settings gear and Quit.
 **Custom…** opens Settings with its minutes field focused; enter a value and
 press Return or Apply. Invalid input remains editable with inline validation.
 The popover uses a 340-point layout that hugs short content; only the package
