@@ -8,6 +8,7 @@ struct ReleaseTests {
         let data = try Data(contentsOf: root.appendingPathComponent("Resources/Info.plist"))
         let plist = try #require(PropertyListSerialization.propertyList(from: data, format: nil) as? [String: Any])
         #expect(plist["CFBundleShortVersionString"] as? String == BrewVersionRelease.version)
+        #expect(BrewVersionRelease.versionLine == "Brew Version \(BrewVersionRelease.version)")
         #expect(plist["CFBundleIdentifier"] as? String == "local.utilities.brew-version")
         #expect(plist["CFBundleExecutable"] as? String == "BrewVersion")
         #expect(plist["LSUIElement"] as? Bool == true)

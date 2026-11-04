@@ -1,6 +1,6 @@
 # Anker Charge Monitor
 
-Anker Charge Monitor 0.4.4 is a native macOS menu bar app for the Anker Prime
+Anker Charge Monitor 0.4.5 is a native macOS menu bar app for the Anker Prime
 250W six-port charger (A2345). It displays charger-reported power, voltage and
 current in physical C1–C4, A1–A2 order. Reported watts are authoritative; the app
 does not substitute voltage × current. Inactive readings remain visible.
@@ -88,6 +88,7 @@ are never automatically read, migrated or deleted.
 ## Operation and state
 
 Opening the status panel requests readings immediately and every five seconds.
+The panel footer shows the app version; hover it for the build number.
 Settings controls closed-panel cadence, charger selection, menu bar text size
 and launch at login. Text size runs from 10 pt to the standard 13 pt menu bar
 size; the icon scales with it, and a change applies to the status item at once.
@@ -303,7 +304,7 @@ switch a USB-C port off and on in the Anker app and use `--live-check` after eac
 change to compare its reported switch state with the other ports. After a separately
 authorized installation, check off/on, identity labels, naming across quit and
 reopen, live catalog edits and physical keyboard and mouse interaction. Verify
-source, installed metadata and Settings versions agree.
+source, installed metadata, panel footer and Settings versions agree.
 
 ## Privacy and development
 

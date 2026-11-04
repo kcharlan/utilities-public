@@ -7,6 +7,7 @@ struct ReleaseTests {
         let root = URL(filePath: #filePath, directoryHint: .notDirectory).deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
         let info = try #require(PropertyListSerialization.propertyList(from: Data(contentsOf: root.appending(path: "Resources/Info.plist", directoryHint: .notDirectory)), format: nil) as? [String: Any])
         #expect(info["CFBundleShortVersionString"] as? String == PrimeMonitorRelease.version)
+        #expect(PrimeMonitorRelease.versionLine == "Anker Charge Monitor \(PrimeMonitorRelease.version)")
         #expect(info["CFBundleIdentifier"] as? String == "local.utilities.prime-monitor")
         #expect(info["CFBundleExecutable"] as? String == "PrimeMonitor")
         let build = try #require(info["CFBundleVersion"] as? String)

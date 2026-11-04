@@ -280,6 +280,10 @@ struct PanelView: View {
                     .font(.system(size: 12)).foregroundStyle(.secondary).padding(.vertical, 8)
             }
             if let catalogWarning { InlineWarning(message: catalogWarning) }
+            Divider()
+            // Bottom-left like Telltale's footer; refresh and Settings stay in the header.
+            Text(PrimeMonitorRelease.versionLine).font(.system(size: 11)).foregroundStyle(.tertiary)
+                .help(AppBundle.buildHelp(info: Bundle.main.infoDictionary) ?? "").accessibilityIdentifier("version")
         }.padding(16).frame(width: 400)
             // Losing control availability or the armed context disarms for good.
             .onChange(of: controlGenerations) { _, context in detail.revalidate(in: context, available: controlsAvailable) }

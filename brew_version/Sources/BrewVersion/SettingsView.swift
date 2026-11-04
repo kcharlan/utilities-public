@@ -59,7 +59,7 @@ struct SettingsView: View {
                     if let error = controller.catalogWriteError { InlineWarning(message: error) }
                 }
             }.formStyle(.grouped).toggleStyle(.switch)
-            Text("Brew Version \(BrewVersionRelease.version)").font(.caption).foregroundStyle(.secondary).frame(maxWidth: .infinity).padding(.bottom, 14)
+            Text(BrewVersionRelease.versionLine).font(.caption).foregroundStyle(.secondary).frame(maxWidth: .infinity).padding(.bottom, 14)
         }.frame(width: 460)
             .onAppear { login.refresh(); input.minutes = String(controller.state.interval.minutes); intervalFocused = focus.intervalRequest > 0 }
             .onChange(of: focus.intervalRequest) { _, _ in input.minutes = String(controller.state.interval.minutes); input.invalid = false; intervalFocused = true }
