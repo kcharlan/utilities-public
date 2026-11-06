@@ -37,12 +37,12 @@ function loadCore() {
 
 const data = extractData();
 
-test('October 23 Kimi launch appears in the October 2026 report with weights still pending', () => {
+test('Kimi hosted launches and the open-weight release appear in separate monthly reports', () => {
   const kimi = data.filter(row => row.lab === 'Moonshot' && row.date === '2026-10-23');
   assert.deepEqual(kimi.map(row => row.model).sort(), ['Kimi K3.1 Pro', 'Kimi K3.1 Pro Highspeed']);
   for (const row of kimi) {
     assert.equal(row.tier, 'flagship');
-    assert.match(row.note, /weights.*November 4, 2026/);
+    assert.match(row.note, /weights.*November 4/);
     assert.match(row.note, /kimi-k3\.1-pro/);
   }
   const core = loadCore();
@@ -52,6 +52,11 @@ test('October 23 Kimi launch appears in the October 2026 report with weights sti
     {range, tiers:new Set(allTiers), allTiers, terms:['kimi k3.1']});
   assert.match(report, /Oct 23, 2026 · Moonshot · Kimi K3\.1 Pro · flagship/);
   assert.match(report, /Oct 23, 2026 · Moonshot · Kimi K3\.1 Pro Highspeed · flagship/);
+  const november = core.resolveRange({kind:'month', ym:'2026-11'}, bounds);
+  const weights = data.filter(row => row.lab === 'Moonshot' && row.date >= november.start && row.date <= november.end);
+  const novemberReport = core.formatReportText(core.groupByMonth(weights, 'desc', () => 0),
+    {range:november, tiers:new Set(allTiers), allTiers, terms:['kimi k3.1']});
+  assert.match(novemberReport, /Nov 4, 2026 · Moonshot · Kimi K3\.1 Pro \(open weights\) · open-weights/);
 });
 
 test('Meta Wonder models appear in the October 2026 report', () => {
@@ -279,8 +284,8 @@ test('static header metadata and initial chart domain cover the dataset', () => 
   assert.match(html, new RegExp(`<span data-lab-count>${labs.size}<\\/span>`));
   const latestLabel = new Date(`${latest}T00:00:00Z`).toLocaleDateString('en-US', {timeZone:'UTC', month:'long', day:'numeric', year:'numeric'});
   assert.ok(html.includes(`<span data-latest-date>${latestLabel}</span>`));
-  assert.equal((html.match(/· checked October 30, 2026 ·/g) || []).length, 1);
-  assert.equal((html.match(/Verification checked October 30, 2026/g) || []).length, 1);
+  assert.equal((html.match(/· checked November 6, 2026 ·/g) || []).length, 1);
+  assert.equal((html.match(/Verification checked November 6, 2026/g) || []).length, 1);
   // Proportional range padding replaces the former fixed ±15-day x0 domain,
   // so assert the core-driven domain instead of its retired literal expression.
   const script = extractInlineScript();
@@ -382,9 +387,9 @@ test('TimelineCore monthly counts cover every calendar month including empty mon
   const bounds = {earliest:data.reduce((v,d)=>d.date<v?d.date:v,data[0].date), latest:data.reduce((v,d)=>d.date>v?d.date:v,data[0].date)};
   const months = core.monthlyTierCounts(data, bounds);
   assert.equal(months.reduce((n,m)=>n+m.total,0), data.length);
-  assert.equal(months.length, 34);
+  assert.equal(months.length, 35);
   assert.equal(months[0].key, '2024-01');
-  assert.equal(months.at(-1).key, '2026-10');
+  assert.equal(months.at(-1).key, '2026-11');
   assert.ok(months.every((month,i) => i===0 || month.start === core.addDays(months[i-1].end,1)));
   const sparse = core.monthlyTierCounts([{date:'2026-01-15',tier:'mid'}], {earliest:'2026-01-01',latest:'2026-03-31'});
   assert.deepEqual(sparse.map(m=>m.total), [1,0,0]);
@@ -429,12 +434,14 @@ const {analyze, render} = require('../scripts/timeline-analysis.cjs');
 
 test('narrative statistics match the expanded dataset', () => {
   const stats = analyze(data);
-  assert.equal(stats.total, 531);
-  assert.equal(new Set(data.map(row => row.lab)).size, 98);
-  assert.equal(stats.sameDay, 475);
-  assert.equal(stats.withinTwo, 1998);
-  assert.deepEqual(stats.years, {'2024': 88, '2025': 134, '2026': 309});
-  assert.deepEqual(stats.weekdays, {'0':14, '1':89, '2':108, '3':107, '4':136, '5':64, '6':13});
+  assert.equal(stats.total, 574);
+  assert.equal(new Set(data.map(row => row.lab)).size, 119);
+  assert.equal(stats.sameDay, 633);
+  assert.equal(stats.withinTwo, 2587);
+  assert.deepEqual(stats.years, {'2024': 88, '2025': 134, '2026': 352});
+  assert.deepEqual(stats.weekdays, {'0':14, '1':91, '2':115, '3':117, '4':150, '5':74, '6':13});
+  assert.equal(stats.months['2026-10'], 127);
+  assert.equal(stats.months['2026-11'], 18);
   assert.equal(stats.cadence.OpenAI.major, 52);
   assert.equal(stats.cadence.Google.major, 48);
   assert.deepEqual(stats.moonshotLags, [14,90,50,31,38,64,4,16,10,25,25]);
@@ -460,13 +467,23 @@ test('analysis handles same-day pairs, medians, and missing prior releases', () 
 
 test('recent-release summary follows the latest dated rows', () => {
   const summary = render(analyze(data));
-  assert.match(summary, /Mistral Large 4 \(open weights\) \(October 29\)/);
-  assert.match(summary, /Gemini 4 Carbon \(limited preview\) \(October 28\)/);
+  assert.match(summary, /Gemini Omni 1\.2 Flash \(November 5\)/);
+  assert.match(summary, /Kimi K3\.1 Pro \(open weights\) \(November 4\)/);
+  assert.match(summary, /Hy4 \(hosted release\) \(November 3\)/);
+  assert.doesNotMatch(summary, /Hydrogen-1\.0 \(November 2\)/);
+  assert.doesNotMatch(summary, /Mistral Large 4 \(open weights\) \(October 29\)/);
   assert.doesNotMatch(summary, /Kimi K3\.1 Pro \(October 23\)/);
   assert.doesNotMatch(summary, /Voxtral Transcribe 3 family \(public preview\) \(October 20\)/);
   assert.doesNotMatch(summary, /Muse Wonder \(October 12\)/);
   assert.doesNotMatch(summary, /MISSINGNO\. \(October 10\)/);
   assert.doesNotMatch(summary, /The latest cluster spans Antigravity/);
+});
+
+test('Inkling releases share the same lab lane', () => {
+  const original = data.find(row => row.model === 'Inkling');
+  const successor = data.find(row => row.model === 'Inkling 2 Small (Tinker release)');
+  assert.ok(original && successor);
+  assert.equal(successor.lab, original.lab);
 });
 
 test('every update manifest is reflected in the embedded data', () => {

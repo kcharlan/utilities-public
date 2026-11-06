@@ -1,0 +1,490 @@
+{
+  "checked": "2026-11-06",
+  "latestRelease": "2026-11-05",
+  "baselineManifest": "ai_model_timeline_update_sources_2026_10_30.json",
+  "preservedHistoricalRows": 531,
+  "additions": [
+    {
+      "model": "Gemini Omni 1.2 Flash",
+      "lab": "Google",
+      "date": "2026-11-05",
+      "tier": "specialty",
+      "note": "Hosted video generation and editing with native audio, improved consistency, and clips up to 15 seconds. Generally available in the Gemini API and Gemini for business.",
+      "source": "https://blog.google/innovation-and-ai/technology/developers-tools/introducing-gemini-omni-1-2-flash/"
+    },
+    {
+      "model": "GPT-6 Cyber (limited access)",
+      "lab": "OpenAI",
+      "date": "2026-11-05",
+      "tier": "specialty",
+      "note": "Cybersecurity model for finding and validating exploitable vulnerabilities. Initially available to approved Daybreak Red customers through the API and Codex.",
+      "source": "https://openai.com/index/introducing-gpt-6-cyber/"
+    },
+    {
+      "model": "Inkling 2 Small (Tinker release)",
+      "lab": "Thinking Machines",
+      "date": "2026-11-05",
+      "tier": "mid",
+      "note": "594B mixture-of-experts model with 17B active parameters and image input. Available on Tinker at launch, with Apache-2.0 weights planned after safety testing.",
+      "source": "https://thinkingmachines.ai/news/inkling-2-small/"
+    },
+    {
+      "model": "Cosmos 3 simulation family",
+      "lab": "NVIDIA",
+      "date": "2026-11-05",
+      "tier": "open-weights",
+      "note": "Four open-weight Cosmos 3 checkpoints for interactive world simulation and synchronized multi-sensor driving scenes.",
+      "source": "https://huggingface.co/blog/nvidia/cosmos-interactive-world-simulation"
+    },
+    {
+      "model": "CCORE GLB-3D-Coder 4B",
+      "lab": "CCORE",
+      "date": "2026-11-05",
+      "tier": "open-weights",
+      "note": "Apache-2.0 coding model based on Qwen3.5-4B that generates Three.js scenes with editable GLB exports. Full Safetensors and GGUF checkpoints are public.",
+      "source": "https://huggingface.co/ccore/Qwen3.5-4B-GLB-3D-Coder"
+    },
+    {
+      "model": "ERNIE 5.5 Flash Base",
+      "lab": "Baidu",
+      "date": "2026-11-05",
+      "tier": "open-weights",
+      "note": "Public 280B mixture-of-experts pre-training checkpoint with 14B active parameters and up to 1M context for inference and fine-tuning. Downloadable weights use Baidu’s model-specific license.",
+      "source": "https://huggingface.co/baidu/ERNIE-5.5-Flash-Base"
+    },
+    {
+      "model": "GPT-Image-2.6 Flare / Sunburst",
+      "lab": "OpenAI",
+      "date": "2026-11-04",
+      "tier": "specialty",
+      "note": "Image-generation family for ChatGPT, Codex, and the API. Adds animated GIFs, SVG output, markup-guided edits, and a complexity setting.",
+      "source": "https://developers.openai.com/api/docs/changelog"
+    },
+    {
+      "model": "Kimi K3.1 Pro (open weights)",
+      "lab": "Moonshot",
+      "date": "2026-11-04",
+      "tier": "open-weights",
+      "note": "Full 2.8T mixture-of-experts weights with 104B active parameters, native vision, and 1M context under the Kimi K3.1 Pro License. The November 4 public release follows the October hosted launch and a November 2 repository commit.",
+      "source": "https://huggingface.co/moonshotai/Kimi-K3.1-Pro"
+    },
+    {
+      "model": "Ripple-65B Preview",
+      "lab": "Ricursive Intelligence",
+      "date": "2026-11-04",
+      "tier": "open-weights",
+      "note": "Apache-2.0 dense text model for reasoning and agentic coding with up to 1M context. Public weights and hosted inference were released together.",
+      "source": "https://www.ricursive.com/ripple"
+    },
+    {
+      "model": "SWE-2 Flash",
+      "lab": "Cognition",
+      "date": "2026-11-04",
+      "tier": "specialty",
+      "note": "Coding model post-trained from Inkling-Small with 276B total and 12B active parameters. Available in Devin Desktop and CLI, with controlled weight access planned for partners and researchers.",
+      "source": "https://cognition.com/blog/swe-2-flash"
+    },
+    {
+      "model": "TwIL-8B",
+      "lab": "webAI",
+      "date": "2026-11-04",
+      "tier": "open-weights",
+      "note": "Reasoning model post-trained from IBM Granite 4.2 8B. Full weights and a local GGUF build are available under webAI's non-commercial license.",
+      "source": "https://huggingface.co/webAI-Official/TwIL-8B"
+    },
+    {
+      "model": "P-JiT 21K",
+      "lab": "Linum",
+      "date": "2026-11-04",
+      "tier": "specialty",
+      "note": "Open-weight Pyramid-JiT text-to-image research model with a published training recipe. November 4 is the lab's release write-up date.",
+      "source": "https://www.linum.ai/field-notes/pjit-21k"
+    },
+    {
+      "model": "Pangram Image 1.0 / Image Flash 1.0",
+      "lab": "Pangram",
+      "date": "2026-11-04",
+      "tier": "specialty",
+      "note": "Hosted detection family for AI-generated images and video. The full model supports localization heatmaps and Flash targets higher-throughput screening.",
+      "source": "https://www.pangram.com/blog/introducing-pangram-image-1-0"
+    },
+    {
+      "model": "Dharma Field Extractor",
+      "lab": "Dharma AI",
+      "date": "2026-11-04",
+      "tier": "specialty",
+      "note": "Document extraction model that maps visual documents into a requested set of structured JSON fields.",
+      "source": "https://huggingface.co/blog/Dharma-AI/dharma-field-extractor"
+    },
+    {
+      "model": "Hy4 (hosted release)",
+      "lab": "Tencent",
+      "date": "2026-11-03",
+      "tier": "flagship",
+      "note": "Hosted multimodal reasoning model with image understanding, coding, and computer use across graphical and command-line interfaces. Vercel confirms API availability November 3, a day before the OpenRouter listing. Public weights were still pending at launch.",
+      "source": "https://vercel.com/changelog/tencent-hy4-now-available-on-ai-gateway"
+    },
+    {
+      "model": "Sarvam Prism",
+      "lab": "Sarvam AI",
+      "date": "2026-11-03",
+      "tier": "specialty",
+      "note": "Apache-2.0 decision model built on Sarvam 105B. Returns probabilities over supplied answer options for classification, routing, and verification.",
+      "source": "https://www.sarvam.ai/blogs/sarvam-prism"
+    },
+    {
+      "model": "P-H3-Image",
+      "lab": "Pruna AI",
+      "date": "2026-11-03",
+      "tier": "specialty",
+      "note": "Open-weight image generation and editing model distilled from MiniMax H3. Uses eight sampling steps and ships with reduced-precision variants for local inference.",
+      "source": "https://www.pruna.ai/blog/oss-p-h3-image-launch"
+    },
+    {
+      "model": "Hydrogen-1.0",
+      "lab": "Deep Principle",
+      "date": "2026-11-02",
+      "tier": "open-weights",
+      "note": "MIT-licensed scientific reasoning model post-trained from GLM-5.3 for chemistry, materials, and life sciences. November 2 records public release evidence, following the October 31 repository creation timestamp.",
+      "source": "https://huggingface.co/deep-principle/Hydrogen-1.0"
+    },
+    {
+      "model": "Mage-VL-Cowork",
+      "lab": "Microsoft",
+      "date": "2026-10-30",
+      "tier": "open-weights",
+      "note": "Apache-2.0 computer-use checkpoint for visual grounding, multi-step GUI actions, and switching to command-line operations. Microsoft uploaded the weights October 30, following its October 29 technical report.",
+      "source": "https://huggingface.co/microsoft/Mage-VL-Cowork/commits/main"
+    },
+    {
+      "model": "Clover-35B-A3B-Preview",
+      "lab": "DiffuSpace",
+      "date": "2026-10-30",
+      "tier": "open-weights",
+      "note": "Apache-2.0 diffusion language model with 35B total and 3B active parameters. Public weights and code support reasoning, coding, and generating interfaces.",
+      "source": "https://huggingface.co/blog/Diffuspace/clover-35b-a3b-preview"
+    },
+    {
+      "model": "GPT-Rosalind-6 Research (limited access)",
+      "lab": "OpenAI",
+      "date": "2026-10-30",
+      "tier": "specialty",
+      "note": "Trusted-access deployment for qualified life-sciences researchers. Uses GPT-6 Astra weights with a research-specific refusal policy and separate access controls.",
+      "source": "https://deploymentsafety.openai.com/gpt-rosalind-6"
+    },
+    {
+      "model": "SenseNova-Loop-9B-Preview",
+      "lab": "SenseNova",
+      "date": "2026-10-30",
+      "tier": "open-weights",
+      "note": "Open preview checkpoint for long-context reasoning. October 30 is the dated public model-card update, following the October 28 repository creation timestamp.",
+      "source": "https://huggingface.co/sensenova/SenseNova-Loop-9B-Preview"
+    },
+    {
+      "model": "TBC mischief 1",
+      "lab": "The Biological Computing Co.",
+      "date": "2026-10-30",
+      "tier": "specialty",
+      "note": "Hosted image-to-video model derived using the company's neuron-based optimization. Available through fal and OpenRouter at launch.",
+      "source": "https://www.tbc.co/press-releases/neuron-derived-ai-video-model"
+    },
+    {
+      "model": "Surya 2.5",
+      "lab": "Datalab",
+      "date": "2026-10-30",
+      "tier": "specialty",
+      "note": "689M OCR model for document text and layout, with downloadable weights. The surya-ocr 0.23.0 release uses it by default.",
+      "source": "https://www.datalab.to/blog/surya-2-5"
+    },
+    {
+      "model": "Pika H3 Flex",
+      "lab": "Pika",
+      "date": "2026-10-29",
+      "tier": "specialty",
+      "note": "Open-weight MiniMax H3 post-train for video with synchronized audio. Supports text, reference images, and first and last frames, with a separate hosted API.",
+      "source": "https://pika.art/blog/pika-h3-flex"
+    },
+    {
+      "model": "Phonic-1",
+      "lab": "Phonic",
+      "date": "2026-10-29",
+      "tier": "specialty",
+      "note": "Hosted speech-to-speech model for voice agents that can call tools during a conversation.",
+      "source": "https://phonic.ai/blog/phonic-1"
+    },
+    {
+      "model": "joey-1",
+      "lab": "Base Labs (Baseten)",
+      "date": "2026-10-29",
+      "tier": "specialty",
+      "note": "Small MIT-licensed decision model that returns probabilities and confidence for typed questions. Released on Hugging Face and Baseten Model APIs.",
+      "source": "https://www.baseten.co/blog/decisions-for-a-penny-introducing-joey-1"
+    },
+    {
+      "model": "GLM-5.3-FlashX-Legal (AutoClaw release)",
+      "lab": "Z.ai (Zhipu)",
+      "date": "2026-10-29",
+      "tier": "specialty",
+      "note": "Hosted legal model made available in AutoClaw on October 29, before its November 2 OpenRouter listing. Z.ai has not specified its checkpoint relationship to the earlier GLM-Legal beta.",
+      "source": "https://autoclaw.z.ai/blog/model/GLM-5.3-flashX-Legal/"
+    },
+    {
+      "model": "GO-3 (research preview)",
+      "lab": "AGIBOT",
+      "date": "2026-10-29",
+      "tier": "specialty",
+      "note": "Embodied foundation model for robotic manipulation and post-deployment learning. October 29 records the public unveiling, with public weights planned for later in 2026.",
+      "source": "https://www.agibot.com/article/231/detail/133.html"
+    },
+    {
+      "model": "Particle-1",
+      "lab": "Particle AI",
+      "date": "2026-10-28",
+      "tier": "specialty",
+      "note": "Hosted coding and software-engineering model post-trained for token efficiency, with text and image input, tool calling, and 1M context.",
+      "source": "https://particle.ai/blog/introducing-particle-1"
+    },
+    {
+      "model": "Ling-3.1-flash-1019 (open weights)",
+      "lab": "Ant Group (inclusionAI)",
+      "date": "2026-10-27",
+      "tier": "open-weights",
+      "note": "Updated hybrid reasoning checkpoint for coding and agent workflows. October 27 records the initial weight upload, before the October 29 public coverage.",
+      "source": "https://huggingface.co/inclusionAI/Ling-3.1-flash-1019"
+    },
+    {
+      "model": "Cosmos3-H-Dreams",
+      "lab": "NVIDIA",
+      "date": "2026-10-20",
+      "tier": "specialty",
+      "note": "Open-weight Cosmos 3 checkpoint for interactive surgical simulation. Generates video conditioned on instrument motion and endoscope pose, with code and model weights published.",
+      "source": "https://huggingface.co/blog/nvidia/cosmos3-h-dreams"
+    },
+    {
+      "model": "Nemotron Labs Dory 1.0 4B",
+      "lab": "NVIDIA",
+      "date": "2026-10-16",
+      "tier": "open-weights",
+      "note": "Looped language model with a recurrent block that can run multiple times to trade speed for reasoning depth. NVIDIA dates the BF16 weights October 16, before the November 2 paper.",
+      "source": "https://huggingface.co/nvidia/NVIDIA-Nemotron-Labs-Dory1.0-4B-BF16"
+    },
+    {
+      "model": "MOSS-Image",
+      "lab": "OpenMOSS",
+      "date": "2026-10-16",
+      "tier": "specialty",
+      "note": "Open-weight 5B text-to-image model with base and supervised fine-tuned checkpoints, including support for text rendering within images.",
+      "source": "https://github.com/OpenMOSS/MOSS-Image"
+    },
+    {
+      "model": "GPT-Live-1.1 / GPT-Live-1.1 Quip",
+      "lab": "OpenAI",
+      "date": "2026-10-15",
+      "tier": "specialty",
+      "note": "Full-duplex voice models for continuous listening and response. GPT-Live-1.1 succeeds GPT-Live-1 on Plus and higher tiers, and Quip succeeds GPT-Live-1 mini.",
+      "source": "https://deploymentsafety.openai.com/gpt-live-1-1/alignment"
+    },
+    {
+      "model": "Krea 3",
+      "lab": "Krea",
+      "date": "2026-10-15",
+      "tier": "specialty",
+      "note": "Hosted image model for prompt-driven generation and targeted edits at up to 2K, available in Krea at launch.",
+      "source": "https://www.krea.ai/blog/introducing-krea-3"
+    },
+    {
+      "model": "HiRO-ACEv2",
+      "lab": "Ai2",
+      "date": "2026-10-14",
+      "tier": "specialty",
+      "note": "Open regional weather simulation system with a new downscaling model that predicts high-resolution rain, wind, and pressure fields at 3 km resolution.",
+      "source": "https://huggingface.co/blog/allenai/hiro-acev2"
+    },
+    {
+      "model": "Ling-3.1-flash (open weights)",
+      "lab": "Ant Group (inclusionAI)",
+      "date": "2026-10-13",
+      "tier": "open-weights",
+      "note": "Public weights for the hybrid reasoning model that was available via hosted inference in September. October 13 records the initial checkpoint upload.",
+      "source": "https://huggingface.co/inclusionAI/Ling-3.1-flash"
+    },
+    {
+      "model": "Voxtral Mini 4B Realtime Arabic",
+      "lab": "Mistral",
+      "date": "2026-10-09",
+      "tier": "specialty",
+      "note": "Open-weight streaming Arabic speech recognition checkpoint, adapted from Voxtral Mini 4B Realtime and released in BF16.",
+      "source": "https://huggingface.co/mistralai/Voxtral-Mini-4B-Realtime-Arabic"
+    },
+    {
+      "model": "Kandinsky 6.0 Video Lite / Pro",
+      "lab": "Kandinsky Lab",
+      "date": "2026-10-06",
+      "tier": "specialty",
+      "note": "MIT-licensed 3B and 29B video generation models with synchronized audio and lip sync. Released weights and code include a separate super-resolution model.",
+      "source": "https://github.com/kandinskylab/kandinsky-6"
+    },
+    {
+      "model": "Rho-1 (research preview)",
+      "lab": "Reka",
+      "date": "2026-10-05",
+      "tier": "specialty",
+      "note": "19B multimodal reasoning preview that uses shared state to understand, render, and interact with scenes. Dated by Reka's public research announcement.",
+      "source": "https://reka.ai/news/rho-1-collapsing-the-multimodal-stack"
+    },
+    {
+      "model": "Cactus Whistle",
+      "lab": "Cactus Compute",
+      "date": "2026-10-02",
+      "tier": "specialty",
+      "note": "Compact on-device speech recognition model with downloadable weights, packaged for the Needle runtime.",
+      "source": "https://huggingface.co/Cactus-Compute/whistle"
+    },
+    {
+      "model": "Chord",
+      "lab": "Decagon",
+      "date": "2026-10-01",
+      "tier": "specialty",
+      "note": "Speech model for customer-service conversations, introduced with Decagon Voice 3.",
+      "source": "https://decagon.ai/blog/decagon-chord-voice-model"
+    }
+  ],
+  "corrections": [
+    {
+      "before": {
+        "model": "Kimi K3.1 Pro",
+        "lab": "Moonshot",
+        "date": "2026-10-23",
+        "tier": "flagship",
+        "note": "3T-class multimodal reasoning model with 1M context, post-trained from Kimi K3 for coding, 3D creation, research, and agents. Available in Kimi apps, Work, Code, and the API as kimi-k3.1-pro. Full weights are promised by November 4, 2026, and are not yet public. Uses the October 23 official launch announcement; the research index is dated October 24.",
+        "source": "https://forum.moonshot.ai/t/kimi-k3-1-pro-has-launched-start-exploring-now/629"
+      },
+      "after": {
+        "model": "Kimi K3.1 Pro",
+        "lab": "Moonshot",
+        "date": "2026-10-23",
+        "tier": "flagship",
+        "note": "3T-class multimodal reasoning model with 1M context, post-trained from Kimi K3 for coding, 3D creation, research, and agents. Available in Kimi apps, Work, Code, and the API as kimi-k3.1-pro. Moonshot published the full weights on November 4 as a separate release. Uses the October 23 official launch announcement; the research index is dated October 24.",
+        "source": "https://forum.moonshot.ai/t/kimi-k3-1-pro-has-launched-start-exploring-now/629"
+      },
+      "reason": "Public weights followed the October hosted launch."
+    },
+    {
+      "before": {
+        "model": "Kimi K3.1 Pro Highspeed",
+        "lab": "Moonshot",
+        "date": "2026-10-23",
+        "tier": "flagship",
+        "note": "Faster hosted K3.1 Pro variant released alongside the standard model, available as kimi-k3.1-pro-highspeed in the API and across Kimi products. Moonshot reports 2-3 times the speed; this is a publisher claim. Full model weights are promised by November 4, 2026, rather than available at launch.",
+        "source": "https://www.kimi.com/en/blog/kimi-k3-1-pro"
+      },
+      "after": {
+        "model": "Kimi K3.1 Pro Highspeed",
+        "lab": "Moonshot",
+        "date": "2026-10-23",
+        "tier": "flagship",
+        "note": "Faster hosted K3.1 Pro variant released alongside the standard model, available as kimi-k3.1-pro-highspeed in the API and across Kimi products. Moonshot reports 2-3 times the speed; this is a publisher claim. Moonshot released weights for standard K3.1 Pro on November 4. Highspeed is a hosted variant.",
+        "source": "https://www.kimi.com/en/blog/kimi-k3-1-pro"
+      },
+      "reason": "The public weight release covers standard K3.1 Pro."
+    }
+  ],
+  "exclusions": [
+    {
+      "candidate": "GPT-6.1 Terra Pro",
+      "reason": "OpenRouter documents the same Terra model with a higher reasoning mode.",
+      "sources": [
+        "https://openrouter.ai/openai/gpt-6.1-terra-pro"
+      ]
+    },
+    {
+      "candidate": "GLM 5.3 FlashX Legal (November 2 OpenRouter listing)",
+      "reason": "Later API listing for the October 29 AutoClaw release.",
+      "sources": [
+        "https://autoclaw.z.ai/blog/model/GLM-5.3-flashX-Legal/",
+        "https://openrouter.ai/z-ai/glm-5.3-flashx-legal"
+      ]
+    },
+    {
+      "candidate": "Kimi K3.1 Pro (November 2 repository timestamp)",
+      "reason": "Repository history does not establish public availability on November 2. The public launch was November 4 UTC.",
+      "sources": [
+        "https://huggingface.co/moonshotai/Kimi-K3.1-Pro",
+        "https://chinaaiwire.com/news/moonshot-kimi-k31-pro-model-weights-release-20261105"
+      ]
+    },
+    {
+      "candidate": "Nemotron Labs Dory 1.0 4B (November paper)",
+      "reason": "NVIDIA dates the downloadable model to October 16.",
+      "sources": [
+        "https://huggingface.co/nvidia/NVIDIA-Nemotron-Labs-Dory1.0-4B-BF16",
+        "https://arxiv.org/abs/2611.03998"
+      ]
+    },
+    {
+      "candidate": "Inkling 2 Small and Hy4 open weights",
+      "reason": "The launch announcements establish hosted access. Future weights are a separate milestone.",
+      "sources": [
+        "https://thinkingmachines.ai/news/inkling-2-small/",
+        "https://hy.tencent.ai/research/hy4?langVersion=en"
+      ]
+    },
+    {
+      "candidate": "SWE-2 (October promotion)",
+      "reason": "The model shipped September 10 and is already represented.",
+      "sources": [
+        "https://cognition.com/blog/swe-2"
+      ]
+    },
+    {
+      "candidate": "AnySpeechRecognizer / AnyDecisionModel",
+      "reason": "Swift libraries for running existing models.",
+      "sources": [
+        "https://huggingface.co/blog/anydecisionmodel"
+      ]
+    },
+    {
+      "candidate": "Claude text watermark and Gemini 2.5 retirement",
+      "reason": "Updates to provenance and availability of existing models.",
+      "sources": [
+        "https://platform.claude.com/docs/en/release-notes/overview",
+        "https://ai.google.dev/gemini-api/docs/changelog"
+      ]
+    },
+    {
+      "candidate": "Muse Glimmer 30B (October paper)",
+      "reason": "October technical report covers the open-weight model already recorded in August.",
+      "sources": [
+        "https://huggingface.co/meta-models/Muse-Glimmer-30B",
+        "https://arxiv.org/abs/2610.24628"
+      ]
+    }
+  ],
+  "sourceSweep": [
+    {
+      "lab": "October 1–31 candidate comparison",
+      "sourceURLs": [
+        "https://theagenticweekly.com/models/releases/2026-10",
+        "https://www.nocode.mba/ai-release-tracker/2026/10",
+        "https://benchlm.ai/model-updates/releases/october-2026",
+        "https://digestai.news/models",
+        "https://ai-tldr.dev/releases/model/",
+        "https://minutesofai.com/model-tracker/releases"
+      ],
+      "result": "Compared candidates across the whole month with the embedded timeline and prior manifests. Confirmed additions from vendor announcements, model cards, and hosted provider records. Coverage is curated across model modalities."
+    },
+    {
+      "lab": "November 1–6 candidate comparison",
+      "sourceURLs": [
+        "https://theagenticweekly.com/news/models",
+        "https://thismonthinai.com/updates/2026-11",
+        "https://llmbenchmark.ai/model-updates",
+        "https://huggingface.co/blog",
+        "https://vercel.com/changelog",
+        "https://developers.openai.com/api/docs/changelog",
+        "https://ai.google.dev/gemini-api/docs/changelog"
+      ],
+      "result": "Checked public announcements, weights, and first confirmed hosted milestones. Grouped same-day family variants and skipped duplicate reseller listings, product updates, and unverified releases."
+    }
+  ]
+}
