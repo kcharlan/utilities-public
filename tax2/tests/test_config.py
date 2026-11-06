@@ -177,6 +177,7 @@ def test_config_defaults_created_in_tax2_home(monkeypatch, tmp_path):
     cfg = load_config()
 
     assert cfg == default_config()
+    assert cfg["default_states"] == ["PA"]
     assert config_path() == runtime_home / "config.yaml"
     assert yaml.safe_load(config_path().read_text(encoding="utf-8")) == default_config()
 

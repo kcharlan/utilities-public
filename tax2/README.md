@@ -1,14 +1,14 @@
 # Tax2
 
-Tax2 3.0.3 builds a private, self-contained estimated-tax calculator from federal and
+Tax2 3.1.0 builds a private, self-contained estimated-tax calculator from federal and
 state YAML rules. Open the resulting HTML file in a browser to calculate tax
 and download QIF payments, a Markdown rate schedule, or a CSV lookup table.
 All rules, scripts, styles and license notices are embedded; the page uses local
 system fonts. It works offline without a server or frontend build step.
 
-Bundled rules cover federal and Georgia tax for 2025 and 2026, and Pennsylvania
-for 2026. Verify rates and eligibility before relying on estimates. See
-[Usage](docs/Usage.md) for tax and lookup limitations, and
+Bundled rules cover federal tax for 2025–2027, Georgia for 2025–2026, and
+Pennsylvania for 2026–2027. Verify rates and eligibility before relying on
+estimates. See [Usage](docs/Usage.md) for tax and lookup limitations, and
 [multi-state design](docs/multi_state_design.md) for interfaces and invariants.
 
 ## Quick start
@@ -157,6 +157,7 @@ long-term capital-gain rates, NIIT, FICA and self-employment tax are not modelle
 missing and reads existing config without rewriting it. Optional `tax2:`
 browser-storage keys save theme and state selection; a valid saved selection
 wins over config. Browser interactions never write config or rules.
+See the [default preferences example](docs/Usage.md#hand-edit-preferences).
 An existing non-mapping config (including an empty YAML document) warns
 `config.yaml is not a mapping; using defaults`, uses defaults and remains untouched.
 

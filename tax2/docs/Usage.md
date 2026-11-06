@@ -69,6 +69,8 @@ deployment directories without markers work without Git.
 3. Select at least one state and set each allocation.
 4. Read federal/state estimates, **Total Monthly Tax**, and **Net Monthly Income**.
 
+For 2025 tax with the new default, select Georgia and then clear Pennsylvania.
+
 The browser immediately calculates from embedded rules. Federal uses full
 income once. Each state applies its allocation to both buckets before annual
 computation, rather than prorating full-income tax. Allocations default to 100%,
@@ -93,7 +95,8 @@ never an additional QIF transaction.
 
 Years reflect federal availability, not the intersection of state years.
 A missing selected-state year reports available years and disables QIF.
-Pennsylvania has only 2026 rules. A federal-only year still permits reference
+Bundled federal rules cover 2025–2027, Georgia 2025–2026, and Pennsylvania
+2026–2027. A federal-only year still permits reference
 exports; these do not depend on selected states or valid income.
 
 ## Download QIF
@@ -145,7 +148,7 @@ Tax2 creates missing `$TAX2_HOME/config.yaml` (default `~/.tax2/config.yaml`):
 
 ```yaml
 default_states:
-  - GA
+  - PA
 qif_overrides: {}
 ```
 
@@ -208,7 +211,9 @@ Credits retain a one-child placeholder: take the greater of fixed and per-child
 amount, floored at zero, reduce for phaseout, then apply the refundable cap.
 Tax is floored at zero; this is not a full dependent-eligibility/refund model.
 
-Pennsylvania 2026 uses flat 3.07% personal income tax without a standard
+The 2027 federal and Pennsylvania rules omit tax credits.
+
+Pennsylvania 2026–2027 uses flat 3.07% personal income tax without a standard
 deduction and does not distinguish qualified from ordinary dividends. Local
 EIT is enabled at a generic configured 1% rate on earned income only, added to
 state tax. The state allocation applies to both components before calculation.

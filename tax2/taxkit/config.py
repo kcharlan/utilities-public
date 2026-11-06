@@ -18,7 +18,7 @@ logger = logging.getLogger(__name__)
 
 CONFIG_FILENAME = "config.yaml"
 DEFAULT_CONFIG = {
-    "default_states": ["GA"],
+    "default_states": ["PA"],
     "qif_overrides": {},
 }
 

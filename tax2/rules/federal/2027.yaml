@@ -1,0 +1,24 @@
+year: 2027
+jurisdiction: federal
+filing_statuses: [single, married_joint]
+standard_deduction:
+  single: 16600
+  married_joint: 33200
+brackets:
+  single:
+    - { up_to: 12800, rate: 0.10 }
+    - { up_to: 52025, rate: 0.12 }
+    - { up_to: 109125, rate: 0.22 }
+    - { up_to: 208325, rate: 0.24 }
+    - { up_to: 264550, rate: 0.32 }
+    - { up_to: 661375, rate: 0.35 }
+    - { up_to: null, rate: 0.37 }
+  married_joint:
+    - { up_to: 25600, rate: 0.10 }
+    - { up_to: 104050, rate: 0.12 }
+    - { up_to: 218250, rate: 0.22 }
+    - { up_to: 416650, rate: 0.24 }
+    - { up_to: 529100, rate: 0.32 }
+    - { up_to: 793650, rate: 0.35 }
+    - { up_to: null, rate: 0.37 }
+credits: []

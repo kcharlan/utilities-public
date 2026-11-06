@@ -130,8 +130,10 @@ def test_offline_launcher_page_inputs_allocations_and_downloads(tmp_path):
         browser.close()
 
 
-def test_bundled_pa_eit_reaches_display_and_all_downloads(built_browser):
+@pytest.mark.parametrize('year', [2026, 2027])
+def test_bundled_pa_eit_reaches_display_and_all_downloads(built_browser, year):
     page = built_browser(instant='2026-10-01T12:00:00Z')
+    page.get_by_label('Tax Year', exact=True).select_option(str(year))
     page.get_by_label('Pennsylvania', exact=True).check()
     page.get_by_label('Georgia', exact=True).uncheck()
     income(page, '4000', earned='1000')
@@ -141,6 +143,8 @@ def test_bundled_pa_eit_reaches_display_and_all_downloads(built_browser):
     assert '\nT-163.50\n' in qif
     assert '\nT163.50\n' in qif
     _, schedule = download_text(page, 'Download rate schedule')
+    if year == 2027:
+        assert '## Federal' in schedule and '## PA' in schedule and '## GA' not in schedule
     pa_schedule = schedule.split('## PA', 1)[1]
     assert 'disabled — not included' not in pa_schedule
     assert '1%' in pa_schedule
@@ -384,6 +388,18 @@ def test_tablet_sidebar_spans_main_and_export(built_browser):
     assert boxes[0] >= boxes[1] - 1
 
 
+def test_default_config_opens_2027_on_pennsylvania_without_error(built_browser):
+    built_browser.config.unlink()
+    page = built_browser(storage={}, instant='2027-10-08T12:00:00Z')
+    expect(page.get_by_label('Tax Year', exact=True)).to_have_value('2027')
+    expect(page.get_by_label('Pennsylvania', exact=True)).to_be_checked()
+    expect(page.get_by_label('Georgia', exact=True)).not_to_be_checked()
+    assert page.locator('input[type=checkbox]:checked').count() == 1
+    expect(page.locator('.federal .result-amount')).to_be_visible()
+    expect(page.locator('.state .result-amount')).to_be_visible()
+    assert page.locator('.error-card').count() == 0
+
+
 def test_defaults_format_reconciliation_and_current_qif(built_browser):
     page = built_browser(instant='2026-10-08T12:00:00Z')
     expect(page.get_by_label('Tax Year', exact=True)).to_have_value('2026')
@@ -573,11 +589,14 @@ def test_missing_state_year_preserves_selection_and_exports(built_browser, tmp_p
 def test_partial_missing_year_and_selected_year_names(built_browser):
     page = built_browser(storage={'tax2:selected-states': '["GA","PA"]'}, instant='2026-10-08T12:00:00Z')
     page.get_by_label('Tax Year', exact=True).select_option('2025')
-    expect(page.locator('.error-card')).to_have_text('Error: State PA has no rules for 2025. Available years: [2026]')
+    expect(page.locator('.error-card')).to_have_text('Error: State PA has no rules for 2025. Available years: [2026, 2027]')
     expect(page.get_by_label('Georgia', exact=True)).to_be_checked()
     expect(page.get_by_label('Pennsylvania', exact=True)).to_be_checked()
     page.get_by_label('Pennsylvania', exact=True).uncheck()
     expect(page.locator('.state .result-label')).to_have_text('Georgia')
+    page.get_by_label('Tax Year', exact=True).select_option('2027')
+    expect(page.locator('.error-card')).to_have_text('Error: State GA has no rules for 2027. Available years: [2025, 2026]')
+    expect(page.get_by_role('button', name='Download QIF')).to_be_disabled()
 
 
 def test_available_years_multi_year_format(built_browser, tmp_path):
