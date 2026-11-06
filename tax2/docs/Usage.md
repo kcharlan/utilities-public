@@ -69,6 +69,8 @@ deployment directories without markers work without Git.
 3. Select at least one state and set each allocation.
 4. Read federal/state estimates, **Total Monthly Tax**, and **Net Monthly Income**.
 
+For 2025 tax with the new default, select Georgia and then clear Pennsylvania.
+
 The browser immediately calculates from embedded rules. Federal uses full
 income once. Each state applies its allocation to both buckets before annual
 computation, rather than prorating full-income tax. Allocations default to 100%,
@@ -146,7 +148,7 @@ Tax2 creates missing `$TAX2_HOME/config.yaml` (default `~/.tax2/config.yaml`):
 
 ```yaml
 default_states:
-  - GA
+  - PA
 qif_overrides: {}
 ```
 

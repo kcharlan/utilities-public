@@ -124,7 +124,7 @@ credits. Use the schedule above 500,000 or for exact boundary calculations.
 ## Config, storage and publication
 
 Missing `~/.tax2/config.yaml` (or `$TAX2_HOME/config.yaml`) is created privately
-with `default_states: [GA]` and `qif_overrides: {}`. Existing config is read-only.
+with `default_states: [PA]` and `qif_overrides: {}`. Existing config is read-only.
 Override mappings normalize state keys and retain only string `state_expense`
 and `state_transfer`. Malformed parts warn/fall back while valid siblings remain:
 this is the adopted compatibility assumption. Obsolete alias preferences are

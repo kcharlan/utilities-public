@@ -388,6 +388,18 @@ def test_tablet_sidebar_spans_main_and_export(built_browser):
     assert boxes[0] >= boxes[1] - 1
 
 
+def test_default_config_opens_2027_on_pennsylvania_without_error(built_browser):
+    built_browser.config.unlink()
+    page = built_browser(storage={}, instant='2027-10-08T12:00:00Z')
+    expect(page.get_by_label('Tax Year', exact=True)).to_have_value('2027')
+    expect(page.get_by_label('Pennsylvania', exact=True)).to_be_checked()
+    expect(page.get_by_label('Georgia', exact=True)).not_to_be_checked()
+    assert page.locator('input[type=checkbox]:checked').count() == 1
+    expect(page.locator('.federal .result-amount')).to_be_visible()
+    expect(page.locator('.state .result-amount')).to_be_visible()
+    assert page.locator('.error-card').count() == 0
+
+
 def test_defaults_format_reconciliation_and_current_qif(built_browser):
     page = built_browser(instant='2026-10-08T12:00:00Z')
     expect(page.get_by_label('Tax Year', exact=True)).to_have_value('2026')

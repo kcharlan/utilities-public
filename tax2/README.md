@@ -1,6 +1,6 @@
 # Tax2
 
-Tax2 3.0.3 builds a private, self-contained estimated-tax calculator from federal and
+Tax2 3.1.0 builds a private, self-contained estimated-tax calculator from federal and
 state YAML rules. Open the resulting HTML file in a browser to calculate tax
 and download QIF payments, a Markdown rate schedule, or a CSV lookup table.
 All rules, scripts, styles and license notices are embedded; the page uses local
@@ -157,6 +157,7 @@ long-term capital-gain rates, NIIT, FICA and self-employment tax are not modelle
 missing and reads existing config without rewriting it. Optional `tax2:`
 browser-storage keys save theme and state selection; a valid saved selection
 wins over config. Browser interactions never write config or rules.
+See the [default preferences example](docs/Usage.md#hand-edit-preferences).
 An existing non-mapping config (including an empty YAML document) warns
 `config.yaml is not a mapping; using defaults`, uses defaults and remains untouched.
 
