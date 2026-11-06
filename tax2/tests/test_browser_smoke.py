@@ -395,8 +395,13 @@ def test_default_config_opens_2027_on_pennsylvania_without_error(built_browser):
     expect(page.get_by_label('Pennsylvania', exact=True)).to_be_checked()
     expect(page.get_by_label('Georgia', exact=True)).not_to_be_checked()
     assert page.locator('input[type=checkbox]:checked').count() == 1
-    expect(page.locator('.federal .result-amount')).to_be_visible()
-    expect(page.locator('.state .result-amount')).to_be_visible()
+    # Default inputs: single, 12,500 unearned. Federal 2027: 150,000 - 16,600
+    # = 133,400 taxable; 18,549 + 24,275 * .24 = 24,375 / 12 = 2,031.25.
+    # PA: 150,000 * 3.07% = 4,605 / 12 = 383.75; EIT applies to earned only.
+    expect(page.locator('.federal .result-amount')).to_have_text('$2,031.25')
+    expect(page.locator('.state .result-amount')).to_have_text('$383.75')
+    expect(page.locator('.total .result-amount')).to_have_text('$2,415.00')
+    expect(page.locator('.net .result-amount')).to_have_text('$10,085.00')
     assert page.locator('.error-card').count() == 0
 
 

@@ -211,8 +211,6 @@ Credits retain a one-child placeholder: take the greater of fixed and per-child
 amount, floored at zero, reduce for phaseout, then apply the refundable cap.
 Tax is floored at zero; this is not a full dependent-eligibility/refund model.
 
-The 2027 federal and Pennsylvania rules omit tax credits.
-
 Pennsylvania 2026–2027 uses flat 3.07% personal income tax without a standard
 deduction and does not distinguish qualified from ordinary dividends. Local
 EIT is enabled at a generic configured 1% rate on earned income only, added to
