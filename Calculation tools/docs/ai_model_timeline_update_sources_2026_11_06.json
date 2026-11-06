@@ -22,7 +22,7 @@
     },
     {
       "model": "Inkling 2 Small (Tinker release)",
-      "lab": "Thinking Machines Lab",
+      "lab": "Thinking Machines",
       "date": "2026-11-05",
       "tier": "mid",
       "note": "594B mixture-of-experts model with 17B active parameters and image input. Available on Tinker at launch, with Apache-2.0 weights planned after safety testing.",

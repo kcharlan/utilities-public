@@ -60,7 +60,7 @@ for (const width of [1440, 375]) {
       page.on('pageerror', error => errors.push(error.message));
       page.on('console', message => { if (message.type() === 'error') errors.push(message.text()); });
       await page.goto(target === 'http' ? '/ai-model-timeline.html' : pathToFileURL(path.join(__dirname, '..', 'ai-model-timeline.html')).href);
-      await expect(page.locator('header')).toContainText('574 notable model releases from 120 labs');
+      await expect(page.locator('header')).toContainText('574 notable model releases from 119 labs');
       await page.getByRole('button', { name: 'Month', exact: true }).click();
       await expect(page.locator('#period-label')).toHaveText('November 2026');
       await page.getByRole('button', { name: 'Report', exact: true }).click();

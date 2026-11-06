@@ -435,7 +435,7 @@ const {analyze, render} = require('../scripts/timeline-analysis.cjs');
 test('narrative statistics match the expanded dataset', () => {
   const stats = analyze(data);
   assert.equal(stats.total, 574);
-  assert.equal(new Set(data.map(row => row.lab)).size, 120);
+  assert.equal(new Set(data.map(row => row.lab)).size, 119);
   assert.equal(stats.sameDay, 633);
   assert.equal(stats.withinTwo, 2587);
   assert.deepEqual(stats.years, {'2024': 88, '2025': 134, '2026': 352});
@@ -477,6 +477,13 @@ test('recent-release summary follows the latest dated rows', () => {
   assert.doesNotMatch(summary, /Muse Wonder \(October 12\)/);
   assert.doesNotMatch(summary, /MISSINGNO\. \(October 10\)/);
   assert.doesNotMatch(summary, /The latest cluster spans Antigravity/);
+});
+
+test('Inkling releases share the same lab lane', () => {
+  const original = data.find(row => row.model === 'Inkling');
+  const successor = data.find(row => row.model === 'Inkling 2 Small (Tinker release)');
+  assert.ok(original && successor);
+  assert.equal(successor.lab, original.lab);
 });
 
 test('every update manifest is reflected in the embedded data', () => {
