@@ -14,10 +14,10 @@ def test_state_inventory_retains_names_years_and_qif(monkeypatch, tmp_path):
     assert not tmp_path.resolve().is_relative_to(PROJECT.parent)
     states = {state['code']: state for state in build_payload(PROJECT / 'rules', rules_source='bundled')['states']}
     assert states['GA']['display_name'] == 'Georgia'
-    assert {2025, 2026} <= set(states['GA']['years'])
+    assert set(states['GA']['years']) == {2025, 2026}
     assert states['GA']['qif']['state_transfer'] == '[GA State Income Taxes]'
     assert states['PA']['display_name'] == 'Pennsylvania'
-    assert 2026 in states['PA']['years']
+    assert set(states['PA']['years']) == {2026, 2027}
     assert states['PA']['qif']['state_transfer'] == '[PA State Income Taxes]'
 
 
@@ -50,6 +50,25 @@ def test_live_bundled_federal_hand_calculations(engine_page, year, status, month
     assert result['federal_annual'] == annual
 
 
+@pytest.mark.parametrize('status,monthly,federal_cents,pa_cents', [
+    ('single', 1000, 0, 3070), ('single', 2450, 10667, 7522),
+    ('single', 5000, 41267, 15350), ('single', 12500, 203125, 38375),
+    ('single', 60000, 1789892, 184200),
+    ('married_joint', 1000, 0, 3070), ('married_joint', 4900, 21334, 15043),
+    ('married_joint', 5000, 22534, 15350), ('married_joint', 12500, 123159, 38375),
+    ('married_joint', 70000, 1817967, 214900),
+])
+def test_live_bundled_2027_federal_and_pa_monthly_cents(engine_page, status, monthly, federal_cents, pa_cents):
+    # Unearned income isolates the Pennsylvania state component.
+    rules = build_payload(PROJECT / 'rules', rules_source='bundled')
+    result = engine_page.evaluate('''({rules,status,monthly}) => Tax2Engine.computeMonthly({earnedCents:0,
+        unearnedCents:monthly*100,filingStatus:status,year:2027,states:[{code:'PA',allocation_pct:100}]},rules)''',
+        dict(rules=rules, status=status, monthly=monthly))
+    assert result['federal_cents'] == federal_cents
+    assert result['states'][0]['state_cents'] == pa_cents
+
+
+@pytest.mark.parametrize('year', [2026, 2027])
 @pytest.mark.parametrize('status', ['single', 'married_joint'])
 @pytest.mark.parametrize('earned,unearned,allocation,pa_cents', [
     (0, 5000, 100, 15350),
@@ -60,13 +79,13 @@ def test_live_bundled_federal_hand_calculations(engine_page, year, status, month
     (0, 0, 100, 0),
 ])
 def test_bundled_pa_adds_eit_only_to_allocated_earned_income(
-        engine_page, status, earned, unearned, allocation, pa_cents):
+        engine_page, year, status, earned, unearned, allocation, pa_cents):
     # Synthetic amounts: 5,000 * 3.07% = 153.50; 1,000 * 1% adds 10.00.
     # Halving both buckets gives 76.75 state tax plus 5.00 local EIT.
     rules = build_payload(PROJECT / 'rules', rules_source='bundled')
-    result = engine_page.evaluate('''({rules,status,earned,unearned,allocation}) =>
+    result = engine_page.evaluate('''({rules,year,status,earned,unearned,allocation}) =>
         Tax2Engine.computeMonthly({earnedCents:earned*100,unearnedCents:unearned*100,
-            filingStatus:status,year:2026,states:[{code:'PA',allocation_pct:allocation}]},rules)
-    ''', dict(rules=rules, status=status, earned=earned, unearned=unearned,
+            filingStatus:status,year:year,states:[{code:'PA',allocation_pct:allocation}]},rules)
+    ''', dict(rules=rules, year=year, status=status, earned=earned, unearned=unearned,
               allocation=allocation))
     assert result['states'][0]['state_cents'] == pa_cents

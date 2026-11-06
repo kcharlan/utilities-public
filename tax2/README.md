@@ -6,9 +6,9 @@ and download QIF payments, a Markdown rate schedule, or a CSV lookup table.
 All rules, scripts, styles and license notices are embedded; the page uses local
 system fonts. It works offline without a server or frontend build step.
 
-Bundled rules cover federal and Georgia tax for 2025 and 2026, and Pennsylvania
-for 2026. Verify rates and eligibility before relying on estimates. See
-[Usage](docs/Usage.md) for tax and lookup limitations, and
+Bundled rules cover federal tax for 2025–2027, Georgia for 2025–2026, and
+Pennsylvania for 2026–2027. Verify rates and eligibility before relying on
+estimates. See [Usage](docs/Usage.md) for tax and lookup limitations, and
 [multi-state design](docs/multi_state_design.md) for interfaces and invariants.
 
 ## Quick start

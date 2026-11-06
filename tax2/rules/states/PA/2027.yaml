@@ -1,0 +1,33 @@
+year: 2027
+jurisdiction: PA
+display_name: Pennsylvania
+filing_statuses: [single, married_joint]
+components:
+  - name: state_income_tax
+    enabled: true
+    applies_to: [earned, unearned]
+    standard_deduction:
+      single: 0
+      married_joint: 0
+    brackets:
+      single:
+        - { up_to: null, rate: 0.0307 }
+      married_joint:
+        - { up_to: null, rate: 0.0307 }
+  - name: local_eit
+    label: "Local EIT (resident municipality and school district)"
+    enabled: true
+    applies_to: [earned]
+    standard_deduction:
+      single: 0
+      married_joint: 0
+    brackets:
+      # Generic configured local EIT rate; verify applicability before use.
+      single:
+        - { up_to: null, rate: 0.01 }
+      married_joint:
+        - { up_to: null, rate: 0.01 }
+credits: []
+qif:
+  state_expense: "Tax:State Income Tax Estimated Paid"
+  state_transfer: "[PA State Income Taxes]"

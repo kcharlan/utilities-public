@@ -61,7 +61,7 @@ phaseout rates and non-null refundable caps are nonnegative. Deductions have
 no additional restrictions. Zero-rate/all-disabled rules remain valid.
 Roots require federal rules and at least one state with valid rules.
 
-Federal/Georgia currently normalize legacy files; Pennsylvania 2026 uses
+Federal/Georgia currently normalize legacy files; Pennsylvania 2026–2027 uses
 components for 3.07% state tax and enabled 1% earned-only local EIT. Names are
 identifiers, never jurisdiction-specific engine branches. Generic labels and
 rates stay in YAML; private locality names/codes never enter this public repo.
@@ -151,7 +151,7 @@ allocations, generic YAML components, intentional zero tax and negative net,
 config/storage fallbacks, publication safety and offline Chromium downloads.
 Frozen parity rules remain unchanged. Georgia 2025's historical federal-like
 deductions are preserved for its fixture, not corrected silently. Pennsylvania
-has only 2026 rules. Starting with 3.0.1, its bundled local EIT is enabled at a
+has 2026–2027 rules. Starting with 3.0.1, its bundled local EIT is enabled at a
 generic configured rate of 1%; the frozen parity inputs retain disabled EIT.
 Live bundled-rule tests cover the uplift on earned income, state allocations
 and the resulting display, QIF, rate schedule and lookup downloads.
