@@ -55,8 +55,8 @@ directory in either temporary directory.
 Remove the directory once you have reviewed the images.
 Signing commands are synthetic only inside isolated release tests; these tests
 cannot establish real certificate trust, vault access, physical input delivery,
-cloud connectivity or login-item registration. See [SDK audit](docs/macos_sdk_audit_20261019.md)
-and [architecture](docs/architecture.md).
+cloud connectivity or login-item registration. See the
+[architecture and SDK maintenance guidance](docs/architecture.md).
 
 ## Credentials and setup
 

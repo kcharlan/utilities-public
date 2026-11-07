@@ -167,3 +167,42 @@ and the reading. A button title would add NSStatusBarButton title-cell insets
 (about 3 pt per side). Colours resolve in the image's drawing handler, under
 the menu bar's real appearance; the macOS 27 menu bar draws tinted template
 images and tinted titles black on a dark bar.
+
+## Security and SDK maintenance
+
+`TLSIdentity` composes connection-owned, memory-only Security objects with
+`SecKeyCreateWithData`, `SecCertificateCreateWithData` and `SecIdentityCreate`.
+It does not persist PEM files or create a Keychain. Identity tests exercise
+certificate equality, private-key signatures, mismatched keys, malformed PEM
+and independent persistence checks. Credentials use `CredentialProvider` and
+`MemorySessionStore`; historical Keychain items are never automatically read or
+deleted. The protocol's MD5 and CBC operations are compatibility requirements.
+
+Filesystem code uses `URL(filePath:directoryHint:)`,
+`appending(path:directoryHint:)` and `path(percentEncoded: false)` so POSIX calls
+receive decoded paths. Snapshot containment compares resolved path components:
+directory URLs can retain a trailing slash. Keep the space, percent, Unicode,
+literal `%2F`, atomic replacement and locking regressions when changing paths.
+
+The credential subprocess reader uses nonblocking `Darwin.read` to preserve
+fragmented output; Foundation's filling read can consume a fragment before
+throwing `EAGAIN`. One worker owns output bounds, timeout/cancellation,
+termination and child reaping. Cleanup and synthetic certificate generation use
+throwing FileHandle APIs. The synthetic certificate helper depends on the
+installed `/usr/bin/openssl` command; no Python generator is required.
+
+The October 2026 review used Xcode 27.0, the macOS 27.0 SDK and Swift 6.4.
+Normal build, test and release compilation treats warnings as errors, but the
+review also found future-sentinel deprecations that do not produce compiler
+warnings. Recheck SDK declarations when updating the toolchain; that review is
+not a promise of future support. The snapshot builder and bundle checks verify
+the renderer's minimum OS and SDK against macOS 27.
+
+The app uses the macOS 27 expanded status-item session, an owned nonactivating
+panel, `NSApplication.activate()` and `SMAppService` for login registration.
+Network.framework callbacks and NotificationCenter block observers were
+supported in the inspected SDK; the availability of newer APIs alone did not
+require replacing them. The panel uses semantic `.popover` material, and Reduce
+Motion bypasses animation. Synthetic tests and source-copy rendering do not
+establish real signing trust, installed GUI authorization, login registration,
+vault access or physical charger behavior; the README documents those checks.

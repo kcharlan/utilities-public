@@ -19,8 +19,10 @@ brew install ffmpeg
 ## Setup
 
 Run the launcher from this directory. uv installs the pinned dependencies on
-first use; the [decision record](../docs/transcription_uv_decision.md) records
-the measured cache footprint.
+first use. Allow several GiB for its dependency cache, plus the selected Whisper
+model. An October 2026 Apple Silicon pilot measured about 2.36 GiB for the
+dependency cache with both optional packages, excluding model downloads; package
+versions and cache sharing affect the actual footprint.
 
 ```bash
 ./transcription
