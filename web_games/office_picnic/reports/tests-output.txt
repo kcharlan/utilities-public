@@ -1,0 +1,59 @@
+
+> test
+> node --test
+
+✔ passive release fails during the opening district within forty seconds (5.132042ms)
+✔ a single launch pull-up cannot coast through the entire opening district (3.90975ms)
+✔ a height-only cruise policy encounters a real hazard in the opening district (3.38975ms)
+✔ opening route makes the pilot clear hazards both above and below (5.437125ms)
+✔ vent lull lets the plane descend while its visible burst raises it (0.29ms)
+✔ wide heat, fading lift and wind produce distinct physical responses (0.270541ms)
+✔ staying high throughout the opening cannot bypass the dive-under encounter (10.411125ms)
+✔ a player at normal cruising height can react to the advertised washer warning (1.825041ms)
+✔ a high nose-up approach can dive through AC and level below the washer (2.489209ms)
+✔ flight guidance warns to climb over the first flock and dive before the washers (2.826917ms)
+✔ guidance stops asking for more climb when speed is low or the flock is already below (0.560667ms)
+✔ between encounters guidance asks to rebuild height only when it is needed (0.591083ms)
+✔ guidance does not tell a low plane to glide into a raised receiving roof (1.02975ms)
+✔ air guidance distinguishes upward push from actual rising or descending motion (0.574958ms)
+✔ a plane already below the washer gets level-out advice instead of an endless dive (0.50975ms)
+✔ guidance exposes the same vent lull and burst that affect the plane (0.261917ms)
+✔ tailwind guidance discloses its forward and upward effects (0.23675ms)
+✔ generated sheets decode as alpha PNGs with an even fixed grid (3.024417ms)
+✔ washer illustration is a high-resolution alpha asset (1.225125ms)
+✔ static server serves browser modules, checks and assets with correct MIME and rejects unknown paths (61.835375ms)
+✔ holding converts forward energy into height (0.927125ms)
+✔ release gains speed and descends (0.15475ms)
+✔ stall costs height, release recovers, fixed inputs reproduce state (1.76875ms)
+✔ holding a stalled plane cannot harvest lift for free height (0.091042ms)
+✔ released dive can lower altitude and build airspeed inside steady AC lift (0.108709ms)
+✔ releasing from nose-up flight produces downward motion within one second in AC (0.074958ms)
+✔ encounter proof rejects a missing warning instead of treating null as time zero (0.704708ms)
+✔ CLI measurement and collision-enabled proof verify the shipped world (309.763791ms)
+✔ records keep fastest completed result separately by mode (0.659417ms)
+✔ corrupt, nonfinite, unknown modes and blocked storage cannot break play or create records (0.138458ms)
+✔ unavailable storage retains the in-session best across slower replays (0.050833ms)
+✔ fixed step budget freezes paused time and bounds catch-up after a long frame (0.383917ms)
+✔ time display and camera preserve readable minimum phone lookahead (0.111167ms)
+✔ portrait camera keeps the plane in the middle portion of the screen (0.073625ms)
+✔ player distances and speeds use American units with useful near-goal precision (8.081ms)
+✔ every authored gap fits a measured envelope and final district approaches its limit (2.81625ms)
+✔ each district teaches its new air feature first and remixes the earlier features (0.7005ms)
+✔ real hold/release bot finishes both modes without impacts in four to eight minutes (36.737917ms)
+✔ swept collisions catch thin platforms (0.094792ms)
+✔ standard crash restores checkpoint in under one second and keeps time; nonstop restarts (0.494542ms)
+✔ hazards advertise enough distance for at least two seconds at maximum closing speed (0.201459ms)
+✔ later crossings require a pull-up rather than clearing with release alone (16.768792ms)
+✔ park arrival descends continuously into the salad before results (0.302042ms)
+✔ both recognizable hazard types and roofs cause real impacts (0.533042ms)
+✔ crossing a district saves a safe rooftop and emits a timely hazard warning (0.340708ms)
+✔ washer collision consists of a compact deck and actual suspension cables, with open space between (4.175166ms)
+✔ washer art uses the collision body dimensions on desktop, portrait and landscape (1.386625ms)
+ℹ tests 47
+ℹ suites 0
+ℹ pass 47
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 353.072375

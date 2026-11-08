@@ -1,0 +1,6 @@
+{
+  "source": "key-art.png, 24x16 area-average samples; coordinates use BMP bottom-left origin",
+  "sampled": {"shadow":"#4f4b64","sky":"#9b8cbb","warm":"#f1a290"},
+  "sampleCoordinates": {"shadow":[2,9],"sky":[20,2],"warm":[22,7]},
+  "derived": {"ink":"#302f48","paper":"#fff0d3","window":"#f3bd86","park":"#7d887d"}
+}

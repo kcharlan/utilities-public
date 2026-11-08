@@ -1,0 +1,4 @@
+!dist/
+!dist/**
+office-picnic.zip
+.DS_Store

@@ -638,6 +638,12 @@ zsh tools/tests/test_check_local_deployments.zsh
 
 ## `~/Library/Scripts`
 
+### Office Picnic static game
+
+Office Picnic is a maintained static runtime under `web_games/office_picnic/dist/`, deployed by its project-specific installer rather than the home-project/script manifest. From `web_games/office_picnic`, run `npm test`, stage the runtime with `git add dist`, then `npm run deploy`. It validates indexed source bytes/modes, installs only that inventory into `~/webroot/games/office_picnic/`, and preserves local-only files and other games. No build or server restart is needed. The play route is `/games/office_picnic/index.html` on the existing local webserver; folder URLs open its file browser.
+
+`npm run deploy -- --dry-run` validates without writes; `--check` compares installed maintained files with staged source. Before activation it saves the complete prior managed inventory in private persistent `~/.utilities-deploy-backups/office-picnic/copy-*` backups. Successful forward deployments retain the newest two. `--rollback BACKUP` restores independently of the current source state, saves current files first, preserves recovery history, and preserves unrelated files. The fleet audit does not yet inspect this game; use its explicit `--check`. Its full `npm test` suite includes isolated deployment/update/rollback and rejection tests in removed OS temporary directories. See the [game README](../web_games/office_picnic/README.md#local-webserver-deployment).
+
 Direct script copies are listed in [`tools/deployment_copies.json`](../tools/deployment_copies.json). Deploy them with `node tools/deploy_copies.mjs` from the repository root. Use `--only NAME` to select an entry and `--dry-run` to inspect changes without writing. The deployer requires a clean committed `main` for its inputs. Each entry is its own transaction; a failure reports any earlier entries that completed. Successful forward updates retain the newest two eligible backups per entry, ordered by modification time and then name.
 
 `model-sentinel` is intentionally different: it is a generated zipapp. Rebuild

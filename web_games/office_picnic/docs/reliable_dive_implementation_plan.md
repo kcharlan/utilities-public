@@ -1,0 +1,7 @@
+# Reliable dive, clearer air, and washer artwork
+
+The user's playthrough exposed a mismatch between promised release-to-dive behavior and net flight inside lift. Fix the existing one-input control; do not add a second flight input. Root README and lessons were read; no area README exists. PKM project resolution is unregistered and prior searches contain no relevant flight decisions.
+
+1. Reproduce release staying level/rising in AC. Add regressions for decisive nose-down pitch, loss of altitude and speed recovery, including a high approach to washers. Make release effective, measure the new dive/glide/pull-up envelope before changing layout, and retune authored crossings without removing the earlier climb/dive/recovery challenges. Keep four-to-eight-minute runs and full route/perturbed proofs.
+2. Replace the giant mesh/keyhole figure with a generated, transparent illustrated worker/gondola. Render suspension cables clearly and collide with actual platform/cable parts. Update asset checks/provenance. Distinguish control instructions (pitch up spends airspeed, release dives/builds airspeed), environmental upward/forward push, and actual ascent/descent. Remove contradictory “use lift and keep speed” copy.
+3. Fresh reviewer, regression fixes, full suite/proofs, desktop/phone browser play and image inspection. Refresh QA notes and download archive, with physical-device/independent-novice limits stated. No commits, pushes or publication.

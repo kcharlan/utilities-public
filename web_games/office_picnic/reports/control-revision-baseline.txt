@@ -1,0 +1,50 @@
+
+> test
+> node --test
+
+✔ passive release fails during the opening district within forty seconds (5.567959ms)
+✔ a single launch pull-up cannot coast through the entire opening district (7.606458ms)
+✔ a height-only cruise policy encounters a real hazard in the opening district (2.305ms)
+✔ opening route makes the pilot clear hazards both above and below (5.529208ms)
+✔ vent lull lets the plane descend while its visible burst raises it (0.366584ms)
+✔ wide heat, fading lift and wind produce distinct physical responses (0.356292ms)
+✔ staying high throughout the opening cannot bypass the dive-under encounter (10.11875ms)
+✔ a player at normal cruising height can react to the advertised washer warning (2.458958ms)
+✔ flight guidance warns to climb over the first flock and dive before the washers (3.238458ms)
+✔ guidance stops asking for more climb when speed is low or the flock is already below (1.09325ms)
+✔ between encounters guidance asks to rebuild height only when it is needed (1.35525ms)
+✔ guidance does not tell a low plane to glide into a raised receiving roof (0.830291ms)
+✔ guidance exposes the same vent lull and burst that affect the plane (0.490792ms)
+✔ generated sheets decode as alpha PNGs with an even fixed grid (2.510666ms)
+✔ static server serves browser modules, checks and assets with correct MIME and rejects unknown paths (63.071958ms)
+✔ holding converts forward energy into height (0.943541ms)
+✔ release gains speed and descends (0.155292ms)
+✔ stall costs height, release recovers, fixed inputs reproduce state (0.94575ms)
+✔ holding a stalled plane cannot harvest lift for free height (0.07075ms)
+✔ encounter proof rejects a missing warning instead of treating null as time zero (0.726833ms)
+✔ CLI measurement and collision-enabled proof verify the shipped world (489.199ms)
+✔ records keep fastest completed result separately by mode (0.694ms)
+✔ corrupt, nonfinite, unknown modes and blocked storage cannot break play or create records (0.177583ms)
+✔ unavailable storage retains the in-session best across slower replays (0.061333ms)
+✔ fixed step budget freezes paused time and bounds catch-up after a long frame (0.380084ms)
+✔ time display and camera preserve readable minimum phone lookahead (0.1105ms)
+✔ portrait camera keeps the plane in the middle portion of the screen (0.054667ms)
+✔ player distances and speeds use American units with useful near-goal precision (7.962209ms)
+✔ every authored gap fits a measured envelope and final district approaches its limit (3.144583ms)
+✔ each district teaches its new air feature first and remixes the earlier features (1.1375ms)
+✔ real hold/release bot finishes both modes without impacts in four to eight minutes (46.707167ms)
+✔ swept collisions catch thin platforms (0.106375ms)
+✔ standard crash restores checkpoint in under one second and keeps time; nonstop restarts (0.740834ms)
+✔ hazards advertise enough distance for at least two seconds at maximum closing speed (0.254ms)
+✔ later crossings require a pull-up rather than clearing with release alone (18.238792ms)
+✔ park arrival descends continuously into the salad before results (0.315375ms)
+✔ both recognizable hazard types and roofs cause real impacts (0.798541ms)
+✔ crossing a district saves a safe rooftop and emits a timely hazard warning (0.516458ms)
+ℹ tests 38
+ℹ suites 0
+ℹ pass 38
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 534.46875

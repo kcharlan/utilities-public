@@ -1,0 +1,23 @@
+# Lessons learned
+
+- Measure released descent, full-speed pull-up and stall response before laying out crossings. A steady glide ratio alone does not establish a safe receiving roof: record entry speed/pitch/height, roof bounds, and collision-inclusive clearance separately.
+- Air columns need bounded heights. Unbounded lift carried the bot into overhead platforms despite safe horizontal gap lengths.
+- Broad weaker thermals need enough width to regain height before the pull-up stripe. Test energy recovery through the whole district, not isolated gaps alone.
+- A corridor that clears with release alone makes the core input unnecessary. A no-input regression guards the later districts' need for a pull-up.
+- Use separate vertical framing on portrait screens; equal x/y scale with long horizontal lookahead left the plane at the bottom of a tall phone screen. Keep warning distance and readable vertical space.
+- Stalled-and-held behavior must be checked inside lift, not only in still air. Otherwise the player can gain height despite the intended energy constraint.
+- Best times need an in-memory fallback. Reloading unavailable storage at every finish discards the best result between replays.
+- Landing is a real simulation state: smoothly descend from the actual approach position to the bowl before freezing results. Substituting the bowl coordinate only in the renderer creates a visible teleport.
+- Test district feature coverage explicitly. A clamped feature index introduced new lift types but silently dropped AC lift from every later district; use an authored teaching-first cycle that covers all prior types.
+- Version best-time storage when route length/geometry changes, so old development runs do not compete with the final course.
+- A successful bot route is not evidence of engaging play. The first user playthrough found that early districts permitted passive gliding and every hazard occupied an overhead band. Future difficulty proofs must also demonstrate that early maneuvers and vertical hazard avoidance are necessary, while preserving successful perturbed routes.
+- Air-feature presentation must match its physical effect at flight height. A small rooftop vent ellipse plus a 12–18 m/s continuously positive lift cycle made the pulse hard to distinguish from steady AC. A meaningful pulse needs a visible column and a meaningful change in the plane's response.
+- Check obvious alternative policies, not just the preferred pilot. A 185m cruising test missed a reachable 230m bypass above the suspended frame. The visible suspension now extends beyond the measured reachable height, and multiple high targets are tested.
+- Warning lead in seconds must also allow the required maneuver. The washer's old cue arrived well before collision but too late to descend from normal cruise; use the same preparation distance for the audio/notice, HUD, offscreen marker and reference pilot, then simulate a delayed response at that cue.
+- Reject nullable warning timestamps before subtracting them. JavaScript coerces null to zero, letting an absent warning look like a large valid lead time.
+- Test a single early input followed by coasting. Weaker lift and two hazard types still left that route through the first district until receiving roofs required rebuilding height after the dive.
+- Guidance should describe the next useful action: release when speed is low or height is sufficient, rebuild in lift, and warn about raised receiving roofs. A permanent “hold” hint can teach overclimbing or holding into stall.
+- A nose-down animation is not proof of a usable dive. Test actual net descent and speed recovery in the strongest steady lift, from both level and nose-up approaches; remeasure and shorten gaps after changing dive pitch.
+- Separate the environmental force, pilot action and observed motion in the HUD. Upward push can coexist with descent; pitching up still spends airspeed. Tailwind with an upward component must disclose both effects.
+- Sprite minimum sizes can detach art from collision and cable anchors on portrait cameras. Test actual draw calls against projected collision bounds at multiple aspect ratios, then inspect the result visually.
+- Deployment recovery must read a complete saved managed inventory independently of current source edits. Changed-file-only snapshots can mix releases when restoring an older backup. Rollback preserves prior recovery history; only forward deployment prunes it. Existing server directory routes open the file browser, so game links must include `index.html`.
