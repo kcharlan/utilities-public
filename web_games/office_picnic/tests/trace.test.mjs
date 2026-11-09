@@ -1,17 +1,18 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {createRun,stepRun} from '../dist/game/simulation.js';
-import {chooseInput} from '../dist/game/bot.js';
+import {sensible,REFERENCE} from '../dist/game/bot.js';
 import {createTrace,recordInput,finishTrace,replayTrace} from '../dist/game/trace.js';
 
 function flightWithRestart(){
   const run=createRun('nonstop'),trace=createTrace(run);
   for(let n=0;n<50000&&run.status!=='finished';n++){
-    const held=n<800?false:chooseInput(run);
+    const held=n<800?false:sensible(run,{...REFERENCE,pickups:()=>true});
     recordInput(trace,held);
     stepRun(run,held);
   }
   assert.ok(run.crashes>0);
+  assert.ok(run.bonusTicks>0);
   assert.equal(run.status,'finished');
   finishTrace(trace,run);
   return {run,trace};
@@ -19,6 +20,8 @@ function flightWithRestart(){
 test('trace replays a Nonstop flight across a restart',()=>{
   const {run,trace}=flightWithRestart();
   assert.deepEqual(replayTrace(trace).crashLog,run.crashLog);
+  assert.equal(trace.finishNetTicks,trace.finishTicks-run.bonusTicks);
+  assert.notEqual(trace.finishNetTicks,trace.finishTicks);
 });
 test('trace rejects malformed, stale and inconsistent data',()=>{
   const trace=createTrace(createRun());
@@ -38,4 +41,5 @@ test('trace verifies net time separately from raw finish ticks',()=>{
   const {trace}=flightWithRestart();
   assert.equal(replayTrace(trace).ticks-replayTrace(trace).bonusTicks,trace.finishNetTicks);
   assert.throws(()=>replayTrace({...trace,finishNetTicks:trace.finishNetTicks+1}),/does not match/);
+  assert.throws(()=>replayTrace({...trace,finishNetTicks:trace.finishTicks}),/does not match/);
 });

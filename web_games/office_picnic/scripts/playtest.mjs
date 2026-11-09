@@ -1,4 +1,4 @@
-import {pricePickup,pickupMenu} from './pickup-study.mjs';
+import {pricePickup,pickupMenu,pickupCoverage,menuSampleSize} from './pickup-study.mjs';
 import {TIERS} from '../dist/game/tiers.js';
 import {buildWorld} from '../dist/game/world.js';
 import {playOnce,quantile,referenceProof,shortcutOutcomes} from './flight-study.mjs';
@@ -32,12 +32,31 @@ if((diagnostic||menu)&&check){
   process.exit(1);
 }
 
-if(menu){for(const [id,tier] of Object.entries(TIERS))if(!selected||id===selected)console.log(id,JSON.stringify(pickupMenu(tier,n),null,2));process.exit(0);}
+if(menu){
+  const samples=menuSampleSize(n,diagnostic),tiers={};
+  for(const [id,tier] of Object.entries(TIERS)){
+    if(!selected||id===selected){
+      tiers[id]=pickupMenu(tier,samples);
+    }
+  }
+  if(json){
+    console.log(JSON.stringify({samples,tiers},null,2));
+  }else{
+    console.dir({samples,tiers},{depth:null});
+  }
+  process.exit(0);
+}
 const out={},gates=[];
 const gate=(name,pass)=>gates.push({name,pass});
 for(const [id,tier] of Object.entries(TIERS)){
   if(selected&&selected!==id)continue;
   const world=buildWorld(undefined,tier),row={};
+  const covered=pickupCoverage(tier,world);
+  gate(`${id} pickup coverage`,covered);
+  if(!covered){
+    out[id]={pickupCoverage:false};
+    continue;
+  }
   for(const profile of ['expert','regular','novice']){
     const runs=Array.from({length:n},(_,i)=>playOnce(world,profile,1000+i));
     const where={};
@@ -94,7 +113,7 @@ for(const [id,tier] of Object.entries(TIERS)){
 if(!selected){
   const rows=Object.entries(out);
   for(let i=1;i<rows.length;i++)for(const [profile,metric] of [['expert','crashMean'],['regular','crashMean'],['novice','crashMedian']]){
-    gate(`${rows[i-1][0]} to ${rows[i][0]} ${profile} crashes rise`,rows[i][1][profile][metric]>rows[i-1][1][profile][metric]);
+    gate(`${rows[i-1][0]} to ${rows[i][0]} ${profile} crashes rise`,rows[i][1][profile]?.[metric]>rows[i-1][1][profile]?.[metric]);
   }
 }
 if(json)console.log(JSON.stringify({tiers:out,gates},null,2));

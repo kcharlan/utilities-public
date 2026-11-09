@@ -71,7 +71,7 @@ export function buildWorld(limits=measureFlight(),cfg=TIERS.casual){
     world.winds.push({x0:w.startAtGap?from.release:from.x,x1:to.release+(w.includeGap===false?0:to.gap),y0:w.y0,y1:w.y1,wind:w.wind,lift:w.lift??0,district:w.district});
   }
   let pid=0;
-  for(const pk of cfg.pickups??[]){
+  for(const [sourceIndex,pk] of (cfg.pickups??[]).entries()){
     const slot=slots.find(s=>s.d===pk.district&&s.j===pk.slot);if(!slot)continue;
     const next=slots[slots.indexOf(slot)+1];
     let px,py;
@@ -82,7 +82,7 @@ export function buildWorld(limits=measureFlight(),cfg=TIERS.casual){
     else if(pk.place==='roofEdge'){if(!next)continue;px=next.building.x+(pk.dx??6);py=next.building.y+pk.dy;}
     else if(pk.place==='gapLow'){px=slot.release+slot.gap*(pk.at??.5);py=pk.y;}
     else if(pk.place==='high'){px=slot.x+slot.width*(pk.at??.5);py=pk.y??(world.airs.find(a=>a.x===slot.x).targetExit+pk.above);}
-    world.pickups.push({id:`p${pid++}`,district:pk.district,slot:pk.slot,place:pk.place,x:px,y:py,r:pk.r??4,rewardTicks:pk.rewardTicks,label:`${pk.place}${pk.dy??pk.above??pk.y}`,attach:pk.attach===false?null:attach,ox,oy});
+    world.pickups.push({sourceIndex,placement:{...pk},id:`p${pid++}`,district:pk.district,slot:pk.slot,place:pk.place,x:px,y:py,r:pk.r??4,rewardTicks:pk.rewardTicks,label:`${pk.place}${pk.dy??pk.above??pk.y}`,attach:pk.attach===false?null:attach,ox,oy});
   }
   // A generous final park descent follows the last technical crossing.
   world.finishStart=x;world.length=x+140;
