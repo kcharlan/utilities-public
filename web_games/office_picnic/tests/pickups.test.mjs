@@ -96,3 +96,11 @@ test('playtest check fails when an authored pickup cannot be built',async()=>{
     await assert.rejects(promisify(execFile)(process.execPath,['scripts/playtest.mjs','--tier','casual','--check'],{cwd:root}),error=>error.code===1&&error.stdout.includes('FAIL casual pickup coverage'));
   }finally{await rm(root,{recursive:true,force:true});}
 });
+
+test('menu JSON is complete when stdout is backpressured',async()=>{
+  const {execFile}=await import('node:child_process');const {promisify}=await import('node:util');
+  const command='{ head -c 60000 /dev/zero; "$1" scripts/playtest.mjs --tier casual --menu --json --n 1; } | { sleep 12; cat; }';
+  const {stdout}=await promisify(execFile)('sh',['-c',command,'sh',process.execPath],{cwd:new URL('../',import.meta.url),maxBuffer:1024*1024});
+  const result=JSON.parse(stdout.slice(60000));
+  assert.equal(result.samples,1);assert.ok(result.tiers.casual.length>0);
+});

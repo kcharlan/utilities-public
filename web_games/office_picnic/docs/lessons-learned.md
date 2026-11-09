@@ -28,3 +28,4 @@
 - A storage migration needs a best-effort write as well as a readable in-memory result. Keep the old key intact and exercise a denied write separately from successful persistence.
 - Transient HUD feedback keyed to a simulation clock must reset with that clock: a Nonstop restart resets world ticks, so clear the previous throw's reward message on respawn.
 - Validate authored pickup coverage before pricing the generated world: placements that lack a matching hazard are skipped during world construction and otherwise disappear from every pricing gate.
+- Before an explicit CLI exit, wait for queued stdout writes: a delayed pipe reader can otherwise receive truncated JSON even when the process exits successfully.

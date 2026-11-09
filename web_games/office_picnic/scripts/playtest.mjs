@@ -44,6 +44,7 @@ if(menu){
   }else{
     console.dir({samples,tiers},{depth:null});
   }
+  await new Promise((resolve,reject)=>process.stdout.write('',error=>error?reject(error):resolve()));
   process.exit(0);
 }
 const out={},gates=[];
