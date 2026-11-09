@@ -1,3 +1,4 @@
+import {createTrace,recordInput,finishTrace} from './trace.js';
 import {createRun,stepRun} from './simulation.js';
 import {airAt,upcomingHazard,hazardAdvice} from './world.js';
 import {flightGuidance} from './guidance.js';
@@ -6,6 +7,7 @@ import {Sound} from './audio.js';
 import {consumeTime,formatTime,formatDistance,formatSpeed,formatFeet} from './session.js';
 import {loadRecords,saveResult,savePreferences} from './records.js';
 const $=id=>document.getElementById(id),canvas=$('flight'),renderer=new Renderer(canvas);
+const tracing=new URLSearchParams(location.search).has('trace');let trace=null;
 let storage;try{storage=window.localStorage;}catch{storage=null;}
 let records=loadRecords(storage),sound=new Sound(records.muted),run=null,paused=false,held=false,last=0,clock={accumulator:0},noticeEnd=0,lastDistrict=-1,lastVent=null,lastVentActive=false,resultShown=false;
 const reduced=matchMedia('(prefers-reduced-motion: reduce)');reduced.addEventListener('change',()=>renderer.reduced=reduced.matches);
@@ -17,7 +19,7 @@ function muteUI(){$('mute').textContent=records.muted?'Sound off':'Sound on';$('
 function notice(text,seconds=6){$('notice').textContent=text;$('notice').hidden=false;noticeEnd=(run?.worldTicks||0)+seconds*60;}
 function setHeld(value){if(held!==value&&run&&!paused&&run.status==='flying')sound.event(value?'pitch':'release');held=value;}
 function start(mode){
-  run=createRun(mode);paused=false;held=false;clock.accumulator=0;last=performance.now();lastDistrict=-1;lastVent=null;lastVentActive=false;resultShown=false;sound.district=0;sound.setPaused(false);sound.unlock().then(()=>sound.event('launch'));
+  run=createRun(mode);trace=tracing?createTrace(run):null;paused=false;held=false;clock.accumulator=0;last=performance.now();lastDistrict=-1;lastVent=null;lastVentActive=false;resultShown=false;sound.district=0;sound.setPaused(false);sound.unlock().then(()=>sound.event('launch'));
   for(const id of ['title-screen','pause-screen','result-screen'])$(id).hidden=true;
   for(const id of ['hud','route-hud','flight-hud'])$(id).hidden=false;
   $('district-dots').replaceChildren(...Array.from({length:5},()=>document.createElement('i')));
@@ -32,11 +34,12 @@ function finish(){
   $('result-time').textContent=formatTime(seconds);$('result-distance').textContent=formatDistance(run.world.length);
   $('result-best').textContent=`${run.mode==='standard'?'Standard':'Nonstop'} · ${!previous||seconds<previous?'Your best flight.':`Best ${formatTime(previous)}`}`;
   $('notice').hidden=true;
+  if(trace){finishTrace(trace,run);const link=document.createElement('a');link.textContent='Download flight trace';link.download='office-picnic-trace.json';link.href=URL.createObjectURL(new Blob([JSON.stringify(trace)],{type:'application/json'}));link.id='trace-download';$('trace-download')?.remove();$('result-screen').append(link);}
   // Let the visible landing settle before revealing the invitation card.
   setTimeout(()=>{if(run?.status==='finished'&&resultShown){$('result-screen').hidden=false;$('replay').focus();if(!previous||seconds<previous)sound.event('best');}},reduced.matches?300:1400);
 }
 function tick(){
-  run.previous={x:run.plane.x,y:run.plane.y};stepRun(run,held);sound.district=run.district;
+  run.previous={x:run.plane.x,y:run.plane.y};if(trace)recordInput(trace,held);stepRun(run,held);sound.district=run.district;
   for(const event of run.events)sound.event(event);
   if(run.events.includes('impact')){held=false;notice(run.cause,5);}
   if(run.events.includes('respawn'))notice(run.mode==='standard'?'Back at the last rooftop. Build height for the flock.':'A fresh throw. Climb over the first flock.',4);

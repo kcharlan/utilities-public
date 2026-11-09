@@ -13,3 +13,42 @@ export function chooseInput(run){
   }else if(!column)return false;
   return p.y+p.vy*.55<target;
 }
+
+export const REFERENCE=Object.freeze({reaction:0,jitter:0,minPress:0,sigma:0,lead:.55,predict:true});
+export function sensible(run,prof={}){
+  const p=run.plane,w=run.world,t=run.worldTicks/60,lead=prof.lead??.55,bias=prof.biasFor?prof.biasFor(run):0;
+  if(p.stalled||p.speed<(prof.minSpeed??14))return false;
+  if(p.x>w.finishStart)return false;
+  const look=prof.lookahead??300,flockM=(prof.flockMargin??12)+(prof.adapt?.(run,"flock")??0),washM=(prof.washerMargin??18)+(prof.adapt?.(run,"washer")??0),roofM=(prof.roofMargin??8)+(prof.adapt?.(run,"roof")??0),planRatio=prof.planRatio??3;
+  const column=w.airs.find(a=>p.x>=a.x&&p.x<=a.x+a.w);
+  const arrival=x=>t+Math.max(0,x-p.x)/Math.max(8,p.vx||20);
+  let floor=-Infinity,ceiling=Infinity,ceilingDist=Infinity,floorDist=Infinity,squeezeAhead=false;
+  for(const h of w.hazards){
+    if(h.x+h.w+2<p.x||h.x-p.x>look)continue;
+    if(h.squeeze&&h.x-p.x<(prof.squeezeLook??160))squeezeAhead=true;
+    // Only the nearest hazard of each kind constrains the plan; later ones are dealt with later.
+    if(h.pass==='below'&&Number.isFinite(ceiling))continue;
+    if(h.pass==='above'&&Number.isFinite(floor)&&!h.squeeze)continue;
+    const now=hazardBox(h,t),then=prof.predict?hazardBox(h,arrival(h.x)):now;
+    const d=Math.max(0,now.x-p.x);
+    if(h.pass==='above'){const f=Math.max(now.y,then.y)+h.h+(h.squeeze?Math.min(flockM,(h.windowTop-h.windowBottom)/2-2):flockM)+(h.squeeze?0:d*.05);if(f>floor){floor=f;floorDist=d;}}
+    else{const c=Math.min(now.y,then.y)-(h.squeeze?Math.min(washM,(h.windowTop-h.windowBottom)/2-2):washM);if(c<ceiling){ceiling=c;ceilingDist=d;}}
+  }
+  // Next solid roof (receiving building or perch) within planning range.
+  for(const b of w.buildings){
+    if(b.x+b.w<p.x)continue;
+    const d=Math.max(0,b.x-p.x);if(d>200)continue;
+    const f=b.y+roofM+(prof.roofFloorBias??0)+d/planRatio;
+    if(f>floor){floor=f;floorDist=d;}
+  }
+  let preferred=column?(column.targetExit+(prof.columnOffset?.(column)??0)):-Infinity;
+  let desired=Math.max(preferred,floor);
+  if(desired>ceiling){
+    if(floor<=ceiling)desired=squeezeAhead?(floor+ceiling)/2:ceiling; // a window exists: stay inside it
+    else desired=floorDist<ceilingDist?floor:ceiling;                  // conflict: nearer constraint wins
+  }else if(squeezeAhead&&Number.isFinite(ceiling)&&Number.isFinite(floor))desired=(Math.max(floor,-1e9)+ceiling)/2;
+  return p.y+p.vy*lead<desired+bias;
+}
+
+
+export const referenceInput=run=>sensible(run,REFERENCE);
