@@ -18,7 +18,12 @@ function titleBests(){
 function muteUI(){$('mute').textContent=records.muted?'Sound off':'Sound on';$('mute').setAttribute('aria-pressed',String(records.muted));$('mute').setAttribute('aria-label',records.muted?'Unmute sound':'Mute sound');}
 function notice(text,seconds=6){$('notice').textContent=text;$('notice').hidden=false;noticeEnd=(run?.worldTicks||0)+seconds*60;}
 function setHeld(value){if(held!==value&&run&&!paused&&run.status==='flying')sound.event(value?'pitch':'release');held=value;}
+function clearTraceDownload(){
+  const link=$('trace-download');
+  if(link){URL.revokeObjectURL(link.href);link.remove();}
+}
 function start(mode){
+  clearTraceDownload();
   run=createRun(mode);trace=tracing?createTrace(run):null;paused=false;held=false;clock.accumulator=0;last=performance.now();lastDistrict=-1;lastVent=null;lastVentActive=false;resultShown=false;sound.district=0;sound.setPaused(false);sound.unlock().then(()=>sound.event('launch'));
   for(const id of ['title-screen','pause-screen','result-screen'])$(id).hidden=true;
   for(const id of ['hud','route-hud','flight-hud'])$(id).hidden=false;
@@ -28,13 +33,13 @@ function start(mode){
 }
 function pause(){if(!run||run.status==='finished'||paused)return;setHeld(false);paused=true;clock.accumulator=0;sound.event('pause');sound.setPaused(true);$('pause-screen').hidden=false;$('resume').focus();}
 function resume(){if(!run)return;paused=false;held=false;clock.accumulator=0;last=performance.now();sound.setPaused(false);sound.unlock().then(()=>sound.event('resume'));$('pause-screen').hidden=true;canvas.focus({preventScroll:true});}
-function home(){held=false;paused=true;run=null;sound.setPaused(true);for(const id of ['pause-screen','result-screen','hud','route-hud','flight-hud','notice'])$(id).hidden=true;$('title-screen').hidden=false;titleBests();$('start').focus();}
+function home(){clearTraceDownload();held=false;paused=true;run=null;sound.setPaused(true);for(const id of ['pause-screen','result-screen','hud','route-hud','flight-hud','notice'])$(id).hidden=true;$('title-screen').hidden=false;titleBests();$('start').focus();}
 function finish(){
   if(resultShown)return;resultShown=true;held=false;const seconds=run.finishTicks/60,previous=records.best[run.mode];records=saveResult(storage,run.mode,seconds,records);records.muted=sound.muted;
   $('result-time').textContent=formatTime(seconds);$('result-distance').textContent=formatDistance(run.world.length);
   $('result-best').textContent=`${run.mode==='standard'?'Standard':'Nonstop'} · ${!previous||seconds<previous?'Your best flight.':`Best ${formatTime(previous)}`}`;
   $('notice').hidden=true;
-  if(trace){finishTrace(trace,run);const link=document.createElement('a');link.textContent='Download flight trace';link.download='office-picnic-trace.json';link.href=URL.createObjectURL(new Blob([JSON.stringify(trace)],{type:'application/json'}));link.id='trace-download';$('trace-download')?.remove();$('result-screen').append(link);}
+  if(trace){finishTrace(trace,run);const link=document.createElement('a');link.textContent='Download flight trace';link.download='office-picnic-trace.json';link.href=URL.createObjectURL(new Blob([JSON.stringify(trace)],{type:'application/json'}));link.id='trace-download';clearTraceDownload();$('result-screen').append(link);}
   // Let the visible landing settle before revealing the invitation card.
   setTimeout(()=>{if(run?.status==='finished'&&resultShown){$('result-screen').hidden=false;$('replay').focus();if(!previous||seconds<previous)sound.event('best');}},reduced.matches?300:1400);
 }

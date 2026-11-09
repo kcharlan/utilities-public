@@ -45,7 +45,7 @@ npm run prove
 npm run playtest
 ```
 
-The playtest runs seeded pilot studies, reference route and district proofs, and shortcut checks. Use `node scripts/playtest.mjs --tier casual --n 10` for a smaller diagnostic sample or add `--json` for machine-readable results.
+The playtest runs seeded pilot studies, reference route and district proofs, and shortcut checks. Use `node scripts/playtest.mjs --tier casual --n 10` for a smaller diagnostic sample or add `--json` for machine-readable results. Diagnostic sample sizes cannot be combined with `--check`.
 
 Open the game with `?trace` to record inputs; after a finished flight, download its JSON trace from the result screen and run `node scripts/replay.mjs <trace.json>` to check it against the current tier and simulation version. Traces contain the full input history and crash locations; share them only when appropriate.
 
