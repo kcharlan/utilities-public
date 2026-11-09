@@ -26,6 +26,29 @@ test('real squeeze cue passes its pair identity through audio, notice and marker
   }
   assert.ok(crossedSecond,'second member trigger was reached');
   r.plane.y=0;stepRun(r,false);while(r.status==='respawning')stepRun(r,false);
+  assert.ok(noticeMessages(r).every(text=>!text.includes('Squeeze')));
   assert.ok(!r.warned.has(key));r.plane.x=flock.x-flock.warningDistance+1;r.plane.y=300;stepRun(r,false);
   assert.ok(r.warningHazards.some(h=>hazardKey(h)===key));
+  assert.ok(noticeMessages(r).every(text=>!text.includes('Squeeze')));
+});
+test('first squeeze is introduced once on its warning during a clean flight',async()=>{
+  const {referenceInput}=await import('../dist/game/bot.js');
+  for(const tier of [TIERS.rush,TIERS.overtime,{...TIERS.overtime,prompts:'warnings'}]){
+    const run=createRun('standard',buildWorld(undefined,tier)),notices=[];
+    let laterWarning=false,laterNotice=false;
+    let firstWarningTick=null,entryTick=null;
+    for(let n=0;n<54000&&run.status!=='finished';n++){
+      stepRun(run,referenceInput(run));
+      if(run.events.includes('district')&&run.district===(tier.id==='rush'?4:2))entryTick=run.worldTicks;
+      if(firstWarningTick===null&&run.warningHazards.some(h=>h.firstSqueeze))firstWarningTick=run.worldTicks;
+      if(run.warningHazards.some(h=>h.squeeze&&!h.firstSqueeze))laterWarning=true;
+      for(const message of noticeMessages(run))if(message.startsWith('Squeeze')){
+        if(laterWarning)laterNotice=true;else notices.push({tick:run.worldTicks,message});
+      }
+    }
+    assert.equal(run.status,'finished');assert.equal(run.crashes,0);
+    assert.notEqual(entryTick,null);assert.notEqual(firstWarningTick,null);
+    assert.deepEqual(notices,[{tick:firstWarningTick,message:'Squeeze · fly between the washer and the flock'}],`${tier.id} ${tier.prompts}`);
+    if(tier.id==='overtime'&&tier.prompts==='warnings')assert.ok(laterNotice,'later squeeze still warns');
+  }
 });

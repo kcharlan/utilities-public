@@ -33,7 +33,7 @@ export function noticeMessages(run){
   const messages=[],prompts=run.world.tier.prompts;
   const introduced=run.introducedElements??=new Set();
   if(run.events.includes('impact'))messages.push(run.cause);
-  if(run.events.includes('respawn')&&prompts!=='quiet'){const hazard=upcomingHazard(run.world,run.plane.x);messages.push(run.mode==='standard'?`Back at the last rooftop.${hazard?' '+hazardAdvice(hazard):''}`:'A fresh throw. Climb over the first flock.');}
+  if(run.events.includes('respawn')&&prompts!=='quiet'){const hazard=upcomingHazard(run.world,run.plane.x);messages.push(run.mode==='standard'?`Back at the last rooftop.${hazard&&!hazard.firstSqueeze?' '+hazardAdvice(hazard):''}`:'A fresh throw. Climb over the first flock.');}
   if(run.events.includes('district')){
     const district=run.world.districts[run.district];
     let message=prompts==='full'?`${district.name}. ${district.tip}`:district.name;
@@ -41,9 +41,11 @@ export function noticeMessages(run){
     messages.push(message);
     const moving=run.world.hazards.find(h=>h.firstMoving&&h.district===run.district);
     if(moving&&!introduced.has('moving')){messages.push(`Moving ${moving.kind==='pigeon'?'flock':'washer'} · watch its rhythm`);introduced.add('moving');}
-    const squeeze=run.world.hazards.find(h=>h.firstSqueeze&&h.district===run.district);
-    if(squeeze&&!introduced.has('squeeze')){messages.push(hazardAdvice(squeeze));introduced.add('squeeze');}
   }
-  if(prompts!=='quiet')for(const hazard of run.warningHazards||[])messages.push(hazardAdvice(hazard));
+  for(const hazard of run.warningHazards||[]){
+    if(hazard.firstSqueeze){
+      if(!introduced.has('squeeze')){messages.push(hazardAdvice(hazard));introduced.add('squeeze');}
+    }else if(prompts!=='quiet')messages.push(hazardAdvice(hazard));
+  }
   return messages;
 }

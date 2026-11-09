@@ -99,16 +99,15 @@ test('tier elements debut in separate districts and crossings',()=>{
   }
 });
 
-test('quiet mode announces first tier hazards once in their district',async()=>{
+test('quiet mode announces movement on district entry and squeeze on warning',async()=>{
   const {createRun}=await import('../dist/game/simulation.js');
   const {noticeMessages}=await import('../dist/game/guidance.js');
   const run=createRun('standard',buildWorld(undefined,TIERS.overtime));
-  for(const flag of ['firstMoving','firstSqueeze']){
-    const hazard=run.world.hazards.find(h=>h[flag]);
-    run.district=hazard.district;run.warningHazards=[];run.events=['district'];
-    assert.equal(noticeMessages(run).length,2,flag);
-    assert.equal(noticeMessages(run).length,1,flag);
-  }
+  const moving=run.world.hazards.find(h=>h.firstMoving),squeeze=run.world.hazards.find(h=>h.firstSqueeze);
+  run.district=moving.district;run.warningHazards=[];run.events=['district'];
+  assert.equal(noticeMessages(run).length,2);assert.equal(noticeMessages(run).length,1);
+  run.district=squeeze.district;run.events=['district'];assert.equal(noticeMessages(run).length,1);
+  run.events=['warning'];run.warningHazards=[squeeze];assert.equal(noticeMessages(run).length,1);assert.deepEqual(noticeMessages(run),[]);
   run.district=3;run.events=['district'];run.warningHazards=[];
   assert.match(noticeMessages(run).join(' '),/Headwinds/);
   assert.doesNotMatch(noticeMessages(run).join(' '),/Headwinds/);
