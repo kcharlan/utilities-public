@@ -20,25 +20,38 @@ export function loadRecords(storage){
     const previous=storage?.getItem(OLD_KEY);
     if(previous===null||previous===undefined)return clean({});
     const old=JSON.parse(previous),migrated=clean({best:{casual:old?.best},muted:old?.muted});
-    savePreferences(storage,migrated);
+    write(storage,migrated);
     return migrated;
   }catch{return clean({});}
 }
-export function savePreferences(storage,records){try{storage?.setItem(KEY,JSON.stringify(clean(records)));}catch{/* Storage can be unavailable. */}}
-export function saveResult(storage,tier,mode,seconds,current){
-  const records=loadRecords(storage),session=clean(current);
+function write(storage,records){try{storage?.setItem(KEY,JSON.stringify(clean(records)));}catch{/* Storage can be unavailable. */}}
+function mergeBests(records,session){
   for(const [id,values] of Object.entries(session.best))for(const [key,value] of Object.entries(values)){
     const best=records.best[id]??={};
     if(!best[key]||value<best[key])best[key]=value;
   }
-  if(current){records.tier=session.tier;records.muted=session.muted;}
-  if(validTier(tier)&&modes.includes(mode)&&Number.isFinite(seconds)&&seconds>0){
+}
+export function savePreferences(storage,current,changes){
+  const session=clean(current),records=loadRecords(storage);
+  mergeBests(records,session);
+  if(validTier(changes?.tier))records.tier=session.tier=changes.tier;
+  if(typeof changes?.muted==='boolean')records.muted=session.muted=changes.muted;
+  write(storage,records);
+  return {...records,tier:session.tier,muted:session.muted};
+}
+export function finishResult(storage,tier,mode,seconds,current){
+  const records=loadRecords(storage),session=clean(current);
+  mergeBests(records,session);
+  const valid=validTier(tier)&&modes.includes(mode);
+  const previous=valid?records.best[tier]?.[mode]:undefined;
+  if(valid&&Number.isFinite(seconds)&&seconds>0){
     const best=records.best[tier]??={};
     if(!best[mode]||seconds<best[mode])best[mode]=seconds;
-    savePreferences(storage,records);
+    write(storage,records);
   }
-  return records;
+  return {records:current?{...records,tier:session.tier,muted:session.muted}:records,previous};
 }
+export function saveResult(storage,tier,mode,seconds,current){return finishResult(storage,tier,mode,seconds,current).records;}
 
 export function titleBestText(records,tier){
   const best=records.best[tier]||{};

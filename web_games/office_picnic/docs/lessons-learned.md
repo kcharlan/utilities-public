@@ -7,6 +7,7 @@
 - Use separate vertical framing on portrait screens; equal x/y scale with long horizontal lookahead left the plane at the bottom of a tall phone screen. Keep warning distance and readable vertical space.
 - Stalled-and-held behavior must be checked inside lift, not only in still air. Otherwise the player can gain height despite the intended energy constraint.
 - Best times need an in-memory fallback. Reloading unavailable storage at every finish discards the best result between replays.
+- Multiple tabs can hold stale snapshots: merge session and stored best times before every write, update only the preference the player changed, and compare finish feedback with the merged prior best while keeping the active tab's settings for replay.
 - Landing is a real simulation state: smoothly descend from the actual approach position to the bowl before freezing results. Substituting the bowl coordinate only in the renderer creates a visible teleport.
 - Test district feature coverage explicitly. A clamped feature index introduced new lift types but silently dropped AC lift from every later district; use an authored teaching-first cycle that covers all prior types.
 - Version best-time storage when route length/geometry changes, so old development runs do not compete with the final course.

@@ -8,7 +8,7 @@ import {flightGuidance,noticeMessages} from './guidance.js';
 import {Renderer} from './render.js';
 import {Sound,dispatchRunEvents} from './audio.js';
 import {consumeTime,rebaseNoticeDeadline,formatTime,formatDistance,formatSpeed,formatFeet} from './session.js';
-import {loadRecords,saveResult,savePreferences,titleBestText} from './records.js';
+import {loadRecords,finishResult,savePreferences,titleBestText} from './records.js';
 const $=id=>document.getElementById(id),canvas=$('flight'),renderer=new Renderer(canvas);
 const tracing=new URLSearchParams(location.search).has('trace');let trace=null;
 let storage;try{storage=window.localStorage;}catch{storage=null;}
@@ -42,7 +42,11 @@ function pause(){if(!run||run.status==='finished'||paused)return;setHeld(false);
 function resume(){if(!run)return;paused=false;held=false;clock.accumulator=0;last=performance.now();sound.setPaused(false);sound.unlock().then(()=>sound.event('resume'));$('pause-screen').hidden=true;canvas.focus({preventScroll:true});}
 function home(){clearTraceDownload();held=false;paused=true;run=null;sound.setPaused(true);for(const id of ['pause-screen','result-screen','hud','route-hud','flight-hud','notice'])$(id).hidden=true;$('title-screen').hidden=false;titleBests();$('start').focus();}
 function finish(){
-  if(resultShown)return;resultShown=true;held=false;const seconds=netTicks(run)/60,previous=records.best[run.world.tier.id]?.[run.mode];records=saveResult(storage,run.world.tier.id,run.mode,seconds,records);records.muted=sound.muted;
+  if(resultShown)return;
+  resultShown=true;held=false;
+  const seconds=netTicks(run)/60;
+  const result=finishResult(storage,run.world.tier.id,run.mode,seconds,records),previous=result.previous;
+  records=result.records;
   $('result-time').textContent=formatTime(seconds);$('result-distance').textContent=formatDistance(run.world.length);
   const penalty=run.mode==='standard'?run.crashes*run.world.rules.crashPenaltyTicks:0;
   const impacts=run.mode==='standard'?`Impacts: ${run.crashes} · +${formatTime(penalty/60)}`:`Restarts: ${run.crashes} · no time penalty`;
@@ -87,7 +91,7 @@ function frame(now){
   requestAnimationFrame(frame);
 }
 $('start').onclick=()=>start('standard');$('nonstop').onclick=()=>start('nonstop');$('pause').onclick=pause;$('resume').onclick=resume;$('restart').onclick=()=>start(run.mode);$('home').onclick=home;$('result-home').onclick=home;$('replay').onclick=()=>start(run.mode);
-$('mute').onclick=()=>{records.muted=!records.muted;sound.setMuted(records.muted);savePreferences(storage,records);muteUI();sound.unlock();sound.event('ui');};
+$('mute').onclick=()=>{records=savePreferences(storage,records,{muted:!records.muted});sound.setMuted(records.muted);muteUI();sound.unlock();sound.event('ui');};
 canvas.addEventListener('pointerdown',e=>{if(e.button!==0||!run||paused||run.status!=='flying')return;e.preventDefault();canvas.setPointerCapture(e.pointerId);setHeld(true);sound.unlock();});
 canvas.addEventListener('pointerup',()=>setHeld(false));canvas.addEventListener('pointercancel',pause);canvas.addEventListener('lostpointercapture',()=>setHeld(false));
 document.addEventListener('keydown',e=>{
@@ -107,6 +111,6 @@ for(const tier of Object.values(TIERS)){
   const best=document.createElement('small');
   best.id=`best-${tier.id}`;
   copy.append(name,detail,thresholds,best);label.append(radio,copy);$('tier-picker').append(label);
-  radio.addEventListener('change',()=>{if(radio.checked){records.tier=tier.id;savePreferences(storage,records);titleBests();}});
+  radio.addEventListener('change',()=>{if(radio.checked){records=savePreferences(storage,records,{tier:tier.id});titleBests();}});
 }
 titleBests();muteUI();requestAnimationFrame(frame);
