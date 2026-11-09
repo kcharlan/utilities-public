@@ -2,7 +2,7 @@ import {createPlane,advancePlane,PHYSICS} from './physics.js';
 import {buildWorld,airAt,hazardBox,hazardParts,hazardKey,pickupPos} from './world.js';
 export function createRun(mode='standard',world=buildWorld()){
   if(!['standard','nonstop'].includes(mode))mode='standard';
-  return {mode,world,plane:createPlane(),ticks:0,worldTicks:0,district:0,checkpoint:{...world.checkpoints[0]},status:'flying',respawnTicks:0,crashes:0,events:['launch'],warned:new Set(),lastAir:null,lastStall:false,cause:'',finishTicks:0,collected:new Set(),bonusTicks:0,crashLog:[],attempts:1};
+  return {mode,world,plane:createPlane(),ticks:0,worldTicks:0,district:0,checkpoint:{...world.checkpoints[0]},status:'flying',respawnTicks:0,crashes:0,events:['launch'],warned:new Set(),introducedElements:new Set(),lastAir:null,lastStall:false,cause:'',finishTicks:0,collected:new Set(),bonusTicks:0,crashLog:[],attempts:1};
 }
 export const netTicks=r=>r.ticks-r.bonusTicks;
 export function segmentHitsBox(a,b,box,pad=1.2){

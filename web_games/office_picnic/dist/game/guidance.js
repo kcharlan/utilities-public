@@ -39,11 +39,11 @@ export function noticeMessages(run){
     let message=prompts==='full'?`${district.name}. ${district.tip}`:district.name;
     if(run.world.winds.some(z=>z.district===run.district&&z.wind<0)&&!introduced.has('headwind')){message+=' · Headwinds ahead';introduced.add('headwind');}
     messages.push(message);
+    const moving=run.world.hazards.find(h=>h.firstMoving&&h.district===run.district);
+    if(moving&&!introduced.has('moving')){messages.push(`Moving ${moving.kind==='pigeon'?'flock':'washer'} · watch its rhythm`);introduced.add('moving');}
+    const squeeze=run.world.hazards.find(h=>h.firstSqueeze&&h.district===run.district);
+    if(squeeze&&!introduced.has('squeeze')){messages.push(hazardAdvice(squeeze));introduced.add('squeeze');}
   }
-  for(const hazard of run.warningHazards||[]){
-    const element=hazard.firstMoving?'moving':hazard.firstSqueeze?'squeeze':null;
-    if(element&&!introduced.has(element)){messages.push(hazardAdvice(hazard));introduced.add(element);}
-    else if(prompts!=='quiet')messages.push(hazardAdvice({...hazard,firstMoving:false,firstSqueeze:false}));
-  }
+  if(prompts!=='quiet')for(const hazard of run.warningHazards||[])messages.push(hazardAdvice(hazard));
   return messages;
 }

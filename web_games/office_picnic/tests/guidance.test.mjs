@@ -82,3 +82,31 @@ test('guidance selects hazards by their moving horizontal box',async()=>{
   r.worldTicks=60*(Math.PI/2-h.phase)/(.65*h.amp.rate);const b=hazardBox(h,r.worldTicks/60);r.world={...r.world,hazards:[h],buildings:[]};
   r.plane.x=h.x+h.w+9;r.plane.y=120;assert.ok(b.x>h.x+8);assert.equal(module.flightGuidance(r,false).hazard,h);
 });
+test('moving introduction waits for its district while warnings and retries remain actionable',async()=>{
+  const {buildWorld,hazardAdvice}=await import('../dist/game/world.js');const {TIERS}=await import('../dist/game/tiers.js');
+  const {stepRun}=await import('../dist/game/simulation.js');
+  for(const tier of [TIERS.rush,TIERS.overtime,{...TIERS.rush,prompts:'full'}]){
+    const r=createRun('standard',buildWorld(undefined,tier)),h=r.world.hazards.find(h=>h.firstMoving);
+    assert.match(hazardAdvice(h),/climb over/i);
+    r.plane.x=h.x-h.warningDistance-15;r.plane.y=300;
+    for(let i=0;i<120&&!r.warningHazards?.includes(h);i++)stepRun(r,false);
+    assert.equal(r.district,0);assert.ok(r.warningHazards.includes(h));
+    const early=module.noticeMessages(r).join(' ');
+    assert.doesNotMatch(early,/watch its rhythm/);
+    if(tier.prompts!=='quiet')assert.match(early,/climb over/i);
+    r.district=1;r.warningHazards=[];r.events=['district'];
+    assert.match(module.noticeMessages(r).join(' '),/Moving flock · watch its rhythm/);
+    assert.doesNotMatch(module.noticeMessages(r).join(' '),/watch its rhythm/);
+    r.plane.x=h.x-30;r.events=['respawn'];
+    assert.doesNotMatch(module.noticeMessages(r).join(' '),/watch its rhythm/);
+    if(tier.prompts!=='quiet')assert.match(module.noticeMessages(r).join(' '),/climb over/i);
+  }
+});
+test('Nonstop fresh throw can introduce tier features again',async()=>{
+  const {buildWorld}=await import('../dist/game/world.js');const {TIERS}=await import('../dist/game/tiers.js');
+  const {stepRun}=await import('../dist/game/simulation.js');
+  const r=createRun('nonstop',buildWorld(undefined,TIERS.overtime));
+  r.district=1;r.events=['district'];assert.match(module.noticeMessages(r).join(' '),/Moving flock/);
+  r.plane.y=0;stepRun(r,false);while(r.status==='respawning')stepRun(r,false);
+  r.district=1;r.events=['district'];assert.match(module.noticeMessages(r).join(' '),/Moving flock/);
+});

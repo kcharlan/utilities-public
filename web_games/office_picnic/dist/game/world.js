@@ -132,7 +132,7 @@ export function airEffect(a,height,time){
 }
 export function upcomingHazard(world,x,lookahead){return world.hazards.find(h=>h.x+h.w+8>x&&h.x-x<(lookahead??h.warningDistance));}
 export function hazardKey(h){return h.squeeze?`squeeze-${h.district}-${h.slot}`:h.id;}
-export function hazardAdvice(h){return h.firstMoving?`Moving ${h.kind==='pigeon'?'flock':'washer'} · watch its rhythm`:h.firstSqueeze?'Squeeze · fly between the washer and the flock':h.squeeze?'Squeeze · fly between the washer and the flock':h.kind==='pigeon'?'Pigeons · climb over':'Window washers · dive under';}
+export function hazardAdvice(h){return h.squeeze?'Squeeze · fly between the washer and the flock':h.kind==='pigeon'?'Pigeons · climb over':'Window washers · dive under';}
 export function hazardBox(h,time){
   if(h.moving===false)return {x:h.x,y:h.y,w:h.w,h:h.h};
   const m=h.amp??{platformY:13,pigeonX:9,pigeonY:9,rate:1},r=m.rate??1;

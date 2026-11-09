@@ -7238,13 +7238,13 @@
     "runs": [
       {
         "mode": "standard",
-        "seconds": 392.85,
+        "seconds": 393.35,
         "distance": 7186,
         "crashes": 0
       },
       {
         "mode": "nonstop",
-        "seconds": 392.85,
+        "seconds": 393.35,
         "distance": 7186,
         "crashes": 0
       }
@@ -10905,11 +10905,11 @@
         "district": 4,
         "kind": "pigeon",
         "pass": "above",
-        "minClearance": 9.141218255358655,
+        "minClearance": 7.701676665031971,
         "warningSeconds": 358.01666666666665,
-        "arrivalSeconds": 383.9166666666667,
+        "arrivalSeconds": 384.25,
         "passed": true,
-        "warningLeadSeconds": 25.900000000000034
+        "warningLeadSeconds": 26.23333333333335
       }
     ],
     "engagement": [
@@ -10935,8 +10935,8 @@
       },
       {
         "district": "Park Approach",
-        "heldTicks": 2333,
-        "totalTicks": 5229
+        "heldTicks": 2348,
+        "totalTicks": 5259
       }
     ],
     "summary": {

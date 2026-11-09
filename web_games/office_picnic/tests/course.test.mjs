@@ -3,6 +3,11 @@ import assert from 'node:assert/strict';
 import {buildWorld} from '../dist/game/world.js';
 import {TIERS} from '../dist/game/tiers.js';
 
+function teachingImpacts(world,log,d){
+  const start=world.checkpoints.findIndex(cp=>cp.id===`${d}.T`);
+  return log.filter(c=>c.x>=world.checkpoints[start].x&&c.x<world.checkpoints[start+1].x);
+}
+
 test('each district introduces its feature on a clear teaching crossing',()=>{
   for(const tier of Object.values(TIERS)){
     const world=buildWorld(undefined,tier);
@@ -25,7 +30,12 @@ test('tier elements are staged after the first district',()=>{
     assert.ok(world.hazards.filter(h=>h.district===0).every(h=>!h.moving&&!h.squeeze));
     assert.ok(world.hazards.some(h=>h.district===1&&h.moving));
     assert.ok(world.hazards.some(h=>h.squeeze&&h.district===(tier.id==='rush'?4:2)&&!h.moving));
-    assert.ok(world.winds.every(w=>w.district===3));
+    assert.deepEqual([...new Set(world.winds.map(w=>w.district))],tier.id==='rush'?[3]:[3,4]);
+    if(tier.id==='overtime'){
+      assert.ok(world.winds.some(w=>w.district===4&&w.wind<0&&w.y0<=0&&w.y1>=400));
+      assert.ok(world.hazards.some(h=>h.district===4&&h.moving));
+      assert.ok(world.hazards.some(h=>h.district===4&&h.squeeze));
+    }
   }
 });
 
@@ -58,9 +68,14 @@ test('teaching crossings are forgiving for seeded novices',async()=>{
   const world=buildWorld(undefined,TIERS.casual);
   const runs=Array.from({length:80},(_,i)=>playOnce(world,'novice',1000+i));
   for(let d=1;d<=5;d++){
-    const impacts=runs.flatMap(r=>r.log).filter(c=>c.where.endsWith(` ${d}.T`)).length;
+    const impacts=teachingImpacts(world,runs.flatMap(r=>r.log),d).length;
     assert.ok(impacts/80<=.15,`${d}.T: ${impacts}/80`);
   }
+});
+
+test('teaching impact attribution uses position even when the location label is unknown',()=>{
+  const world=buildWorld(),start=world.checkpoints.find(cp=>cp.id==='2.T').x;
+  assert.equal(teachingImpacts(world,[{x:Math.ceil(start),where:'roof ?'}],2).length,1);
 });
 
 test('each feature is necessary to its introducing district and all lift is necessary',async()=>{
@@ -84,14 +99,15 @@ test('tier elements debut in separate districts and crossings',()=>{
   }
 });
 
-test('quiet mode announces first tier hazards once',async()=>{
+test('quiet mode announces first tier hazards once in their district',async()=>{
   const {createRun}=await import('../dist/game/simulation.js');
   const {noticeMessages}=await import('../dist/game/guidance.js');
   const run=createRun('standard',buildWorld(undefined,TIERS.overtime));
   for(const flag of ['firstMoving','firstSqueeze']){
-    run.warningHazards=[run.world.hazards.find(h=>h[flag])];run.events=['warning'];
+    const hazard=run.world.hazards.find(h=>h[flag]);
+    run.district=hazard.district;run.warningHazards=[];run.events=['district'];
+    assert.equal(noticeMessages(run).length,2,flag);
     assert.equal(noticeMessages(run).length,1,flag);
-    assert.deepEqual(noticeMessages(run),[],flag);
   }
   run.district=3;run.events=['district'];run.warningHazards=[];
   assert.match(noticeMessages(run).join(' '),/Headwinds/);

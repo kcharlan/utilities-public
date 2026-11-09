@@ -55,5 +55,5 @@ test('warnings marker follows a moving flock into range on phone',async()=>{
   stepRun(run,false);assert.equal(run.warningHazards[0].id,hazard.id);
   const labels=[],ctx=new Proxy({drawImage(){}},{get:(o,k)=>k in o?o[k]:()=>{}});
   const renderer=Object.assign(Object.create(Renderer.prototype),{w:390,h:844,ctx,washer:{complete:false},reduced:true,cache:[{},{}],label:(text)=>labels.push(text),sprite:()=>{}});
-  renderer.draw(run,false,1);assert.ok(labels.some(text=>text.startsWith('→ Moving flock')),labels.join(', '));
+  renderer.draw(run,false,1);assert.ok(labels.some(text=>text.startsWith('→ Pigeons')),labels.join(', '));
 });
