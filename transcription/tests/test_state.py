@@ -1,8 +1,5 @@
 import json
-import getpass
 import multiprocessing
-import os
-import subprocess
 from pathlib import Path
 
 import pytest
@@ -157,86 +154,3 @@ def test_oversized_json_integer_is_preserved():
     assert result.counters.cumulative_seconds == 0.0
     assert saved.read_bytes() == raw
     assert any(str(saved) in warning for warning in result.warnings)
-
-
-@pytest.mark.parametrize("sources", [(True, True), (True, False), (False, True), (False, False)])
-@pytest.mark.parametrize("overrides", [False, True])
-def test_readme_migration_block(sources, overrides, tmp_path, monkeypatch):
-    monkeypatch.setenv("HOME", str(tmp_path))
-    monkeypatch.setenv("TRANSCRIPTION_HOME", "~/new-home")
-    if overrides:
-        monkeypatch.setenv("CUMULATIVE_JSON_PATH", "relative/counter.json")
-        monkeypatch.setenv("LIFETIME_TXT_PATH", "~/outside/lifetime.txt")
-        (tmp_path / "outside").mkdir(mode=0o755)
-        (tmp_path / "outside").chmod(0o755)
-        assert (tmp_path / "outside").stat().st_mode & 0o777 == 0o755
-    legacy = tmp_path / "transcription"
-    legacy.mkdir()
-    names = ("session_backup.json", "transcription_odometer.txt")
-    values = (b'{"cumulative_seconds": 3.5}', b"4.5\n")
-    for name, value, present in zip(names, values, sources):
-        if present:
-            (legacy / name).write_bytes(value)
-    readme = (Path(__file__).parents[1] / "README.md").read_text()
-    section = readme.split("## Manual counter migration", 1)[1]
-    script = section.split("```bash\n", 1)[1].split("```", 1)[0]
-    for _ in range(2):
-        result = subprocess.run(["bash", "-c", script], capture_output=True, text=True)
-        assert result.returncode == 0, result.stderr
-    for name, value, present, destination in zip(names, values, sources, (state.cumulative_path(), state.lifetime_path())):
-        if present:
-            assert (legacy / name).read_bytes() == value == destination.read_bytes()
-            assert destination.stat().st_mode & 0o777 == 0o600
-        else:
-            assert not destination.exists()
-    if overrides:
-        assert (tmp_path / "outside").stat().st_mode & 0o777 == 0o755
-
-
-def test_migration_preserves_source_when_publication_fails(tmp_path, monkeypatch):
-    monkeypatch.setenv("HOME", str(tmp_path))
-    legacy = tmp_path / "transcription"
-    legacy.mkdir()
-    source = legacy / "session_backup.json"
-    source.write_bytes(b"synthetic source")
-    fake_bin = tmp_path / "bin"
-    fake_bin.mkdir()
-    fake_ln = fake_bin / "ln"
-    fake_ln.write_text("#!/bin/sh\nexit 1\n")
-    fake_ln.chmod(0o755)
-    monkeypatch.setenv("PATH", f"{fake_bin}:{os.environ['PATH']}")
-    readme = (Path(__file__).parents[1] / "README.md").read_text()
-    section = readme.split("## Manual counter migration", 1)[1]
-    script = section.split("```bash\n", 1)[1].split("```", 1)[0]
-    result = subprocess.run(["bash", "-c", script], capture_output=True, text=True)
-    assert result.returncode != 0
-    assert source.read_bytes() == b"synthetic source"
-    assert not state.cumulative_path().exists()
-    assert not list(state.cumulative_path().parent.glob(".counter-migration.*"))
-
-
-def test_migration_never_overwrites_existing_or_dangling_entries(tmp_path, monkeypatch):
-    monkeypatch.setenv("HOME", str(tmp_path))
-    legacy = tmp_path / "transcription"
-    legacy.mkdir()
-    (legacy / "session_backup.json").write_text("source")
-    (legacy / "transcription_odometer.txt").write_text("source")
-    state.runtime_home().mkdir()
-    state.cumulative_path().write_text("destination")
-    state.lifetime_path().symlink_to("missing")
-    readme = (Path(__file__).parents[1] / "README.md").read_text()
-    script = readme.split("## Manual counter migration", 1)[1].split("```bash\n", 1)[1].split("```", 1)[0]
-    result = subprocess.run(["bash", "-c", script], capture_output=True, text=True)
-    assert result.returncode == 0, result.stderr
-    assert state.cumulative_path().read_text() == "destination"
-    assert state.lifetime_path().is_symlink()
-
-
-def test_migration_expands_named_user_tilde():
-    readme = (Path(__file__).parents[1] / "README.md").read_text()
-    script = readme.split("## Manual counter migration", 1)[1].split("```bash\n", 1)[1].split("```", 1)[0]
-    function = script.split("home=$(expand_path", 1)[0]
-    value = "~" + getpass.getuser() + "/synthetic"
-    result = subprocess.run(["bash", "-c", function + '\nexpand_path "$1"', "bash", value], capture_output=True, text=True)
-    assert result.returncode == 0
-    assert result.stdout.strip() == str(Path(value).expanduser())

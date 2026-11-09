@@ -1819,6 +1819,9 @@ joining readers and test a signal-resistant descendant.
 Historical local dates need the timezone offset at the event, not today's
 offset. Normalize offset-bearing time-series timestamps to instants before
 matching, while retaining local timezone interpretation for legacy naive input.
+Time Machine snapshot names encode local wall-clock time. Resolve the local
+offset at the snapshot date before serializing to UTC, and test both standard
+and daylight time under a fixed timezone.
 When testing QuickTime conversion, write the QuickTime CreateDate specifically:
 an unqualified ExifTool assignment can create an overriding XMP value. Under
 Bash errexit, use an increment whose return status is successful at zero.

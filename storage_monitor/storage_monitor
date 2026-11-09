@@ -185,7 +185,7 @@ def initialize_scan_db(paths: RuntimePaths) -> None:
         connection.commit()
 
 RUNTIME_PATHS = build_runtime_paths()
-VERSION = "0.4.3"
+VERSION = "0.4.4"
 DATA_VOLUME = Path("/System/Volumes/Data")
 HOME_DIR = Path.home()
 APPLICATIONS_DIR = Path("/Applications")
@@ -2149,7 +2149,8 @@ def collect_snapshot_section() -> Dict[str, Any]:
             continue
         action_token = encode_action_token({"kind": "delete_snapshot", "snapshot_name": name, "token": token})
         try:
-            parsed_date = datetime.strptime(token, "%Y-%m-%d-%H%M%S").replace(tzinfo=timezone.utc).isoformat()
+            local_time = datetime.strptime(token, "%Y-%m-%d-%H%M%S")
+            parsed_date = local_time.astimezone(timezone.utc).isoformat()
         except ValueError:
             parsed_date = None
         details = enriched.get(name, {})

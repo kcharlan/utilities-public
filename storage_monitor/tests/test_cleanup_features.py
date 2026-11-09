@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import plistlib
 import sys
+import time
 from pathlib import Path
 
 import pytest
@@ -132,6 +133,29 @@ def test_snapshot_plist_and_tmutil_fallback(monkeypatch, tmp_path):
     item = module.collect_snapshot_section()["items"][0]
     assert item["snapshot_name"] == name
     assert item["purgeable"] is None
+
+
+@pytest.mark.parametrize(("token", "expected"), [
+    ("2030-01-15-123456", "2030-01-15T17:34:56+00:00"),
+    ("2030-07-15-123456", "2030-07-15T16:34:56+00:00"),
+])
+def test_snapshot_date_uses_local_offset_at_creation(monkeypatch, tmp_path, token, expected):
+    module = load(monkeypatch, tmp_path)
+    payload = plistlib.dumps({"Snapshots": [
+        {"SnapshotName": f"com.apple.TimeMachine.{token}.local"},
+    ]}).decode("utf-8")
+    monkeypatch.setattr(module, "run_command", lambda *a, **k: {"ok": True, "stdout": payload})
+
+    try:
+        with monkeypatch.context() as timezone_env:
+            timezone_env.setenv("TZ", "America/New_York")
+            time.tzset()
+            item = module.collect_snapshot_section()["items"][0]
+    finally:
+        time.tzset()
+
+    assert item["parsed_date"] == expected
+    assert item["token"] == token
 
 
 def test_measured_reclaim_and_metadata_failure(monkeypatch, tmp_path):
