@@ -1,7 +1,9 @@
+import {TIERS} from './tiers.js';
+import {buildWorld} from './world.js';
 import {createTrace,recordInput,finishTrace} from './trace.js';
 import {createRun,stepRun} from './simulation.js';
-import {airAt,upcomingHazard,hazardAdvice} from './world.js';
-import {flightGuidance} from './guidance.js';
+import {airAt} from './world.js';
+import {flightGuidance,noticeMessages} from './guidance.js';
 import {Renderer} from './render.js';
 import {Sound} from './audio.js';
 import {consumeTime,formatTime,formatDistance,formatSpeed,formatFeet} from './session.js';
@@ -12,7 +14,7 @@ let storage;try{storage=window.localStorage;}catch{storage=null;}
 let records=loadRecords(storage),sound=new Sound(records.muted),run=null,paused=false,held=false,last=0,clock={accumulator:0},noticeEnd=0,lastDistrict=-1,lastVent=null,lastVentActive=false,resultShown=false;
 const reduced=matchMedia('(prefers-reduced-motion: reduce)');reduced.addEventListener('change',()=>renderer.reduced=reduced.matches);
 function titleBests(){
-  const a=records.best.standard,b=records.best.nonstop;
+  const best=records.best[records.tier]||{},a=best.standard,b=best.nonstop;
   $('best-title').textContent=a||b?`Best standard: ${a?formatTime(a):'—'}   /   Nonstop: ${b?formatTime(b):'—'}`:'A short flight. A long way from your desk.';
 }
 function muteUI(){$('mute').textContent=records.muted?'Sound off':'Sound on';$('mute').setAttribute('aria-pressed',String(records.muted));$('mute').setAttribute('aria-label',records.muted?'Unmute sound':'Mute sound');}
@@ -22,20 +24,23 @@ function clearTraceDownload(){
   const link=$('trace-download');
   if(link){URL.revokeObjectURL(link.href);link.remove();}
 }
+const worlds=new Map();
+function modeText(world,mode){return `${world.tier.name} · ${mode==='standard'?`Standard · impacts +${world.rules.crashPenaltyTicks/60}s`:'Nonstop · restart from the office'}`;}
 function start(mode){
   clearTraceDownload();
-  run=createRun(mode);trace=tracing?createTrace(run):null;paused=false;held=false;clock.accumulator=0;last=performance.now();lastDistrict=-1;lastVent=null;lastVentActive=false;resultShown=false;sound.district=0;sound.setPaused(false);sound.unlock().then(()=>sound.event('launch'));
+  let world=worlds.get(records.tier);if(!world){world=buildWorld(undefined,TIERS[records.tier]);worlds.set(records.tier,world);}
+  run=createRun(mode,world);trace=tracing?createTrace(run):null;paused=false;held=false;clock.accumulator=0;last=performance.now();lastDistrict=-1;lastVent=null;lastVentActive=false;resultShown=false;sound.district=0;sound.setPaused(false);sound.unlock().then(()=>sound.event('launch'));
   for(const id of ['title-screen','pause-screen','result-screen'])$(id).hidden=true;
   for(const id of ['hud','route-hud','flight-hud'])$(id).hidden=false;
   $('district-dots').replaceChildren(...Array.from({length:5},()=>document.createElement('i')));
-  $('run-mode').textContent=mode==='standard'?'Standard · impacts +3s':'Nonstop · no checkpoints';
-  canvas.focus({preventScroll:true});notice('Hold to climb over the first flock. Release to dive and regain speed.',8);updateHUD();
+  $('run-mode').textContent=modeText(world,mode);$('pause-mode').textContent=modeText(world,mode);
+  canvas.focus({preventScroll:true});if(world.tier.prompts!=='quiet')notice('Hold to climb over the first flock. Release to dive and regain speed.',8);updateHUD();
 }
 function pause(){if(!run||run.status==='finished'||paused)return;setHeld(false);paused=true;clock.accumulator=0;sound.event('pause');sound.setPaused(true);$('pause-screen').hidden=false;$('resume').focus();}
 function resume(){if(!run)return;paused=false;held=false;clock.accumulator=0;last=performance.now();sound.setPaused(false);sound.unlock().then(()=>sound.event('resume'));$('pause-screen').hidden=true;canvas.focus({preventScroll:true});}
 function home(){clearTraceDownload();held=false;paused=true;run=null;sound.setPaused(true);for(const id of ['pause-screen','result-screen','hud','route-hud','flight-hud','notice'])$(id).hidden=true;$('title-screen').hidden=false;titleBests();$('start').focus();}
 function finish(){
-  if(resultShown)return;resultShown=true;held=false;const seconds=run.finishTicks/60,previous=records.best[run.mode];records=saveResult(storage,run.mode,seconds,records);records.muted=sound.muted;
+  if(resultShown)return;resultShown=true;held=false;const seconds=run.finishTicks/60,previous=records.best[run.world.tier.id]?.[run.mode];records=saveResult(storage,run.world.tier.id,run.mode,seconds,records);records.muted=sound.muted;
   $('result-time').textContent=formatTime(seconds);$('result-distance').textContent=formatDistance(run.world.length);
   $('result-best').textContent=`${run.mode==='standard'?'Standard':'Nonstop'} · ${!previous||seconds<previous?'Your best flight.':`Best ${formatTime(previous)}`}`;
   $('notice').hidden=true;
@@ -46,10 +51,9 @@ function finish(){
 function tick(){
   run.previous={x:run.plane.x,y:run.plane.y};if(trace)recordInput(trace,held);stepRun(run,held);sound.district=run.district;
   for(const event of run.events)sound.event(event);
-  if(run.events.includes('impact')){held=false;notice(run.cause,5);}
-  if(run.events.includes('respawn'))notice(run.mode==='standard'?'Back at the last rooftop. Build height for the flock.':'A fresh throw. Climb over the first flock.',4);
-  if(run.events.includes('warning')){const hazard=upcomingHazard(run.world,run.plane.x);if(hazard)notice(hazardAdvice(hazard),4);}
-  if(run.events.includes('checkpoint'))notice(`${run.world.districts[run.district].name}. ${run.mode==='standard'?'Rooftop checkpoint saved. ':''}${run.world.districts[run.district].tip}`,8);
+  if(run.events.includes('impact'))held=false;
+  const messages=noticeMessages(run);
+  if(messages.length)notice(messages.join(' · '),8);
   const air=airAt(run.world,run.plane,run.worldTicks/60),source=air.source;
   const ventActive=source?.type===1&&air.activity>.35;
   if(ventActive&&(lastVent!==source||!lastVentActive))sound.event('vent');lastVent=source;lastVentActive=ventActive;
@@ -80,4 +84,12 @@ document.addEventListener('keydown',e=>{
   if(e.code==='KeyM'&&!e.repeat)$('mute').click();
 });document.addEventListener('keyup',e=>{if(e.code==='Space')setHeld(false);});
 window.addEventListener('blur',pause);document.addEventListener('visibilitychange',()=>{if(document.hidden)pause();});window.addEventListener('resize',()=>renderer.resize());
+for(const tier of Object.values(TIERS)){
+  const label=document.createElement('label');label.className='tier-row';
+  const radio=document.createElement('input');radio.type='radio';radio.name='tier';radio.value=tier.id;radio.checked=records.tier===tier.id;
+  const copy=document.createElement('span');const name=document.createElement('strong');name.textContent=tier.name;
+  const detail=document.createElement('small');detail.textContent=`${tier.blurb} Standard impacts +${tier.rules.crashPenaltyTicks/60}s.`;
+  copy.append(name,detail);label.append(radio,copy);$('tier-picker').append(label);
+  radio.addEventListener('change',()=>{if(radio.checked){records.tier=tier.id;savePreferences(storage,records);titleBests();}});
+}
 titleBests();muteUI();requestAnimationFrame(frame);

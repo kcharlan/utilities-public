@@ -72,3 +72,7 @@ test('a high nose-up approach can dive through AC and level below the washer',()
     assert.equal(r.crashes,0,`${height}m approach cannot recover: ${r.cause}`);assert.ok(r.plane.x>h.x+h.w);
   }
 });
+test('all shortcut policies fail every district in every available tier',async()=>{
+  const {TIERS}=await import('../dist/game/tiers.js');const {shortcutOutcomes}=await import('../scripts/flight-study.mjs');
+  for(const tier of Object.values(TIERS))assert.ok(Object.values(shortcutOutcomes(buildWorld(undefined,tier))).every(n=>n===0),tier.id);
+});

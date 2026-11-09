@@ -1,5 +1,5 @@
 import {createPlane,advancePlane,PHYSICS} from './physics.js';
-import {buildWorld,airAt,hazardBox,hazardParts} from './world.js';
+import {buildWorld,airAt,hazardBox,hazardParts,hazardKey} from './world.js';
 export function createRun(mode='standard',world=buildWorld()){
   if(!['standard','nonstop'].includes(mode))mode='standard';
   return {mode,world,plane:createPlane(),ticks:0,worldTicks:0,district:0,checkpoint:{...world.districts[0].checkpoint,x:0,y:130},status:'flying',respawnTicks:0,crashes:0,events:['launch'],warned:new Set(),lastAir:null,lastStall:false,cause:'',finishTicks:0,crashLog:[],attempts:1};
@@ -16,7 +16,7 @@ export function segmentHitsBox(a,b,box,pad=1.2){
 function crash(r,cause,where){r.crashes++;r.status='respawning';r.respawnTicks=r.world.rules.respawnTicks;r.cause=cause;r.events.push('impact');r.crashLog.push({where,x:Math.round(r.plane.x),y:Math.round(r.plane.y),district:r.district});if(r.mode==='standard')r.ticks+=r.world.rules.crashPenaltyTicks;}
 function gapAt(world,x){return world.gaps.find(g=>x>=g.x-10&&x<g.end+10)?.id??'?';}
 export function stepRun(r,held){
-  r.events=[];
+  r.events=[];r.warningHazards=[];
   if(r.status==='finished')return r;
   r.ticks++;r.worldTicks++;
   if(r.status==='landing'){
@@ -37,7 +37,7 @@ export function stepRun(r,held){
   }
   const p=r.plane,previous={x:p.x,y:p.y},time=r.worldTicks*PHYSICS.dt;
   const air=airAt(r.world,p,time);advancePlane(p,held,air);
-  if(air.source!==r.lastAir&&air.source)r.events.push('lift');r.lastAir=air.source;
+  if(air.source!==r.lastAir&&air.source&&air.source.type!==5)r.events.push('lift');r.lastAir=air.source;
   if(p.stalled!==r.lastStall)r.events.push(p.stalled?'stall':'recovery');r.lastStall=p.stalled;
   if(p.y<2){crash(r,'Street level — use the rising air over rooftops.',`street ${gapAt(r.world,p.x)}`);return r;}
   for(const b of r.world.buildings){
@@ -46,8 +46,9 @@ export function stepRun(r,held){
   }
   for(const h of r.world.hazards){
     const box=hazardBox(h,time),dx=box.x-p.x;
-    if(dx>0&&dx<h.warningDistance&&!r.warned.has(h.id)){r.warned.add(h.id);r.events.push('warning');}
-    if(Math.abs(dx)<8+box.w&&hazardParts(h,time).some(part=>segmentHitsBox(previous,p,part))){crash(r,h.kind==='pigeon'?'Pigeons — hold earlier to climb over the flock.':'Window washer or cable — release to dive, then level out below.',h.id);return r;}
+    const key=hazardKey(h);
+    if(dx>0&&dx<h.warningDistance&&!r.warned.has(key)){r.warned.add(key);r.warningHazards.push(h);r.events.push('warning');}
+    if(Math.abs(dx)<8+box.w&&hazardParts(h,time).some(part=>segmentHitsBox(previous,p,part))){crash(r,h.squeeze?'Squeeze — fly through the window between the washer and the flock.':h.kind==='pigeon'?'Pigeons — hold earlier to climb over the flock.':'Window washer or cable — release to dive, then level out below.',h.id);return r;}
   }
   const next=r.world.districts[r.district+1];
   if(next&&p.x>=next.start){r.district++;if(r.mode==='standard')r.checkpoint={...next.checkpoint};r.events.push('checkpoint','district');}

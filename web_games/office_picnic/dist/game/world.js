@@ -96,7 +96,8 @@ export function airEffect(a,height,time){
   return {lift:[6.5,1.5+11*pulse,5.3,5,9*fade][a.type]*s,wind:a.type===3?6:0,activity:a.type===1?pulse:a.type===4?fade:1};
 }
 export function upcomingHazard(world,x,lookahead){return world.hazards.find(h=>h.x+h.w+8>x&&h.x-x<(lookahead??h.warningDistance));}
-export function hazardAdvice(h){return h.kind==='pigeon'?'Pigeons · climb over':'Window washers · dive under';}
+export function hazardKey(h){return h.squeeze?`squeeze-${h.district}-${h.slot}`:h.id;}
+export function hazardAdvice(h){return h.squeeze?'Squeeze · fly between the washer and the flock':h.kind==='pigeon'?'Pigeons · climb over':'Window washers · dive under';}
 export function hazardBox(h,time){
   if(h.moving===false)return {x:h.x,y:h.y,w:h.w,h:h.h};
   const m=h.amp??{platformY:13,pigeonX:9,pigeonY:9,rate:1},r=m.rate??1;

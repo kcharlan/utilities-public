@@ -41,3 +41,35 @@ test('tailwind guidance discloses its forward and upward effects',()=>{
   const g=module.flightGuidance(r,false);assert.ok(g.air.lift>0);assert.ok(g.air.wind>0);
   assert.match(g.airLabel,/forward.*upward/i);
 });
+test('headwind names its effect and squeeze guidance targets the live window',async()=>{
+  const {buildWorld,hazardAdvice}=await import('../dist/game/world.js');const {TIERS}=await import('../dist/game/tiers.js');
+  const r=createRun('standard',buildWorld(undefined,TIERS.rush)),wind=r.world.winds[0];
+  r.plane.x=wind.x0+20;r.plane.y=300;assert.match(module.flightGuidance(r,false).airLabel,/Headwind · slows you/);
+  const h=r.world.hazards.find(h=>h.squeeze);r.plane.x=h.x-40;r.plane.y=110;
+  assert.match(hazardAdvice(h),/fly between/);assert.match(module.flightGuidance(r,false).instruction,/climb.*window/i);
+  r.plane.y=190;assert.match(module.flightGuidance(r,false).instruction,/dive.*window/i);
+});
+test('moving hazard guidance uses its live box rather than its authored height',async()=>{
+  const {buildWorld,hazardBox}=await import('../dist/game/world.js');const {TIERS}=await import('../dist/game/tiers.js');
+  const r=createRun('standard',buildWorld(undefined,TIERS.rush)),h=r.world.hazards.find(h=>h.kind==='platform'&&h.moving);
+  r.worldTicks=60*(Math.PI/2-h.phase)/(.8*h.amp.rate);const box=hazardBox(h,r.worldTicks/60);
+  r.plane.x=box.x-50;r.plane.y=h.y-25;r.plane.vy=0;
+  assert.ok(box.y>h.y+10);assert.match(module.flightGuidance(r,false).instruction,/level out/i);
+});
+test('simultaneous checkpoint, impact and warning notices retain each message',async()=>{
+  const {noticeMessages}=await import('../dist/game/guidance.js');
+  const r=createRun();r.district=3;r.events=['checkpoint','impact','warning'];r.cause='Impact correction';r.warningHazards=[{squeeze:true}];
+  r.world={...r.world,tier:{...r.world.tier,prompts:'warnings'},winds:[{district:3,wind:-3}]};
+  const text=noticeMessages(r).join(' ');assert.match(text,/Impact correction/);assert.match(text,/Crosswind Court/);assert.match(text,/Headwinds ahead/);assert.match(text,/Squeeze/);
+});
+test('headwind uses still-air flight and rooftop guidance',async()=>{
+  const {buildWorld}=await import('../dist/game/world.js');const {TIERS}=await import('../dist/game/tiers.js');
+  const r=createRun('standard',buildWorld(undefined,TIERS.rush)),zone=r.world.winds[0];r.plane.x=zone.x0+20;r.plane.y=140;r.world={...r.world,hazards:[],buildings:[]};
+  assert.match(module.flightGuidance(r,false).instruction,/level out/i);
+});
+test('guidance selects hazards by their moving horizontal box',async()=>{
+  const {buildWorld,hazardBox}=await import('../dist/game/world.js');const {TIERS}=await import('../dist/game/tiers.js');
+  const r=createRun('standard',buildWorld(undefined,TIERS.rush)),h=r.world.hazards.find(h=>h.kind==='pigeon'&&h.moving);
+  r.worldTicks=60*(Math.PI/2-h.phase)/(.65*h.amp.rate);const b=hazardBox(h,r.worldTicks/60);r.world={...r.world,hazards:[h],buildings:[]};
+  r.plane.x=h.x+h.w+9;r.plane.y=120;assert.ok(b.x>h.x+8);assert.equal(module.flightGuidance(r,false).hazard,h);
+});

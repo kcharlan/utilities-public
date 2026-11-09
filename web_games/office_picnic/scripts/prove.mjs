@@ -2,27 +2,30 @@ import assert from 'node:assert/strict';
 import {mkdir,writeFile} from 'node:fs/promises';
 import {createPlane,advancePlane} from '../dist/game/physics.js';
 import {createRun,stepRun} from '../dist/game/simulation.js';
-import {chooseInput} from '../dist/game/bot.js';
-import {buildWorld} from '../dist/game/world.js';
+import {chooseInput,referenceInput} from '../dist/game/bot.js';
+import {TIERS} from '../dist/game/tiers.js';
+import {buildWorld,hazardBox,hazardKey} from '../dist/game/world.js';
 import {validateEncounter} from './proof-checks.mjs';
-const world=buildWorld(),runs=[],districtTrials=[],gaps=[],actualEntries=new Map(),actualReceivers=new Map();
+function prove(tier){
+const world=buildWorld(undefined,tier),input=tier.id==='casual'?chooseInput:referenceInput,runs=[],districtTrials=[],gaps=[],actualEntries=new Map(),actualReceivers=new Map();
 const encounters=world.hazards.map(h=>({id:h.id,district:h.district,kind:h.kind,pass:h.pass,minClearance:Infinity,warningSeconds:null,arrivalSeconds:null,passed:false}));
 const engagement=world.districts.map(d=>({district:d.name,heldTicks:0,totalTicks:0}));
 for(const mode of ['standard','nonstop']){
   const r=createRun(mode,world);
-  for(let n=0;n<60*480&&r.status!=='finished';n++){
-    const before={...r.plane},held=chooseInput(r);
+  for(let n=0;n<60*900&&r.status!=='finished';n++){
+    const before={...r.plane},held=input(r);
     if(mode==='standard'){engagement[r.district].heldTicks+=Number(held);engagement[r.district].totalTicks++;}
     stepRun(r,held);
     if(mode==='standard')for(let i=0;i<world.hazards.length;i++){
       const h=world.hazards[i],record=encounters[i];
-      if(record.warningSeconds===null&&r.warned.has(h.id))record.warningSeconds=r.worldTicks/60;
-      if(r.plane.x>=h.x-1.2&&r.plane.x<=h.x+h.w+1.2){
+      const box=hazardBox(h,r.worldTicks/60);
+      if(record.warningSeconds===null&&r.warningHazards.some(w=>hazardKey(w)===hazardKey(h)))record.warningSeconds=r.worldTicks/60;
+      if(r.plane.x>=box.x-1.2&&r.plane.x<=box.x+box.w+1.2){
         if(record.arrivalSeconds===null)record.arrivalSeconds=r.worldTicks/60;
-        const clearance=h.pass==='above'?r.plane.y-h.y-h.h-1.2:h.y-r.plane.y-1.2;
+        const clearance=h.pass==='above'?r.plane.y-box.y-box.h-1.2:box.y-r.plane.y-1.2;
         record.minClearance=Math.min(record.minClearance,clearance);
       }
-      if(before.x<h.x+h.w+1.2&&r.plane.x>=h.x+h.w+1.2)record.passed=true;
+      if(record.arrivalSeconds!==null&&r.plane.x>=box.x+box.w+1.2)record.passed=true;
     }
     if(mode==='standard')for(const g of world.gaps){
       if(before.x<g.x&&r.plane.x>=g.x)actualEntries.set(g.id,{height:r.plane.y,speed:r.plane.speed,pitch:r.plane.pitch});
@@ -37,7 +40,7 @@ for(const d of world.districts)for(const speed of [22,26,30])for(const dy of [-6
   const r=createRun('standard',world);r.district=d.index;r.checkpoint={...d.checkpoint};r.plane=createPlane({...d.checkpoint,speed,y:d.checkpoint.y+dy});
   let held=false;
   for(let n=0;n<60*150&&r.plane.x<d.end&&r.crashes===0;n++){
-    if(n%Math.max(1,delay+1)===0)held=chooseInput(r);
+    if(n%Math.max(1,delay+1)===0)held=input(r);
     stepRun(r,held);
   }
   assert.equal(r.crashes,0,`${d.name}: speed=${speed}, dy=${dy}, delay=${delay}`);
@@ -47,10 +50,12 @@ for(const d of world.districts)for(const speed of [22,26,30])for(const dy of [-6
 for(const g of world.gaps){
   let minClearance=Infinity,minActualRoofClearance=Infinity;
   const receiver=world.buildings.find(b=>Math.abs(b.x-(g.end-10))<.01);
+  const occupied=tier.id!=='casual'&&world.hazards.some(h=>h.x>=g.x&&h.x<=g.end);
   for(const speed of [18,22,26])for(const dy of [-2,0,2]){
     const p=createPlane({x:0,y:g.entryHeight+dy,speed,pitch:g.entryPitch});
     while(p.x<g.length)advancePlane(p,false);
     minClearance=Math.min(minClearance,p.y-g.clearance);
+    if(occupied)continue;
     const trial=createRun('standard',world);trial.district=g.district;trial.plane=createPlane({x:g.x,y:g.entryHeight+dy,speed,pitch:g.entryPitch});
     for(let n=0;n<1200&&trial.plane.x<g.end+2&&trial.crashes===0;n++){
       stepRun(trial,false);
@@ -63,9 +68,13 @@ for(const g of world.gaps){
   while(continuation.y>roof+1.2&&continuation.x<2000)advancePlane(continuation,false);
   const actualRequiredRange=receiver?receiver.x-1.2-g.x:g.length;
   assert.ok(actualRequiredRange<=continuation.x,`${g.id}: actual-entry continuation over limit`);
-  gaps.push({...g,sourceRoofEnd:g.x+10,receiverRoofStart:receiver?.x??null,receiverRoof:roof,clearanceMeaning:`Synthetic ${g.clearance}m envelope target; actual roof and hazard clearances are separate.`,syntheticPerturbedClearance:minClearance,realGeometryMinSampledRoofClearance:Number.isFinite(minActualRoofClearance)?minActualRoofClearance:null,actualBotEntry:entry,actualBotReceiver:actualReceivers.get(g.id)??null,actualEntryMeasuredRange:continuation.x,actualRequiredRange,actualEntryUtilization:actualRequiredRange/continuation.x});
+  gaps.push({...g,sourceRoofEnd:g.x+10,receiverRoofStart:receiver?.x??null,receiverRoof:roof,clearanceMeaning:`Synthetic ${g.clearance}m envelope target; actual roof and hazard clearances are separate.`,syntheticPerturbedClearance:minClearance,releaseOnlySkipped:occupied,realGeometryMinSampledRoofClearance:Number.isFinite(minActualRoofClearance)?minActualRoofClearance:null,actualBotEntry:entry,actualBotReceiver:actualReceivers.get(g.id)??null,actualEntryMeasuredRange:continuation.x,actualRequiredRange,actualEntryUtilization:actualRequiredRange/continuation.x});
 }
 for(const e of encounters)e.warningLeadSeconds=validateEncounter(e);
 const report={runs,districtTrials,gaps,encounters,engagement,summary:{districtTrials:districtTrials.length,gaps:gaps.length,encounters:encounters.length,firstEncounterSeconds:encounters[0].arrivalSeconds,minHazardClearance:Math.min(...encounters.map(e=>e.minClearance)),minWarningLeadSeconds:Math.min(...encounters.map(e=>e.warningLeadSeconds)),maxSyntheticEnvelopeUtilization:Math.max(...gaps.map(g=>g.utilization)),minSyntheticPerturbedClearance:Math.min(...gaps.map(g=>g.syntheticPerturbedClearance)),maxActualEntryUtilization:Math.max(...gaps.map(g=>g.actualEntryUtilization)),minActualBotReceiverClearance:Math.min(...gaps.filter(g=>g.actualBotReceiver).map(g=>g.actualBotReceiver.clearance)),minRealGeometrySampledRoofClearance:Math.min(...gaps.filter(g=>g.realGeometryMinSampledRoofClearance!==null).map(g=>g.realGeometryMinSampledRoofClearance))}};
-await mkdir(new URL('../reports/',import.meta.url),{recursive:true});await writeFile(new URL('../reports/route-proof.json',import.meta.url),JSON.stringify(report,null,2)+'\n');
-console.table(runs);console.table(world.districts.map(d=>({district:d.name,gaps:gaps.filter(g=>g.district===d.index).length,utilization:(gaps.find(g=>g.district===d.index).utilization*100).toFixed(1)+'%'})));console.log(report.summary);
+return report;
+}
+const reports=Object.fromEntries(Object.entries(TIERS).map(([id,tier])=>[id,prove(tier)]));
+await mkdir(new URL('../reports/',import.meta.url),{recursive:true});
+await writeFile(new URL('../reports/route-proof.json',import.meta.url),JSON.stringify(reports,null,2)+'\n');
+for(const [id,report] of Object.entries(reports)){console.log(id);console.table(report.runs);console.log(report.summary);}

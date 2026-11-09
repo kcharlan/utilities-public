@@ -99,3 +99,10 @@ test('shared shortcut runner rejects each passive policy in every district',()=>
   assert.ok(Object.keys(results).length>=9);
   assert.ok(Object.values(results).every(n=>n===0));
 });
+test('Rush has the authored moving hazards, squeeze and headwinds',()=>{
+  const world=buildWorld(undefined,TIERS.rush);
+  assert.equal(world.rules.crashPenaltyTicks,300);
+  assert.equal(world.winds.length,2);
+  assert.equal(world.hazards.filter(h=>h.squeeze).length,4);
+  assert.ok(world.hazards.some(h=>h.moving));
+});

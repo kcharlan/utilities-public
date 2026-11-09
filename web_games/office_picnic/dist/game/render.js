@@ -1,6 +1,6 @@
 import {cameraFor} from './session.js';
-import {hazardBox,hazardParts,hazardAdvice,upcomingHazard} from './world.js';
-import {drawAir} from './air-render.js';
+import {hazardBox,hazardParts,hazardAdvice,upcomingHazard,hazardKey} from './world.js';
+import {drawAir,drawWind} from './air-render.js';
 const C={ink:'#302f48',shadow:'#4f4b64',sky:'#9b8cbb',warm:'#f1a290',paper:'#fff0d3',window:'#f3bd86',green:'#7d887d'};
 const hash=n=>{const x=Math.sin(n*127.1+311.7)*43758.5453;return x-Math.floor(x);};
 export class Renderer{
@@ -50,6 +50,7 @@ export class Renderer{
       // Rooftop railings mark the solid top; lift machinery below.
       ctx.strokeStyle='#9c9aaa';ctx.lineWidth=Math.max(1,s*.6);ctx.beginPath();ctx.moveTo(bx,Y(b.y+4));ctx.lineTo(bx+bw,Y(b.y+4));ctx.stroke();
     }
+    for(const zone of run.world.winds)drawWind(this,zone,run,X,Y);
     for(const a of run.world.airs)drawAir(this,a,run,X,Y,s,cam.verticalScale);
     for(const hazard of run.world.hazards){
       const b=hazardBox(hazard,run.worldTicks/60),x=X(b.x),y=Y(b.y),dx=b.x-p.x;
@@ -57,7 +58,7 @@ export class Renderer{
       if(hazard.kind==='pigeon'){
         const size=Math.max(33,15*s),frame=this.reduced?0:Math.floor(run.worldTicks/9)%4;
         for(let i=0;i<2;i++)this.sprite(this.pigeon,(frame+i)%4,X(b.x+b.w*(i===0?.2:.8)),Y(b.y+b.h*(i%2?.7:.35)),size,size,0);
-        if(x<w&&dx>-b.w&&dx<hazard.warningDistance)this.label(hazardAdvice(hazard),Math.min(w-155,Math.max(10,x-44)),Y(b.y+b.h)-25,'#ffe3a8',12);
+        if(!hazard.squeeze&&run.world.tier.prompts!=='quiet'&&x<w&&dx>-b.w&&dx<hazard.warningDistance)this.label(hazardAdvice(hazard),Math.min(w-155,Math.max(10,x-44)),Y(b.y+b.h)-25,'#ffe3a8',12);
       }else{
         for(const cable of hazardParts(hazard,run.worldTicks/60).filter(part=>part.part==='cable')){
           const cx=X(cable.x+cable.w/2);ctx.strokeStyle='#37405c';ctx.lineWidth=Math.max(2.5,cable.w*s+1);ctx.beginPath();ctx.moveTo(cx,Y(cable.y+cable.h));ctx.lineTo(cx,Y(cable.y));ctx.stroke();
@@ -66,12 +67,28 @@ export class Renderer{
         const image=this.washer,width=b.w*s,height=b.h*cam.verticalScale,center=X(b.x+b.w/2);
         if(image.complete&&image.naturalWidth)ctx.drawImage(image,center-width/2,y-height,width,height);
         else{ctx.fillStyle='#d5b18b';ctx.fillRect(center-width/2,y-8,width,8);}
-        if(x<w&&dx>-b.w&&dx<hazard.warningDistance)this.label(hazardAdvice(hazard),Math.min(w-195,Math.max(10,x-65)),Math.min(h-110,y+23),'#ffe3a8',12);
+        if(!hazard.squeeze&&run.world.tier.prompts!=='quiet'&&x<w&&dx>-b.w&&dx<hazard.warningDistance)this.label(hazardAdvice(hazard),Math.min(w-195,Math.max(10,x-65)),Math.min(h-110,y+23),'#ffe3a8',12);
+      }
+    }
+    // Label a squeeze once, at its shared window rather than on each member.
+    if(run.world.tier.prompts!=='quiet')for(const hazard of run.world.hazards.filter(h=>h.squeeze&&h.kind==='platform')){
+      const b=hazardBox(hazard,run.worldTicks/60),flock=run.world.hazards.find(h=>h.squeeze&&h.district===hazard.district&&h.slot===hazard.slot&&h.kind==='pigeon');
+      const f=hazardBox(flock,run.worldTicks/60),dx=b.x-p.x;
+      if(X(b.x)<w&&X(b.x+b.w)>0&&dx>-b.w&&dx<hazard.warningDistance){
+        this.label(hazardAdvice(hazard),Math.max(10,X(b.x)-65),Y((b.y+f.y+f.h)/2)-20,'#ffe3a8',12);
       }
     }
     // If a warning source is outside the camera vertically, keep its direction legible.
     const incoming=upcomingHazard(run.world,p.x);
-    if(incoming){const b=hazardBox(incoming,run.worldTicks/60),offscreen=X(b.x)>w-15;if(offscreen||Y(b.y)<155)this.label((offscreen?'→ ':'')+hazardAdvice(incoming),Math.max(10,Math.min(w-218,w*.35)),182,'#ffe3a8',12);}
+    const squeeze=run.world.hazards.find(h=>h.squeeze&&run.warned.has(hazardKey(h))&&hazardBox(h,run.worldTicks/60).x+h.w+8>p.x);
+    const marker=squeeze||incoming;
+    if(marker){
+      const b=hazardBox(marker,run.worldTicks/60);
+      if(marker.squeeze){
+        const pair=run.world.hazards.filter(h=>h.squeeze&&hazardKey(h)===hazardKey(marker)).map(h=>hazardBox(h,run.worldTicks/60));
+        b.x=Math.min(...pair.map(h=>h.x));b.y=(Math.max(...pair.map(h=>h.y))+Math.min(...pair.map(h=>h.y+h.h)))/2;
+      }
+      const offscreen=X(b.x)>w-15;if(offscreen||Y(b.y)<155)this.label((run.world.tier.prompts==='full'?(offscreen?'→ ':''):'→ ')+(run.world.tier.prompts==='quiet'?'':hazardAdvice(marker)),Math.max(10,Math.min(w-218,w*.35)),182,'#ffe3a8',12);}
     if(p.x<70){
       const bx=X(-34),by=Y(138);ctx.fillStyle='#384459';ctx.fillRect(bx,by,30*s,h-by);ctx.fillStyle='#f4c68d';ctx.fillRect(bx+5*s,by+7*s,20*s,29*s);ctx.strokeStyle='#aeb2bd';ctx.strokeRect(bx+5*s,by+7*s,20*s,29*s);this.label('40th floor',Math.max(8,bx),by-10,'#fff0d3',11);
     }
@@ -85,8 +102,13 @@ export class Renderer{
     if(p.y>cam.bottom+h/s-25)this.label('↑ Plane above view',20,190,C.paper,12);
   }
   label(text,x,y,color,size){
-    const ctx=this.ctx;ctx.font=`${size}px -apple-system, BlinkMacSystemFont, sans-serif`;const width=ctx.measureText(text).width;
-    ctx.fillStyle='#303149d9';ctx.fillRect(x-6,y-size-4,width+12,size+11);ctx.fillStyle=color;ctx.fillText(text,x,y);
+    const ctx=this.ctx;ctx.font=`${size}px -apple-system, BlinkMacSystemFont, sans-serif`;
+    const lines=[];let line='';const limit=Math.max(30,this.w-32);
+    for(const word of text.split(' ')){const next=line?line+' '+word:word;if(line&&ctx.measureText(next).width>limit){lines.push(line);line=word;}else line=next;}
+    if(line)lines.push(line);const width=Math.max(...lines.map(part=>ctx.measureText(part).width));
+    x=Math.max(6,Math.min(x,this.w-width-6));
+    ctx.fillStyle='#303149d9';ctx.fillRect(x-6,y-size-4,width+12,lines.length*(size+4)+7);ctx.fillStyle=color;
+    lines.forEach((part,i)=>ctx.fillText(part,x,y+i*(size+4)));
   }
   sprite(img,frame,x,y,w,h,rotation){
     const ctx=this.ctx;ctx.save();ctx.translate(x,y);ctx.rotate(rotation);

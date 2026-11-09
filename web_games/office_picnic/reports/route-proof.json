@@ -1,1914 +1,3968 @@
 {
-  "runs": [
-    {
-      "mode": "standard",
-      "seconds": 305.35,
-      "distance": 6245,
-      "crashes": 0
-    },
-    {
-      "mode": "nonstop",
-      "seconds": 305.35,
-      "distance": 6245,
-      "crashes": 0
+  "casual": {
+    "runs": [
+      {
+        "mode": "standard",
+        "seconds": 305.35,
+        "distance": 6245,
+        "crashes": 0
+      },
+      {
+        "mode": "nonstop",
+        "seconds": 305.35,
+        "distance": 6245,
+        "crashes": 0
+      }
+    ],
+    "districtTrials": [
+      {
+        "district": "Glass Mile",
+        "speed": 22,
+        "entryOffset": -6,
+        "inputSampleTicks": 1,
+        "cleared": true
+      },
+      {
+        "district": "Glass Mile",
+        "speed": 22,
+        "entryOffset": -6,
+        "inputSampleTicks": 4,
+        "cleared": true
+      },
+      {
+        "district": "Glass Mile",
+        "speed": 22,
+        "entryOffset": -6,
+        "inputSampleTicks": 7,
+        "cleared": true
+      },
+      {
+        "district": "Glass Mile",
+        "speed": 22,
+        "entryOffset": 0,
+        "inputSampleTicks": 1,
+        "cleared": true
+      },
+      {
+        "district": "Glass Mile",
+        "speed": 22,
+        "entryOffset": 0,
+        "inputSampleTicks": 4,
+        "cleared": true
+      },
+      {
+        "district": "Glass Mile",
+        "speed": 22,
+        "entryOffset": 0,
+        "inputSampleTicks": 7,
+        "cleared": true
+      },
+      {
+        "district": "Glass Mile",
+        "speed": 22,
+        "entryOffset": 6,
+        "inputSampleTicks": 1,
+        "cleared": true
+      },
+      {
+        "district": "Glass Mile",
+        "speed": 22,
+        "entryOffset": 6,
+        "inputSampleTicks": 4,
+        "cleared": true
+      },
+      {
+        "district": "Glass Mile",
+        "speed": 22,
+        "entryOffset": 6,
+        "inputSampleTicks": 7,
+        "cleared": true
+      },
+      {
+        "district": "Glass Mile",
+        "speed": 26,
+        "entryOffset": -6,
+        "inputSampleTicks": 1,
+        "cleared": true
+      },
+      {
+        "district": "Glass Mile",
+        "speed": 26,
+        "entryOffset": -6,
+        "inputSampleTicks": 4,
+        "cleared": true
+      },
+      {
+        "district": "Glass Mile",
+        "speed": 26,
+        "entryOffset": -6,
+        "inputSampleTicks": 7,
+        "cleared": true
+      },
+      {
+        "district": "Glass Mile",
+        "speed": 26,
+        "entryOffset": 0,
+        "inputSampleTicks": 1,
+        "cleared": true
+      },
+      {
+        "district": "Glass Mile",
+        "speed": 26,
+        "entryOffset": 0,
+        "inputSampleTicks": 4,
+        "cleared": true
+      },
+      {
+        "district": "Glass Mile",
+        "speed": 26,
+        "entryOffset": 0,
+        "inputSampleTicks": 7,
+        "cleared": true
+      },
+      {
+        "district": "Glass Mile",
+        "speed": 26,
+        "entryOffset": 6,
+        "inputSampleTicks": 1,
+        "cleared": true
+      },
+      {
+        "district": "Glass Mile",
+        "speed": 26,
+        "entryOffset": 6,
+        "inputSampleTicks": 4,
+        "cleared": true
+      },
+      {
+        "district": "Glass Mile",
+        "speed": 26,
+        "entryOffset": 6,
+        "inputSampleTicks": 7,
+        "cleared": true
+      },
+      {
+        "district": "Glass Mile",
+        "speed": 30,
+        "entryOffset": -6,
+        "inputSampleTicks": 1,
+        "cleared": true
+      },
+      {
+        "district": "Glass Mile",
+        "speed": 30,
+        "entryOffset": -6,
+        "inputSampleTicks": 4,
+        "cleared": true
+      },
+      {
+        "district": "Glass Mile",
+        "speed": 30,
+        "entryOffset": -6,
+        "inputSampleTicks": 7,
+        "cleared": true
+      },
+      {
+        "district": "Glass Mile",
+        "speed": 30,
+        "entryOffset": 0,
+        "inputSampleTicks": 1,
+        "cleared": true
+      },
+      {
+        "district": "Glass Mile",
+        "speed": 30,
+        "entryOffset": 0,
+        "inputSampleTicks": 4,
+        "cleared": true
+      },
+      {
+        "district": "Glass Mile",
+        "speed": 30,
+        "entryOffset": 0,
+        "inputSampleTicks": 7,
+        "cleared": true
+      },
+      {
+        "district": "Glass Mile",
+        "speed": 30,
+        "entryOffset": 6,
+        "inputSampleTicks": 1,
+        "cleared": true
+      },
+      {
+        "district": "Glass Mile",
+        "speed": 30,
+        "entryOffset": 6,
+        "inputSampleTicks": 4,
+        "cleared": true
+      },
+      {
+        "district": "Glass Mile",
+        "speed": 30,
+        "entryOffset": 6,
+        "inputSampleTicks": 7,
+        "cleared": true
+      },
+      {
+        "district": "Boiler Row",
+        "speed": 22,
+        "entryOffset": -6,
+        "inputSampleTicks": 1,
+        "cleared": true
+      },
+      {
+        "district": "Boiler Row",
+        "speed": 22,
+        "entryOffset": -6,
+        "inputSampleTicks": 4,
+        "cleared": true
+      },
+      {
+        "district": "Boiler Row",
+        "speed": 22,
+        "entryOffset": -6,
+        "inputSampleTicks": 7,
+        "cleared": true
+      },
+      {
+        "district": "Boiler Row",
+        "speed": 22,
+        "entryOffset": 0,
+        "inputSampleTicks": 1,
+        "cleared": true
+      },
+      {
+        "district": "Boiler Row",
+        "speed": 22,
+        "entryOffset": 0,
+        "inputSampleTicks": 4,
+        "cleared": true
+      },
+      {
+        "district": "Boiler Row",
+        "speed": 22,
+        "entryOffset": 0,
+        "inputSampleTicks": 7,
+        "cleared": true
+      },
+      {
+        "district": "Boiler Row",
+        "speed": 22,
+        "entryOffset": 6,
+        "inputSampleTicks": 1,
+        "cleared": true
+      },
+      {
+        "district": "Boiler Row",
+        "speed": 22,
+        "entryOffset": 6,
+        "inputSampleTicks": 4,
+        "cleared": true
+      },
+      {
+        "district": "Boiler Row",
+        "speed": 22,
+        "entryOffset": 6,
+        "inputSampleTicks": 7,
+        "cleared": true
+      },
+      {
+        "district": "Boiler Row",
+        "speed": 26,
+        "entryOffset": -6,
+        "inputSampleTicks": 1,
+        "cleared": true
+      },
+      {
+        "district": "Boiler Row",
+        "speed": 26,
+        "entryOffset": -6,
+        "inputSampleTicks": 4,
+        "cleared": true
+      },
+      {
+        "district": "Boiler Row",
+        "speed": 26,
+        "entryOffset": -6,
+        "inputSampleTicks": 7,
+        "cleared": true
+      },
+      {
+        "district": "Boiler Row",
+        "speed": 26,
+        "entryOffset": 0,
+        "inputSampleTicks": 1,
+        "cleared": true
+      },
+      {
+        "district": "Boiler Row",
+        "speed": 26,
+        "entryOffset": 0,
+        "inputSampleTicks": 4,
+        "cleared": true
+      },
+      {
+        "district": "Boiler Row",
+        "speed": 26,
+        "entryOffset": 0,
+        "inputSampleTicks": 7,
+        "cleared": true
+      },
+      {
+        "district": "Boiler Row",
+        "speed": 26,
+        "entryOffset": 6,
+        "inputSampleTicks": 1,
+        "cleared": true
+      },
+      {
+        "district": "Boiler Row",
+        "speed": 26,
+        "entryOffset": 6,
+        "inputSampleTicks": 4,
+        "cleared": true
+      },
+      {
+        "district": "Boiler Row",
+        "speed": 26,
+        "entryOffset": 6,
+        "inputSampleTicks": 7,
+        "cleared": true
+      },
+      {
+        "district": "Boiler Row",
+        "speed": 30,
+        "entryOffset": -6,
+        "inputSampleTicks": 1,
+        "cleared": true
+      },
+      {
+        "district": "Boiler Row",
+        "speed": 30,
+        "entryOffset": -6,
+        "inputSampleTicks": 4,
+        "cleared": true
+      },
+      {
+        "district": "Boiler Row",
+        "speed": 30,
+        "entryOffset": -6,
+        "inputSampleTicks": 7,
+        "cleared": true
+      },
+      {
+        "district": "Boiler Row",
+        "speed": 30,
+        "entryOffset": 0,
+        "inputSampleTicks": 1,
+        "cleared": true
+      },
+      {
+        "district": "Boiler Row",
+        "speed": 30,
+        "entryOffset": 0,
+        "inputSampleTicks": 4,
+        "cleared": true
+      },
+      {
+        "district": "Boiler Row",
+        "speed": 30,
+        "entryOffset": 0,
+        "inputSampleTicks": 7,
+        "cleared": true
+      },
+      {
+        "district": "Boiler Row",
+        "speed": 30,
+        "entryOffset": 6,
+        "inputSampleTicks": 1,
+        "cleared": true
+      },
+      {
+        "district": "Boiler Row",
+        "speed": 30,
+        "entryOffset": 6,
+        "inputSampleTicks": 4,
+        "cleared": true
+      },
+      {
+        "district": "Boiler Row",
+        "speed": 30,
+        "entryOffset": 6,
+        "inputSampleTicks": 7,
+        "cleared": true
+      },
+      {
+        "district": "Sunward Roofs",
+        "speed": 22,
+        "entryOffset": -6,
+        "inputSampleTicks": 1,
+        "cleared": true
+      },
+      {
+        "district": "Sunward Roofs",
+        "speed": 22,
+        "entryOffset": -6,
+        "inputSampleTicks": 4,
+        "cleared": true
+      },
+      {
+        "district": "Sunward Roofs",
+        "speed": 22,
+        "entryOffset": -6,
+        "inputSampleTicks": 7,
+        "cleared": true
+      },
+      {
+        "district": "Sunward Roofs",
+        "speed": 22,
+        "entryOffset": 0,
+        "inputSampleTicks": 1,
+        "cleared": true
+      },
+      {
+        "district": "Sunward Roofs",
+        "speed": 22,
+        "entryOffset": 0,
+        "inputSampleTicks": 4,
+        "cleared": true
+      },
+      {
+        "district": "Sunward Roofs",
+        "speed": 22,
+        "entryOffset": 0,
+        "inputSampleTicks": 7,
+        "cleared": true
+      },
+      {
+        "district": "Sunward Roofs",
+        "speed": 22,
+        "entryOffset": 6,
+        "inputSampleTicks": 1,
+        "cleared": true
+      },
+      {
+        "district": "Sunward Roofs",
+        "speed": 22,
+        "entryOffset": 6,
+        "inputSampleTicks": 4,
+        "cleared": true
+      },
+      {
+        "district": "Sunward Roofs",
+        "speed": 22,
+        "entryOffset": 6,
+        "inputSampleTicks": 7,
+        "cleared": true
+      },
+      {
+        "district": "Sunward Roofs",
+        "speed": 26,
+        "entryOffset": -6,
+        "inputSampleTicks": 1,
+        "cleared": true
+      },
+      {
+        "district": "Sunward Roofs",
+        "speed": 26,
+        "entryOffset": -6,
+        "inputSampleTicks": 4,
+        "cleared": true
+      },
+      {
+        "district": "Sunward Roofs",
+        "speed": 26,
+        "entryOffset": -6,
+        "inputSampleTicks": 7,
+        "cleared": true
+      },
+      {
+        "district": "Sunward Roofs",
+        "speed": 26,
+        "entryOffset": 0,
+        "inputSampleTicks": 1,
+        "cleared": true
+      },
+      {
+        "district": "Sunward Roofs",
+        "speed": 26,
+        "entryOffset": 0,
+        "inputSampleTicks": 4,
+        "cleared": true
+      },
+      {
+        "district": "Sunward Roofs",
+        "speed": 26,
+        "entryOffset": 0,
+        "inputSampleTicks": 7,
+        "cleared": true
+      },
+      {
+        "district": "Sunward Roofs",
+        "speed": 26,
+        "entryOffset": 6,
+        "inputSampleTicks": 1,
+        "cleared": true
+      },
+      {
+        "district": "Sunward Roofs",
+        "speed": 26,
+        "entryOffset": 6,
+        "inputSampleTicks": 4,
+        "cleared": true
+      },
+      {
+        "district": "Sunward Roofs",
+        "speed": 26,
+        "entryOffset": 6,
+        "inputSampleTicks": 7,
+        "cleared": true
+      },
+      {
+        "district": "Sunward Roofs",
+        "speed": 30,
+        "entryOffset": -6,
+        "inputSampleTicks": 1,
+        "cleared": true
+      },
+      {
+        "district": "Sunward Roofs",
+        "speed": 30,
+        "entryOffset": -6,
+        "inputSampleTicks": 4,
+        "cleared": true
+      },
+      {
+        "district": "Sunward Roofs",
+        "speed": 30,
+        "entryOffset": -6,
+        "inputSampleTicks": 7,
+        "cleared": true
+      },
+      {
+        "district": "Sunward Roofs",
+        "speed": 30,
+        "entryOffset": 0,
+        "inputSampleTicks": 1,
+        "cleared": true
+      },
+      {
+        "district": "Sunward Roofs",
+        "speed": 30,
+        "entryOffset": 0,
+        "inputSampleTicks": 4,
+        "cleared": true
+      },
+      {
+        "district": "Sunward Roofs",
+        "speed": 30,
+        "entryOffset": 0,
+        "inputSampleTicks": 7,
+        "cleared": true
+      },
+      {
+        "district": "Sunward Roofs",
+        "speed": 30,
+        "entryOffset": 6,
+        "inputSampleTicks": 1,
+        "cleared": true
+      },
+      {
+        "district": "Sunward Roofs",
+        "speed": 30,
+        "entryOffset": 6,
+        "inputSampleTicks": 4,
+        "cleared": true
+      },
+      {
+        "district": "Sunward Roofs",
+        "speed": 30,
+        "entryOffset": 6,
+        "inputSampleTicks": 7,
+        "cleared": true
+      },
+      {
+        "district": "Crosswind Court",
+        "speed": 22,
+        "entryOffset": -6,
+        "inputSampleTicks": 1,
+        "cleared": true
+      },
+      {
+        "district": "Crosswind Court",
+        "speed": 22,
+        "entryOffset": -6,
+        "inputSampleTicks": 4,
+        "cleared": true
+      },
+      {
+        "district": "Crosswind Court",
+        "speed": 22,
+        "entryOffset": -6,
+        "inputSampleTicks": 7,
+        "cleared": true
+      },
+      {
+        "district": "Crosswind Court",
+        "speed": 22,
+        "entryOffset": 0,
+        "inputSampleTicks": 1,
+        "cleared": true
+      },
+      {
+        "district": "Crosswind Court",
+        "speed": 22,
+        "entryOffset": 0,
+        "inputSampleTicks": 4,
+        "cleared": true
+      },
+      {
+        "district": "Crosswind Court",
+        "speed": 22,
+        "entryOffset": 0,
+        "inputSampleTicks": 7,
+        "cleared": true
+      },
+      {
+        "district": "Crosswind Court",
+        "speed": 22,
+        "entryOffset": 6,
+        "inputSampleTicks": 1,
+        "cleared": true
+      },
+      {
+        "district": "Crosswind Court",
+        "speed": 22,
+        "entryOffset": 6,
+        "inputSampleTicks": 4,
+        "cleared": true
+      },
+      {
+        "district": "Crosswind Court",
+        "speed": 22,
+        "entryOffset": 6,
+        "inputSampleTicks": 7,
+        "cleared": true
+      },
+      {
+        "district": "Crosswind Court",
+        "speed": 26,
+        "entryOffset": -6,
+        "inputSampleTicks": 1,
+        "cleared": true
+      },
+      {
+        "district": "Crosswind Court",
+        "speed": 26,
+        "entryOffset": -6,
+        "inputSampleTicks": 4,
+        "cleared": true
+      },
+      {
+        "district": "Crosswind Court",
+        "speed": 26,
+        "entryOffset": -6,
+        "inputSampleTicks": 7,
+        "cleared": true
+      },
+      {
+        "district": "Crosswind Court",
+        "speed": 26,
+        "entryOffset": 0,
+        "inputSampleTicks": 1,
+        "cleared": true
+      },
+      {
+        "district": "Crosswind Court",
+        "speed": 26,
+        "entryOffset": 0,
+        "inputSampleTicks": 4,
+        "cleared": true
+      },
+      {
+        "district": "Crosswind Court",
+        "speed": 26,
+        "entryOffset": 0,
+        "inputSampleTicks": 7,
+        "cleared": true
+      },
+      {
+        "district": "Crosswind Court",
+        "speed": 26,
+        "entryOffset": 6,
+        "inputSampleTicks": 1,
+        "cleared": true
+      },
+      {
+        "district": "Crosswind Court",
+        "speed": 26,
+        "entryOffset": 6,
+        "inputSampleTicks": 4,
+        "cleared": true
+      },
+      {
+        "district": "Crosswind Court",
+        "speed": 26,
+        "entryOffset": 6,
+        "inputSampleTicks": 7,
+        "cleared": true
+      },
+      {
+        "district": "Crosswind Court",
+        "speed": 30,
+        "entryOffset": -6,
+        "inputSampleTicks": 1,
+        "cleared": true
+      },
+      {
+        "district": "Crosswind Court",
+        "speed": 30,
+        "entryOffset": -6,
+        "inputSampleTicks": 4,
+        "cleared": true
+      },
+      {
+        "district": "Crosswind Court",
+        "speed": 30,
+        "entryOffset": -6,
+        "inputSampleTicks": 7,
+        "cleared": true
+      },
+      {
+        "district": "Crosswind Court",
+        "speed": 30,
+        "entryOffset": 0,
+        "inputSampleTicks": 1,
+        "cleared": true
+      },
+      {
+        "district": "Crosswind Court",
+        "speed": 30,
+        "entryOffset": 0,
+        "inputSampleTicks": 4,
+        "cleared": true
+      },
+      {
+        "district": "Crosswind Court",
+        "speed": 30,
+        "entryOffset": 0,
+        "inputSampleTicks": 7,
+        "cleared": true
+      },
+      {
+        "district": "Crosswind Court",
+        "speed": 30,
+        "entryOffset": 6,
+        "inputSampleTicks": 1,
+        "cleared": true
+      },
+      {
+        "district": "Crosswind Court",
+        "speed": 30,
+        "entryOffset": 6,
+        "inputSampleTicks": 4,
+        "cleared": true
+      },
+      {
+        "district": "Crosswind Court",
+        "speed": 30,
+        "entryOffset": 6,
+        "inputSampleTicks": 7,
+        "cleared": true
+      },
+      {
+        "district": "Park Approach",
+        "speed": 22,
+        "entryOffset": -6,
+        "inputSampleTicks": 1,
+        "cleared": true
+      },
+      {
+        "district": "Park Approach",
+        "speed": 22,
+        "entryOffset": -6,
+        "inputSampleTicks": 4,
+        "cleared": true
+      },
+      {
+        "district": "Park Approach",
+        "speed": 22,
+        "entryOffset": -6,
+        "inputSampleTicks": 7,
+        "cleared": true
+      },
+      {
+        "district": "Park Approach",
+        "speed": 22,
+        "entryOffset": 0,
+        "inputSampleTicks": 1,
+        "cleared": true
+      },
+      {
+        "district": "Park Approach",
+        "speed": 22,
+        "entryOffset": 0,
+        "inputSampleTicks": 4,
+        "cleared": true
+      },
+      {
+        "district": "Park Approach",
+        "speed": 22,
+        "entryOffset": 0,
+        "inputSampleTicks": 7,
+        "cleared": true
+      },
+      {
+        "district": "Park Approach",
+        "speed": 22,
+        "entryOffset": 6,
+        "inputSampleTicks": 1,
+        "cleared": true
+      },
+      {
+        "district": "Park Approach",
+        "speed": 22,
+        "entryOffset": 6,
+        "inputSampleTicks": 4,
+        "cleared": true
+      },
+      {
+        "district": "Park Approach",
+        "speed": 22,
+        "entryOffset": 6,
+        "inputSampleTicks": 7,
+        "cleared": true
+      },
+      {
+        "district": "Park Approach",
+        "speed": 26,
+        "entryOffset": -6,
+        "inputSampleTicks": 1,
+        "cleared": true
+      },
+      {
+        "district": "Park Approach",
+        "speed": 26,
+        "entryOffset": -6,
+        "inputSampleTicks": 4,
+        "cleared": true
+      },
+      {
+        "district": "Park Approach",
+        "speed": 26,
+        "entryOffset": -6,
+        "inputSampleTicks": 7,
+        "cleared": true
+      },
+      {
+        "district": "Park Approach",
+        "speed": 26,
+        "entryOffset": 0,
+        "inputSampleTicks": 1,
+        "cleared": true
+      },
+      {
+        "district": "Park Approach",
+        "speed": 26,
+        "entryOffset": 0,
+        "inputSampleTicks": 4,
+        "cleared": true
+      },
+      {
+        "district": "Park Approach",
+        "speed": 26,
+        "entryOffset": 0,
+        "inputSampleTicks": 7,
+        "cleared": true
+      },
+      {
+        "district": "Park Approach",
+        "speed": 26,
+        "entryOffset": 6,
+        "inputSampleTicks": 1,
+        "cleared": true
+      },
+      {
+        "district": "Park Approach",
+        "speed": 26,
+        "entryOffset": 6,
+        "inputSampleTicks": 4,
+        "cleared": true
+      },
+      {
+        "district": "Park Approach",
+        "speed": 26,
+        "entryOffset": 6,
+        "inputSampleTicks": 7,
+        "cleared": true
+      },
+      {
+        "district": "Park Approach",
+        "speed": 30,
+        "entryOffset": -6,
+        "inputSampleTicks": 1,
+        "cleared": true
+      },
+      {
+        "district": "Park Approach",
+        "speed": 30,
+        "entryOffset": -6,
+        "inputSampleTicks": 4,
+        "cleared": true
+      },
+      {
+        "district": "Park Approach",
+        "speed": 30,
+        "entryOffset": -6,
+        "inputSampleTicks": 7,
+        "cleared": true
+      },
+      {
+        "district": "Park Approach",
+        "speed": 30,
+        "entryOffset": 0,
+        "inputSampleTicks": 1,
+        "cleared": true
+      },
+      {
+        "district": "Park Approach",
+        "speed": 30,
+        "entryOffset": 0,
+        "inputSampleTicks": 4,
+        "cleared": true
+      },
+      {
+        "district": "Park Approach",
+        "speed": 30,
+        "entryOffset": 0,
+        "inputSampleTicks": 7,
+        "cleared": true
+      },
+      {
+        "district": "Park Approach",
+        "speed": 30,
+        "entryOffset": 6,
+        "inputSampleTicks": 1,
+        "cleared": true
+      },
+      {
+        "district": "Park Approach",
+        "speed": 30,
+        "entryOffset": 6,
+        "inputSampleTicks": 4,
+        "cleared": true
+      },
+      {
+        "district": "Park Approach",
+        "speed": 30,
+        "entryOffset": 6,
+        "inputSampleTicks": 7,
+        "cleared": true
+      }
+    ],
+    "gaps": [
+      {
+        "id": "1.1",
+        "district": 0,
+        "x": 200,
+        "end": 243,
+        "length": 43,
+        "entryHeight": 184,
+        "entrySpeed": 18,
+        "entryPitch": -0.55,
+        "clearance": 134,
+        "drop": 50,
+        "measuredRange": 77.7160112025809,
+        "utilization": 0.5532965387005349,
+        "sourceRoofEnd": 210,
+        "receiverRoofStart": 233,
+        "receiverRoof": 40,
+        "clearanceMeaning": "Synthetic 134m envelope target; actual roof and hazard clearances are separate.",
+        "syntheticPerturbedClearance": 20.05780949285861,
+        "releaseOnlySkipped": false,
+        "realGeometryMinSampledRoofClearance": 111.69692584831334,
+        "actualBotEntry": {
+          "height": 164.53075097644245,
+          "speed": 24.988230536632177,
+          "pitch": -0.043333333333333335
+        },
+        "actualBotReceiver": {
+          "roof": 40,
+          "clearance": 122.04691587199541
+        },
+        "actualEntryMeasuredRange": 197.21670930831567,
+        "actualRequiredRange": 31.80000000000001,
+        "actualEntryUtilization": 0.16124394383990037
+      },
+      {
+        "id": "1.2",
+        "district": 0,
+        "x": 413,
+        "end": 456,
+        "length": 43,
+        "entryHeight": 170,
+        "entrySpeed": 18,
+        "entryPitch": -0.55,
+        "clearance": 120,
+        "drop": 50,
+        "measuredRange": 77.7160112025809,
+        "utilization": 0.5532965387005349,
+        "sourceRoofEnd": 423,
+        "receiverRoofStart": 446,
+        "receiverRoof": 40,
+        "clearanceMeaning": "Synthetic 120m envelope target; actual roof and hazard clearances are separate.",
+        "syntheticPerturbedClearance": 20.05780949285861,
+        "releaseOnlySkipped": false,
+        "realGeometryMinSampledRoofClearance": 97.69692584831331,
+        "actualBotEntry": {
+          "height": 167.53768963831516,
+          "speed": 25.55190722169362,
+          "pitch": -0.55
+        },
+        "actualBotReceiver": {
+          "roof": 40,
+          "clearance": 106.00485572194604
+        },
+        "actualEntryMeasuredRange": 198.3159594319681,
+        "actualRequiredRange": 31.80000000000001,
+        "actualEntryUtilization": 0.16035018104989648
+      },
+      {
+        "id": "1.3",
+        "district": 0,
+        "x": 626,
+        "end": 669,
+        "length": 43,
+        "entryHeight": 142,
+        "entrySpeed": 18,
+        "entryPitch": -0.55,
+        "clearance": 92,
+        "drop": 50,
+        "measuredRange": 77.7160112025809,
+        "utilization": 0.5532965387005349,
+        "sourceRoofEnd": 636,
+        "receiverRoofStart": 659,
+        "receiverRoof": 85,
+        "clearanceMeaning": "Synthetic 92m envelope target; actual roof and hazard clearances are separate.",
+        "syntheticPerturbedClearance": 20.057809492858624,
+        "releaseOnlySkipped": false,
+        "realGeometryMinSampledRoofClearance": 24.696925848313388,
+        "actualBotEntry": {
+          "height": 125.96024812206082,
+          "speed": 28.278876848156052,
+          "pitch": 0.03666666666666667
+        },
+        "actualBotReceiver": {
+          "roof": 85,
+          "clearance": 22.603913220141852
+        },
+        "actualEntryMeasuredRange": 67.57767470508439,
+        "actualRequiredRange": 31.799999999999955,
+        "actualEntryUtilization": 0.4705696095460265
+      },
+      {
+        "id": "1.4",
+        "district": 0,
+        "x": 839,
+        "end": 882,
+        "length": 43,
+        "entryHeight": 170,
+        "entrySpeed": 18,
+        "entryPitch": -0.55,
+        "clearance": 120,
+        "drop": 50,
+        "measuredRange": 77.7160112025809,
+        "utilization": 0.5532965387005349,
+        "sourceRoofEnd": 849,
+        "receiverRoofStart": 872,
+        "receiverRoof": 110,
+        "clearanceMeaning": "Synthetic 120m envelope target; actual roof and hazard clearances are separate.",
+        "syntheticPerturbedClearance": 20.05780949285861,
+        "releaseOnlySkipped": false,
+        "realGeometryMinSampledRoofClearance": 27.696925848313345,
+        "actualBotEntry": {
+          "height": 169.85468883102752,
+          "speed": 17.928324882935886,
+          "pitch": 0.009999999999999998
+        },
+        "actualBotReceiver": {
+          "roof": 110,
+          "clearance": 39.96775563161161
+        },
+        "actualEntryMeasuredRange": 94.24152155875215,
+        "actualRequiredRange": 31.799999999999955,
+        "actualEntryUtilization": 0.33743088475258926
+      },
+      {
+        "id": "1.5",
+        "district": 0,
+        "x": 1052,
+        "end": 1095,
+        "length": 43,
+        "entryHeight": 170,
+        "entrySpeed": 18,
+        "entryPitch": -0.55,
+        "clearance": 120,
+        "drop": 50,
+        "measuredRange": 77.7160112025809,
+        "utilization": 0.5532965387005349,
+        "sourceRoofEnd": 1062,
+        "receiverRoofStart": 1085,
+        "receiverRoof": 45,
+        "clearanceMeaning": "Synthetic 120m envelope target; actual roof and hazard clearances are separate.",
+        "syntheticPerturbedClearance": 20.05780949285861,
+        "releaseOnlySkipped": false,
+        "realGeometryMinSampledRoofClearance": 92.66499952991056,
+        "actualBotEntry": {
+          "height": 175.2365659101578,
+          "speed": 23.198207267027847,
+          "pitch": -0.04666666666666669
+        },
+        "actualBotReceiver": {
+          "roof": 45,
+          "clearance": 127.44564105243789
+        },
+        "actualEntryMeasuredRange": 205.71043286804388,
+        "actualRequiredRange": 31.799999999999955,
+        "actualEntryUtilization": 0.15458622859638116
+      },
+      {
+        "id": "2.1",
+        "district": 1,
+        "x": 1295,
+        "end": 1344,
+        "length": 49,
+        "entryHeight": 184,
+        "entrySpeed": 18,
+        "entryPitch": -0.55,
+        "clearance": 134,
+        "drop": 50,
+        "measuredRange": 77.7160112025809,
+        "utilization": 0.6305007068913071,
+        "sourceRoofEnd": 1305,
+        "receiverRoofStart": 1334,
+        "receiverRoof": 45,
+        "clearanceMeaning": "Synthetic 134m envelope target; actual roof and hazard clearances are separate.",
+        "syntheticPerturbedClearance": 16.171700497347047,
+        "releaseOnlySkipped": false,
+        "realGeometryMinSampledRoofClearance": 102.77970757597136,
+        "actualBotEntry": {
+          "height": 163.11805262348068,
+          "speed": 23.873680071351416,
+          "pitch": -0.016666666666666666
+        },
+        "actualBotReceiver": {
+          "roof": 45,
+          "clearance": 115.4858862769607
+        },
+        "actualEntryMeasuredRange": 187.07975024586733,
+        "actualRequiredRange": 37.799999999999955,
+        "actualEntryUtilization": 0.20205286756221214
+      },
+      {
+        "id": "2.2",
+        "district": 1,
+        "x": 1514,
+        "end": 1563,
+        "length": 49,
+        "entryHeight": 170,
+        "entrySpeed": 18,
+        "entryPitch": -0.55,
+        "clearance": 120,
+        "drop": 50,
+        "measuredRange": 77.7160112025809,
+        "utilization": 0.6305007068913071,
+        "sourceRoofEnd": 1524,
+        "receiverRoofStart": 1553,
+        "receiverRoof": 45,
+        "clearanceMeaning": "Synthetic 120m envelope target; actual roof and hazard clearances are separate.",
+        "syntheticPerturbedClearance": 16.171700497347047,
+        "releaseOnlySkipped": false,
+        "realGeometryMinSampledRoofClearance": 88.74506059341591,
+        "actualBotEntry": {
+          "height": 169.9959028879201,
+          "speed": 24.417617399336393,
+          "pitch": 0.010000000000000002
+        },
+        "actualBotReceiver": {
+          "roof": 45,
+          "clearance": 102.16835374968404
+        },
+        "actualEntryMeasuredRange": 198.13566865376862,
+        "actualRequiredRange": 37.799999999999955,
+        "actualEntryUtilization": 0.19077837048135646
+      },
+      {
+        "id": "2.3",
+        "district": 1,
+        "x": 1763,
+        "end": 1812,
+        "length": 49,
+        "entryHeight": 142,
+        "entrySpeed": 18,
+        "entryPitch": -0.55,
+        "clearance": 92,
+        "drop": 50,
+        "measuredRange": 77.7160112025809,
+        "utilization": 0.6305007068913071,
+        "sourceRoofEnd": 1773,
+        "receiverRoofStart": 1802,
+        "receiverRoof": 45,
+        "clearanceMeaning": "Synthetic 92m envelope target; actual roof and hazard clearances are separate.",
+        "syntheticPerturbedClearance": 16.171700497347146,
+        "releaseOnlySkipped": false,
+        "realGeometryMinSampledRoofClearance": 60.77970757597146,
+        "actualBotEntry": {
+          "height": 125.89348498332943,
+          "speed": 26.274555158669653,
+          "pitch": 0.009999999999999998
+        },
+        "actualBotReceiver": {
+          "roof": 45,
+          "clearance": 58.44496201711618
+        },
+        "actualEntryMeasuredRange": 129.45356139513393,
+        "actualRequiredRange": 37.799999999999955,
+        "actualEntryUtilization": 0.29199660165873836
+      },
+      {
+        "id": "2.4",
+        "district": 1,
+        "x": 1982,
+        "end": 2031,
+        "length": 49,
+        "entryHeight": 170,
+        "entrySpeed": 18,
+        "entryPitch": -0.55,
+        "clearance": 120,
+        "drop": 50,
+        "measuredRange": 77.7160112025809,
+        "utilization": 0.6305007068913071,
+        "sourceRoofEnd": 1992,
+        "receiverRoofStart": 2021,
+        "receiverRoof": 45,
+        "clearanceMeaning": "Synthetic 120m envelope target; actual roof and hazard clearances are separate.",
+        "syntheticPerturbedClearance": 16.171700497347047,
+        "releaseOnlySkipped": false,
+        "realGeometryMinSampledRoofClearance": 88.74685278284757,
+        "actualBotEntry": {
+          "height": 169.78630302623935,
+          "speed": 16.273617629249905,
+          "pitch": 0.06333333333333334
+        },
+        "actualBotReceiver": {
+          "roof": 45,
+          "clearance": 101.04069994889794
+        },
+        "actualEntryMeasuredRange": 196.25003459565596,
+        "actualRequiredRange": 37.799999999999955,
+        "actualEntryUtilization": 0.1926114310139167
+      },
+      {
+        "id": "2.5",
+        "district": 1,
+        "x": 2231,
+        "end": 2280,
+        "length": 49,
+        "entryHeight": 170,
+        "entrySpeed": 18,
+        "entryPitch": -0.55,
+        "clearance": 120,
+        "drop": 50,
+        "measuredRange": 77.7160112025809,
+        "utilization": 0.6305007068913071,
+        "sourceRoofEnd": 2241,
+        "receiverRoofStart": 2270,
+        "receiverRoof": 55,
+        "clearanceMeaning": "Synthetic 120m envelope target; actual roof and hazard clearances are separate.",
+        "syntheticPerturbedClearance": 16.171700497347047,
+        "releaseOnlySkipped": false,
+        "realGeometryMinSampledRoofClearance": 78.77139230015801,
+        "actualBotEntry": {
+          "height": 174.93404123489506,
+          "speed": 20.452230650363045,
+          "pitch": -0.016666666666666666
+        },
+        "actualBotReceiver": {
+          "roof": 55,
+          "clearance": 116.73996556939964
+        },
+        "actualEntryMeasuredRange": 189.2375800134144,
+        "actualRequiredRange": 37.80000000000018,
+        "actualEntryUtilization": 0.19974890821009586
+      },
+      {
+        "id": "3.1",
+        "district": 2,
+        "x": 2500,
+        "end": 2556,
+        "length": 56,
+        "entryHeight": 184,
+        "entrySpeed": 18,
+        "entryPitch": -0.55,
+        "clearance": 134,
+        "drop": 50,
+        "measuredRange": 77.7160112025809,
+        "utilization": 0.7205722364472081,
+        "sourceRoofEnd": 2510,
+        "receiverRoofStart": 2546,
+        "receiverRoof": 55,
+        "clearanceMeaning": "Synthetic 134m envelope target; actual roof and hazard clearances are separate.",
+        "syntheticPerturbedClearance": 11.669484460955175,
+        "releaseOnlySkipped": false,
+        "realGeometryMinSampledRoofClearance": 88.24251348578353,
+        "actualBotEntry": {
+          "height": 161.45696031251896,
+          "speed": 25.367235955297286,
+          "pitch": -0.016666666666666666
+        },
+        "actualBotReceiver": {
+          "roof": 55,
+          "clearance": 103.6941693695154
+        },
+        "actualEntryMeasuredRange": 169.2275272602846,
+        "actualRequiredRange": 44.80000000000018,
+        "actualEntryUtilization": 0.26473234423082026
+      },
+      {
+        "id": "3.2",
+        "district": 2,
+        "x": 2726,
+        "end": 2782,
+        "length": 56,
+        "entryHeight": 170,
+        "entrySpeed": 18,
+        "entryPitch": -0.55,
+        "clearance": 120,
+        "drop": 50,
+        "measuredRange": 77.7160112025809,
+        "utilization": 0.7205722364472081,
+        "sourceRoofEnd": 2736,
+        "receiverRoofStart": 2772,
+        "receiverRoof": 55,
+        "clearanceMeaning": "Synthetic 120m envelope target; actual roof and hazard clearances are separate.",
+        "syntheticPerturbedClearance": 11.669484460955175,
+        "releaseOnlySkipped": false,
+        "realGeometryMinSampledRoofClearance": 74.20614443352791,
+        "actualBotEntry": {
+          "height": 169.91396670095565,
+          "speed": 24.422670681043126,
+          "pitch": 0.006666666666666644
+        },
+        "actualBotReceiver": {
+          "roof": 55,
+          "clearance": 87.56810114614926
+        },
+        "actualEntryMeasuredRange": 182.24600160793187,
+        "actualRequiredRange": 44.80000000000018,
+        "actualEntryUtilization": 0.24582157964913265
+      },
+      {
+        "id": "3.3",
+        "district": 2,
+        "x": 2982,
+        "end": 3038,
+        "length": 56,
+        "entryHeight": 142,
+        "entrySpeed": 18,
+        "entryPitch": -0.55,
+        "clearance": 92,
+        "drop": 50,
+        "measuredRange": 77.7160112025809,
+        "utilization": 0.7205722364472081,
+        "sourceRoofEnd": 2992,
+        "receiverRoofStart": 3028,
+        "receiverRoof": 55,
+        "clearanceMeaning": "Synthetic 92m envelope target; actual roof and hazard clearances are separate.",
+        "syntheticPerturbedClearance": 11.669484460955289,
+        "releaseOnlySkipped": false,
+        "realGeometryMinSampledRoofClearance": 46.2337849132423,
+        "actualBotEntry": {
+          "height": 125.98887215900483,
+          "speed": 25.303694150343983,
+          "pitch": 0.03666666666666667
+        },
+        "actualBotReceiver": {
+          "roof": 55,
+          "clearance": 44.09016067089259
+        },
+        "actualEntryMeasuredRange": 114.35353301437998,
+        "actualRequiredRange": 44.80000000000018,
+        "actualEntryUtilization": 0.3917675197177036
+      },
+      {
+        "id": "3.4",
+        "district": 2,
+        "x": 3258,
+        "end": 3314,
+        "length": 56,
+        "entryHeight": 170,
+        "entrySpeed": 18,
+        "entryPitch": -0.55,
+        "clearance": 120,
+        "drop": 50,
+        "measuredRange": 77.7160112025809,
+        "utilization": 0.7205722364472081,
+        "sourceRoofEnd": 3268,
+        "receiverRoofStart": 3304,
+        "receiverRoof": 55,
+        "clearanceMeaning": "Synthetic 120m envelope target; actual roof and hazard clearances are separate.",
+        "syntheticPerturbedClearance": 11.669484460955175,
+        "releaseOnlySkipped": false,
+        "realGeometryMinSampledRoofClearance": 74.24251348578353,
+        "actualBotEntry": {
+          "height": 169.79604373566465,
+          "speed": 15.046398915884746,
+          "pitch": 0.06333333333333334
+        },
+        "actualBotReceiver": {
+          "roof": 55,
+          "clearance": 86.29797414768704
+        },
+        "actualEntryMeasuredRange": 180.3441911356253,
+        "actualRequiredRange": 44.80000000000018,
+        "actualEntryUtilization": 0.24841387858347475
+      },
+      {
+        "id": "3.5",
+        "district": 2,
+        "x": 3484,
+        "end": 3540,
+        "length": 56,
+        "entryHeight": 170,
+        "entrySpeed": 18,
+        "entryPitch": -0.55,
+        "clearance": 120,
+        "drop": 50,
+        "measuredRange": 77.7160112025809,
+        "utilization": 0.7205722364472081,
+        "sourceRoofEnd": 3494,
+        "receiverRoofStart": 3530,
+        "receiverRoof": 65,
+        "clearanceMeaning": "Synthetic 120m envelope target; actual roof and hazard clearances are separate.",
+        "syntheticPerturbedClearance": 11.669484460955175,
+        "releaseOnlySkipped": false,
+        "realGeometryMinSampledRoofClearance": 64.23198096833106,
+        "actualBotEntry": {
+          "height": 171.3501001692666,
+          "speed": 23.472080557534547,
+          "pitch": -0.04666666666666669
+        },
+        "actualBotReceiver": {
+          "roof": 65,
+          "clearance": 102.87898891531968
+        },
+        "actualEntryMeasuredRange": 168.13043917606592,
+        "actualRequiredRange": 44.80000000000018,
+        "actualEntryUtilization": 0.26645978098639056
+      },
+      {
+        "id": "4.1",
+        "district": 3,
+        "x": 3710,
+        "end": 3772,
+        "length": 62,
+        "entryHeight": 184,
+        "entrySpeed": 18,
+        "entryPitch": -0.55,
+        "clearance": 134,
+        "drop": 50,
+        "measuredRange": 77.7160112025809,
+        "utilization": 0.7977764046379804,
+        "sourceRoofEnd": 3720,
+        "receiverRoofStart": 3762,
+        "receiverRoof": 65,
+        "clearanceMeaning": "Synthetic 134m envelope target; actual roof and hazard clearances are separate.",
+        "syntheticPerturbedClearance": 7.816838187458501,
+        "releaseOnlySkipped": false,
+        "realGeometryMinSampledRoofClearance": 74.36197557265139,
+        "actualBotEntry": {
+          "height": 160.1513473808093,
+          "speed": 24.60976501800708,
+          "pitch": -0.04666666666666669
+        },
+        "actualBotReceiver": {
+          "roof": 65,
+          "clearance": 92.12347053108736
+        },
+        "actualEntryMeasuredRange": 150.54545266154958,
+        "actualRequiredRange": 50.80000000000018,
+        "actualEntryUtilization": 0.3374396177492439
+      },
+      {
+        "id": "4.2",
+        "district": 3,
+        "x": 3942,
+        "end": 4004,
+        "length": 62,
+        "entryHeight": 170,
+        "entrySpeed": 18,
+        "entryPitch": -0.55,
+        "clearance": 120,
+        "drop": 50,
+        "measuredRange": 77.7160112025809,
+        "utilization": 0.7977764046379804,
+        "sourceRoofEnd": 3952,
+        "receiverRoofStart": 3994,
+        "receiverRoof": 65,
+        "clearanceMeaning": "Synthetic 120m envelope target; actual roof and hazard clearances are separate.",
+        "syntheticPerturbedClearance": 7.816838187458515,
+        "releaseOnlySkipped": false,
+        "realGeometryMinSampledRoofClearance": 60.32428162783799,
+        "actualBotEntry": {
+          "height": 169.98415712263983,
+          "speed": 24.0889299714092,
+          "pitch": 0.03333333333333331
+        },
+        "actualBotReceiver": {
+          "roof": 65,
+          "clearance": 74.17786509220498
+        },
+        "actualEntryMeasuredRange": 167.3233186544402,
+        "actualRequiredRange": 50.80000000000018,
+        "actualEntryUtilization": 0.30360382765843574
+      },
+      {
+        "id": "4.3",
+        "district": 3,
+        "x": 4204,
+        "end": 4266,
+        "length": 62,
+        "entryHeight": 142,
+        "entrySpeed": 18,
+        "entryPitch": -0.55,
+        "clearance": 92,
+        "drop": 50,
+        "measuredRange": 77.7160112025809,
+        "utilization": 0.7977764046379804,
+        "sourceRoofEnd": 4214,
+        "receiverRoofStart": 4256,
+        "receiverRoof": 65,
+        "clearanceMeaning": "Synthetic 92m envelope target; actual roof and hazard clearances are separate.",
+        "syntheticPerturbedClearance": 7.816838187458671,
+        "releaseOnlySkipped": false,
+        "realGeometryMinSampledRoofClearance": 32.3529290258963,
+        "actualBotEntry": {
+          "height": 125.98453045605929,
+          "speed": 24.316202942134954,
+          "pitch": 0.009999999999999998
+        },
+        "actualBotReceiver": {
+          "roof": 65,
+          "clearance": 29.723941229692972
+        },
+        "actualEntryMeasuredRange": 97.892234321743,
+        "actualRequiredRange": 50.80000000000018,
+        "actualEntryUtilization": 0.5189379969920342
+      },
+      {
+        "id": "4.4",
+        "district": 3,
+        "x": 4486,
+        "end": 4548,
+        "length": 62,
+        "entryHeight": 170,
+        "entrySpeed": 18,
+        "entryPitch": -0.55,
+        "clearance": 120,
+        "drop": 50,
+        "measuredRange": 77.7160112025809,
+        "utilization": 0.7977764046379804,
+        "sourceRoofEnd": 4496,
+        "receiverRoofStart": 4538,
+        "receiverRoof": 65,
+        "clearanceMeaning": "Synthetic 120m envelope target; actual roof and hazard clearances are separate.",
+        "syntheticPerturbedClearance": 7.816838187458515,
+        "releaseOnlySkipped": false,
+        "realGeometryMinSampledRoofClearance": 60.351062184985125,
+        "actualBotEntry": {
+          "height": 167.4264844337586,
+          "speed": 14.150890654978603,
+          "pitch": -0.016666666666666666
+        },
+        "actualBotReceiver": {
+          "roof": 65,
+          "clearance": 69.50889684361648
+        },
+        "actualEntryMeasuredRange": 159.83714003697577,
+        "actualRequiredRange": 50.80000000000018,
+        "actualEntryUtilization": 0.3178235045262222
+      },
+      {
+        "id": "4.5",
+        "district": 3,
+        "x": 4718,
+        "end": 4780,
+        "length": 62,
+        "entryHeight": 170,
+        "entrySpeed": 18,
+        "entryPitch": -0.55,
+        "clearance": 120,
+        "drop": 50,
+        "measuredRange": 77.7160112025809,
+        "utilization": 0.7977764046379804,
+        "sourceRoofEnd": 4728,
+        "receiverRoofStart": 4770,
+        "receiverRoof": 75,
+        "clearanceMeaning": "Synthetic 120m envelope target; actual roof and hazard clearances are separate.",
+        "syntheticPerturbedClearance": 7.816838187458515,
+        "releaseOnlySkipped": false,
+        "realGeometryMinSampledRoofClearance": 50.38082254505804,
+        "actualBotEntry": {
+          "height": 171.1848531490919,
+          "speed": 15.375260830936329,
+          "pitch": 0.010000000000000002
+        },
+        "actualBotReceiver": {
+          "roof": 75,
+          "clearance": 91.54638517226924
+        },
+        "actualEntryMeasuredRange": 150.58639335374528,
+        "actualRequiredRange": 50.80000000000018,
+        "actualEntryUtilization": 0.33734787631618857
+      },
+      {
+        "id": "5.1",
+        "district": 4,
+        "x": 4990,
+        "end": 5061,
+        "length": 71,
+        "entryHeight": 184,
+        "entrySpeed": 18,
+        "entryPitch": -0.55,
+        "clearance": 134,
+        "drop": 50,
+        "measuredRange": 77.7160112025809,
+        "utilization": 0.9135826569241389,
+        "sourceRoofEnd": 5000,
+        "receiverRoofStart": 5051,
+        "receiverRoof": 75,
+        "clearanceMeaning": "Synthetic 134m envelope target; actual roof and hazard clearances are separate.",
+        "syntheticPerturbedClearance": 2.0089018038222264,
+        "releaseOnlySkipped": false,
+        "realGeometryMinSampledRoofClearance": 58.76920113353613,
+        "actualBotEntry": {
+          "height": 158.04747372456436,
+          "speed": 26.080007361325436,
+          "pitch": -0.043333333333333335
+        },
+        "actualBotReceiver": {
+          "roof": 75,
+          "clearance": 79.82855973175877
+        },
+        "actualEntryMeasuredRange": 131.9773407461493,
+        "actualRequiredRange": 59.80000000000018,
+        "actualEntryUtilization": 0.4531080840234687
+      },
+      {
+        "id": "5.2",
+        "district": 4,
+        "x": 5231,
+        "end": 5302,
+        "length": 71,
+        "entryHeight": 170,
+        "entrySpeed": 18,
+        "entryPitch": -0.55,
+        "clearance": 120,
+        "drop": 50,
+        "measuredRange": 77.7160112025809,
+        "utilization": 0.9135826569241389,
+        "sourceRoofEnd": 5241,
+        "receiverRoofStart": 5292,
+        "receiverRoof": 75,
+        "clearanceMeaning": "Synthetic 120m envelope target; actual roof and hazard clearances are separate.",
+        "syntheticPerturbedClearance": 2.008901803822255,
+        "releaseOnlySkipped": false,
+        "realGeometryMinSampledRoofClearance": 44.7418506181113,
+        "actualBotEntry": {
+          "height": 169.959693905858,
+          "speed": 23.876919564490763,
+          "pitch": 0.006666666666666647
+        },
+        "actualBotReceiver": {
+          "roof": 75,
+          "clearance": 58.05070850968811
+        },
+        "actualEntryMeasuredRange": 151.0684232351819,
+        "actualRequiredRange": 59.80000000000018,
+        "actualEntryUtilization": 0.39584711827503555
+      },
+      {
+        "id": "5.3",
+        "district": 4,
+        "x": 5502,
+        "end": 5573,
+        "length": 71,
+        "entryHeight": 142,
+        "entrySpeed": 18,
+        "entryPitch": -0.55,
+        "clearance": 92,
+        "drop": 50,
+        "measuredRange": 77.7160112025809,
+        "utilization": 0.9135826569241389,
+        "sourceRoofEnd": 5512,
+        "receiverRoofStart": 5563,
+        "receiverRoof": 75,
+        "clearanceMeaning": "Synthetic 92m envelope target; actual roof and hazard clearances are separate.",
+        "syntheticPerturbedClearance": 2.008901803822411,
+        "releaseOnlySkipped": false,
+        "realGeometryMinSampledRoofClearance": 16.76262621653402,
+        "actualBotEntry": {
+          "height": 125.89104593330356,
+          "speed": 24.531705318156746,
+          "pitch": 0.010000000000000002
+        },
+        "actualBotReceiver": {
+          "roof": 75,
+          "clearance": 13.914613760533388
+        },
+        "actualEntryMeasuredRange": 81.97626910273428,
+        "actualRequiredRange": 59.80000000000018,
+        "actualEntryUtilization": 0.7294794048879882
+      },
+      {
+        "id": "5.4",
+        "district": 4,
+        "x": 5793,
+        "end": 5864,
+        "length": 71,
+        "entryHeight": 170,
+        "entrySpeed": 18,
+        "entryPitch": -0.55,
+        "clearance": 120,
+        "drop": 50,
+        "measuredRange": 77.7160112025809,
+        "utilization": 0.9135826569241389,
+        "sourceRoofEnd": 5803,
+        "receiverRoofStart": 5854,
+        "receiverRoof": 75,
+        "clearanceMeaning": "Synthetic 120m envelope target; actual roof and hazard clearances are separate.",
+        "syntheticPerturbedClearance": 2.008901803822255,
+        "releaseOnlySkipped": false,
+        "realGeometryMinSampledRoofClearance": 44.76120414707114,
+        "actualBotEntry": {
+          "height": 162.14660318206035,
+          "speed": 14.434882121253585,
+          "pitch": -0.20333333333333337
+        },
+        "actualBotReceiver": {
+          "roof": 75,
+          "clearance": 47.81171023669208
+        },
+        "actualEntryMeasuredRange": 134.8229872579426,
+        "actualRequiredRange": 59.80000000000018,
+        "actualEntryUtilization": 0.4435445410031685
+      },
+      {
+        "id": "5.5",
+        "district": 4,
+        "x": 6034,
+        "end": 6105,
+        "length": 71,
+        "entryHeight": 170,
+        "entrySpeed": 18,
+        "entryPitch": -0.55,
+        "clearance": 120,
+        "drop": 50,
+        "measuredRange": 77.7160112025809,
+        "utilization": 0.9135826569241389,
+        "sourceRoofEnd": 6044,
+        "receiverRoofStart": null,
+        "receiverRoof": 2,
+        "clearanceMeaning": "Synthetic 120m envelope target; actual roof and hazard clearances are separate.",
+        "syntheticPerturbedClearance": 2.008901803822255,
+        "releaseOnlySkipped": false,
+        "realGeometryMinSampledRoofClearance": null,
+        "actualBotEntry": {
+          "height": 163.68594776515928,
+          "speed": 14.124927002017218,
+          "pitch": -0.4700000000000001
+        },
+        "actualBotReceiver": null,
+        "actualEntryMeasuredRange": 250.95863732983588,
+        "actualRequiredRange": 71,
+        "actualEntryUtilization": 0.2829151479121415
+      }
+    ],
+    "encounters": [
+      {
+        "id": "h0-over",
+        "district": 0,
+        "kind": "pigeon",
+        "pass": "above",
+        "minClearance": 10.947584127338008,
+        "warningSeconds": 0.016666666666666666,
+        "arrivalSeconds": 11.466666666666667,
+        "passed": true,
+        "warningLeadSeconds": 11.45
+      },
+      {
+        "id": "h0-under",
+        "district": 0,
+        "kind": "platform",
+        "pass": "below",
+        "minClearance": 28.989493116805935,
+        "warningSeconds": 20,
+        "arrivalSeconds": 29.033333333333335,
+        "passed": true,
+        "warningLeadSeconds": 9.033333333333335
+      },
+      {
+        "id": "h1-over",
+        "district": 1,
+        "kind": "pigeon",
+        "pass": "above",
+        "minClearance": 10.915608346239015,
+        "warningSeconds": 45.95,
+        "arrivalSeconds": 62.68333333333333,
+        "passed": true,
+        "warningLeadSeconds": 16.733333333333327
+      },
+      {
+        "id": "h1-under",
+        "district": 1,
+        "kind": "platform",
+        "pass": "below",
+        "minClearance": 34.3043930345397,
+        "warningSeconds": 73.58333333333333,
+        "arrivalSeconds": 82.86666666666666,
+        "passed": true,
+        "warningLeadSeconds": 9.283333333333331
+      },
+      {
+        "id": "h2-over",
+        "district": 2,
+        "kind": "pigeon",
+        "pass": "above",
+        "minClearance": 10.941058300876808,
+        "warningSeconds": 104.6,
+        "arrivalSeconds": 121.88333333333334,
+        "passed": true,
+        "warningLeadSeconds": 17.283333333333346
+      },
+      {
+        "id": "h2-under",
+        "district": 2,
+        "kind": "platform",
+        "pass": "below",
+        "minClearance": 38.2244494696034,
+        "warningSeconds": 133.38333333333333,
+        "arrivalSeconds": 142.73333333333332,
+        "passed": true,
+        "warningLeadSeconds": 9.349999999999994
+      },
+      {
+        "id": "h3-over",
+        "district": 3,
+        "kind": "pigeon",
+        "pass": "above",
+        "minClearance": 10.925884682401875,
+        "warningSeconds": 164.33333333333334,
+        "arrivalSeconds": 180.08333333333334,
+        "passed": true,
+        "warningLeadSeconds": 15.75
+      },
+      {
+        "id": "h3-under",
+        "district": 3,
+        "kind": "platform",
+        "pass": "below",
+        "minClearance": 41.25364515764029,
+        "warningSeconds": 192.53333333333333,
+        "arrivalSeconds": 201.98333333333332,
+        "passed": true,
+        "warningLeadSeconds": 9.449999999999989
+      },
+      {
+        "id": "h4-over",
+        "district": 4,
+        "kind": "pigeon",
+        "pass": "above",
+        "minClearance": 10.957595621714535,
+        "warningSeconds": 225.63333333333333,
+        "arrivalSeconds": 244.26666666666668,
+        "passed": true,
+        "warningLeadSeconds": 18.633333333333354
+      },
+      {
+        "id": "h4-under",
+        "district": 4,
+        "kind": "platform",
+        "pass": "below",
+        "minClearance": 45.258167383216914,
+        "warningSeconds": 257.5833333333333,
+        "arrivalSeconds": 267.28333333333336,
+        "passed": true,
+        "warningLeadSeconds": 9.700000000000045
+      }
+    ],
+    "engagement": [
+      {
+        "district": "Glass Mile",
+        "heldTicks": 1584,
+        "totalTicks": 3175
+      },
+      {
+        "district": "Boiler Row",
+        "heldTicks": 1605,
+        "totalTicks": 3494
+      },
+      {
+        "district": "Sunward Roofs",
+        "heldTicks": 1785,
+        "totalTicks": 3709
+      },
+      {
+        "district": "Crosswind Court",
+        "heldTicks": 1719,
+        "totalTicks": 3604
+      },
+      {
+        "district": "Park Approach",
+        "heldTicks": 1729,
+        "totalTicks": 4339
+      }
+    ],
+    "summary": {
+      "districtTrials": 135,
+      "gaps": 25,
+      "encounters": 10,
+      "firstEncounterSeconds": 11.466666666666667,
+      "minHazardClearance": 10.915608346239015,
+      "minWarningLeadSeconds": 9.033333333333335,
+      "maxSyntheticEnvelopeUtilization": 0.9135826569241389,
+      "minSyntheticPerturbedClearance": 2.0089018038222264,
+      "maxActualEntryUtilization": 0.7294794048879882,
+      "minActualBotReceiverClearance": 13.914613760533388,
+      "minRealGeometrySampledRoofClearance": 16.76262621653402
     }
-  ],
-  "districtTrials": [
-    {
-      "district": "Glass Mile",
-      "speed": 22,
-      "entryOffset": -6,
-      "inputSampleTicks": 1,
-      "cleared": true
-    },
-    {
-      "district": "Glass Mile",
-      "speed": 22,
-      "entryOffset": -6,
-      "inputSampleTicks": 4,
-      "cleared": true
-    },
-    {
-      "district": "Glass Mile",
-      "speed": 22,
-      "entryOffset": -6,
-      "inputSampleTicks": 7,
-      "cleared": true
-    },
-    {
-      "district": "Glass Mile",
-      "speed": 22,
-      "entryOffset": 0,
-      "inputSampleTicks": 1,
-      "cleared": true
-    },
-    {
-      "district": "Glass Mile",
-      "speed": 22,
-      "entryOffset": 0,
-      "inputSampleTicks": 4,
-      "cleared": true
-    },
-    {
-      "district": "Glass Mile",
-      "speed": 22,
-      "entryOffset": 0,
-      "inputSampleTicks": 7,
-      "cleared": true
-    },
-    {
-      "district": "Glass Mile",
-      "speed": 22,
-      "entryOffset": 6,
-      "inputSampleTicks": 1,
-      "cleared": true
-    },
-    {
-      "district": "Glass Mile",
-      "speed": 22,
-      "entryOffset": 6,
-      "inputSampleTicks": 4,
-      "cleared": true
-    },
-    {
-      "district": "Glass Mile",
-      "speed": 22,
-      "entryOffset": 6,
-      "inputSampleTicks": 7,
-      "cleared": true
-    },
-    {
-      "district": "Glass Mile",
-      "speed": 26,
-      "entryOffset": -6,
-      "inputSampleTicks": 1,
-      "cleared": true
-    },
-    {
-      "district": "Glass Mile",
-      "speed": 26,
-      "entryOffset": -6,
-      "inputSampleTicks": 4,
-      "cleared": true
-    },
-    {
-      "district": "Glass Mile",
-      "speed": 26,
-      "entryOffset": -6,
-      "inputSampleTicks": 7,
-      "cleared": true
-    },
-    {
-      "district": "Glass Mile",
-      "speed": 26,
-      "entryOffset": 0,
-      "inputSampleTicks": 1,
-      "cleared": true
-    },
-    {
-      "district": "Glass Mile",
-      "speed": 26,
-      "entryOffset": 0,
-      "inputSampleTicks": 4,
-      "cleared": true
-    },
-    {
-      "district": "Glass Mile",
-      "speed": 26,
-      "entryOffset": 0,
-      "inputSampleTicks": 7,
-      "cleared": true
-    },
-    {
-      "district": "Glass Mile",
-      "speed": 26,
-      "entryOffset": 6,
-      "inputSampleTicks": 1,
-      "cleared": true
-    },
-    {
-      "district": "Glass Mile",
-      "speed": 26,
-      "entryOffset": 6,
-      "inputSampleTicks": 4,
-      "cleared": true
-    },
-    {
-      "district": "Glass Mile",
-      "speed": 26,
-      "entryOffset": 6,
-      "inputSampleTicks": 7,
-      "cleared": true
-    },
-    {
-      "district": "Glass Mile",
-      "speed": 30,
-      "entryOffset": -6,
-      "inputSampleTicks": 1,
-      "cleared": true
-    },
-    {
-      "district": "Glass Mile",
-      "speed": 30,
-      "entryOffset": -6,
-      "inputSampleTicks": 4,
-      "cleared": true
-    },
-    {
-      "district": "Glass Mile",
-      "speed": 30,
-      "entryOffset": -6,
-      "inputSampleTicks": 7,
-      "cleared": true
-    },
-    {
-      "district": "Glass Mile",
-      "speed": 30,
-      "entryOffset": 0,
-      "inputSampleTicks": 1,
-      "cleared": true
-    },
-    {
-      "district": "Glass Mile",
-      "speed": 30,
-      "entryOffset": 0,
-      "inputSampleTicks": 4,
-      "cleared": true
-    },
-    {
-      "district": "Glass Mile",
-      "speed": 30,
-      "entryOffset": 0,
-      "inputSampleTicks": 7,
-      "cleared": true
-    },
-    {
-      "district": "Glass Mile",
-      "speed": 30,
-      "entryOffset": 6,
-      "inputSampleTicks": 1,
-      "cleared": true
-    },
-    {
-      "district": "Glass Mile",
-      "speed": 30,
-      "entryOffset": 6,
-      "inputSampleTicks": 4,
-      "cleared": true
-    },
-    {
-      "district": "Glass Mile",
-      "speed": 30,
-      "entryOffset": 6,
-      "inputSampleTicks": 7,
-      "cleared": true
-    },
-    {
-      "district": "Boiler Row",
-      "speed": 22,
-      "entryOffset": -6,
-      "inputSampleTicks": 1,
-      "cleared": true
-    },
-    {
-      "district": "Boiler Row",
-      "speed": 22,
-      "entryOffset": -6,
-      "inputSampleTicks": 4,
-      "cleared": true
-    },
-    {
-      "district": "Boiler Row",
-      "speed": 22,
-      "entryOffset": -6,
-      "inputSampleTicks": 7,
-      "cleared": true
-    },
-    {
-      "district": "Boiler Row",
-      "speed": 22,
-      "entryOffset": 0,
-      "inputSampleTicks": 1,
-      "cleared": true
-    },
-    {
-      "district": "Boiler Row",
-      "speed": 22,
-      "entryOffset": 0,
-      "inputSampleTicks": 4,
-      "cleared": true
-    },
-    {
-      "district": "Boiler Row",
-      "speed": 22,
-      "entryOffset": 0,
-      "inputSampleTicks": 7,
-      "cleared": true
-    },
-    {
-      "district": "Boiler Row",
-      "speed": 22,
-      "entryOffset": 6,
-      "inputSampleTicks": 1,
-      "cleared": true
-    },
-    {
-      "district": "Boiler Row",
-      "speed": 22,
-      "entryOffset": 6,
-      "inputSampleTicks": 4,
-      "cleared": true
-    },
-    {
-      "district": "Boiler Row",
-      "speed": 22,
-      "entryOffset": 6,
-      "inputSampleTicks": 7,
-      "cleared": true
-    },
-    {
-      "district": "Boiler Row",
-      "speed": 26,
-      "entryOffset": -6,
-      "inputSampleTicks": 1,
-      "cleared": true
-    },
-    {
-      "district": "Boiler Row",
-      "speed": 26,
-      "entryOffset": -6,
-      "inputSampleTicks": 4,
-      "cleared": true
-    },
-    {
-      "district": "Boiler Row",
-      "speed": 26,
-      "entryOffset": -6,
-      "inputSampleTicks": 7,
-      "cleared": true
-    },
-    {
-      "district": "Boiler Row",
-      "speed": 26,
-      "entryOffset": 0,
-      "inputSampleTicks": 1,
-      "cleared": true
-    },
-    {
-      "district": "Boiler Row",
-      "speed": 26,
-      "entryOffset": 0,
-      "inputSampleTicks": 4,
-      "cleared": true
-    },
-    {
-      "district": "Boiler Row",
-      "speed": 26,
-      "entryOffset": 0,
-      "inputSampleTicks": 7,
-      "cleared": true
-    },
-    {
-      "district": "Boiler Row",
-      "speed": 26,
-      "entryOffset": 6,
-      "inputSampleTicks": 1,
-      "cleared": true
-    },
-    {
-      "district": "Boiler Row",
-      "speed": 26,
-      "entryOffset": 6,
-      "inputSampleTicks": 4,
-      "cleared": true
-    },
-    {
-      "district": "Boiler Row",
-      "speed": 26,
-      "entryOffset": 6,
-      "inputSampleTicks": 7,
-      "cleared": true
-    },
-    {
-      "district": "Boiler Row",
-      "speed": 30,
-      "entryOffset": -6,
-      "inputSampleTicks": 1,
-      "cleared": true
-    },
-    {
-      "district": "Boiler Row",
-      "speed": 30,
-      "entryOffset": -6,
-      "inputSampleTicks": 4,
-      "cleared": true
-    },
-    {
-      "district": "Boiler Row",
-      "speed": 30,
-      "entryOffset": -6,
-      "inputSampleTicks": 7,
-      "cleared": true
-    },
-    {
-      "district": "Boiler Row",
-      "speed": 30,
-      "entryOffset": 0,
-      "inputSampleTicks": 1,
-      "cleared": true
-    },
-    {
-      "district": "Boiler Row",
-      "speed": 30,
-      "entryOffset": 0,
-      "inputSampleTicks": 4,
-      "cleared": true
-    },
-    {
-      "district": "Boiler Row",
-      "speed": 30,
-      "entryOffset": 0,
-      "inputSampleTicks": 7,
-      "cleared": true
-    },
-    {
-      "district": "Boiler Row",
-      "speed": 30,
-      "entryOffset": 6,
-      "inputSampleTicks": 1,
-      "cleared": true
-    },
-    {
-      "district": "Boiler Row",
-      "speed": 30,
-      "entryOffset": 6,
-      "inputSampleTicks": 4,
-      "cleared": true
-    },
-    {
-      "district": "Boiler Row",
-      "speed": 30,
-      "entryOffset": 6,
-      "inputSampleTicks": 7,
-      "cleared": true
-    },
-    {
-      "district": "Sunward Roofs",
-      "speed": 22,
-      "entryOffset": -6,
-      "inputSampleTicks": 1,
-      "cleared": true
-    },
-    {
-      "district": "Sunward Roofs",
-      "speed": 22,
-      "entryOffset": -6,
-      "inputSampleTicks": 4,
-      "cleared": true
-    },
-    {
-      "district": "Sunward Roofs",
-      "speed": 22,
-      "entryOffset": -6,
-      "inputSampleTicks": 7,
-      "cleared": true
-    },
-    {
-      "district": "Sunward Roofs",
-      "speed": 22,
-      "entryOffset": 0,
-      "inputSampleTicks": 1,
-      "cleared": true
-    },
-    {
-      "district": "Sunward Roofs",
-      "speed": 22,
-      "entryOffset": 0,
-      "inputSampleTicks": 4,
-      "cleared": true
-    },
-    {
-      "district": "Sunward Roofs",
-      "speed": 22,
-      "entryOffset": 0,
-      "inputSampleTicks": 7,
-      "cleared": true
-    },
-    {
-      "district": "Sunward Roofs",
-      "speed": 22,
-      "entryOffset": 6,
-      "inputSampleTicks": 1,
-      "cleared": true
-    },
-    {
-      "district": "Sunward Roofs",
-      "speed": 22,
-      "entryOffset": 6,
-      "inputSampleTicks": 4,
-      "cleared": true
-    },
-    {
-      "district": "Sunward Roofs",
-      "speed": 22,
-      "entryOffset": 6,
-      "inputSampleTicks": 7,
-      "cleared": true
-    },
-    {
-      "district": "Sunward Roofs",
-      "speed": 26,
-      "entryOffset": -6,
-      "inputSampleTicks": 1,
-      "cleared": true
-    },
-    {
-      "district": "Sunward Roofs",
-      "speed": 26,
-      "entryOffset": -6,
-      "inputSampleTicks": 4,
-      "cleared": true
-    },
-    {
-      "district": "Sunward Roofs",
-      "speed": 26,
-      "entryOffset": -6,
-      "inputSampleTicks": 7,
-      "cleared": true
-    },
-    {
-      "district": "Sunward Roofs",
-      "speed": 26,
-      "entryOffset": 0,
-      "inputSampleTicks": 1,
-      "cleared": true
-    },
-    {
-      "district": "Sunward Roofs",
-      "speed": 26,
-      "entryOffset": 0,
-      "inputSampleTicks": 4,
-      "cleared": true
-    },
-    {
-      "district": "Sunward Roofs",
-      "speed": 26,
-      "entryOffset": 0,
-      "inputSampleTicks": 7,
-      "cleared": true
-    },
-    {
-      "district": "Sunward Roofs",
-      "speed": 26,
-      "entryOffset": 6,
-      "inputSampleTicks": 1,
-      "cleared": true
-    },
-    {
-      "district": "Sunward Roofs",
-      "speed": 26,
-      "entryOffset": 6,
-      "inputSampleTicks": 4,
-      "cleared": true
-    },
-    {
-      "district": "Sunward Roofs",
-      "speed": 26,
-      "entryOffset": 6,
-      "inputSampleTicks": 7,
-      "cleared": true
-    },
-    {
-      "district": "Sunward Roofs",
-      "speed": 30,
-      "entryOffset": -6,
-      "inputSampleTicks": 1,
-      "cleared": true
-    },
-    {
-      "district": "Sunward Roofs",
-      "speed": 30,
-      "entryOffset": -6,
-      "inputSampleTicks": 4,
-      "cleared": true
-    },
-    {
-      "district": "Sunward Roofs",
-      "speed": 30,
-      "entryOffset": -6,
-      "inputSampleTicks": 7,
-      "cleared": true
-    },
-    {
-      "district": "Sunward Roofs",
-      "speed": 30,
-      "entryOffset": 0,
-      "inputSampleTicks": 1,
-      "cleared": true
-    },
-    {
-      "district": "Sunward Roofs",
-      "speed": 30,
-      "entryOffset": 0,
-      "inputSampleTicks": 4,
-      "cleared": true
-    },
-    {
-      "district": "Sunward Roofs",
-      "speed": 30,
-      "entryOffset": 0,
-      "inputSampleTicks": 7,
-      "cleared": true
-    },
-    {
-      "district": "Sunward Roofs",
-      "speed": 30,
-      "entryOffset": 6,
-      "inputSampleTicks": 1,
-      "cleared": true
-    },
-    {
-      "district": "Sunward Roofs",
-      "speed": 30,
-      "entryOffset": 6,
-      "inputSampleTicks": 4,
-      "cleared": true
-    },
-    {
-      "district": "Sunward Roofs",
-      "speed": 30,
-      "entryOffset": 6,
-      "inputSampleTicks": 7,
-      "cleared": true
-    },
-    {
-      "district": "Crosswind Court",
-      "speed": 22,
-      "entryOffset": -6,
-      "inputSampleTicks": 1,
-      "cleared": true
-    },
-    {
-      "district": "Crosswind Court",
-      "speed": 22,
-      "entryOffset": -6,
-      "inputSampleTicks": 4,
-      "cleared": true
-    },
-    {
-      "district": "Crosswind Court",
-      "speed": 22,
-      "entryOffset": -6,
-      "inputSampleTicks": 7,
-      "cleared": true
-    },
-    {
-      "district": "Crosswind Court",
-      "speed": 22,
-      "entryOffset": 0,
-      "inputSampleTicks": 1,
-      "cleared": true
-    },
-    {
-      "district": "Crosswind Court",
-      "speed": 22,
-      "entryOffset": 0,
-      "inputSampleTicks": 4,
-      "cleared": true
-    },
-    {
-      "district": "Crosswind Court",
-      "speed": 22,
-      "entryOffset": 0,
-      "inputSampleTicks": 7,
-      "cleared": true
-    },
-    {
-      "district": "Crosswind Court",
-      "speed": 22,
-      "entryOffset": 6,
-      "inputSampleTicks": 1,
-      "cleared": true
-    },
-    {
-      "district": "Crosswind Court",
-      "speed": 22,
-      "entryOffset": 6,
-      "inputSampleTicks": 4,
-      "cleared": true
-    },
-    {
-      "district": "Crosswind Court",
-      "speed": 22,
-      "entryOffset": 6,
-      "inputSampleTicks": 7,
-      "cleared": true
-    },
-    {
-      "district": "Crosswind Court",
-      "speed": 26,
-      "entryOffset": -6,
-      "inputSampleTicks": 1,
-      "cleared": true
-    },
-    {
-      "district": "Crosswind Court",
-      "speed": 26,
-      "entryOffset": -6,
-      "inputSampleTicks": 4,
-      "cleared": true
-    },
-    {
-      "district": "Crosswind Court",
-      "speed": 26,
-      "entryOffset": -6,
-      "inputSampleTicks": 7,
-      "cleared": true
-    },
-    {
-      "district": "Crosswind Court",
-      "speed": 26,
-      "entryOffset": 0,
-      "inputSampleTicks": 1,
-      "cleared": true
-    },
-    {
-      "district": "Crosswind Court",
-      "speed": 26,
-      "entryOffset": 0,
-      "inputSampleTicks": 4,
-      "cleared": true
-    },
-    {
-      "district": "Crosswind Court",
-      "speed": 26,
-      "entryOffset": 0,
-      "inputSampleTicks": 7,
-      "cleared": true
-    },
-    {
-      "district": "Crosswind Court",
-      "speed": 26,
-      "entryOffset": 6,
-      "inputSampleTicks": 1,
-      "cleared": true
-    },
-    {
-      "district": "Crosswind Court",
-      "speed": 26,
-      "entryOffset": 6,
-      "inputSampleTicks": 4,
-      "cleared": true
-    },
-    {
-      "district": "Crosswind Court",
-      "speed": 26,
-      "entryOffset": 6,
-      "inputSampleTicks": 7,
-      "cleared": true
-    },
-    {
-      "district": "Crosswind Court",
-      "speed": 30,
-      "entryOffset": -6,
-      "inputSampleTicks": 1,
-      "cleared": true
-    },
-    {
-      "district": "Crosswind Court",
-      "speed": 30,
-      "entryOffset": -6,
-      "inputSampleTicks": 4,
-      "cleared": true
-    },
-    {
-      "district": "Crosswind Court",
-      "speed": 30,
-      "entryOffset": -6,
-      "inputSampleTicks": 7,
-      "cleared": true
-    },
-    {
-      "district": "Crosswind Court",
-      "speed": 30,
-      "entryOffset": 0,
-      "inputSampleTicks": 1,
-      "cleared": true
-    },
-    {
-      "district": "Crosswind Court",
-      "speed": 30,
-      "entryOffset": 0,
-      "inputSampleTicks": 4,
-      "cleared": true
-    },
-    {
-      "district": "Crosswind Court",
-      "speed": 30,
-      "entryOffset": 0,
-      "inputSampleTicks": 7,
-      "cleared": true
-    },
-    {
-      "district": "Crosswind Court",
-      "speed": 30,
-      "entryOffset": 6,
-      "inputSampleTicks": 1,
-      "cleared": true
-    },
-    {
-      "district": "Crosswind Court",
-      "speed": 30,
-      "entryOffset": 6,
-      "inputSampleTicks": 4,
-      "cleared": true
-    },
-    {
-      "district": "Crosswind Court",
-      "speed": 30,
-      "entryOffset": 6,
-      "inputSampleTicks": 7,
-      "cleared": true
-    },
-    {
-      "district": "Park Approach",
-      "speed": 22,
-      "entryOffset": -6,
-      "inputSampleTicks": 1,
-      "cleared": true
-    },
-    {
-      "district": "Park Approach",
-      "speed": 22,
-      "entryOffset": -6,
-      "inputSampleTicks": 4,
-      "cleared": true
-    },
-    {
-      "district": "Park Approach",
-      "speed": 22,
-      "entryOffset": -6,
-      "inputSampleTicks": 7,
-      "cleared": true
-    },
-    {
-      "district": "Park Approach",
-      "speed": 22,
-      "entryOffset": 0,
-      "inputSampleTicks": 1,
-      "cleared": true
-    },
-    {
-      "district": "Park Approach",
-      "speed": 22,
-      "entryOffset": 0,
-      "inputSampleTicks": 4,
-      "cleared": true
-    },
-    {
-      "district": "Park Approach",
-      "speed": 22,
-      "entryOffset": 0,
-      "inputSampleTicks": 7,
-      "cleared": true
-    },
-    {
-      "district": "Park Approach",
-      "speed": 22,
-      "entryOffset": 6,
-      "inputSampleTicks": 1,
-      "cleared": true
-    },
-    {
-      "district": "Park Approach",
-      "speed": 22,
-      "entryOffset": 6,
-      "inputSampleTicks": 4,
-      "cleared": true
-    },
-    {
-      "district": "Park Approach",
-      "speed": 22,
-      "entryOffset": 6,
-      "inputSampleTicks": 7,
-      "cleared": true
-    },
-    {
-      "district": "Park Approach",
-      "speed": 26,
-      "entryOffset": -6,
-      "inputSampleTicks": 1,
-      "cleared": true
-    },
-    {
-      "district": "Park Approach",
-      "speed": 26,
-      "entryOffset": -6,
-      "inputSampleTicks": 4,
-      "cleared": true
-    },
-    {
-      "district": "Park Approach",
-      "speed": 26,
-      "entryOffset": -6,
-      "inputSampleTicks": 7,
-      "cleared": true
-    },
-    {
-      "district": "Park Approach",
-      "speed": 26,
-      "entryOffset": 0,
-      "inputSampleTicks": 1,
-      "cleared": true
-    },
-    {
-      "district": "Park Approach",
-      "speed": 26,
-      "entryOffset": 0,
-      "inputSampleTicks": 4,
-      "cleared": true
-    },
-    {
-      "district": "Park Approach",
-      "speed": 26,
-      "entryOffset": 0,
-      "inputSampleTicks": 7,
-      "cleared": true
-    },
-    {
-      "district": "Park Approach",
-      "speed": 26,
-      "entryOffset": 6,
-      "inputSampleTicks": 1,
-      "cleared": true
-    },
-    {
-      "district": "Park Approach",
-      "speed": 26,
-      "entryOffset": 6,
-      "inputSampleTicks": 4,
-      "cleared": true
-    },
-    {
-      "district": "Park Approach",
-      "speed": 26,
-      "entryOffset": 6,
-      "inputSampleTicks": 7,
-      "cleared": true
-    },
-    {
-      "district": "Park Approach",
-      "speed": 30,
-      "entryOffset": -6,
-      "inputSampleTicks": 1,
-      "cleared": true
-    },
-    {
-      "district": "Park Approach",
-      "speed": 30,
-      "entryOffset": -6,
-      "inputSampleTicks": 4,
-      "cleared": true
-    },
-    {
-      "district": "Park Approach",
-      "speed": 30,
-      "entryOffset": -6,
-      "inputSampleTicks": 7,
-      "cleared": true
-    },
-    {
-      "district": "Park Approach",
-      "speed": 30,
-      "entryOffset": 0,
-      "inputSampleTicks": 1,
-      "cleared": true
-    },
-    {
-      "district": "Park Approach",
-      "speed": 30,
-      "entryOffset": 0,
-      "inputSampleTicks": 4,
-      "cleared": true
-    },
-    {
-      "district": "Park Approach",
-      "speed": 30,
-      "entryOffset": 0,
-      "inputSampleTicks": 7,
-      "cleared": true
-    },
-    {
-      "district": "Park Approach",
-      "speed": 30,
-      "entryOffset": 6,
-      "inputSampleTicks": 1,
-      "cleared": true
-    },
-    {
-      "district": "Park Approach",
-      "speed": 30,
-      "entryOffset": 6,
-      "inputSampleTicks": 4,
-      "cleared": true
-    },
-    {
-      "district": "Park Approach",
-      "speed": 30,
-      "entryOffset": 6,
-      "inputSampleTicks": 7,
-      "cleared": true
+  },
+  "rush": {
+    "runs": [
+      {
+        "mode": "standard",
+        "seconds": 319.0833333333333,
+        "distance": 6245,
+        "crashes": 0
+      },
+      {
+        "mode": "nonstop",
+        "seconds": 319.0833333333333,
+        "distance": 6245,
+        "crashes": 0
+      }
+    ],
+    "districtTrials": [
+      {
+        "district": "Glass Mile",
+        "speed": 22,
+        "entryOffset": -6,
+        "inputSampleTicks": 1,
+        "cleared": true
+      },
+      {
+        "district": "Glass Mile",
+        "speed": 22,
+        "entryOffset": -6,
+        "inputSampleTicks": 4,
+        "cleared": true
+      },
+      {
+        "district": "Glass Mile",
+        "speed": 22,
+        "entryOffset": -6,
+        "inputSampleTicks": 7,
+        "cleared": true
+      },
+      {
+        "district": "Glass Mile",
+        "speed": 22,
+        "entryOffset": 0,
+        "inputSampleTicks": 1,
+        "cleared": true
+      },
+      {
+        "district": "Glass Mile",
+        "speed": 22,
+        "entryOffset": 0,
+        "inputSampleTicks": 4,
+        "cleared": true
+      },
+      {
+        "district": "Glass Mile",
+        "speed": 22,
+        "entryOffset": 0,
+        "inputSampleTicks": 7,
+        "cleared": true
+      },
+      {
+        "district": "Glass Mile",
+        "speed": 22,
+        "entryOffset": 6,
+        "inputSampleTicks": 1,
+        "cleared": true
+      },
+      {
+        "district": "Glass Mile",
+        "speed": 22,
+        "entryOffset": 6,
+        "inputSampleTicks": 4,
+        "cleared": true
+      },
+      {
+        "district": "Glass Mile",
+        "speed": 22,
+        "entryOffset": 6,
+        "inputSampleTicks": 7,
+        "cleared": true
+      },
+      {
+        "district": "Glass Mile",
+        "speed": 26,
+        "entryOffset": -6,
+        "inputSampleTicks": 1,
+        "cleared": true
+      },
+      {
+        "district": "Glass Mile",
+        "speed": 26,
+        "entryOffset": -6,
+        "inputSampleTicks": 4,
+        "cleared": true
+      },
+      {
+        "district": "Glass Mile",
+        "speed": 26,
+        "entryOffset": -6,
+        "inputSampleTicks": 7,
+        "cleared": true
+      },
+      {
+        "district": "Glass Mile",
+        "speed": 26,
+        "entryOffset": 0,
+        "inputSampleTicks": 1,
+        "cleared": true
+      },
+      {
+        "district": "Glass Mile",
+        "speed": 26,
+        "entryOffset": 0,
+        "inputSampleTicks": 4,
+        "cleared": true
+      },
+      {
+        "district": "Glass Mile",
+        "speed": 26,
+        "entryOffset": 0,
+        "inputSampleTicks": 7,
+        "cleared": true
+      },
+      {
+        "district": "Glass Mile",
+        "speed": 26,
+        "entryOffset": 6,
+        "inputSampleTicks": 1,
+        "cleared": true
+      },
+      {
+        "district": "Glass Mile",
+        "speed": 26,
+        "entryOffset": 6,
+        "inputSampleTicks": 4,
+        "cleared": true
+      },
+      {
+        "district": "Glass Mile",
+        "speed": 26,
+        "entryOffset": 6,
+        "inputSampleTicks": 7,
+        "cleared": true
+      },
+      {
+        "district": "Glass Mile",
+        "speed": 30,
+        "entryOffset": -6,
+        "inputSampleTicks": 1,
+        "cleared": true
+      },
+      {
+        "district": "Glass Mile",
+        "speed": 30,
+        "entryOffset": -6,
+        "inputSampleTicks": 4,
+        "cleared": true
+      },
+      {
+        "district": "Glass Mile",
+        "speed": 30,
+        "entryOffset": -6,
+        "inputSampleTicks": 7,
+        "cleared": true
+      },
+      {
+        "district": "Glass Mile",
+        "speed": 30,
+        "entryOffset": 0,
+        "inputSampleTicks": 1,
+        "cleared": true
+      },
+      {
+        "district": "Glass Mile",
+        "speed": 30,
+        "entryOffset": 0,
+        "inputSampleTicks": 4,
+        "cleared": true
+      },
+      {
+        "district": "Glass Mile",
+        "speed": 30,
+        "entryOffset": 0,
+        "inputSampleTicks": 7,
+        "cleared": true
+      },
+      {
+        "district": "Glass Mile",
+        "speed": 30,
+        "entryOffset": 6,
+        "inputSampleTicks": 1,
+        "cleared": true
+      },
+      {
+        "district": "Glass Mile",
+        "speed": 30,
+        "entryOffset": 6,
+        "inputSampleTicks": 4,
+        "cleared": true
+      },
+      {
+        "district": "Glass Mile",
+        "speed": 30,
+        "entryOffset": 6,
+        "inputSampleTicks": 7,
+        "cleared": true
+      },
+      {
+        "district": "Boiler Row",
+        "speed": 22,
+        "entryOffset": -6,
+        "inputSampleTicks": 1,
+        "cleared": true
+      },
+      {
+        "district": "Boiler Row",
+        "speed": 22,
+        "entryOffset": -6,
+        "inputSampleTicks": 4,
+        "cleared": true
+      },
+      {
+        "district": "Boiler Row",
+        "speed": 22,
+        "entryOffset": -6,
+        "inputSampleTicks": 7,
+        "cleared": true
+      },
+      {
+        "district": "Boiler Row",
+        "speed": 22,
+        "entryOffset": 0,
+        "inputSampleTicks": 1,
+        "cleared": true
+      },
+      {
+        "district": "Boiler Row",
+        "speed": 22,
+        "entryOffset": 0,
+        "inputSampleTicks": 4,
+        "cleared": true
+      },
+      {
+        "district": "Boiler Row",
+        "speed": 22,
+        "entryOffset": 0,
+        "inputSampleTicks": 7,
+        "cleared": true
+      },
+      {
+        "district": "Boiler Row",
+        "speed": 22,
+        "entryOffset": 6,
+        "inputSampleTicks": 1,
+        "cleared": true
+      },
+      {
+        "district": "Boiler Row",
+        "speed": 22,
+        "entryOffset": 6,
+        "inputSampleTicks": 4,
+        "cleared": true
+      },
+      {
+        "district": "Boiler Row",
+        "speed": 22,
+        "entryOffset": 6,
+        "inputSampleTicks": 7,
+        "cleared": true
+      },
+      {
+        "district": "Boiler Row",
+        "speed": 26,
+        "entryOffset": -6,
+        "inputSampleTicks": 1,
+        "cleared": true
+      },
+      {
+        "district": "Boiler Row",
+        "speed": 26,
+        "entryOffset": -6,
+        "inputSampleTicks": 4,
+        "cleared": true
+      },
+      {
+        "district": "Boiler Row",
+        "speed": 26,
+        "entryOffset": -6,
+        "inputSampleTicks": 7,
+        "cleared": true
+      },
+      {
+        "district": "Boiler Row",
+        "speed": 26,
+        "entryOffset": 0,
+        "inputSampleTicks": 1,
+        "cleared": true
+      },
+      {
+        "district": "Boiler Row",
+        "speed": 26,
+        "entryOffset": 0,
+        "inputSampleTicks": 4,
+        "cleared": true
+      },
+      {
+        "district": "Boiler Row",
+        "speed": 26,
+        "entryOffset": 0,
+        "inputSampleTicks": 7,
+        "cleared": true
+      },
+      {
+        "district": "Boiler Row",
+        "speed": 26,
+        "entryOffset": 6,
+        "inputSampleTicks": 1,
+        "cleared": true
+      },
+      {
+        "district": "Boiler Row",
+        "speed": 26,
+        "entryOffset": 6,
+        "inputSampleTicks": 4,
+        "cleared": true
+      },
+      {
+        "district": "Boiler Row",
+        "speed": 26,
+        "entryOffset": 6,
+        "inputSampleTicks": 7,
+        "cleared": true
+      },
+      {
+        "district": "Boiler Row",
+        "speed": 30,
+        "entryOffset": -6,
+        "inputSampleTicks": 1,
+        "cleared": true
+      },
+      {
+        "district": "Boiler Row",
+        "speed": 30,
+        "entryOffset": -6,
+        "inputSampleTicks": 4,
+        "cleared": true
+      },
+      {
+        "district": "Boiler Row",
+        "speed": 30,
+        "entryOffset": -6,
+        "inputSampleTicks": 7,
+        "cleared": true
+      },
+      {
+        "district": "Boiler Row",
+        "speed": 30,
+        "entryOffset": 0,
+        "inputSampleTicks": 1,
+        "cleared": true
+      },
+      {
+        "district": "Boiler Row",
+        "speed": 30,
+        "entryOffset": 0,
+        "inputSampleTicks": 4,
+        "cleared": true
+      },
+      {
+        "district": "Boiler Row",
+        "speed": 30,
+        "entryOffset": 0,
+        "inputSampleTicks": 7,
+        "cleared": true
+      },
+      {
+        "district": "Boiler Row",
+        "speed": 30,
+        "entryOffset": 6,
+        "inputSampleTicks": 1,
+        "cleared": true
+      },
+      {
+        "district": "Boiler Row",
+        "speed": 30,
+        "entryOffset": 6,
+        "inputSampleTicks": 4,
+        "cleared": true
+      },
+      {
+        "district": "Boiler Row",
+        "speed": 30,
+        "entryOffset": 6,
+        "inputSampleTicks": 7,
+        "cleared": true
+      },
+      {
+        "district": "Sunward Roofs",
+        "speed": 22,
+        "entryOffset": -6,
+        "inputSampleTicks": 1,
+        "cleared": true
+      },
+      {
+        "district": "Sunward Roofs",
+        "speed": 22,
+        "entryOffset": -6,
+        "inputSampleTicks": 4,
+        "cleared": true
+      },
+      {
+        "district": "Sunward Roofs",
+        "speed": 22,
+        "entryOffset": -6,
+        "inputSampleTicks": 7,
+        "cleared": true
+      },
+      {
+        "district": "Sunward Roofs",
+        "speed": 22,
+        "entryOffset": 0,
+        "inputSampleTicks": 1,
+        "cleared": true
+      },
+      {
+        "district": "Sunward Roofs",
+        "speed": 22,
+        "entryOffset": 0,
+        "inputSampleTicks": 4,
+        "cleared": true
+      },
+      {
+        "district": "Sunward Roofs",
+        "speed": 22,
+        "entryOffset": 0,
+        "inputSampleTicks": 7,
+        "cleared": true
+      },
+      {
+        "district": "Sunward Roofs",
+        "speed": 22,
+        "entryOffset": 6,
+        "inputSampleTicks": 1,
+        "cleared": true
+      },
+      {
+        "district": "Sunward Roofs",
+        "speed": 22,
+        "entryOffset": 6,
+        "inputSampleTicks": 4,
+        "cleared": true
+      },
+      {
+        "district": "Sunward Roofs",
+        "speed": 22,
+        "entryOffset": 6,
+        "inputSampleTicks": 7,
+        "cleared": true
+      },
+      {
+        "district": "Sunward Roofs",
+        "speed": 26,
+        "entryOffset": -6,
+        "inputSampleTicks": 1,
+        "cleared": true
+      },
+      {
+        "district": "Sunward Roofs",
+        "speed": 26,
+        "entryOffset": -6,
+        "inputSampleTicks": 4,
+        "cleared": true
+      },
+      {
+        "district": "Sunward Roofs",
+        "speed": 26,
+        "entryOffset": -6,
+        "inputSampleTicks": 7,
+        "cleared": true
+      },
+      {
+        "district": "Sunward Roofs",
+        "speed": 26,
+        "entryOffset": 0,
+        "inputSampleTicks": 1,
+        "cleared": true
+      },
+      {
+        "district": "Sunward Roofs",
+        "speed": 26,
+        "entryOffset": 0,
+        "inputSampleTicks": 4,
+        "cleared": true
+      },
+      {
+        "district": "Sunward Roofs",
+        "speed": 26,
+        "entryOffset": 0,
+        "inputSampleTicks": 7,
+        "cleared": true
+      },
+      {
+        "district": "Sunward Roofs",
+        "speed": 26,
+        "entryOffset": 6,
+        "inputSampleTicks": 1,
+        "cleared": true
+      },
+      {
+        "district": "Sunward Roofs",
+        "speed": 26,
+        "entryOffset": 6,
+        "inputSampleTicks": 4,
+        "cleared": true
+      },
+      {
+        "district": "Sunward Roofs",
+        "speed": 26,
+        "entryOffset": 6,
+        "inputSampleTicks": 7,
+        "cleared": true
+      },
+      {
+        "district": "Sunward Roofs",
+        "speed": 30,
+        "entryOffset": -6,
+        "inputSampleTicks": 1,
+        "cleared": true
+      },
+      {
+        "district": "Sunward Roofs",
+        "speed": 30,
+        "entryOffset": -6,
+        "inputSampleTicks": 4,
+        "cleared": true
+      },
+      {
+        "district": "Sunward Roofs",
+        "speed": 30,
+        "entryOffset": -6,
+        "inputSampleTicks": 7,
+        "cleared": true
+      },
+      {
+        "district": "Sunward Roofs",
+        "speed": 30,
+        "entryOffset": 0,
+        "inputSampleTicks": 1,
+        "cleared": true
+      },
+      {
+        "district": "Sunward Roofs",
+        "speed": 30,
+        "entryOffset": 0,
+        "inputSampleTicks": 4,
+        "cleared": true
+      },
+      {
+        "district": "Sunward Roofs",
+        "speed": 30,
+        "entryOffset": 0,
+        "inputSampleTicks": 7,
+        "cleared": true
+      },
+      {
+        "district": "Sunward Roofs",
+        "speed": 30,
+        "entryOffset": 6,
+        "inputSampleTicks": 1,
+        "cleared": true
+      },
+      {
+        "district": "Sunward Roofs",
+        "speed": 30,
+        "entryOffset": 6,
+        "inputSampleTicks": 4,
+        "cleared": true
+      },
+      {
+        "district": "Sunward Roofs",
+        "speed": 30,
+        "entryOffset": 6,
+        "inputSampleTicks": 7,
+        "cleared": true
+      },
+      {
+        "district": "Crosswind Court",
+        "speed": 22,
+        "entryOffset": -6,
+        "inputSampleTicks": 1,
+        "cleared": true
+      },
+      {
+        "district": "Crosswind Court",
+        "speed": 22,
+        "entryOffset": -6,
+        "inputSampleTicks": 4,
+        "cleared": true
+      },
+      {
+        "district": "Crosswind Court",
+        "speed": 22,
+        "entryOffset": -6,
+        "inputSampleTicks": 7,
+        "cleared": true
+      },
+      {
+        "district": "Crosswind Court",
+        "speed": 22,
+        "entryOffset": 0,
+        "inputSampleTicks": 1,
+        "cleared": true
+      },
+      {
+        "district": "Crosswind Court",
+        "speed": 22,
+        "entryOffset": 0,
+        "inputSampleTicks": 4,
+        "cleared": true
+      },
+      {
+        "district": "Crosswind Court",
+        "speed": 22,
+        "entryOffset": 0,
+        "inputSampleTicks": 7,
+        "cleared": true
+      },
+      {
+        "district": "Crosswind Court",
+        "speed": 22,
+        "entryOffset": 6,
+        "inputSampleTicks": 1,
+        "cleared": true
+      },
+      {
+        "district": "Crosswind Court",
+        "speed": 22,
+        "entryOffset": 6,
+        "inputSampleTicks": 4,
+        "cleared": true
+      },
+      {
+        "district": "Crosswind Court",
+        "speed": 22,
+        "entryOffset": 6,
+        "inputSampleTicks": 7,
+        "cleared": true
+      },
+      {
+        "district": "Crosswind Court",
+        "speed": 26,
+        "entryOffset": -6,
+        "inputSampleTicks": 1,
+        "cleared": true
+      },
+      {
+        "district": "Crosswind Court",
+        "speed": 26,
+        "entryOffset": -6,
+        "inputSampleTicks": 4,
+        "cleared": true
+      },
+      {
+        "district": "Crosswind Court",
+        "speed": 26,
+        "entryOffset": -6,
+        "inputSampleTicks": 7,
+        "cleared": true
+      },
+      {
+        "district": "Crosswind Court",
+        "speed": 26,
+        "entryOffset": 0,
+        "inputSampleTicks": 1,
+        "cleared": true
+      },
+      {
+        "district": "Crosswind Court",
+        "speed": 26,
+        "entryOffset": 0,
+        "inputSampleTicks": 4,
+        "cleared": true
+      },
+      {
+        "district": "Crosswind Court",
+        "speed": 26,
+        "entryOffset": 0,
+        "inputSampleTicks": 7,
+        "cleared": true
+      },
+      {
+        "district": "Crosswind Court",
+        "speed": 26,
+        "entryOffset": 6,
+        "inputSampleTicks": 1,
+        "cleared": true
+      },
+      {
+        "district": "Crosswind Court",
+        "speed": 26,
+        "entryOffset": 6,
+        "inputSampleTicks": 4,
+        "cleared": true
+      },
+      {
+        "district": "Crosswind Court",
+        "speed": 26,
+        "entryOffset": 6,
+        "inputSampleTicks": 7,
+        "cleared": true
+      },
+      {
+        "district": "Crosswind Court",
+        "speed": 30,
+        "entryOffset": -6,
+        "inputSampleTicks": 1,
+        "cleared": true
+      },
+      {
+        "district": "Crosswind Court",
+        "speed": 30,
+        "entryOffset": -6,
+        "inputSampleTicks": 4,
+        "cleared": true
+      },
+      {
+        "district": "Crosswind Court",
+        "speed": 30,
+        "entryOffset": -6,
+        "inputSampleTicks": 7,
+        "cleared": true
+      },
+      {
+        "district": "Crosswind Court",
+        "speed": 30,
+        "entryOffset": 0,
+        "inputSampleTicks": 1,
+        "cleared": true
+      },
+      {
+        "district": "Crosswind Court",
+        "speed": 30,
+        "entryOffset": 0,
+        "inputSampleTicks": 4,
+        "cleared": true
+      },
+      {
+        "district": "Crosswind Court",
+        "speed": 30,
+        "entryOffset": 0,
+        "inputSampleTicks": 7,
+        "cleared": true
+      },
+      {
+        "district": "Crosswind Court",
+        "speed": 30,
+        "entryOffset": 6,
+        "inputSampleTicks": 1,
+        "cleared": true
+      },
+      {
+        "district": "Crosswind Court",
+        "speed": 30,
+        "entryOffset": 6,
+        "inputSampleTicks": 4,
+        "cleared": true
+      },
+      {
+        "district": "Crosswind Court",
+        "speed": 30,
+        "entryOffset": 6,
+        "inputSampleTicks": 7,
+        "cleared": true
+      },
+      {
+        "district": "Park Approach",
+        "speed": 22,
+        "entryOffset": -6,
+        "inputSampleTicks": 1,
+        "cleared": true
+      },
+      {
+        "district": "Park Approach",
+        "speed": 22,
+        "entryOffset": -6,
+        "inputSampleTicks": 4,
+        "cleared": true
+      },
+      {
+        "district": "Park Approach",
+        "speed": 22,
+        "entryOffset": -6,
+        "inputSampleTicks": 7,
+        "cleared": true
+      },
+      {
+        "district": "Park Approach",
+        "speed": 22,
+        "entryOffset": 0,
+        "inputSampleTicks": 1,
+        "cleared": true
+      },
+      {
+        "district": "Park Approach",
+        "speed": 22,
+        "entryOffset": 0,
+        "inputSampleTicks": 4,
+        "cleared": true
+      },
+      {
+        "district": "Park Approach",
+        "speed": 22,
+        "entryOffset": 0,
+        "inputSampleTicks": 7,
+        "cleared": true
+      },
+      {
+        "district": "Park Approach",
+        "speed": 22,
+        "entryOffset": 6,
+        "inputSampleTicks": 1,
+        "cleared": true
+      },
+      {
+        "district": "Park Approach",
+        "speed": 22,
+        "entryOffset": 6,
+        "inputSampleTicks": 4,
+        "cleared": true
+      },
+      {
+        "district": "Park Approach",
+        "speed": 22,
+        "entryOffset": 6,
+        "inputSampleTicks": 7,
+        "cleared": true
+      },
+      {
+        "district": "Park Approach",
+        "speed": 26,
+        "entryOffset": -6,
+        "inputSampleTicks": 1,
+        "cleared": true
+      },
+      {
+        "district": "Park Approach",
+        "speed": 26,
+        "entryOffset": -6,
+        "inputSampleTicks": 4,
+        "cleared": true
+      },
+      {
+        "district": "Park Approach",
+        "speed": 26,
+        "entryOffset": -6,
+        "inputSampleTicks": 7,
+        "cleared": true
+      },
+      {
+        "district": "Park Approach",
+        "speed": 26,
+        "entryOffset": 0,
+        "inputSampleTicks": 1,
+        "cleared": true
+      },
+      {
+        "district": "Park Approach",
+        "speed": 26,
+        "entryOffset": 0,
+        "inputSampleTicks": 4,
+        "cleared": true
+      },
+      {
+        "district": "Park Approach",
+        "speed": 26,
+        "entryOffset": 0,
+        "inputSampleTicks": 7,
+        "cleared": true
+      },
+      {
+        "district": "Park Approach",
+        "speed": 26,
+        "entryOffset": 6,
+        "inputSampleTicks": 1,
+        "cleared": true
+      },
+      {
+        "district": "Park Approach",
+        "speed": 26,
+        "entryOffset": 6,
+        "inputSampleTicks": 4,
+        "cleared": true
+      },
+      {
+        "district": "Park Approach",
+        "speed": 26,
+        "entryOffset": 6,
+        "inputSampleTicks": 7,
+        "cleared": true
+      },
+      {
+        "district": "Park Approach",
+        "speed": 30,
+        "entryOffset": -6,
+        "inputSampleTicks": 1,
+        "cleared": true
+      },
+      {
+        "district": "Park Approach",
+        "speed": 30,
+        "entryOffset": -6,
+        "inputSampleTicks": 4,
+        "cleared": true
+      },
+      {
+        "district": "Park Approach",
+        "speed": 30,
+        "entryOffset": -6,
+        "inputSampleTicks": 7,
+        "cleared": true
+      },
+      {
+        "district": "Park Approach",
+        "speed": 30,
+        "entryOffset": 0,
+        "inputSampleTicks": 1,
+        "cleared": true
+      },
+      {
+        "district": "Park Approach",
+        "speed": 30,
+        "entryOffset": 0,
+        "inputSampleTicks": 4,
+        "cleared": true
+      },
+      {
+        "district": "Park Approach",
+        "speed": 30,
+        "entryOffset": 0,
+        "inputSampleTicks": 7,
+        "cleared": true
+      },
+      {
+        "district": "Park Approach",
+        "speed": 30,
+        "entryOffset": 6,
+        "inputSampleTicks": 1,
+        "cleared": true
+      },
+      {
+        "district": "Park Approach",
+        "speed": 30,
+        "entryOffset": 6,
+        "inputSampleTicks": 4,
+        "cleared": true
+      },
+      {
+        "district": "Park Approach",
+        "speed": 30,
+        "entryOffset": 6,
+        "inputSampleTicks": 7,
+        "cleared": true
+      }
+    ],
+    "gaps": [
+      {
+        "id": "1.1",
+        "district": 0,
+        "x": 200,
+        "end": 243,
+        "length": 43,
+        "entryHeight": 184,
+        "entrySpeed": 18,
+        "entryPitch": -0.55,
+        "clearance": 134,
+        "drop": 50,
+        "measuredRange": 77.7160112025809,
+        "utilization": 0.5532965387005349,
+        "sourceRoofEnd": 210,
+        "receiverRoofStart": 233,
+        "receiverRoof": 40,
+        "clearanceMeaning": "Synthetic 134m envelope target; actual roof and hazard clearances are separate.",
+        "syntheticPerturbedClearance": 20.05780949285861,
+        "releaseOnlySkipped": true,
+        "realGeometryMinSampledRoofClearance": null,
+        "actualBotEntry": {
+          "height": 183.97080831093416,
+          "speed": 22.362531156900527,
+          "pitch": 0.03666666666666667
+        },
+        "actualBotReceiver": {
+          "roof": 40,
+          "clearance": 124.99236577121603
+        },
+        "actualEntryMeasuredRange": 227.89952885928636,
+        "actualRequiredRange": 31.80000000000001,
+        "actualEntryUtilization": 0.13953517218385525
+      },
+      {
+        "id": "1.2",
+        "district": 0,
+        "x": 413,
+        "end": 456,
+        "length": 43,
+        "entryHeight": 170,
+        "entrySpeed": 18,
+        "entryPitch": -0.55,
+        "clearance": 120,
+        "drop": 50,
+        "measuredRange": 77.7160112025809,
+        "utilization": 0.5532965387005349,
+        "sourceRoofEnd": 423,
+        "receiverRoofStart": 446,
+        "receiverRoof": 40,
+        "clearanceMeaning": "Synthetic 120m envelope target; actual roof and hazard clearances are separate.",
+        "syntheticPerturbedClearance": 20.05780949285861,
+        "releaseOnlySkipped": false,
+        "realGeometryMinSampledRoofClearance": 97.69692584831331,
+        "actualBotEntry": {
+          "height": 148.18597383127263,
+          "speed": 31.289641633411982,
+          "pitch": -0.55
+        },
+        "actualBotReceiver": {
+          "roof": 40,
+          "clearance": 86.77227485957589
+        },
+        "actualEntryMeasuredRange": 168.13643080021166,
+        "actualRequiredRange": 31.80000000000001,
+        "actualEntryUtilization": 0.18913212234049626
+      },
+      {
+        "id": "1.3",
+        "district": 0,
+        "x": 626,
+        "end": 669,
+        "length": 43,
+        "entryHeight": 142,
+        "entrySpeed": 18,
+        "entryPitch": -0.55,
+        "clearance": 92,
+        "drop": 50,
+        "measuredRange": 77.7160112025809,
+        "utilization": 0.5532965387005349,
+        "sourceRoofEnd": 636,
+        "receiverRoofStart": 659,
+        "receiverRoof": 85,
+        "clearanceMeaning": "Synthetic 92m envelope target; actual roof and hazard clearances are separate.",
+        "syntheticPerturbedClearance": 20.057809492858624,
+        "releaseOnlySkipped": true,
+        "realGeometryMinSampledRoofClearance": null,
+        "actualBotEntry": {
+          "height": 114.11912330466494,
+          "speed": 29.17124154222998,
+          "pitch": 0.09000000000000001
+        },
+        "actualBotReceiver": {
+          "roof": 85,
+          "clearance": 13.667448421671654
+        },
+        "actualEntryMeasuredRange": 50.49176799777607,
+        "actualRequiredRange": 31.799999999999955,
+        "actualEntryUtilization": 0.6298056348789489
+      },
+      {
+        "id": "1.4",
+        "district": 0,
+        "x": 839,
+        "end": 882,
+        "length": 43,
+        "entryHeight": 170,
+        "entrySpeed": 18,
+        "entryPitch": -0.55,
+        "clearance": 120,
+        "drop": 50,
+        "measuredRange": 77.7160112025809,
+        "utilization": 0.5532965387005349,
+        "sourceRoofEnd": 849,
+        "receiverRoofStart": 872,
+        "receiverRoof": 110,
+        "clearanceMeaning": "Synthetic 120m envelope target; actual roof and hazard clearances are separate.",
+        "syntheticPerturbedClearance": 20.05780949285861,
+        "releaseOnlySkipped": false,
+        "realGeometryMinSampledRoofClearance": 27.696925848313345,
+        "actualBotEntry": {
+          "height": 169.89515558889735,
+          "speed": 17.010969533323255,
+          "pitch": 0.06333333333333334
+        },
+        "actualBotReceiver": {
+          "roof": 110,
+          "clearance": 40.289494845981594
+        },
+        "actualEntryMeasuredRange": 94.6941653044638,
+        "actualRequiredRange": 31.799999999999955,
+        "actualEntryUtilization": 0.3358179450418677
+      },
+      {
+        "id": "1.5",
+        "district": 0,
+        "x": 1052,
+        "end": 1095,
+        "length": 43,
+        "entryHeight": 170,
+        "entrySpeed": 18,
+        "entryPitch": -0.55,
+        "clearance": 120,
+        "drop": 50,
+        "measuredRange": 77.7160112025809,
+        "utilization": 0.5532965387005349,
+        "sourceRoofEnd": 1062,
+        "receiverRoofStart": 1085,
+        "receiverRoof": 45,
+        "clearanceMeaning": "Synthetic 120m envelope target; actual roof and hazard clearances are separate.",
+        "syntheticPerturbedClearance": 20.05780949285861,
+        "releaseOnlySkipped": false,
+        "realGeometryMinSampledRoofClearance": 92.66499952991056,
+        "actualBotEntry": {
+          "height": 173.89285589922164,
+          "speed": 22.105488861109155,
+          "pitch": 0.19333333333333333
+        },
+        "actualBotReceiver": {
+          "roof": 45,
+          "clearance": 134.68716783068828
+        },
+        "actualEntryMeasuredRange": 206.58921376321769,
+        "actualRequiredRange": 31.799999999999955,
+        "actualEntryUtilization": 0.153928655909633
+      },
+      {
+        "id": "2.1",
+        "district": 1,
+        "x": 1295,
+        "end": 1344,
+        "length": 49,
+        "entryHeight": 184,
+        "entrySpeed": 18,
+        "entryPitch": -0.55,
+        "clearance": 134,
+        "drop": 50,
+        "measuredRange": 77.7160112025809,
+        "utilization": 0.6305007068913071,
+        "sourceRoofEnd": 1305,
+        "receiverRoofStart": 1334,
+        "receiverRoof": 45,
+        "clearanceMeaning": "Synthetic 134m envelope target; actual roof and hazard clearances are separate.",
+        "syntheticPerturbedClearance": 16.171700497347047,
+        "releaseOnlySkipped": true,
+        "realGeometryMinSampledRoofClearance": null,
+        "actualBotEntry": {
+          "height": 164.9162037700154,
+          "speed": 28.50063425865107,
+          "pitch": -0.4700000000000001
+        },
+        "actualBotReceiver": {
+          "roof": 45,
+          "clearance": 112.65020883070342
+        },
+        "actualEntryMeasuredRange": 186.61855619491894,
+        "actualRequiredRange": 37.799999999999955,
+        "actualEntryUtilization": 0.20255220472565813
+      },
+      {
+        "id": "2.2",
+        "district": 1,
+        "x": 1514,
+        "end": 1563,
+        "length": 49,
+        "entryHeight": 170,
+        "entrySpeed": 18,
+        "entryPitch": -0.55,
+        "clearance": 120,
+        "drop": 50,
+        "measuredRange": 77.7160112025809,
+        "utilization": 0.6305007068913071,
+        "sourceRoofEnd": 1524,
+        "receiverRoofStart": 1553,
+        "receiverRoof": 45,
+        "clearanceMeaning": "Synthetic 120m envelope target; actual roof and hazard clearances are separate.",
+        "syntheticPerturbedClearance": 16.171700497347047,
+        "releaseOnlySkipped": true,
+        "realGeometryMinSampledRoofClearance": null,
+        "actualBotEntry": {
+          "height": 124.62785738678707,
+          "speed": 27.416718057844026,
+          "pitch": 0.38333333333333336
+        },
+        "actualBotReceiver": {
+          "roof": 45,
+          "clearance": 61.80391176697485
+        },
+        "actualEntryMeasuredRange": 135.05545655378262,
+        "actualRequiredRange": 37.799999999999955,
+        "actualEntryUtilization": 0.27988502622955486
+      },
+      {
+        "id": "2.3",
+        "district": 1,
+        "x": 1763,
+        "end": 1812,
+        "length": 49,
+        "entryHeight": 142,
+        "entrySpeed": 18,
+        "entryPitch": -0.55,
+        "clearance": 92,
+        "drop": 50,
+        "measuredRange": 77.7160112025809,
+        "utilization": 0.6305007068913071,
+        "sourceRoofEnd": 1773,
+        "receiverRoofStart": 1802,
+        "receiverRoof": 45,
+        "clearanceMeaning": "Synthetic 92m envelope target; actual roof and hazard clearances are separate.",
+        "syntheticPerturbedClearance": 16.171700497347146,
+        "releaseOnlySkipped": true,
+        "realGeometryMinSampledRoofClearance": null,
+        "actualBotEntry": {
+          "height": 113.16442468224281,
+          "speed": 21.563886204226854,
+          "pitch": 0.006666666666666644
+        },
+        "actualBotReceiver": {
+          "roof": 45,
+          "clearance": 45.064551681495274
+        },
+        "actualEntryMeasuredRange": 108.32914746766197,
+        "actualRequiredRange": 37.799999999999955,
+        "actualEntryUtilization": 0.3489365593990655
+      },
+      {
+        "id": "2.4",
+        "district": 1,
+        "x": 1982,
+        "end": 2031,
+        "length": 49,
+        "entryHeight": 170,
+        "entrySpeed": 18,
+        "entryPitch": -0.55,
+        "clearance": 120,
+        "drop": 50,
+        "measuredRange": 77.7160112025809,
+        "utilization": 0.6305007068913071,
+        "sourceRoofEnd": 1992,
+        "receiverRoofStart": 2021,
+        "receiverRoof": 45,
+        "clearanceMeaning": "Synthetic 120m envelope target; actual roof and hazard clearances are separate.",
+        "syntheticPerturbedClearance": 16.171700497347047,
+        "releaseOnlySkipped": false,
+        "realGeometryMinSampledRoofClearance": 88.74685278284757,
+        "actualBotEntry": {
+          "height": 157.57376834159854,
+          "speed": 14.35343665553548,
+          "pitch": -0.15000000000000002
+        },
+        "actualBotReceiver": {
+          "roof": 45,
+          "clearance": 87.41849112241245
+        },
+        "actualEntryMeasuredRange": 175.1695994111654,
+        "actualRequiredRange": 37.799999999999955,
+        "actualEntryUtilization": 0.21579086854719703
+      },
+      {
+        "id": "2.5",
+        "district": 1,
+        "x": 2231,
+        "end": 2280,
+        "length": 49,
+        "entryHeight": 170,
+        "entrySpeed": 18,
+        "entryPitch": -0.55,
+        "clearance": 120,
+        "drop": 50,
+        "measuredRange": 77.7160112025809,
+        "utilization": 0.6305007068913071,
+        "sourceRoofEnd": 2241,
+        "receiverRoofStart": 2270,
+        "receiverRoof": 55,
+        "clearanceMeaning": "Synthetic 120m envelope target; actual roof and hazard clearances are separate.",
+        "syntheticPerturbedClearance": 16.171700497347047,
+        "releaseOnlySkipped": false,
+        "realGeometryMinSampledRoofClearance": 78.77139230015801,
+        "actualBotEntry": {
+          "height": 171.83778746764958,
+          "speed": 17.199136448342788,
+          "pitch": 0.11666666666666664
+        },
+        "actualBotReceiver": {
+          "roof": 55,
+          "clearance": 110.10951458465185
+        },
+        "actualEntryMeasuredRange": 184.5993671404272,
+        "actualRequiredRange": 37.80000000000018,
+        "actualEntryUtilization": 0.20476776592221585
+      },
+      {
+        "id": "3.1",
+        "district": 2,
+        "x": 2500,
+        "end": 2556,
+        "length": 56,
+        "entryHeight": 184,
+        "entrySpeed": 18,
+        "entryPitch": -0.55,
+        "clearance": 134,
+        "drop": 50,
+        "measuredRange": 77.7160112025809,
+        "utilization": 0.7205722364472081,
+        "sourceRoofEnd": 2510,
+        "receiverRoofStart": 2546,
+        "receiverRoof": 55,
+        "clearanceMeaning": "Synthetic 134m envelope target; actual roof and hazard clearances are separate.",
+        "syntheticPerturbedClearance": 11.669484460955175,
+        "releaseOnlySkipped": true,
+        "realGeometryMinSampledRoofClearance": null,
+        "actualBotEntry": {
+          "height": 183.96536042261445,
+          "speed": 22.932864961773642,
+          "pitch": 0.009999999999999998
+        },
+        "actualBotReceiver": {
+          "roof": 55,
+          "clearance": 101.77597977924908
+        },
+        "actualEntryMeasuredRange": 204.39212587818577,
+        "actualRequiredRange": 44.80000000000018,
+        "actualEntryUtilization": 0.21918652593642585
+      },
+      {
+        "id": "3.2",
+        "district": 2,
+        "x": 2726,
+        "end": 2782,
+        "length": 56,
+        "entryHeight": 170,
+        "entrySpeed": 18,
+        "entryPitch": -0.55,
+        "clearance": 120,
+        "drop": 50,
+        "measuredRange": 77.7160112025809,
+        "utilization": 0.7205722364472081,
+        "sourceRoofEnd": 2736,
+        "receiverRoofStart": 2772,
+        "receiverRoof": 55,
+        "clearanceMeaning": "Synthetic 120m envelope target; actual roof and hazard clearances are separate.",
+        "syntheticPerturbedClearance": 11.669484460955175,
+        "releaseOnlySkipped": true,
+        "realGeometryMinSampledRoofClearance": null,
+        "actualBotEntry": {
+          "height": 169.28449073858474,
+          "speed": 26.835789450641993,
+          "pitch": -0.12333333333333335
+        },
+        "actualBotReceiver": {
+          "roof": 55,
+          "clearance": 111.807144323651
+        },
+        "actualEntryMeasuredRange": 180.2320337076921,
+        "actualRequiredRange": 44.80000000000018,
+        "actualEntryUtilization": 0.2485684652077927
+      },
+      {
+        "id": "3.3",
+        "district": 2,
+        "x": 2982,
+        "end": 3038,
+        "length": 56,
+        "entryHeight": 142,
+        "entrySpeed": 18,
+        "entryPitch": -0.55,
+        "clearance": 92,
+        "drop": 50,
+        "measuredRange": 77.7160112025809,
+        "utilization": 0.7205722364472081,
+        "sourceRoofEnd": 2992,
+        "receiverRoofStart": 3028,
+        "receiverRoof": 55,
+        "clearanceMeaning": "Synthetic 92m envelope target; actual roof and hazard clearances are separate.",
+        "syntheticPerturbedClearance": 11.669484460955289,
+        "releaseOnlySkipped": true,
+        "realGeometryMinSampledRoofClearance": null,
+        "actualBotEntry": {
+          "height": 115.97170234180795,
+          "speed": 29.074919835069334,
+          "pitch": 0.009999999999999998
+        },
+        "actualBotReceiver": {
+          "roof": 55,
+          "clearance": 34.162946267429746
+        },
+        "actualEntryMeasuredRange": 98.65863740002877,
+        "actualRequiredRange": 44.80000000000018,
+        "actualEntryUtilization": 0.454091006936886
+      },
+      {
+        "id": "3.4",
+        "district": 2,
+        "x": 3258,
+        "end": 3314,
+        "length": 56,
+        "entryHeight": 170,
+        "entrySpeed": 18,
+        "entryPitch": -0.55,
+        "clearance": 120,
+        "drop": 50,
+        "measuredRange": 77.7160112025809,
+        "utilization": 0.7205722364472081,
+        "sourceRoofEnd": 3268,
+        "receiverRoofStart": 3304,
+        "receiverRoof": 55,
+        "clearanceMeaning": "Synthetic 120m envelope target; actual roof and hazard clearances are separate.",
+        "syntheticPerturbedClearance": 11.669484460955175,
+        "releaseOnlySkipped": false,
+        "realGeometryMinSampledRoofClearance": 74.24251348578353,
+        "actualBotEntry": {
+          "height": 163.3626248069924,
+          "speed": 13.764547079173614,
+          "pitch": -0.07000000000000002
+        },
+        "actualBotReceiver": {
+          "roof": 55,
+          "clearance": 79.12994818528715
+        },
+        "actualEntryMeasuredRange": 168.94011344958585,
+        "actualRequiredRange": 44.80000000000018,
+        "actualEntryUtilization": 0.2651827270932261
+      },
+      {
+        "id": "3.5",
+        "district": 2,
+        "x": 3484,
+        "end": 3540,
+        "length": 56,
+        "entryHeight": 170,
+        "entrySpeed": 18,
+        "entryPitch": -0.55,
+        "clearance": 120,
+        "drop": 50,
+        "measuredRange": 77.7160112025809,
+        "utilization": 0.7205722364472081,
+        "sourceRoofEnd": 3494,
+        "receiverRoofStart": 3530,
+        "receiverRoof": 65,
+        "clearanceMeaning": "Synthetic 120m envelope target; actual roof and hazard clearances are separate.",
+        "syntheticPerturbedClearance": 11.669484460955175,
+        "releaseOnlySkipped": false,
+        "realGeometryMinSampledRoofClearance": 64.23198096833106,
+        "actualBotEntry": {
+          "height": 179.16225122777206,
+          "speed": 19.4509045806603,
+          "pitch": -0.15000000000000002
+        },
+        "actualBotReceiver": {
+          "roof": 65,
+          "clearance": 111.3128393992154
+        },
+        "actualEntryMeasuredRange": 178.5649075432675,
+        "actualRequiredRange": 44.80000000000018,
+        "actualEntryUtilization": 0.2508891619096257
+      },
+      {
+        "id": "4.1",
+        "district": 3,
+        "x": 3710,
+        "end": 3772,
+        "length": 62,
+        "entryHeight": 184,
+        "entrySpeed": 18,
+        "entryPitch": -0.55,
+        "clearance": 134,
+        "drop": 50,
+        "measuredRange": 77.7160112025809,
+        "utilization": 0.7977764046379804,
+        "sourceRoofEnd": 3720,
+        "receiverRoofStart": 3762,
+        "receiverRoof": 65,
+        "clearanceMeaning": "Synthetic 134m envelope target; actual roof and hazard clearances are separate.",
+        "syntheticPerturbedClearance": 7.816838187458501,
+        "releaseOnlySkipped": true,
+        "realGeometryMinSampledRoofClearance": null,
+        "actualBotEntry": {
+          "height": 173.7334163323937,
+          "speed": 25.02460854154775,
+          "pitch": -0.55
+        },
+        "actualBotReceiver": {
+          "roof": 65,
+          "clearance": 94.7623556140283
+        },
+        "actualEntryMeasuredRange": 168.7359243537265,
+        "actualRequiredRange": 50.80000000000018,
+        "actualEntryUtilization": 0.3010621490033535
+      },
+      {
+        "id": "4.2",
+        "district": 3,
+        "x": 3942,
+        "end": 4004,
+        "length": 62,
+        "entryHeight": 170,
+        "entrySpeed": 18,
+        "entryPitch": -0.55,
+        "clearance": 120,
+        "drop": 50,
+        "measuredRange": 77.7160112025809,
+        "utilization": 0.7977764046379804,
+        "sourceRoofEnd": 3952,
+        "receiverRoofStart": 3994,
+        "receiverRoof": 65,
+        "clearanceMeaning": "Synthetic 120m envelope target; actual roof and hazard clearances are separate.",
+        "syntheticPerturbedClearance": 7.816838187458515,
+        "releaseOnlySkipped": true,
+        "realGeometryMinSampledRoofClearance": null,
+        "actualBotEntry": {
+          "height": 133.11445863295017,
+          "speed": 25.099999439360996,
+          "pitch": 0.22333333333333336
+        },
+        "actualBotReceiver": {
+          "roof": 65,
+          "clearance": 35.38188990417143
+        },
+        "actualEntryMeasuredRange": 112.93129272282809,
+        "actualRequiredRange": 50.80000000000018,
+        "actualEntryUtilization": 0.44983103243740163
+      },
+      {
+        "id": "4.3",
+        "district": 3,
+        "x": 4204,
+        "end": 4266,
+        "length": 62,
+        "entryHeight": 142,
+        "entrySpeed": 18,
+        "entryPitch": -0.55,
+        "clearance": 92,
+        "drop": 50,
+        "measuredRange": 77.7160112025809,
+        "utilization": 0.7977764046379804,
+        "sourceRoofEnd": 4214,
+        "receiverRoofStart": 4256,
+        "receiverRoof": 65,
+        "clearanceMeaning": "Synthetic 92m envelope target; actual roof and hazard clearances are separate.",
+        "syntheticPerturbedClearance": 7.816838187458671,
+        "releaseOnlySkipped": true,
+        "realGeometryMinSampledRoofClearance": null,
+        "actualBotEntry": {
+          "height": 119.81216905046097,
+          "speed": 22.137780318354793,
+          "pitch": 0.41000000000000003
+        },
+        "actualBotReceiver": {
+          "roof": 65,
+          "clearance": 62.05778264992422
+        },
+        "actualEntryMeasuredRange": 93.83357653163675,
+        "actualRequiredRange": 50.80000000000018,
+        "actualEntryUtilization": 0.5413840320034327
+      },
+      {
+        "id": "4.4",
+        "district": 3,
+        "x": 4486,
+        "end": 4548,
+        "length": 62,
+        "entryHeight": 170,
+        "entrySpeed": 18,
+        "entryPitch": -0.55,
+        "clearance": 120,
+        "drop": 50,
+        "measuredRange": 77.7160112025809,
+        "utilization": 0.7977764046379804,
+        "sourceRoofEnd": 4496,
+        "receiverRoofStart": 4538,
+        "receiverRoof": 65,
+        "clearanceMeaning": "Synthetic 120m envelope target; actual roof and hazard clearances are separate.",
+        "syntheticPerturbedClearance": 7.816838187458515,
+        "releaseOnlySkipped": true,
+        "realGeometryMinSampledRoofClearance": null,
+        "actualBotEntry": {
+          "height": 146.99401105254097,
+          "speed": 22.470315350051887,
+          "pitch": 0.009999999999999998
+        },
+        "actualBotReceiver": {
+          "roof": 65,
+          "clearance": 80.79186896608898
+        },
+        "actualEntryMeasuredRange": 130.54955255736473,
+        "actualRequiredRange": 50.80000000000018,
+        "actualEntryUtilization": 0.38912427507308517
+      },
+      {
+        "id": "4.5",
+        "district": 3,
+        "x": 4718,
+        "end": 4780,
+        "length": 62,
+        "entryHeight": 170,
+        "entrySpeed": 18,
+        "entryPitch": -0.55,
+        "clearance": 120,
+        "drop": 50,
+        "measuredRange": 77.7160112025809,
+        "utilization": 0.7977764046379804,
+        "sourceRoofEnd": 4728,
+        "receiverRoofStart": 4770,
+        "receiverRoof": 75,
+        "clearanceMeaning": "Synthetic 120m envelope target; actual roof and hazard clearances are separate.",
+        "syntheticPerturbedClearance": 7.816838187458515,
+        "releaseOnlySkipped": false,
+        "realGeometryMinSampledRoofClearance": 50.38082254505804,
+        "actualBotEntry": {
+          "height": 169.95407436037652,
+          "speed": 17.28276987752022,
+          "pitch": 0.03666666666666667
+        },
+        "actualBotReceiver": {
+          "roof": 75,
+          "clearance": 87.02440351787921
+        },
+        "actualEntryMeasuredRange": 149.6840382571222,
+        "actualRequiredRange": 50.80000000000018,
+        "actualEntryUtilization": 0.3393815438940634
+      },
+      {
+        "id": "5.1",
+        "district": 4,
+        "x": 4990,
+        "end": 5061,
+        "length": 71,
+        "entryHeight": 184,
+        "entrySpeed": 18,
+        "entryPitch": -0.55,
+        "clearance": 134,
+        "drop": 50,
+        "measuredRange": 77.7160112025809,
+        "utilization": 0.9135826569241389,
+        "sourceRoofEnd": 5000,
+        "receiverRoofStart": 5051,
+        "receiverRoof": 75,
+        "clearanceMeaning": "Synthetic 134m envelope target; actual roof and hazard clearances are separate.",
+        "syntheticPerturbedClearance": 2.0089018038222264,
+        "releaseOnlySkipped": true,
+        "realGeometryMinSampledRoofClearance": null,
+        "actualBotEntry": {
+          "height": 183.98880543555663,
+          "speed": 20.16043641369185,
+          "pitch": 0.009999999999999998
+        },
+        "actualBotReceiver": {
+          "roof": 75,
+          "clearance": 76.16648677812795
+        },
+        "actualEntryMeasuredRange": 171.91809478493605,
+        "actualRequiredRange": 59.80000000000018,
+        "actualEntryUtilization": 0.3478400576437753
+      },
+      {
+        "id": "5.2",
+        "district": 4,
+        "x": 5231,
+        "end": 5302,
+        "length": 71,
+        "entryHeight": 170,
+        "entrySpeed": 18,
+        "entryPitch": -0.55,
+        "clearance": 120,
+        "drop": 50,
+        "measuredRange": 77.7160112025809,
+        "utilization": 0.9135826569241389,
+        "sourceRoofEnd": 5241,
+        "receiverRoofStart": 5292,
+        "receiverRoof": 75,
+        "clearanceMeaning": "Synthetic 120m envelope target; actual roof and hazard clearances are separate.",
+        "syntheticPerturbedClearance": 2.008901803822255,
+        "releaseOnlySkipped": true,
+        "realGeometryMinSampledRoofClearance": null,
+        "actualBotEntry": {
+          "height": 169.99378517332374,
+          "speed": 25.8454662759159,
+          "pitch": 0.03666666666666667
+        },
+        "actualBotReceiver": {
+          "roof": 75,
+          "clearance": 79.91723251833984
+        },
+        "actualEntryMeasuredRange": 151.77079434996006,
+        "actualRequiredRange": 59.80000000000018,
+        "actualEntryUtilization": 0.39401520072505253
+      },
+      {
+        "id": "5.3",
+        "district": 4,
+        "x": 5502,
+        "end": 5573,
+        "length": 71,
+        "entryHeight": 142,
+        "entrySpeed": 18,
+        "entryPitch": -0.55,
+        "clearance": 92,
+        "drop": 50,
+        "measuredRange": 77.7160112025809,
+        "utilization": 0.9135826569241389,
+        "sourceRoofEnd": 5512,
+        "receiverRoofStart": 5563,
+        "receiverRoof": 75,
+        "clearanceMeaning": "Synthetic 92m envelope target; actual roof and hazard clearances are separate.",
+        "syntheticPerturbedClearance": 2.008901803822411,
+        "releaseOnlySkipped": true,
+        "realGeometryMinSampledRoofClearance": null,
+        "actualBotEntry": {
+          "height": 115.04670462125799,
+          "speed": 28.57978328662067,
+          "pitch": -0.12333333333333335
+        },
+        "actualBotReceiver": {
+          "roof": 75,
+          "clearance": 37.49182032147347
+        },
+        "actualEntryMeasuredRange": 64.02146177888388,
+        "actualRequiredRange": 59.80000000000018,
+        "actualEntryUtilization": 0.93406177144996
+      },
+      {
+        "id": "5.4",
+        "district": 4,
+        "x": 5793,
+        "end": 5864,
+        "length": 71,
+        "entryHeight": 170,
+        "entrySpeed": 18,
+        "entryPitch": -0.55,
+        "clearance": 120,
+        "drop": 50,
+        "measuredRange": 77.7160112025809,
+        "utilization": 0.9135826569241389,
+        "sourceRoofEnd": 5803,
+        "receiverRoofStart": 5854,
+        "receiverRoof": 75,
+        "clearanceMeaning": "Synthetic 120m envelope target; actual roof and hazard clearances are separate.",
+        "syntheticPerturbedClearance": 2.008901803822255,
+        "releaseOnlySkipped": true,
+        "realGeometryMinSampledRoofClearance": null,
+        "actualBotEntry": {
+          "height": 146.9986291408434,
+          "speed": 23.445667136745634,
+          "pitch": 0.010000000000000002
+        },
+        "actualBotReceiver": {
+          "roof": 75,
+          "clearance": 70.32503351393625
+        },
+        "actualEntryMeasuredRange": 115.08610792207088,
+        "actualRequiredRange": 59.80000000000018,
+        "actualEntryUtilization": 0.5196109337583387
+      },
+      {
+        "id": "5.5",
+        "district": 4,
+        "x": 6034,
+        "end": 6105,
+        "length": 71,
+        "entryHeight": 170,
+        "entrySpeed": 18,
+        "entryPitch": -0.55,
+        "clearance": 120,
+        "drop": 50,
+        "measuredRange": 77.7160112025809,
+        "utilization": 0.9135826569241389,
+        "sourceRoofEnd": 6044,
+        "receiverRoofStart": null,
+        "receiverRoof": 2,
+        "clearanceMeaning": "Synthetic 120m envelope target; actual roof and hazard clearances are separate.",
+        "syntheticPerturbedClearance": 2.008901803822255,
+        "releaseOnlySkipped": false,
+        "realGeometryMinSampledRoofClearance": null,
+        "actualBotEntry": {
+          "height": 169.94327783952087,
+          "speed": 17.368589734483848,
+          "pitch": 0.009999999999999998
+        },
+        "actualBotReceiver": null,
+        "actualEntryMeasuredRange": 263.8374340489862,
+        "actualRequiredRange": 71,
+        "actualEntryUtilization": 0.26910510351164785
+      }
+    ],
+    "encounters": [
+      {
+        "id": "h0-over",
+        "district": 0,
+        "kind": "pigeon",
+        "pass": "above",
+        "minClearance": 15.542859077615578,
+        "warningSeconds": 0.016666666666666666,
+        "arrivalSeconds": 13.166666666666666,
+        "passed": true,
+        "warningLeadSeconds": 13.149999999999999
+      },
+      {
+        "id": "h0-under",
+        "district": 0,
+        "kind": "platform",
+        "pass": "below",
+        "minClearance": 40.08706139170501,
+        "warningSeconds": 20.766666666666666,
+        "arrivalSeconds": 29.633333333333333,
+        "passed": true,
+        "warningLeadSeconds": 8.866666666666667
+      },
+      {
+        "id": "h1-over",
+        "district": 1,
+        "kind": "pigeon",
+        "pass": "above",
+        "minClearance": 7.576872129760392,
+        "warningSeconds": 47.71666666666667,
+        "arrivalSeconds": 66.88333333333334,
+        "passed": true,
+        "warningLeadSeconds": 19.16666666666667
+      },
+      {
+        "id": "h1-1-under",
+        "district": 1,
+        "kind": "platform",
+        "pass": "below",
+        "minClearance": 37.379842114687335,
+        "warningSeconds": 65.86666666666666,
+        "arrivalSeconds": 75.18333333333334,
+        "passed": true,
+        "warningLeadSeconds": 9.316666666666677
+      },
+      {
+        "id": "h1-under",
+        "district": 1,
+        "kind": "platform",
+        "pass": "below",
+        "minClearance": 35.88491464752559,
+        "warningSeconds": 75.4,
+        "arrivalSeconds": 86.03333333333333,
+        "passed": true,
+        "warningLeadSeconds": 10.633333333333326
+      },
+      {
+        "id": "h2-over",
+        "district": 2,
+        "kind": "pigeon",
+        "pass": "above",
+        "minClearance": 20.12478929670961,
+        "warningSeconds": 109.88333333333334,
+        "arrivalSeconds": 130.36666666666667,
+        "passed": true,
+        "warningLeadSeconds": 20.483333333333334
+      },
+      {
+        "id": "h2-1-over",
+        "district": 2,
+        "kind": "pigeon",
+        "pass": "above",
+        "minClearance": 9.864379222930058,
+        "warningSeconds": 124.63333333333334,
+        "arrivalSeconds": 140.13333333333333,
+        "passed": true,
+        "warningLeadSeconds": 15.499999999999986
+      },
+      {
+        "id": "h2-under",
+        "district": 2,
+        "kind": "platform",
+        "pass": "below",
+        "minClearance": 37.44196092660323,
+        "warningSeconds": 141.45,
+        "arrivalSeconds": 150.83333333333334,
+        "passed": true,
+        "warningLeadSeconds": 9.383333333333354
+      },
+      {
+        "id": "h3-over",
+        "district": 3,
+        "kind": "pigeon",
+        "pass": "above",
+        "minClearance": 8.516167253173325,
+        "warningSeconds": 172.5,
+        "arrivalSeconds": 191.1,
+        "passed": true,
+        "warningLeadSeconds": 18.599999999999994
+      },
+      {
+        "id": "h3-1-under",
+        "district": 3,
+        "kind": "platform",
+        "pass": "below",
+        "minClearance": 33.93622425005441,
+        "warningSeconds": 190.76666666666668,
+        "arrivalSeconds": 200.55,
+        "passed": true,
+        "warningLeadSeconds": 9.783333333333331
+      },
+      {
+        "id": "h3-under",
+        "district": 3,
+        "kind": "platform",
+        "pass": "below",
+        "minClearance": 11.363591455625585,
+        "warningSeconds": 201.4,
+        "arrivalSeconds": 214,
+        "passed": true,
+        "warningLeadSeconds": 12.599999999999994
+      },
+      {
+        "id": "h3-3-sq-under",
+        "district": 3,
+        "kind": "platform",
+        "pass": "below",
+        "minClearance": 24.29990932754011,
+        "warningSeconds": 209.06666666666666,
+        "arrivalSeconds": 229.78333333333333,
+        "passed": true,
+        "warningLeadSeconds": 20.71666666666667
+      },
+      {
+        "id": "h3-3-sq-over",
+        "district": 3,
+        "kind": "pigeon",
+        "pass": "above",
+        "minClearance": 18.24088508215063,
+        "warningSeconds": 209.06666666666666,
+        "arrivalSeconds": 230.36666666666667,
+        "passed": true,
+        "warningLeadSeconds": 21.30000000000001
+      },
+      {
+        "id": "h4-over",
+        "district": 4,
+        "kind": "pigeon",
+        "pass": "above",
+        "minClearance": 18.44838112724054,
+        "warningSeconds": 238.58333333333334,
+        "arrivalSeconds": 259.3333333333333,
+        "passed": true,
+        "warningLeadSeconds": 20.74999999999997
+      },
+      {
+        "id": "h4-1-over",
+        "district": 4,
+        "kind": "pigeon",
+        "pass": "above",
+        "minClearance": 13.261156739768314,
+        "warningSeconds": 253.61666666666667,
+        "arrivalSeconds": 270.55,
+        "passed": true,
+        "warningLeadSeconds": 16.933333333333337
+      },
+      {
+        "id": "h4-under",
+        "district": 4,
+        "kind": "platform",
+        "pass": "below",
+        "minClearance": 22.66985028653993,
+        "warningSeconds": 272.6,
+        "arrivalSeconds": 281.75,
+        "passed": true,
+        "warningLeadSeconds": 9.149999999999977
+      },
+      {
+        "id": "h4-3-sq-under",
+        "district": 4,
+        "kind": "platform",
+        "pass": "below",
+        "minClearance": 24.3202055491435,
+        "warningSeconds": 278.46666666666664,
+        "arrivalSeconds": 297.43333333333334,
+        "passed": true,
+        "warningLeadSeconds": 18.966666666666697
+      },
+      {
+        "id": "h4-3-sq-over",
+        "district": 4,
+        "kind": "pigeon",
+        "pass": "above",
+        "minClearance": 18.228187524277747,
+        "warningSeconds": 278.46666666666664,
+        "arrivalSeconds": 297.93333333333334,
+        "passed": true,
+        "warningLeadSeconds": 19.466666666666697
+      }
+    ],
+    "engagement": [
+      {
+        "district": "Glass Mile",
+        "heldTicks": 1581,
+        "totalTicks": 3265
+      },
+      {
+        "district": "Boiler Row",
+        "heldTicks": 1583,
+        "totalTicks": 3732
+      },
+      {
+        "district": "Sunward Roofs",
+        "heldTicks": 1885,
+        "totalTicks": 3943
+      },
+      {
+        "district": "Crosswind Court",
+        "heldTicks": 1724,
+        "totalTicks": 3753
+      },
+      {
+        "district": "Park Approach",
+        "heldTicks": 1883,
+        "totalTicks": 4452
+      }
+    ],
+    "summary": {
+      "districtTrials": 135,
+      "gaps": 25,
+      "encounters": 18,
+      "firstEncounterSeconds": 13.166666666666666,
+      "minHazardClearance": 7.576872129760392,
+      "minWarningLeadSeconds": 8.866666666666667,
+      "maxSyntheticEnvelopeUtilization": 0.9135826569241389,
+      "minSyntheticPerturbedClearance": 2.0089018038222264,
+      "maxActualEntryUtilization": 0.93406177144996,
+      "minActualBotReceiverClearance": 13.667448421671654,
+      "minRealGeometrySampledRoofClearance": 27.696925848313345
     }
-  ],
-  "gaps": [
-    {
-      "id": "1.1",
-      "district": 0,
-      "x": 200,
-      "end": 243,
-      "length": 43,
-      "entryHeight": 184,
-      "entrySpeed": 18,
-      "entryPitch": -0.55,
-      "clearance": 134,
-      "drop": 50,
-      "measuredRange": 77.7160112025809,
-      "utilization": 0.5532965387005349,
-      "sourceRoofEnd": 210,
-      "receiverRoofStart": 233,
-      "receiverRoof": 40,
-      "clearanceMeaning": "Synthetic 134m envelope target; actual roof and hazard clearances are separate.",
-      "syntheticPerturbedClearance": 20.05780949285861,
-      "realGeometryMinSampledRoofClearance": 111.69692584831334,
-      "actualBotEntry": {
-        "height": 164.53075097644245,
-        "speed": 24.988230536632177,
-        "pitch": -0.043333333333333335
-      },
-      "actualBotReceiver": {
-        "roof": 40,
-        "clearance": 122.04691587199541
-      },
-      "actualEntryMeasuredRange": 197.21670930831567,
-      "actualRequiredRange": 31.80000000000001,
-      "actualEntryUtilization": 0.16124394383990037
-    },
-    {
-      "id": "1.2",
-      "district": 0,
-      "x": 413,
-      "end": 456,
-      "length": 43,
-      "entryHeight": 170,
-      "entrySpeed": 18,
-      "entryPitch": -0.55,
-      "clearance": 120,
-      "drop": 50,
-      "measuredRange": 77.7160112025809,
-      "utilization": 0.5532965387005349,
-      "sourceRoofEnd": 423,
-      "receiverRoofStart": 446,
-      "receiverRoof": 40,
-      "clearanceMeaning": "Synthetic 120m envelope target; actual roof and hazard clearances are separate.",
-      "syntheticPerturbedClearance": 20.05780949285861,
-      "realGeometryMinSampledRoofClearance": 97.69692584831331,
-      "actualBotEntry": {
-        "height": 167.53768963831516,
-        "speed": 25.55190722169362,
-        "pitch": -0.55
-      },
-      "actualBotReceiver": {
-        "roof": 40,
-        "clearance": 106.00485572194604
-      },
-      "actualEntryMeasuredRange": 198.3159594319681,
-      "actualRequiredRange": 31.80000000000001,
-      "actualEntryUtilization": 0.16035018104989648
-    },
-    {
-      "id": "1.3",
-      "district": 0,
-      "x": 626,
-      "end": 669,
-      "length": 43,
-      "entryHeight": 142,
-      "entrySpeed": 18,
-      "entryPitch": -0.55,
-      "clearance": 92,
-      "drop": 50,
-      "measuredRange": 77.7160112025809,
-      "utilization": 0.5532965387005349,
-      "sourceRoofEnd": 636,
-      "receiverRoofStart": 659,
-      "receiverRoof": 85,
-      "clearanceMeaning": "Synthetic 92m envelope target; actual roof and hazard clearances are separate.",
-      "syntheticPerturbedClearance": 20.057809492858624,
-      "realGeometryMinSampledRoofClearance": 24.696925848313388,
-      "actualBotEntry": {
-        "height": 125.96024812206082,
-        "speed": 28.278876848156052,
-        "pitch": 0.03666666666666667
-      },
-      "actualBotReceiver": {
-        "roof": 85,
-        "clearance": 22.603913220141852
-      },
-      "actualEntryMeasuredRange": 67.57767470508439,
-      "actualRequiredRange": 31.799999999999955,
-      "actualEntryUtilization": 0.4705696095460265
-    },
-    {
-      "id": "1.4",
-      "district": 0,
-      "x": 839,
-      "end": 882,
-      "length": 43,
-      "entryHeight": 170,
-      "entrySpeed": 18,
-      "entryPitch": -0.55,
-      "clearance": 120,
-      "drop": 50,
-      "measuredRange": 77.7160112025809,
-      "utilization": 0.5532965387005349,
-      "sourceRoofEnd": 849,
-      "receiverRoofStart": 872,
-      "receiverRoof": 110,
-      "clearanceMeaning": "Synthetic 120m envelope target; actual roof and hazard clearances are separate.",
-      "syntheticPerturbedClearance": 20.05780949285861,
-      "realGeometryMinSampledRoofClearance": 27.696925848313345,
-      "actualBotEntry": {
-        "height": 169.85468883102752,
-        "speed": 17.928324882935886,
-        "pitch": 0.009999999999999998
-      },
-      "actualBotReceiver": {
-        "roof": 110,
-        "clearance": 39.96775563161161
-      },
-      "actualEntryMeasuredRange": 94.24152155875215,
-      "actualRequiredRange": 31.799999999999955,
-      "actualEntryUtilization": 0.33743088475258926
-    },
-    {
-      "id": "1.5",
-      "district": 0,
-      "x": 1052,
-      "end": 1095,
-      "length": 43,
-      "entryHeight": 170,
-      "entrySpeed": 18,
-      "entryPitch": -0.55,
-      "clearance": 120,
-      "drop": 50,
-      "measuredRange": 77.7160112025809,
-      "utilization": 0.5532965387005349,
-      "sourceRoofEnd": 1062,
-      "receiverRoofStart": 1085,
-      "receiverRoof": 45,
-      "clearanceMeaning": "Synthetic 120m envelope target; actual roof and hazard clearances are separate.",
-      "syntheticPerturbedClearance": 20.05780949285861,
-      "realGeometryMinSampledRoofClearance": 92.66499952991056,
-      "actualBotEntry": {
-        "height": 175.2365659101578,
-        "speed": 23.198207267027847,
-        "pitch": -0.04666666666666669
-      },
-      "actualBotReceiver": {
-        "roof": 45,
-        "clearance": 127.44564105243789
-      },
-      "actualEntryMeasuredRange": 205.71043286804388,
-      "actualRequiredRange": 31.799999999999955,
-      "actualEntryUtilization": 0.15458622859638116
-    },
-    {
-      "id": "2.1",
-      "district": 1,
-      "x": 1295,
-      "end": 1344,
-      "length": 49,
-      "entryHeight": 184,
-      "entrySpeed": 18,
-      "entryPitch": -0.55,
-      "clearance": 134,
-      "drop": 50,
-      "measuredRange": 77.7160112025809,
-      "utilization": 0.6305007068913071,
-      "sourceRoofEnd": 1305,
-      "receiverRoofStart": 1334,
-      "receiverRoof": 45,
-      "clearanceMeaning": "Synthetic 134m envelope target; actual roof and hazard clearances are separate.",
-      "syntheticPerturbedClearance": 16.171700497347047,
-      "realGeometryMinSampledRoofClearance": 102.77970757597136,
-      "actualBotEntry": {
-        "height": 163.11805262348068,
-        "speed": 23.873680071351416,
-        "pitch": -0.016666666666666666
-      },
-      "actualBotReceiver": {
-        "roof": 45,
-        "clearance": 115.4858862769607
-      },
-      "actualEntryMeasuredRange": 187.07975024586733,
-      "actualRequiredRange": 37.799999999999955,
-      "actualEntryUtilization": 0.20205286756221214
-    },
-    {
-      "id": "2.2",
-      "district": 1,
-      "x": 1514,
-      "end": 1563,
-      "length": 49,
-      "entryHeight": 170,
-      "entrySpeed": 18,
-      "entryPitch": -0.55,
-      "clearance": 120,
-      "drop": 50,
-      "measuredRange": 77.7160112025809,
-      "utilization": 0.6305007068913071,
-      "sourceRoofEnd": 1524,
-      "receiverRoofStart": 1553,
-      "receiverRoof": 45,
-      "clearanceMeaning": "Synthetic 120m envelope target; actual roof and hazard clearances are separate.",
-      "syntheticPerturbedClearance": 16.171700497347047,
-      "realGeometryMinSampledRoofClearance": 88.74506059341591,
-      "actualBotEntry": {
-        "height": 169.9959028879201,
-        "speed": 24.417617399336393,
-        "pitch": 0.010000000000000002
-      },
-      "actualBotReceiver": {
-        "roof": 45,
-        "clearance": 102.16835374968404
-      },
-      "actualEntryMeasuredRange": 198.13566865376862,
-      "actualRequiredRange": 37.799999999999955,
-      "actualEntryUtilization": 0.19077837048135646
-    },
-    {
-      "id": "2.3",
-      "district": 1,
-      "x": 1763,
-      "end": 1812,
-      "length": 49,
-      "entryHeight": 142,
-      "entrySpeed": 18,
-      "entryPitch": -0.55,
-      "clearance": 92,
-      "drop": 50,
-      "measuredRange": 77.7160112025809,
-      "utilization": 0.6305007068913071,
-      "sourceRoofEnd": 1773,
-      "receiverRoofStart": 1802,
-      "receiverRoof": 45,
-      "clearanceMeaning": "Synthetic 92m envelope target; actual roof and hazard clearances are separate.",
-      "syntheticPerturbedClearance": 16.171700497347146,
-      "realGeometryMinSampledRoofClearance": 60.77970757597146,
-      "actualBotEntry": {
-        "height": 125.89348498332943,
-        "speed": 26.274555158669653,
-        "pitch": 0.009999999999999998
-      },
-      "actualBotReceiver": {
-        "roof": 45,
-        "clearance": 58.44496201711618
-      },
-      "actualEntryMeasuredRange": 129.45356139513393,
-      "actualRequiredRange": 37.799999999999955,
-      "actualEntryUtilization": 0.29199660165873836
-    },
-    {
-      "id": "2.4",
-      "district": 1,
-      "x": 1982,
-      "end": 2031,
-      "length": 49,
-      "entryHeight": 170,
-      "entrySpeed": 18,
-      "entryPitch": -0.55,
-      "clearance": 120,
-      "drop": 50,
-      "measuredRange": 77.7160112025809,
-      "utilization": 0.6305007068913071,
-      "sourceRoofEnd": 1992,
-      "receiverRoofStart": 2021,
-      "receiverRoof": 45,
-      "clearanceMeaning": "Synthetic 120m envelope target; actual roof and hazard clearances are separate.",
-      "syntheticPerturbedClearance": 16.171700497347047,
-      "realGeometryMinSampledRoofClearance": 88.74685278284757,
-      "actualBotEntry": {
-        "height": 169.78630302623935,
-        "speed": 16.273617629249905,
-        "pitch": 0.06333333333333334
-      },
-      "actualBotReceiver": {
-        "roof": 45,
-        "clearance": 101.04069994889794
-      },
-      "actualEntryMeasuredRange": 196.25003459565596,
-      "actualRequiredRange": 37.799999999999955,
-      "actualEntryUtilization": 0.1926114310139167
-    },
-    {
-      "id": "2.5",
-      "district": 1,
-      "x": 2231,
-      "end": 2280,
-      "length": 49,
-      "entryHeight": 170,
-      "entrySpeed": 18,
-      "entryPitch": -0.55,
-      "clearance": 120,
-      "drop": 50,
-      "measuredRange": 77.7160112025809,
-      "utilization": 0.6305007068913071,
-      "sourceRoofEnd": 2241,
-      "receiverRoofStart": 2270,
-      "receiverRoof": 55,
-      "clearanceMeaning": "Synthetic 120m envelope target; actual roof and hazard clearances are separate.",
-      "syntheticPerturbedClearance": 16.171700497347047,
-      "realGeometryMinSampledRoofClearance": 78.77139230015801,
-      "actualBotEntry": {
-        "height": 174.93404123489506,
-        "speed": 20.452230650363045,
-        "pitch": -0.016666666666666666
-      },
-      "actualBotReceiver": {
-        "roof": 55,
-        "clearance": 116.73996556939964
-      },
-      "actualEntryMeasuredRange": 189.2375800134144,
-      "actualRequiredRange": 37.80000000000018,
-      "actualEntryUtilization": 0.19974890821009586
-    },
-    {
-      "id": "3.1",
-      "district": 2,
-      "x": 2500,
-      "end": 2556,
-      "length": 56,
-      "entryHeight": 184,
-      "entrySpeed": 18,
-      "entryPitch": -0.55,
-      "clearance": 134,
-      "drop": 50,
-      "measuredRange": 77.7160112025809,
-      "utilization": 0.7205722364472081,
-      "sourceRoofEnd": 2510,
-      "receiverRoofStart": 2546,
-      "receiverRoof": 55,
-      "clearanceMeaning": "Synthetic 134m envelope target; actual roof and hazard clearances are separate.",
-      "syntheticPerturbedClearance": 11.669484460955175,
-      "realGeometryMinSampledRoofClearance": 88.24251348578353,
-      "actualBotEntry": {
-        "height": 161.45696031251896,
-        "speed": 25.367235955297286,
-        "pitch": -0.016666666666666666
-      },
-      "actualBotReceiver": {
-        "roof": 55,
-        "clearance": 103.6941693695154
-      },
-      "actualEntryMeasuredRange": 169.2275272602846,
-      "actualRequiredRange": 44.80000000000018,
-      "actualEntryUtilization": 0.26473234423082026
-    },
-    {
-      "id": "3.2",
-      "district": 2,
-      "x": 2726,
-      "end": 2782,
-      "length": 56,
-      "entryHeight": 170,
-      "entrySpeed": 18,
-      "entryPitch": -0.55,
-      "clearance": 120,
-      "drop": 50,
-      "measuredRange": 77.7160112025809,
-      "utilization": 0.7205722364472081,
-      "sourceRoofEnd": 2736,
-      "receiverRoofStart": 2772,
-      "receiverRoof": 55,
-      "clearanceMeaning": "Synthetic 120m envelope target; actual roof and hazard clearances are separate.",
-      "syntheticPerturbedClearance": 11.669484460955175,
-      "realGeometryMinSampledRoofClearance": 74.20614443352791,
-      "actualBotEntry": {
-        "height": 169.91396670095565,
-        "speed": 24.422670681043126,
-        "pitch": 0.006666666666666644
-      },
-      "actualBotReceiver": {
-        "roof": 55,
-        "clearance": 87.56810114614926
-      },
-      "actualEntryMeasuredRange": 182.24600160793187,
-      "actualRequiredRange": 44.80000000000018,
-      "actualEntryUtilization": 0.24582157964913265
-    },
-    {
-      "id": "3.3",
-      "district": 2,
-      "x": 2982,
-      "end": 3038,
-      "length": 56,
-      "entryHeight": 142,
-      "entrySpeed": 18,
-      "entryPitch": -0.55,
-      "clearance": 92,
-      "drop": 50,
-      "measuredRange": 77.7160112025809,
-      "utilization": 0.7205722364472081,
-      "sourceRoofEnd": 2992,
-      "receiverRoofStart": 3028,
-      "receiverRoof": 55,
-      "clearanceMeaning": "Synthetic 92m envelope target; actual roof and hazard clearances are separate.",
-      "syntheticPerturbedClearance": 11.669484460955289,
-      "realGeometryMinSampledRoofClearance": 46.2337849132423,
-      "actualBotEntry": {
-        "height": 125.98887215900483,
-        "speed": 25.303694150343983,
-        "pitch": 0.03666666666666667
-      },
-      "actualBotReceiver": {
-        "roof": 55,
-        "clearance": 44.09016067089259
-      },
-      "actualEntryMeasuredRange": 114.35353301437998,
-      "actualRequiredRange": 44.80000000000018,
-      "actualEntryUtilization": 0.3917675197177036
-    },
-    {
-      "id": "3.4",
-      "district": 2,
-      "x": 3258,
-      "end": 3314,
-      "length": 56,
-      "entryHeight": 170,
-      "entrySpeed": 18,
-      "entryPitch": -0.55,
-      "clearance": 120,
-      "drop": 50,
-      "measuredRange": 77.7160112025809,
-      "utilization": 0.7205722364472081,
-      "sourceRoofEnd": 3268,
-      "receiverRoofStart": 3304,
-      "receiverRoof": 55,
-      "clearanceMeaning": "Synthetic 120m envelope target; actual roof and hazard clearances are separate.",
-      "syntheticPerturbedClearance": 11.669484460955175,
-      "realGeometryMinSampledRoofClearance": 74.24251348578353,
-      "actualBotEntry": {
-        "height": 169.79604373566465,
-        "speed": 15.046398915884746,
-        "pitch": 0.06333333333333334
-      },
-      "actualBotReceiver": {
-        "roof": 55,
-        "clearance": 86.29797414768704
-      },
-      "actualEntryMeasuredRange": 180.3441911356253,
-      "actualRequiredRange": 44.80000000000018,
-      "actualEntryUtilization": 0.24841387858347475
-    },
-    {
-      "id": "3.5",
-      "district": 2,
-      "x": 3484,
-      "end": 3540,
-      "length": 56,
-      "entryHeight": 170,
-      "entrySpeed": 18,
-      "entryPitch": -0.55,
-      "clearance": 120,
-      "drop": 50,
-      "measuredRange": 77.7160112025809,
-      "utilization": 0.7205722364472081,
-      "sourceRoofEnd": 3494,
-      "receiverRoofStart": 3530,
-      "receiverRoof": 65,
-      "clearanceMeaning": "Synthetic 120m envelope target; actual roof and hazard clearances are separate.",
-      "syntheticPerturbedClearance": 11.669484460955175,
-      "realGeometryMinSampledRoofClearance": 64.23198096833106,
-      "actualBotEntry": {
-        "height": 171.3501001692666,
-        "speed": 23.472080557534547,
-        "pitch": -0.04666666666666669
-      },
-      "actualBotReceiver": {
-        "roof": 65,
-        "clearance": 102.87898891531968
-      },
-      "actualEntryMeasuredRange": 168.13043917606592,
-      "actualRequiredRange": 44.80000000000018,
-      "actualEntryUtilization": 0.26645978098639056
-    },
-    {
-      "id": "4.1",
-      "district": 3,
-      "x": 3710,
-      "end": 3772,
-      "length": 62,
-      "entryHeight": 184,
-      "entrySpeed": 18,
-      "entryPitch": -0.55,
-      "clearance": 134,
-      "drop": 50,
-      "measuredRange": 77.7160112025809,
-      "utilization": 0.7977764046379804,
-      "sourceRoofEnd": 3720,
-      "receiverRoofStart": 3762,
-      "receiverRoof": 65,
-      "clearanceMeaning": "Synthetic 134m envelope target; actual roof and hazard clearances are separate.",
-      "syntheticPerturbedClearance": 7.816838187458501,
-      "realGeometryMinSampledRoofClearance": 74.36197557265139,
-      "actualBotEntry": {
-        "height": 160.1513473808093,
-        "speed": 24.60976501800708,
-        "pitch": -0.04666666666666669
-      },
-      "actualBotReceiver": {
-        "roof": 65,
-        "clearance": 92.12347053108736
-      },
-      "actualEntryMeasuredRange": 150.54545266154958,
-      "actualRequiredRange": 50.80000000000018,
-      "actualEntryUtilization": 0.3374396177492439
-    },
-    {
-      "id": "4.2",
-      "district": 3,
-      "x": 3942,
-      "end": 4004,
-      "length": 62,
-      "entryHeight": 170,
-      "entrySpeed": 18,
-      "entryPitch": -0.55,
-      "clearance": 120,
-      "drop": 50,
-      "measuredRange": 77.7160112025809,
-      "utilization": 0.7977764046379804,
-      "sourceRoofEnd": 3952,
-      "receiverRoofStart": 3994,
-      "receiverRoof": 65,
-      "clearanceMeaning": "Synthetic 120m envelope target; actual roof and hazard clearances are separate.",
-      "syntheticPerturbedClearance": 7.816838187458515,
-      "realGeometryMinSampledRoofClearance": 60.32428162783799,
-      "actualBotEntry": {
-        "height": 169.98415712263983,
-        "speed": 24.0889299714092,
-        "pitch": 0.03333333333333331
-      },
-      "actualBotReceiver": {
-        "roof": 65,
-        "clearance": 74.17786509220498
-      },
-      "actualEntryMeasuredRange": 167.3233186544402,
-      "actualRequiredRange": 50.80000000000018,
-      "actualEntryUtilization": 0.30360382765843574
-    },
-    {
-      "id": "4.3",
-      "district": 3,
-      "x": 4204,
-      "end": 4266,
-      "length": 62,
-      "entryHeight": 142,
-      "entrySpeed": 18,
-      "entryPitch": -0.55,
-      "clearance": 92,
-      "drop": 50,
-      "measuredRange": 77.7160112025809,
-      "utilization": 0.7977764046379804,
-      "sourceRoofEnd": 4214,
-      "receiverRoofStart": 4256,
-      "receiverRoof": 65,
-      "clearanceMeaning": "Synthetic 92m envelope target; actual roof and hazard clearances are separate.",
-      "syntheticPerturbedClearance": 7.816838187458671,
-      "realGeometryMinSampledRoofClearance": 32.3529290258963,
-      "actualBotEntry": {
-        "height": 125.98453045605929,
-        "speed": 24.316202942134954,
-        "pitch": 0.009999999999999998
-      },
-      "actualBotReceiver": {
-        "roof": 65,
-        "clearance": 29.723941229692972
-      },
-      "actualEntryMeasuredRange": 97.892234321743,
-      "actualRequiredRange": 50.80000000000018,
-      "actualEntryUtilization": 0.5189379969920342
-    },
-    {
-      "id": "4.4",
-      "district": 3,
-      "x": 4486,
-      "end": 4548,
-      "length": 62,
-      "entryHeight": 170,
-      "entrySpeed": 18,
-      "entryPitch": -0.55,
-      "clearance": 120,
-      "drop": 50,
-      "measuredRange": 77.7160112025809,
-      "utilization": 0.7977764046379804,
-      "sourceRoofEnd": 4496,
-      "receiverRoofStart": 4538,
-      "receiverRoof": 65,
-      "clearanceMeaning": "Synthetic 120m envelope target; actual roof and hazard clearances are separate.",
-      "syntheticPerturbedClearance": 7.816838187458515,
-      "realGeometryMinSampledRoofClearance": 60.351062184985125,
-      "actualBotEntry": {
-        "height": 167.4264844337586,
-        "speed": 14.150890654978603,
-        "pitch": -0.016666666666666666
-      },
-      "actualBotReceiver": {
-        "roof": 65,
-        "clearance": 69.50889684361648
-      },
-      "actualEntryMeasuredRange": 159.83714003697577,
-      "actualRequiredRange": 50.80000000000018,
-      "actualEntryUtilization": 0.3178235045262222
-    },
-    {
-      "id": "4.5",
-      "district": 3,
-      "x": 4718,
-      "end": 4780,
-      "length": 62,
-      "entryHeight": 170,
-      "entrySpeed": 18,
-      "entryPitch": -0.55,
-      "clearance": 120,
-      "drop": 50,
-      "measuredRange": 77.7160112025809,
-      "utilization": 0.7977764046379804,
-      "sourceRoofEnd": 4728,
-      "receiverRoofStart": 4770,
-      "receiverRoof": 75,
-      "clearanceMeaning": "Synthetic 120m envelope target; actual roof and hazard clearances are separate.",
-      "syntheticPerturbedClearance": 7.816838187458515,
-      "realGeometryMinSampledRoofClearance": 50.38082254505804,
-      "actualBotEntry": {
-        "height": 171.1848531490919,
-        "speed": 15.375260830936329,
-        "pitch": 0.010000000000000002
-      },
-      "actualBotReceiver": {
-        "roof": 75,
-        "clearance": 91.54638517226924
-      },
-      "actualEntryMeasuredRange": 150.58639335374528,
-      "actualRequiredRange": 50.80000000000018,
-      "actualEntryUtilization": 0.33734787631618857
-    },
-    {
-      "id": "5.1",
-      "district": 4,
-      "x": 4990,
-      "end": 5061,
-      "length": 71,
-      "entryHeight": 184,
-      "entrySpeed": 18,
-      "entryPitch": -0.55,
-      "clearance": 134,
-      "drop": 50,
-      "measuredRange": 77.7160112025809,
-      "utilization": 0.9135826569241389,
-      "sourceRoofEnd": 5000,
-      "receiverRoofStart": 5051,
-      "receiverRoof": 75,
-      "clearanceMeaning": "Synthetic 134m envelope target; actual roof and hazard clearances are separate.",
-      "syntheticPerturbedClearance": 2.0089018038222264,
-      "realGeometryMinSampledRoofClearance": 58.76920113353613,
-      "actualBotEntry": {
-        "height": 158.04747372456436,
-        "speed": 26.080007361325436,
-        "pitch": -0.043333333333333335
-      },
-      "actualBotReceiver": {
-        "roof": 75,
-        "clearance": 79.82855973175877
-      },
-      "actualEntryMeasuredRange": 131.9773407461493,
-      "actualRequiredRange": 59.80000000000018,
-      "actualEntryUtilization": 0.4531080840234687
-    },
-    {
-      "id": "5.2",
-      "district": 4,
-      "x": 5231,
-      "end": 5302,
-      "length": 71,
-      "entryHeight": 170,
-      "entrySpeed": 18,
-      "entryPitch": -0.55,
-      "clearance": 120,
-      "drop": 50,
-      "measuredRange": 77.7160112025809,
-      "utilization": 0.9135826569241389,
-      "sourceRoofEnd": 5241,
-      "receiverRoofStart": 5292,
-      "receiverRoof": 75,
-      "clearanceMeaning": "Synthetic 120m envelope target; actual roof and hazard clearances are separate.",
-      "syntheticPerturbedClearance": 2.008901803822255,
-      "realGeometryMinSampledRoofClearance": 44.7418506181113,
-      "actualBotEntry": {
-        "height": 169.959693905858,
-        "speed": 23.876919564490763,
-        "pitch": 0.006666666666666647
-      },
-      "actualBotReceiver": {
-        "roof": 75,
-        "clearance": 58.05070850968811
-      },
-      "actualEntryMeasuredRange": 151.0684232351819,
-      "actualRequiredRange": 59.80000000000018,
-      "actualEntryUtilization": 0.39584711827503555
-    },
-    {
-      "id": "5.3",
-      "district": 4,
-      "x": 5502,
-      "end": 5573,
-      "length": 71,
-      "entryHeight": 142,
-      "entrySpeed": 18,
-      "entryPitch": -0.55,
-      "clearance": 92,
-      "drop": 50,
-      "measuredRange": 77.7160112025809,
-      "utilization": 0.9135826569241389,
-      "sourceRoofEnd": 5512,
-      "receiverRoofStart": 5563,
-      "receiverRoof": 75,
-      "clearanceMeaning": "Synthetic 92m envelope target; actual roof and hazard clearances are separate.",
-      "syntheticPerturbedClearance": 2.008901803822411,
-      "realGeometryMinSampledRoofClearance": 16.76262621653402,
-      "actualBotEntry": {
-        "height": 125.89104593330356,
-        "speed": 24.531705318156746,
-        "pitch": 0.010000000000000002
-      },
-      "actualBotReceiver": {
-        "roof": 75,
-        "clearance": 13.914613760533388
-      },
-      "actualEntryMeasuredRange": 81.97626910273428,
-      "actualRequiredRange": 59.80000000000018,
-      "actualEntryUtilization": 0.7294794048879882
-    },
-    {
-      "id": "5.4",
-      "district": 4,
-      "x": 5793,
-      "end": 5864,
-      "length": 71,
-      "entryHeight": 170,
-      "entrySpeed": 18,
-      "entryPitch": -0.55,
-      "clearance": 120,
-      "drop": 50,
-      "measuredRange": 77.7160112025809,
-      "utilization": 0.9135826569241389,
-      "sourceRoofEnd": 5803,
-      "receiverRoofStart": 5854,
-      "receiverRoof": 75,
-      "clearanceMeaning": "Synthetic 120m envelope target; actual roof and hazard clearances are separate.",
-      "syntheticPerturbedClearance": 2.008901803822255,
-      "realGeometryMinSampledRoofClearance": 44.76120414707114,
-      "actualBotEntry": {
-        "height": 162.14660318206035,
-        "speed": 14.434882121253585,
-        "pitch": -0.20333333333333337
-      },
-      "actualBotReceiver": {
-        "roof": 75,
-        "clearance": 47.81171023669208
-      },
-      "actualEntryMeasuredRange": 134.8229872579426,
-      "actualRequiredRange": 59.80000000000018,
-      "actualEntryUtilization": 0.4435445410031685
-    },
-    {
-      "id": "5.5",
-      "district": 4,
-      "x": 6034,
-      "end": 6105,
-      "length": 71,
-      "entryHeight": 170,
-      "entrySpeed": 18,
-      "entryPitch": -0.55,
-      "clearance": 120,
-      "drop": 50,
-      "measuredRange": 77.7160112025809,
-      "utilization": 0.9135826569241389,
-      "sourceRoofEnd": 6044,
-      "receiverRoofStart": null,
-      "receiverRoof": 2,
-      "clearanceMeaning": "Synthetic 120m envelope target; actual roof and hazard clearances are separate.",
-      "syntheticPerturbedClearance": 2.008901803822255,
-      "realGeometryMinSampledRoofClearance": null,
-      "actualBotEntry": {
-        "height": 163.68594776515928,
-        "speed": 14.124927002017218,
-        "pitch": -0.4700000000000001
-      },
-      "actualBotReceiver": null,
-      "actualEntryMeasuredRange": 250.95863732983588,
-      "actualRequiredRange": 71,
-      "actualEntryUtilization": 0.2829151479121415
-    }
-  ],
-  "encounters": [
-    {
-      "id": "h0-over",
-      "district": 0,
-      "kind": "pigeon",
-      "pass": "above",
-      "minClearance": 10.947584127338008,
-      "warningSeconds": 0.016666666666666666,
-      "arrivalSeconds": 11.466666666666667,
-      "passed": true,
-      "warningLeadSeconds": 11.45
-    },
-    {
-      "id": "h0-under",
-      "district": 0,
-      "kind": "platform",
-      "pass": "below",
-      "minClearance": 28.989493116805935,
-      "warningSeconds": 20,
-      "arrivalSeconds": 29.033333333333335,
-      "passed": true,
-      "warningLeadSeconds": 9.033333333333335
-    },
-    {
-      "id": "h1-over",
-      "district": 1,
-      "kind": "pigeon",
-      "pass": "above",
-      "minClearance": 10.915608346239015,
-      "warningSeconds": 45.95,
-      "arrivalSeconds": 62.68333333333333,
-      "passed": true,
-      "warningLeadSeconds": 16.733333333333327
-    },
-    {
-      "id": "h1-under",
-      "district": 1,
-      "kind": "platform",
-      "pass": "below",
-      "minClearance": 34.3043930345397,
-      "warningSeconds": 73.58333333333333,
-      "arrivalSeconds": 82.86666666666666,
-      "passed": true,
-      "warningLeadSeconds": 9.283333333333331
-    },
-    {
-      "id": "h2-over",
-      "district": 2,
-      "kind": "pigeon",
-      "pass": "above",
-      "minClearance": 10.941058300876808,
-      "warningSeconds": 104.6,
-      "arrivalSeconds": 121.88333333333334,
-      "passed": true,
-      "warningLeadSeconds": 17.283333333333346
-    },
-    {
-      "id": "h2-under",
-      "district": 2,
-      "kind": "platform",
-      "pass": "below",
-      "minClearance": 38.2244494696034,
-      "warningSeconds": 133.38333333333333,
-      "arrivalSeconds": 142.73333333333332,
-      "passed": true,
-      "warningLeadSeconds": 9.349999999999994
-    },
-    {
-      "id": "h3-over",
-      "district": 3,
-      "kind": "pigeon",
-      "pass": "above",
-      "minClearance": 10.925884682401875,
-      "warningSeconds": 164.33333333333334,
-      "arrivalSeconds": 180.08333333333334,
-      "passed": true,
-      "warningLeadSeconds": 15.75
-    },
-    {
-      "id": "h3-under",
-      "district": 3,
-      "kind": "platform",
-      "pass": "below",
-      "minClearance": 41.25364515764029,
-      "warningSeconds": 192.53333333333333,
-      "arrivalSeconds": 201.98333333333332,
-      "passed": true,
-      "warningLeadSeconds": 9.449999999999989
-    },
-    {
-      "id": "h4-over",
-      "district": 4,
-      "kind": "pigeon",
-      "pass": "above",
-      "minClearance": 10.957595621714535,
-      "warningSeconds": 225.63333333333333,
-      "arrivalSeconds": 244.26666666666668,
-      "passed": true,
-      "warningLeadSeconds": 18.633333333333354
-    },
-    {
-      "id": "h4-under",
-      "district": 4,
-      "kind": "platform",
-      "pass": "below",
-      "minClearance": 45.258167383216914,
-      "warningSeconds": 257.5833333333333,
-      "arrivalSeconds": 267.28333333333336,
-      "passed": true,
-      "warningLeadSeconds": 9.700000000000045
-    }
-  ],
-  "engagement": [
-    {
-      "district": "Glass Mile",
-      "heldTicks": 1584,
-      "totalTicks": 3175
-    },
-    {
-      "district": "Boiler Row",
-      "heldTicks": 1605,
-      "totalTicks": 3494
-    },
-    {
-      "district": "Sunward Roofs",
-      "heldTicks": 1785,
-      "totalTicks": 3709
-    },
-    {
-      "district": "Crosswind Court",
-      "heldTicks": 1719,
-      "totalTicks": 3604
-    },
-    {
-      "district": "Park Approach",
-      "heldTicks": 1729,
-      "totalTicks": 4339
-    }
-  ],
-  "summary": {
-    "districtTrials": 135,
-    "gaps": 25,
-    "encounters": 10,
-    "firstEncounterSeconds": 11.466666666666667,
-    "minHazardClearance": 10.915608346239015,
-    "minWarningLeadSeconds": 9.033333333333335,
-    "maxSyntheticEnvelopeUtilization": 0.9135826569241389,
-    "minSyntheticPerturbedClearance": 2.0089018038222264,
-    "maxActualEntryUtilization": 0.7294794048879882,
-    "minActualBotReceiverClearance": 13.914613760533388,
-    "minRealGeometrySampledRoofClearance": 16.76262621653402
   }
 }
