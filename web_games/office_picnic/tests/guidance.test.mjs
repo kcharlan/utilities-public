@@ -13,7 +13,7 @@ test('guidance stops asking for more climb when speed is low or the flock is alr
   r.plane.speed=23;r.plane.y=190;assert.match(module.flightGuidance(r,true).instruction,/release/i);
 });
 test('between encounters guidance asks to rebuild height only when it is needed',()=>{
-  const r=createRun(),a=r.world.airs[3];r.plane.x=a.x+a.w/2;r.plane.y=180;
+  const r=createRun(),a=r.world.airs[4];r.plane.x=a.x+a.w/2;r.plane.y=180;
   assert.match(module.flightGuidance(r,false).instruction,/^Release/i);
   r.plane.y=120;assert.match(module.flightGuidance(r,false).instruction,/^Hold/i);
 });

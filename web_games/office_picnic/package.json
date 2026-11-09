@@ -8,6 +8,7 @@
     "measure": "node scripts/measure.mjs",
     "start": "node scripts/serve.mjs",
     "deploy": "node scripts/deploy.mjs",
-    "playtest": "node scripts/playtest.mjs --check"
+    "playtest": "node scripts/playtest.mjs --check",
+    "ablation": "node scripts/ablation.mjs"
   }
 }

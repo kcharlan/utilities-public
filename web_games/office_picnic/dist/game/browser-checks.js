@@ -47,17 +47,17 @@ document.getElementById('run').onclick=async()=>{
     check(renderer.washer.complete&&renderer.washer.naturalWidth>0,'Washer illustration did not decode');
     const current=saveResult(null,'rush','standard',300);check(saveResult(null,'rush','standard',340,current).best.rush.standard===300,'Session records regressed');
     const prefix='office-picnic-browser-check-',store={getItem:k=>localStorage.getItem(prefix+k),setItem:(k,v)=>localStorage.setItem(prefix+k,v)};
-    store.setItem('office-picnic-v4',JSON.stringify({best:{standard:320},muted:true}));
-    check(loadRecords(store).best.casual.standard===320&&loadRecords(store).muted,'Migration failed');
+    store.setItem('office-picnic-v5',JSON.stringify({best:{casual:{standard:320}},tier:'rush',muted:true}));
+    check(Object.keys(loadRecords(store).best).length===0&&loadRecords(store).tier==='rush'&&loadRecords(store).muted,'Migration failed');
     saveResult(store,'rush','nonstop',MEDALS.rush.silver);
     saveResult(store,'overtime','standard',MEDALS.overtime.gold);
     saveResult(store,'overtime','nonstop',MEDALS.overtime.silver);
     const saved=loadRecords(store);
-    check(saved.best.rush.nonstop===MEDALS.rush.silver&&saved.best.casual.standard===320,'Browser storage failed');
+    check(saved.best.rush.nonstop===MEDALS.rush.silver&&!saved.best.casual,'Browser storage failed');
     check(saved.best.overtime.standard===MEDALS.overtime.gold&&saved.best.overtime.nonstop===MEDALS.overtime.silver,'Overtime records failed');
     check(medalFor('rush',saved.best.rush.nonstop)==='silver','Stored Nonstop medal failed');
     check(medalFor('casual',MEDALS.casual.bronze+.01)===null,'Medal cutoff failed');
-    localStorage.removeItem(prefix+'office-picnic-v4');localStorage.removeItem(prefix+'office-picnic-v5');
+    localStorage.removeItem(prefix+'office-picnic-v5');localStorage.removeItem(prefix+'office-picnic-v6');
     if(sound.ctx){check(sound.ctx.state==='running','Audio did not unlock');sound.setMuted(false);sound.event('checkpoint');sound.setPaused(true);await sound.ctx.suspend();check(sound.ctx.state==='suspended','Audio pause failed');sound.setPaused(false);await sound.ctx.resume();sound.setMuted(true);check(sound.master.gain.value>=0,'Invalid gain');}
     // Measure actual draw work; this is not a physical-phone FPS claim.
     const draws=[],frameIntervals=[];let last=0;

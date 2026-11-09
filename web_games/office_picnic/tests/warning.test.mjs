@@ -9,9 +9,9 @@ test('warning audio throttles by encounter identity while ordinary event names w
 });
 test('real squeeze cue passes its pair identity through audio, notice and marker until respawn',()=>{
   const world=buildWorld(undefined,TIERS.rush),r=createRun('standard',world);
-  const pair=world.hazards.filter(h=>h.squeeze&&h.district===3),flock=pair.find(h=>h.kind==='pigeon'),washer=pair.find(h=>h.kind==='platform');
-  const key=hazardKey(flock),standalone=world.hazards.find(h=>h.id==='h3-under');
-  r.district=3;r.plane.x=flock.x-flock.warningDistance-1;r.plane.y=300;r.checkpoint={...r.plane,x:r.plane.x,district:r.district};
+  const pair=world.hazards.filter(h=>h.squeeze&&h.district===4),flock=pair.find(h=>h.kind==='pigeon'),washer=pair.find(h=>h.kind==='platform');
+  const key=hazardKey(flock),standalone=world.hazards.find(h=>h.id==='h4-under');
+  r.district=4;r.plane.x=flock.x-flock.warningDistance-1;r.plane.y=300;r.checkpoint={...r.plane,x:r.plane.x,district:r.district};
   const sound=new Sound(),keys=[],labels=[];sound.event=(name,identity)=>keys.push([name,identity]);
   let cue=null;
   for(let i=0;i<20&&!cue;i++){stepRun(r,false);if(r.warningHazards.some(h=>hazardKey(h)===key))cue=r.warningHazards.find(h=>hazardKey(h)===key);}

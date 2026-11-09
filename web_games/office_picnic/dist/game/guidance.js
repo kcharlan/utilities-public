@@ -31,14 +31,19 @@ export function flightGuidance(run,held){
 
 export function noticeMessages(run){
   const messages=[],prompts=run.world.tier.prompts;
+  const introduced=run.introducedElements??=new Set();
   if(run.events.includes('impact'))messages.push(run.cause);
   if(run.events.includes('respawn')&&prompts!=='quiet'){const hazard=upcomingHazard(run.world,run.plane.x);messages.push(run.mode==='standard'?`Back at the last rooftop.${hazard?' '+hazardAdvice(hazard):''}`:'A fresh throw. Climb over the first flock.');}
   if(run.events.includes('district')){
     const district=run.world.districts[run.district];
     let message=prompts==='full'?`${district.name}. ${district.tip}`:district.name;
-    if(run.world.winds.some(z=>z.district===run.district&&z.wind<0))message+=' · Headwinds ahead';
+    if(run.world.winds.some(z=>z.district===run.district&&z.wind<0)&&!introduced.has('headwind')){message+=' · Headwinds ahead';introduced.add('headwind');}
     messages.push(message);
   }
-  if(prompts!=='quiet')for(const hazard of run.warningHazards||[])messages.push(hazardAdvice(hazard));
+  for(const hazard of run.warningHazards||[]){
+    const element=hazard.firstMoving?'moving':hazard.firstSqueeze?'squeeze':null;
+    if(element&&!introduced.has(element)){messages.push(hazardAdvice(hazard));introduced.add(element);}
+    else if(prompts!=='quiet')messages.push(hazardAdvice({...hazard,firstMoving:false,firstSqueeze:false}));
+  }
   return messages;
 }

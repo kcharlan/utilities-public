@@ -23,16 +23,16 @@ function projection(world){
     ['length',world.length]
   ]);
 }
-test('Casual retains shipped geometry and clean route',()=>{
+test('Casual retains authored geometry and clean route',()=>{
   const world=buildWorld();
   // District checkpoints now identify the first rooftop (including the launch state).
-  assert.equal(createHash('sha256').update(JSON.stringify(projection(world))).digest('hex'),'546d249f7584ae1dda7728c1ec2bac4d14f888bb3b7556ede9842b30f39f3b9a');
-  assert.deepEqual(world.hazards.map(h=>h.id),Array.from({length:5},(_,i)=>[`h${i}-over`,`h${i}-under`]).flat());
-  assert.equal(world.length,6245);
+  assert.equal(createHash('sha256').update(JSON.stringify(projection(world))).digest('hex'),'482c0ef825f466af59f2cf417b37a426ad69196e70e23a23fe66a0ee539a4735');
+  assert.deepEqual(world.hazards.map(h=>h.id),Array.from({length:5},(_,i)=>[`h${i}-over`,`h${i}-under`,...(i?[`h${i}-4-over`]:[])]).flat());
+  assert.equal(world.length,7186);
   for(const mode of ['standard','nonstop']){
     const run=createRun(mode,world);
     while(run.status!=='finished'&&run.ticks<30000)stepRun(run,chooseInput(run));
-    assert.equal(run.finishTicks,18321);
+    assert.equal(run.finishTicks,21575);
     assert.equal(run.crashes,0);
   }
 });
@@ -41,7 +41,7 @@ test('squeeze geometry matches the authored slot and synced motion preserves the
   const world=buildWorld(undefined,config),pair=world.hazards.filter(h=>h.district===0);
   assert.equal(pair.length,2);
   const washer=pair.find(h=>h.kind==='platform'),flock=pair.find(h=>h.kind==='pigeon');
-  const gap=world.gaps[1],center=gap.x+gap.length*.5;
+  const gap=world.gaps[2],center=gap.x+gap.length*.5;
   assert.deepEqual({x:washer.x,y:washer.y,w:washer.w,h:washer.h},{x:center-22.5,y:150,w:45,h:30});
   assert.deepEqual({x:flock.x,y:flock.y,w:flock.w,h:flock.h},{x:center-12,y:94,w:24,h:16});
   for(let t=0;t<100;t+=.1){
@@ -104,7 +104,7 @@ test('Rush has the authored moving hazards, squeeze and headwinds',()=>{
   const world=buildWorld(undefined,TIERS.rush);
   assert.equal(world.rules.crashPenaltyTicks,300);
   assert.equal(world.winds.length,2);
-  assert.equal(world.hazards.filter(h=>h.squeeze).length,4);
+  assert.equal(world.hazards.filter(h=>h.squeeze).length,2);
   assert.ok(world.hazards.some(h=>h.moving));
 });
 test('Overtime has full checkpoints and the authored moving course',()=>{
@@ -112,12 +112,12 @@ test('Overtime has full checkpoints and the authored moving course',()=>{
   assert.equal(world.tier.prompts,'quiet');
   assert.equal(world.rules.crashPenaltyTicks,600);
   assert.equal(world.winds.length,5);
-  assert.equal(world.hazards.length,22);
+  assert.equal(world.hazards.length,23);
   assert.equal(world.districts.filter(d=>d.checkpoint).length,5);
   for(const mode of ['standard','nonstop']){
     const proof=referenceProof(world).full[mode];
     assert.equal(proof.finished,true);
     assert.equal(proof.crashes,0);
-    assert.equal(proof.ticks,20241);
+    assert.equal(proof.ticks,23571);
   }
 });

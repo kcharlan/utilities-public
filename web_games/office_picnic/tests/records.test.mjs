@@ -2,15 +2,15 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {loadRecords,saveResult,savePreferences,finishResult} from '../dist/game/records.js';
 function storage(initial={}){const data={...initial};return {data,getItem:k=>data[k]??null,setItem:(k,v)=>data[k]=v};}
-test('records migrate v4 and v5 takes precedence',()=>{
-  const s=storage({'office-picnic-v4':JSON.stringify({best:{standard:320,nonstop:310},muted:true})});
-  assert.deepEqual(loadRecords(s),{best:{casual:{standard:320,nonstop:310}},tier:'casual',muted:true});
+test('records migrate preferences from v5 and v6 takes precedence',()=>{
+  const s=storage({'office-picnic-v5':JSON.stringify({best:{casual:{standard:320}},tier:'rush',muted:true})});
+  assert.deepEqual(loadRecords(s),{best:{},tier:'rush',muted:true});
   savePreferences(s,{best:{rush:{standard:200}},tier:'rush',muted:false},{tier:'rush',muted:false});
-  assert.deepEqual(loadRecords(s),{best:{casual:{standard:320,nonstop:310},rush:{standard:200}},tier:'rush',muted:false});
-  assert.ok(s.data['office-picnic-v4']);
+  assert.deepEqual(loadRecords(s),{best:{rush:{standard:200}},tier:'rush',muted:false});
+  assert.ok(s.data['office-picnic-v5']);
 });
 test('records validate values, tiers and storage and preserve in-session best',()=>{
-  const s=storage({'office-picnic-v5':JSON.stringify({best:{rush:{standard:-1,nonstop:'fast'},bogus:{standard:1}},tier:'bogus'})});
+  const s=storage({'office-picnic-v6':JSON.stringify({best:{rush:{standard:-1,nonstop:'fast'},bogus:{standard:1}},tier:'bogus'})});
   assert.deepEqual(loadRecords(s),{best:{},tier:'casual',muted:false});
   let r=saveResult(null,'rush','standard',300);
   r=saveResult(null,'rush','standard',340,r);
@@ -34,11 +34,18 @@ test('corrupt storage, unknown modes and nonfinite results do not create records
   assert.deepEqual(loadRecords(bad).best,{});assert.doesNotThrow(()=>saveResult(bad,'casual','standard',300));
   const s=storage();saveResult(s,'casual','cheat',1);saveResult(s,'casual','standard',NaN);assert.deepEqual(loadRecords(s).best,{});
 });
-test('v4 migration persists once, without overwriting v4, and survives blocked writes',()=>{
-  const v4=JSON.stringify({best:{standard:321},muted:true}),s=storage({'office-picnic-v4':v4});
-  const migrated=loadRecords(s);assert.deepEqual(JSON.parse(s.data['office-picnic-v5']),migrated);assert.equal(s.data['office-picnic-v4'],v4);
-  const blocked={getItem:k=>k==='office-picnic-v4'?v4:null,setItem(){throw Error('blocked')}};
+test('v5 migration persists once, without overwriting v5, and survives blocked writes',()=>{
+  const v5=JSON.stringify({best:{casual:{standard:321}},tier:'overtime',muted:true}),s=storage({'office-picnic-v5':v5});
+  const migrated=loadRecords(s);assert.deepEqual(JSON.parse(s.data['office-picnic-v6']),migrated);assert.equal(s.data['office-picnic-v5'],v5);
+  const blocked={getItem:k=>k==='office-picnic-v5'?v5:null,setItem(){throw Error('blocked')}};
   assert.deepEqual(loadRecords(blocked),migrated);
+});
+test('v4 alone is ignored and an existing v6 record wins over v5',()=>{
+  const s=storage({'office-picnic-v4':JSON.stringify({best:{standard:123},muted:true})});
+  assert.deepEqual(loadRecords(s),{best:{},tier:'casual',muted:false});
+  s.data['office-picnic-v5']=JSON.stringify({tier:'rush',muted:true});
+  s.data['office-picnic-v6']=JSON.stringify({tier:'overtime',best:{overtime:{standard:456}}});
+  assert.deepEqual(loadRecords(s),{best:{overtime:{standard:456}},tier:'overtime',muted:false});
 });
 test('Overtime selection and records round trip separately by mode',()=>{
   const s=storage();
