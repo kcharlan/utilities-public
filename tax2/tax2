@@ -13,8 +13,7 @@ from pathlib import Path
 import sys
 import webbrowser
 
-from taxkit.config import (atomic_write_bytes, config_path, ensure_no_config_conflict, runtime_home,
-                           validate_output_destination)
+from taxkit.config import atomic_write_bytes, runtime_home
 from taxkit.page import build_payload, render_page
 
 
@@ -23,7 +22,6 @@ def parse_args(argv=None):
         description="Tax2: build an offline tax calculator with QIF and table downloads.",
         epilog="Runtime: TAX2_HOME (default ~/.tax2), config.yaml and tax2.html. Help writes no files.")
     parser.add_argument('--no-browser', action='store_true', help='Build without opening the browser')
-    parser.add_argument('--output', type=Path, help='Private HTML destination (default TAX2_HOME/tax2.html)')
     parser.add_argument('--rules-dir', type=Path, help='Rules root (default rules/ beside this launcher)')
     return parser.parse_args(argv)
 
@@ -35,11 +33,9 @@ def testing_mode_enabled():
 def main(argv=None) -> int:
     args = parse_args(argv)
     try:
-        output = (args.output if args.output is not None else runtime_home() / 'tax2.html').expanduser()
-        validate_output_destination(output, config_path())
+        output = runtime_home() / 'tax2.html'
         root = args.rules_dir.expanduser() if args.rules_dir is not None else Path(__file__).resolve().parent / 'rules'
         payload = build_payload(root, rules_source='custom' if args.rules_dir is not None else 'bundled')
-        ensure_no_config_conflict(output, config_path())
         atomic_write_bytes(output, render_page(payload))
     except Exception as error:
         print(f'Tax2: {error}', file=sys.stderr)

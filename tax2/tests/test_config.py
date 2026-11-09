@@ -104,54 +104,6 @@ def test_non_mapping_config_warns(monkeypatch, tmp_path, caplog, text):
     assert (path.read_bytes(), path.stat().st_mtime_ns) == before
 
 
-def test_entry_matches_unicode_missing_and_existing_identity(tmp_path, monkeypatch):
-    from taxkit.config import entry_matches
-    assert entry_matches(tmp_path / 'Straße.yaml', tmp_path / 'STRASSE.yaml')
-    assert entry_matches(tmp_path / 'é.yaml', tmp_path / 'e\u0301.yaml')
-    first, second = tmp_path / 'first', tmp_path / 'second'
-    first.write_bytes(b'synthetic')
-    os.link(first, second)
-    assert entry_matches(first, second)
-    # Synthetic identities model distinct existing entries on a case-sensitive volume.
-    original = os.lstat
-    def identities(path, *args, **kwargs):
-        if Path(path).name in {'config.yaml', 'CONFIG.yaml'}:
-            return type('Identity', (), {'st_dev': 1, 'st_ino': 1 if Path(path).name == 'config.yaml' else 2})()
-        return original(path, *args, **kwargs)
-    monkeypatch.setattr(os, 'lstat', identities)
-    assert not entry_matches(tmp_path / 'config.yaml', tmp_path / 'CONFIG.yaml')
-
-
-def test_config_resolution_preserves_link_dotdot_and_missing_tail(tmp_path):
-    from taxkit.config import config_resolution_entries
-    physical = tmp_path / 'physical/nested'
-    physical.mkdir(parents=True)
-    alias = tmp_path / 'alias'
-    alias.symlink_to(physical, target_is_directory=True)
-    config = tmp_path / 'config.yaml'
-    config.symlink_to('alias/../missing/deep.yaml')
-    entries = config_resolution_entries(config)
-    assert config in entries and alias in entries
-    assert entries[-1] == tmp_path / 'physical/missing/deep.yaml'
-
-
-def test_config_resolution_bounded_and_read_errors(tmp_path, monkeypatch):
-    from taxkit.config import config_resolution_entries, entry_matches
-    for index in range(42):
-        (tmp_path / f'link{index}').symlink_to(f'link{index + 1}')
-    entries = config_resolution_entries(tmp_path / 'link0')
-    assert tmp_path / 'link40' in entries
-    assert tmp_path / 'link41' not in entries
-    def unreadable(*args, **kwargs):
-        raise PermissionError('synthetic inaccessible entry')
-    monkeypatch.setattr(os, 'readlink', unreadable)
-    assert config_resolution_entries(tmp_path / 'link0')[-1] == tmp_path / 'link0'
-    monkeypatch.setattr(os, 'lstat', unreadable)
-    assert config_resolution_entries(tmp_path / 'absent/deep/config.yaml')[-1] == tmp_path / 'absent/deep/config.yaml'
-    monkeypatch.setattr(os.path, 'realpath', unreadable)
-    assert not entry_matches(tmp_path / 'missing/a', tmp_path / 'MISSING/A')
-
-
 def test_missing_config_does_not_warn(monkeypatch, tmp_path, caplog):
     monkeypatch.setenv('TAX2_HOME', str(tmp_path / 'runtime'))
     assert load_config() == default_config()

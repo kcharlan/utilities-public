@@ -21,12 +21,12 @@ honor each declared income basis through the generic engine.
 
 ## Runtime boundary and interfaces
 
-`tax2` validates its output destination before private config access, then
 `taxkit.page.build_payload(rules_root, rules_source=...)` validates every
 numeric-year YAML file and assembles federal years, ordered states with
 per-year rules/QIF metadata, build time, and recognized config preferences.
 `render_page(payload)` escapes embedded JSON and inlines vendored Preact/htm,
-application JavaScript, CSS and licenses. Publication is private and atomic.
+application JavaScript, CSS and licenses. The page is always `tax2.html` in the
+runtime home; publication is private and atomic.
 
 There are no HTTP APIs, table-input files, Python interactive tax engine or
 browser config writes. `web/engine.js` exposes `window.Tax2Engine`:
@@ -61,7 +61,7 @@ phaseout rates and non-null refundable caps are nonnegative. Deductions have
 no additional restrictions. Zero-rate/all-disabled rules remain valid.
 Roots require federal rules and at least one state with valid rules.
 
-Federal/Georgia currently normalize legacy files; Pennsylvania 2026–2027 uses
+Federal/Georgia currently normalize legacy files; Pennsylvania uses
 components for 3.07% state tax and enabled 1% earned-only local EIT. Names are
 identifiers, never jurisdiction-specific engine branches. Generic labels and
 rates stay in YAML; private locality names/codes never enter this public repo.
@@ -136,23 +136,20 @@ nonfatal. QIF defaults use override, YAML then generic fallback, both for later
 initialized states and empty edits. Other calculator/QIF fields are session-only.
 
 Runtime home is `0700`, new config/page files `0600`; page replacement is
-atomic. Before config reads/writes, the physical-parent-plus-leaf gate protects
-config entries/targets and checks all Git-marked ancestors for verified source
-identity. Source/worktree/nested-source output is rejected; unclassifiable
-Git-marked ancestry fails closed. Git is conditional on markers, so standalone
-unmarked deployment/default home output works without it. Source identity uses
-tracked files, not directory names or hard-coded paths.
+atomic. There is no output-path option (removed in 4.0.0), so the page cannot be
+directed over config or into a checkout except by pointing `TAX2_HOME` there.
 
 ## Compatibility and verification
 
 Tests cover legacy normalization, exact annual parity against an independent
 test oracle, bundled rule expectations, fixed-amount Georgia QIF text, independent
 allocations, generic YAML components, intentional zero tax and negative net,
-config/storage fallbacks, publication safety and offline Chromium downloads.
+config/storage fallbacks, private atomic publication and offline Chromium
+downloads.
 Frozen parity rules remain unchanged. Georgia 2025's historical federal-like
-deductions are preserved for its fixture, not corrected silently. Pennsylvania
-has 2026–2027 rules. Starting with 3.0.1, its bundled local EIT is enabled at a
-generic configured rate of 1%; the frozen parity inputs retain disabled EIT.
+deductions are preserved for its fixture, not corrected silently. Starting with
+3.0.1, Pennsylvania's bundled local EIT is enabled at a generic configured rate
+of 1%; the frozen parity inputs retain disabled EIT.
 Live bundled-rule tests cover the uplift on earned income, state allocations
 and the resulting display, QIF, rate schedule and lookup downloads.
 

@@ -7,18 +7,16 @@ Install [uv](https://docs.astral.sh/uv/), then run in the Tax2 directory:
 ```bash
 UV_PYTHON_DOWNLOADS=never ./tax2
 UV_PYTHON_DOWNLOADS=never ./tax2 --no-browser
-UV_PYTHON_DOWNLOADS=never ./tax2 --output "$HOME/.tax2/example.html"
 UV_PYTHON_DOWNLOADS=never ./tax2 --rules-dir "$HOME/.tax2/rules"
 UV_PYTHON_DOWNLOADS=never ./tax2 --help
 ```
 
 The launcher validates local rules, embeds them and all browser assets in one
 HTML file, opens it from `file://`, and exits. `--no-browser` suppresses opening;
-`--output` changes the destination; `--rules-dir` selects a root containing
-`federal/` and `states/`. The default rules root is beside the launcher.
-Help writes no files. Usage errors exit 2; fatal builds exit 1; success exits 0,
-including when browser opening warns and fails. Open the printed path manually
-if necessary.
+`--rules-dir` selects a root containing `federal/` and `states/`. The default
+rules root is beside the launcher. Help writes no files. Usage errors exit 2;
+fatal builds exit 1; success exits 0, including when browser opening warns and
+fails. Open the printed path manually if necessary.
 
 First use may need the network for uv resolution/cache population. With
 compatible Python and dependencies already cached, rebuild offline:
@@ -35,32 +33,13 @@ The default page is `~/.tax2/tax2.html`. `TAX2_HOME` changes the runtime home
 and config location. The runtime directory is `0700`; new config/page files
 are `0600`. Pages publish via a private same-directory temporary file and
 atomic replacement. Failed building/publication preserves the previous page.
-Explicit outputs use `0600`, but their parent is not automatically made private.
+There is no option to write the page elsewhere; keep `TAX2_HOME` outside the
+public source checkout.
 
 The page shows its UTC build timestamp. Rerun after editing rules or config;
 refresh only reloads the snapshot. At opening, the year defaults to the browser's
 local current year if federal rules exist, otherwise the latest federal year.
 The initial QIF date uses the browser's local date independently of build time.
-
-### Safe output destinations
-
-Keep runtime files outside the public source checkout. Before reading or
-creating config, Tax2 checks the output's resolved physical parent plus leaf
-name, without following an output leaf symlink. It protects the config entry,
-all symlink entries along its resolution chain (including directory links and
-a symlinked runtime home), and the final target even when missing. Identity
-checks reject hard links; missing names use conservative Unicode case folding
-even on case-sensitive volumes. See the [launcher contract](../README.md#quick-start)
-for examples. An output symlink is replaced
-as an entry rather than used to overwrite its target.
-
-Every physical ancestor with a `.git` marker is classified by bounded,
-read-only Git identity checks. Verified utilities source checkouts, including
-worktrees and nested source ancestors, are rejected. Unclassifiable Git-marked
-ancestry also fails closed before private state access. Classification uses
-tracked source identity rather than names or hard-coded home paths. Git is
-required only for Git-marked ancestry; default home output and standalone
-deployment directories without markers work without Git.
 
 ## Calculate estimated tax
 
@@ -95,9 +74,9 @@ never an additional QIF transaction.
 
 Years reflect federal availability, not the intersection of state years.
 A missing selected-state year reports available years and disables QIF.
-Bundled federal rules cover 2025–2027, Georgia 2025–2026, and Pennsylvania
-2026–2027. A federal-only year still permits reference
-exports; these do not depend on selected states or valid income.
+The files under `rules/` show which years are bundled. A federal-only year
+still permits reference exports; these do not depend on selected states or
+valid income.
 
 ## Download QIF
 
@@ -211,8 +190,8 @@ Credits retain a one-child placeholder: take the greater of fixed and per-child
 amount, floored at zero, reduce for phaseout, then apply the refundable cap.
 Tax is floored at zero; this is not a full dependent-eligibility/refund model.
 
-Pennsylvania 2026–2027 uses flat 3.07% personal income tax without a standard
-deduction and does not distinguish qualified from ordinary dividends. Local
+Bundled Pennsylvania rules use a flat 3.07% personal income tax without a
+standard deduction and do not distinguish qualified from ordinary dividends. Local
 EIT is enabled at a generic configured 1% rate on earned income only, added to
 state tax. The state allocation applies to both components before calculation.
 Verify the applicable local rate before use; edit private rules and rebuild if
