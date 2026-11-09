@@ -34,7 +34,7 @@ Hold Space, the primary mouse button, or one finger on the playfield to pitch up
 
 The opening needs a climb, a dive and another height recovery. Casual Friday has ten encounters alternating flocks and washers across five districts. Rush Hour adds moving hazards, squeeze windows between washers and flocks, and headwinds in Crosswind Court. AC has steady chevrons; vents have full-height steam bursts and real lulls; rooftop heat has broad, weaker contours; tailwinds have horizontal ribbons; fading thermals weaken visibly with height. Display units are mph, miles, and feet within a quarter mile of the picnic. Physics/report data remain metric.
 
-Choose Casual Friday or Rush Hour on the title screen. Standard restores the last district rooftop in 0.6 seconds; each impact adds 3 seconds in Casual and 5 seconds in Rush. Nonstop restarts from the office. Pause with the button, Escape or P; mute with the button or M. Leaving the tab pauses. Best completed times are separate by tier and mode and saved on this browser; when storage is unavailable, records still survive replays during the current session.
+Optional time pickups sit near hazards and rooftops; each tag shows its time reward. The timer and best records use time after rewards and Standard impact penalties. The result breaks down flight time, impacts, and pickups. Choose Casual Friday or Rush Hour on the title screen. Standard restores the last district rooftop in 0.6 seconds; each impact adds 3 seconds in Casual and 5 seconds in Rush. Nonstop restarts from the office. Pause with the button, Escape or P; mute with the button or M. Leaving the tab pauses. Best completed times are separate by tier and mode and saved on this browser; when storage is unavailable, records still survive replays during the current session.
 
 ## Verify
 
@@ -45,13 +45,13 @@ npm run prove
 npm run playtest
 ```
 
-The playtest runs seeded pilot studies, reference route and district proofs, and shortcut checks. Use `node scripts/playtest.mjs --tier casual --n 10` for a smaller diagnostic sample or add `--json` for machine-readable results. Diagnostic sample sizes cannot be combined with `--check`.
+The playtest runs seeded pilot studies, reference route and district proofs, and shortcut checks. Use `node scripts/playtest.mjs --tier casual --n 10` for a smaller diagnostic sample or add `--json` for machine-readable results. Diagnostic sample sizes cannot be combined with `--check`. Use `node scripts/playtest.mjs --tier casual --menu --n 100` to screen pickup placements in the current world.
 
 Open the game with `?trace` to record inputs; after a finished flight, download its JSON trace from the result screen and run `node scripts/replay.mjs <trace.json>` to check it against the current tier and simulation version. Traces contain the full input history and crash locations; share them only when appropriate.
 
 The full Node suite includes physics, collision/run state, timing/camera, records, assets and HTTP serving. The measurement command writes `reports/flight-limits.json`. The proof command writes `reports/route-proof.json` and fails on an uncleared route, collision, over-limit crossing, or failed perturbed trial.
 
-At `/checks.html`, browser verification runs the same collision-enabled simulation in both modes, renders twelve scenes (including vent burst/lull, moving washer, squeeze and headwind), checks actual sprite decoding, records and Web Audio, and samples drawing cost. This harness is separate from the play flow; it does not substitute for human playtesting.
+At `/checks.html`, browser verification runs the same collision-enabled simulation in both modes, renders thirteen scenes (including vent burst/lull, moving washer, squeeze and headwind), checks actual sprite decoding, records and Web Audio, and samples drawing cost. This harness is separate from the play flow; it does not substitute for human playtesting.
 
 ## Architecture and limits
 

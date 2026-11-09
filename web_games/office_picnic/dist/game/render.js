@@ -1,5 +1,5 @@
 import {cameraFor} from './session.js';
-import {hazardBox,hazardParts,hazardAdvice,upcomingHazard,hazardKey} from './world.js';
+import {hazardBox,hazardParts,hazardAdvice,upcomingHazard,hazardKey,pickupPos} from './world.js';
 import {drawAir,drawWind} from './air-render.js';
 const C={ink:'#302f48',shadow:'#4f4b64',sky:'#9b8cbb',warm:'#f1a290',paper:'#fff0d3',window:'#f3bd86',green:'#7d887d'};
 const hash=n=>{const x=Math.sin(n*127.1+311.7)*43758.5453;return x-Math.floor(x);};
@@ -69,6 +69,14 @@ export class Renderer{
         else{ctx.fillStyle='#d5b18b';ctx.fillRect(center-width/2,y-8,width,8);}
         if(!hazard.squeeze&&run.world.tier.prompts!=='quiet'&&x<w&&dx>-b.w&&dx<hazard.warningDistance)this.label(hazardAdvice(hazard),Math.min(w-195,Math.max(10,x-65)),Math.min(h-110,y+23),'#ffe3a8',12);
       }
+    }
+    for(const base of run.world.pickups){
+      if(run.collected.has(base.id))continue;
+      const pk=pickupPos(run.world,base,run.worldTicks/60),x=X(pk.x),y=Y(pk.y);
+      if(x< -40||x>w+40||y< -40||y>h+40)continue;
+      ctx.beginPath();ctx.arc(x,y,Math.max(7,pk.r*s),0,Math.PI*2);ctx.fillStyle='#ffe3a8';ctx.fill();
+      ctx.strokeStyle='#544457';ctx.lineWidth=2;ctx.stroke();
+      this.label('−'+pk.rewardTicks/60+'s',x+10,y-9,'#fff0d3',12);
     }
     // Label a squeeze once, at its shared window rather than on each member.
     if(run.world.tier.prompts!=='quiet')for(const hazard of run.world.hazards.filter(h=>h.squeeze&&h.kind==='platform')){

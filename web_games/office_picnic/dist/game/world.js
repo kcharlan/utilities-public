@@ -10,7 +10,7 @@ export const THEMES=[
 ];
 export function buildWorld(limits=measureFlight(),cfg=TIERS.casual){
   const safeRange=limits.envelopes.find(e=>e.speed===18&&e.drop===50).range;
-  const world={districts:[],airs:[],buildings:[],hazards:[],gaps:[],winds:[],length:0,limits,rules:cfg.rules,tier:cfg};
+  const world={districts:[],airs:[],buildings:[],hazards:[],gaps:[],winds:[],pickups:[],length:0,limits,rules:cfg.rules,tier:cfg};
   if(cfg.encounters.some(e=>e.slot===4&&(e.kind==='platform'||e.kind==='squeeze')))throw new Error('Unsafe encounter in final slot');
   let x=0;const slots=[];
   for(let d=0;d<5;d++){
@@ -70,6 +70,20 @@ export function buildWorld(limits=measureFlight(),cfg=TIERS.casual){
     const from=slots.find(s=>s.d===w.district&&s.j===w.fromSlot),to=slots.find(s=>s.d===w.district&&s.j===w.toSlot);
     world.winds.push({x0:w.startAtGap?from.release:from.x,x1:to.release+(w.includeGap===false?0:to.gap),y0:w.y0,y1:w.y1,wind:w.wind,lift:w.lift??0,district:w.district});
   }
+  let pid=0;
+  for(const pk of cfg.pickups??[]){
+    const slot=slots.find(s=>s.d===pk.district&&s.j===pk.slot);if(!slot)continue;
+    const next=slots[slots.indexOf(slot)+1];
+    let px,py;
+    const flock=slot.slotHazards.find(h=>h.kind==='pigeon'),washer=slot.slotHazards.find(h=>h.kind==='platform');
+    let attach=null,ox=0,oy=0;
+    if(pk.place==='overFlock'){if(!flock)continue;px=flock.x+flock.w/2;py=flock.y+flock.h+pk.dy;attach=flock.id;ox=flock.w/2;oy=flock.h+pk.dy;}
+    else if(pk.place==='underWasher'){if(!washer)continue;px=washer.x+washer.w/2;py=washer.y-pk.dy;attach=washer.id;ox=washer.w/2;oy=-pk.dy;}
+    else if(pk.place==='roofEdge'){if(!next)continue;px=next.building.x+(pk.dx??6);py=next.building.y+pk.dy;}
+    else if(pk.place==='gapLow'){px=slot.release+slot.gap*(pk.at??.5);py=pk.y;}
+    else if(pk.place==='high'){px=slot.x+slot.width*(pk.at??.5);py=pk.y??(world.airs.find(a=>a.x===slot.x).targetExit+pk.above);}
+    world.pickups.push({id:`p${pid++}`,district:pk.district,slot:pk.slot,place:pk.place,x:px,y:py,r:pk.r??4,rewardTicks:pk.rewardTicks,label:`${pk.place}${pk.dy??pk.above??pk.y}`,attach:pk.attach===false?null:attach,ox,oy});
+  }
   // A generous final park descent follows the last technical crossing.
   world.finishStart=x;world.length=x+140;
   return world;
@@ -108,4 +122,11 @@ export function hazardParts(h,time){
   if(h.kind!=='platform'||!Number.isFinite(h.suspensionTop))return [b];
   const y=b.y+b.h*.5,height=Math.max(0,h.suspensionTop-y);
   return [b,{x:b.x+2,y,w:.8,h:height,part:'cable'},{x:b.x+b.w-2.8,y,w:.8,h:height,part:'cable'}];
+}
+
+// Pickups attached to a hazard ride with it, so their risk does not depend on the hazard's phase.
+export function pickupPos(world,pk,time){
+  if(!pk.attach)return pk;
+  const h=world.hazards.find(h=>h.id===pk.attach),b=hazardBox(h,time);
+  return {...pk,x:b.x+pk.ox,y:b.y+pk.oy};
 }

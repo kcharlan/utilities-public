@@ -1,4 +1,4 @@
-import {hazardBox,upcomingHazard} from './world.js';
+import {hazardBox,upcomingHazard,pickupPos} from './world.js';
 export function chooseInput(run){
   const p=run.plane;
   if(p.stalled||p.speed<14)return false;
@@ -53,6 +53,14 @@ export function sensible(run,prof={}){
     if(f>floor){floor=f;floorDist=d;}
   }
   let preferred=column?(column.targetExit+(prof.columnOffset?.(column)??0)):-Infinity;
+  // Going for a pickup overrides the safety margins near it: that is the risk being bought.
+  if(prof.pickups){
+    const found=w.pickups.find(k=>!run.collected.has(k.id)&&k.x+k.r>p.x&&k.x-p.x<(prof.pickupLook??140)&&prof.pickups(k));
+    prof.lastPickup=found?.id??null;
+    // Aim where it will be on arrival (attached pickups move with their hazard).
+    const pk=found&&pickupPos(w,found,prof.predict?arrival(found.x):t);
+    if(pk)return p.y+p.vy*lead<pk.y+(prof.pickupAim??0)+bias*(prof.pickupBias??.5);
+  }
   let desired=Math.max(preferred,floor);
   if(desired>ceiling){
     if(floor<=ceiling)desired=squeezeAhead?(floor+ceiling)/2:ceiling; // a window exists: stay inside it

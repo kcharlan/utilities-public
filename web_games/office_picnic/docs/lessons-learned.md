@@ -26,3 +26,4 @@
 - Validate stored tier IDs as strings before property lookup: JavaScript coerces an array such as `["rush"]` into a valid property key.
 - Carry an encounter's identity through every consumer of an emitted warning. Test both members' actual trigger thresholds and a respawn, and use the same live moving geometry for the warning and its marker.
 - A storage migration needs a best-effort write as well as a readable in-memory result. Keep the old key intact and exercise a denied write separately from successful persistence.
+- Transient HUD feedback keyed to a simulation clock must reset with that clock: a Nonstop restart resets world ticks, so clear the previous throw's reward message on respawn.

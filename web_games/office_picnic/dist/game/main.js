@@ -1,7 +1,7 @@
 import {TIERS} from './tiers.js';
 import {buildWorld} from './world.js';
 import {createTrace,recordInput,finishTrace} from './trace.js';
-import {createRun,stepRun} from './simulation.js';
+import {createRun,stepRun,netTicks} from './simulation.js';
 import {airAt} from './world.js';
 import {flightGuidance,noticeMessages} from './guidance.js';
 import {Renderer} from './render.js';
@@ -11,7 +11,7 @@ import {loadRecords,saveResult,savePreferences} from './records.js';
 const $=id=>document.getElementById(id),canvas=$('flight'),renderer=new Renderer(canvas);
 const tracing=new URLSearchParams(location.search).has('trace');let trace=null;
 let storage;try{storage=window.localStorage;}catch{storage=null;}
-let records=loadRecords(storage),sound=new Sound(records.muted),run=null,paused=false,held=false,last=0,clock={accumulator:0},noticeEnd=0,lastDistrict=-1,lastVent=null,lastVentActive=false,resultShown=false;
+let records=loadRecords(storage),sound=new Sound(records.muted),run=null,paused=false,held=false,last=0,clock={accumulator:0},noticeEnd=0,lastDistrict=-1,lastVent=null,lastVentActive=false,resultShown=false,rewardEnd=0;
 const reduced=matchMedia('(prefers-reduced-motion: reduce)');reduced.addEventListener('change',()=>renderer.reduced=reduced.matches);
 function titleBests(){
   const best=records.best[records.tier]||{},a=best.standard,b=best.nonstop;
@@ -29,7 +29,7 @@ function modeText(world,mode){return `${world.tier.name} · ${mode==='standard'?
 function start(mode){
   clearTraceDownload();
   let world=worlds.get(records.tier);if(!world){world=buildWorld(undefined,TIERS[records.tier]);worlds.set(records.tier,world);}
-  run=createRun(mode,world);trace=tracing?createTrace(run):null;paused=false;held=false;clock.accumulator=0;last=performance.now();lastDistrict=-1;lastVent=null;lastVentActive=false;resultShown=false;sound.district=0;sound.setPaused(false);sound.unlock().then(()=>sound.event('launch'));
+  run=createRun(mode,world);trace=tracing?createTrace(run):null;paused=false;held=false;clock.accumulator=0;last=performance.now();lastDistrict=-1;lastVent=null;lastVentActive=false;resultShown=false;rewardEnd=0;sound.district=0;sound.setPaused(false);sound.unlock().then(()=>sound.event('launch'));
   for(const id of ['title-screen','pause-screen','result-screen'])$(id).hidden=true;
   for(const id of ['hud','route-hud','flight-hud'])$(id).hidden=false;
   $('district-dots').replaceChildren(...Array.from({length:5},()=>document.createElement('i')));
@@ -40,11 +40,14 @@ function pause(){if(!run||run.status==='finished'||paused)return;setHeld(false);
 function resume(){if(!run)return;paused=false;held=false;clock.accumulator=0;last=performance.now();sound.setPaused(false);sound.unlock().then(()=>sound.event('resume'));$('pause-screen').hidden=true;canvas.focus({preventScroll:true});}
 function home(){clearTraceDownload();held=false;paused=true;run=null;sound.setPaused(true);for(const id of ['pause-screen','result-screen','hud','route-hud','flight-hud','notice'])$(id).hidden=true;$('title-screen').hidden=false;titleBests();$('start').focus();}
 function finish(){
-  if(resultShown)return;resultShown=true;held=false;const seconds=run.finishTicks/60,previous=records.best[run.world.tier.id]?.[run.mode];records=saveResult(storage,run.world.tier.id,run.mode,seconds,records);records.muted=sound.muted;
+  if(resultShown)return;resultShown=true;held=false;const seconds=netTicks(run)/60,previous=records.best[run.world.tier.id]?.[run.mode];records=saveResult(storage,run.world.tier.id,run.mode,seconds,records);records.muted=sound.muted;
   $('result-time').textContent=formatTime(seconds);$('result-distance').textContent=formatDistance(run.world.length);
+  const penalty=run.mode==='standard'?run.crashes*run.world.rules.crashPenaltyTicks:0;
+  const impacts=run.mode==='standard'?`Impacts: ${run.crashes} · +${formatTime(penalty/60)}`:`Restarts: ${run.crashes} · no time penalty`;
+  $('result-breakdown').replaceChildren(...[`Flight: ${formatTime((run.finishTicks-penalty)/60)}`,impacts,`Pickups: ${run.collected.size}/${run.world.pickups.length} · −${formatTime(run.bonusTicks/60)}`].map(text=>{const row=document.createElement('div');row.textContent=text;return row;}));
   $('result-best').textContent=`${run.mode==='standard'?'Standard':'Nonstop'} · ${!previous||seconds<previous?'Your best flight.':`Best ${formatTime(previous)}`}`;
   $('notice').hidden=true;
-  if(trace){finishTrace(trace,run);const link=document.createElement('a');link.textContent='Download flight trace';link.download='office-picnic-trace.json';link.href=URL.createObjectURL(new Blob([JSON.stringify(trace)],{type:'application/json'}));link.id='trace-download';clearTraceDownload();$('result-screen').append(link);}
+  if(trace){finishTrace(trace,run);const link=document.createElement('a');link.textContent='Download flight trace';link.download='office-picnic-trace.json';link.href=URL.createObjectURL(new Blob([JSON.stringify(trace)],{type:'application/json'}));link.id='trace-download';clearTraceDownload();$('result-screen').querySelector('.modal').append(link);}
   // Let the visible landing settle before revealing the invitation card.
   setTimeout(()=>{if(run?.status==='finished'&&resultShown){$('result-screen').hidden=false;$('replay').focus();if(!previous||seconds<previous)sound.event('best');}},reduced.matches?300:1400);
 }
@@ -52,6 +55,8 @@ function tick(){
   run.previous={x:run.plane.x,y:run.plane.y};if(trace)recordInput(trace,held);stepRun(run,held);sound.district=run.district;
   dispatchRunEvents(sound,run);
   if(run.events.includes('impact'))held=false;
+  if(run.mode==='nonstop'&&run.events.includes('respawn')){rewardEnd=0;$('pickup-reward').hidden=true;$('pickup-reward').textContent='';}
+  if(run.events.includes('pickup')){rewardEnd=run.worldTicks+150;$('pickup-reward').textContent=`−${run.pickupReward/60}s pickup`;}
   const messages=noticeMessages(run);
   if(messages.length)notice(messages.join(' · '),8);
   const air=airAt(run.world,run.plane,run.worldTicks/60),source=air.source;
@@ -61,7 +66,7 @@ function tick(){
 }
 function updateHUD(){
   if(!run)return;
-  $('timer').textContent=formatTime(run.ticks/60);$('district-name').textContent=run.world.districts[run.district].name;$('height-status').textContent=formatFeet(run.plane.y)+' above street';
+  $('timer').textContent=formatTime(netTicks(run)/60);$('pickup-reward').hidden=run.worldTicks>rewardEnd||!rewardEnd;$('district-name').textContent=run.world.districts[run.district].name;$('height-status').textContent=formatFeet(run.plane.y)+' above street';
   $('remaining').textContent=formatDistance(run.world.length-run.plane.x)+' to the picnic';
   $('route-fill').style.width=Math.min(100,run.plane.x/run.world.length*100)+'%';
   if(lastDistrict!==run.district){lastDistrict=run.district;[...$('district-dots').children].forEach((el,i)=>el.className=i<=run.district?'done':'');}

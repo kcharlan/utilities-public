@@ -34,3 +34,8 @@ test('trace rejects coerced tier IDs and compares crash fields independently of 
   assert.equal(replayTrace(reordered).finishTicks,run.finishTicks);
   assert.throws(()=>replayTrace({...trace,crashLog:[{...trace.crashLog[0],x:'0'}]}));
 });
+test('trace verifies net time separately from raw finish ticks',()=>{
+  const {trace}=flightWithRestart();
+  assert.equal(replayTrace(trace).ticks-replayTrace(trace).bonusTicks,trace.finishNetTicks);
+  assert.throws(()=>replayTrace({...trace,finishNetTicks:trace.finishNetTicks+1}),/does not match/);
+});

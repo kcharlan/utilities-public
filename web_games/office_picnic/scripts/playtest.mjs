@@ -1,8 +1,9 @@
+import {pricePickup,pickupMenu} from './pickup-study.mjs';
 import {TIERS} from '../dist/game/tiers.js';
 import {buildWorld} from '../dist/game/world.js';
 import {playOnce,quantile,referenceProof,shortcutOutcomes} from './flight-study.mjs';
 
-let selected=null,n=150,diagnostic=false,check=false,json=false;
+let selected=null,n=150,diagnostic=false,check=false,json=false,menu=false;
 for(let i=2;i<process.argv.length;i++){
   const arg=process.argv[i];
   if(arg==='--tier'){
@@ -14,7 +15,8 @@ for(let i=2;i<process.argv.length;i++){
   }else if(arg==='--n'){
     n=Number(process.argv[++i]);
     diagnostic=true;
-  }else if(arg==='--check')check=true;
+  }else if(arg==='--menu')menu=true;
+  else if(arg==='--check')check=true;
   else if(arg==='--json')json=true;
   else{
     console.error(`Unknown option: ${arg}`);
@@ -25,11 +27,12 @@ if((selected&&!Object.hasOwn(TIERS,selected))||!Number.isInteger(n)||n<1){
   console.error('Unknown tier or invalid sample size');
   process.exit(1);
 }
-if(diagnostic&&check){
+if((diagnostic||menu)&&check){
   console.error('Diagnostic sample size cannot be used with --check');
   process.exit(1);
 }
 
+if(menu){for(const [id,tier] of Object.entries(TIERS))if(!selected||id===selected)console.log(id,JSON.stringify(pickupMenu(tier,n),null,2));process.exit(0);}
 const out={},gates=[];
 const gate=(name,pass)=>gates.push({name,pass});
 for(const [id,tier] of Object.entries(TIERS)){
@@ -51,13 +54,15 @@ for(const [id,tier] of Object.entries(TIERS)){
   row.nonstop={};
   for(const profile of ['expert','regular']){
     const count=diagnostic?n:100;
-    const runs=Array.from({length:count},(_,i)=>playOnce(world,profile,90000+i,{mode:'nonstop',capSeconds:2700}));
+    const runs=Array.from({length:count},(_,i)=>playOnce(world,profile,90000+i,{mode:'nonstop',capSeconds:2700,extra:{pickups:()=>true}}));
     const finished=runs.filter(run=>run.finished);
     row.nonstop[profile]={
       finish:finished.length/count,
       meanAttempts:finished.reduce((sum,run)=>sum+run.attempts,0)/Math.max(1,finished.length)
     };
   }
+  row.pickups=world.pickups.map(pk=>pricePickup(world,pk,diagnostic?n:100));
+  for(let i=0;i<row.pickups.length;i++)gate(`${id} pickup ${i+1}`,row.pickups[i].qualifies&&row.pickups[i].reward*60===world.pickups[i].rewardTicks);
   row.reference=referenceProof(world);
   row.shortcuts=shortcutOutcomes(world);
   out[id]=row;

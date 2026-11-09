@@ -1,5 +1,5 @@
 import {hazardKey} from './world.js';
-const eventNotes={launch:[523,784],lift:[392,587],vent:[196,294],stall:[164,146],recovery:[294,440],warning:[440,349],impact:[98,73],respawn:[330,494],checkpoint:[392,494,587],district:[440,554,659],landing:[523,659,784,1047],best:[659,784,1047],pitch:[262],release:[220],ui:[330],pause:[294],resume:[392]};
+const eventNotes={pickup:[659,880],launch:[523,784],lift:[392,587],vent:[196,294],stall:[164,146],recovery:[294,440],warning:[440,349],impact:[98,73],respawn:[330,494],checkpoint:[392,494,587],district:[440,554,659],landing:[523,659,784,1047],best:[659,784,1047],pitch:[262],release:[220],ui:[330],pause:[294],resume:[392]};
 export class Sound{
   constructor(muted=false){this.muted=muted;this.ctx=null;this.paused=false;this.district=0;this.beat=0;this.voices=0;this.last=new Map();}
   async unlock(){

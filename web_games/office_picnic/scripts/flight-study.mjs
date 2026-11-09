@@ -3,8 +3,8 @@ import {createPlane} from '../dist/game/physics.js';
 import {referenceInput} from '../dist/game/bot.js';
 import {makePilot,PROFILES} from './pilot.mjs';
 
-export function playOnce(world,profile,seed,{mode='standard',capSeconds=1200}={}){
-  const run=createRun(mode,world),pilot=makePilot(PROFILES[profile],seed);
+export function playOnce(world,profile,seed,{mode='standard',capSeconds=1200,extra={}}={}){
+  const run=createRun(mode,world),pilot=makePilot(PROFILES[profile],seed,extra);
   let steps=0;
   for(;steps<60*capSeconds&&run.status!=='finished';steps++)stepRun(run,pilot(run));
   return {

@@ -1,9 +1,10 @@
 import {createPlane,advancePlane,PHYSICS} from './physics.js';
-import {buildWorld,airAt,hazardBox,hazardParts,hazardKey} from './world.js';
+import {buildWorld,airAt,hazardBox,hazardParts,hazardKey,pickupPos} from './world.js';
 export function createRun(mode='standard',world=buildWorld()){
   if(!['standard','nonstop'].includes(mode))mode='standard';
-  return {mode,world,plane:createPlane(),ticks:0,worldTicks:0,district:0,checkpoint:{...world.districts[0].checkpoint,x:0,y:130},status:'flying',respawnTicks:0,crashes:0,events:['launch'],warned:new Set(),lastAir:null,lastStall:false,cause:'',finishTicks:0,crashLog:[],attempts:1};
+  return {mode,world,plane:createPlane(),ticks:0,worldTicks:0,district:0,checkpoint:{...world.districts[0].checkpoint,x:0,y:130},status:'flying',respawnTicks:0,crashes:0,events:['launch'],warned:new Set(),lastAir:null,lastStall:false,cause:'',finishTicks:0,collected:new Set(),bonusTicks:0,crashLog:[],attempts:1};
 }
+export const netTicks=r=>r.ticks-r.bonusTicks;
 export function segmentHitsBox(a,b,box,pad=1.2){
   let lo=0,hi=1;
   for(const [axis,min,max] of [['x',box.x-pad,box.x+box.w+pad],['y',box.y-pad,box.y+box.h+pad]]){
@@ -49,6 +50,11 @@ export function stepRun(r,held){
     const key=hazardKey(h);
     if(dx>0&&dx<h.warningDistance&&!r.warned.has(key)){r.warned.add(key);r.warningHazards.push(h);r.events.push('warning');}
     if(Math.abs(dx)<8+box.w&&hazardParts(h,time).some(part=>segmentHitsBox(previous,p,part))){crash(r,h.squeeze?'Squeeze — fly through the window between the washer and the flock.':h.kind==='pigeon'?'Pigeons — hold earlier to climb over the flock.':'Window washer or cable — release to dive, then level out below.',h.id);return r;}
+  }
+  for(const base of r.world.pickups){
+    if(r.collected.has(base.id))continue;
+    const pk=pickupPos(r.world,base,time);
+    if(segmentHitsBox(previous,p,{x:pk.x-pk.r,y:pk.y-pk.r,w:pk.r*2,h:pk.r*2},0)){r.collected.add(pk.id);r.bonusTicks+=base.rewardTicks;r.pickupReward=base.rewardTicks;r.events.push('pickup');}
   }
   const next=r.world.districts[r.district+1];
   if(next&&p.x>=next.start){r.district++;if(r.mode==='standard')r.checkpoint={...next.checkpoint};r.events.push('checkpoint','district');}

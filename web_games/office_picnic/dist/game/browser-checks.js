@@ -2,7 +2,7 @@
 import {TIERS} from './tiers.js';import {buildWorld} from './world.js';
 import {createRun,stepRun} from './simulation.js';import {chooseInput,referenceInput} from './bot.js';import {Renderer} from './render.js';import {Sound} from './audio.js';import {saveResult,loadRecords} from './records.js';import {formatTime,formatDistance} from './session.js';
 const output=document.getElementById('output'),canvas=document.getElementById('preview'),renderer=new Renderer(canvas),scenes=[],select=document.getElementById('scene');
-for(const [value,text] of [['6','Vent · steam burst'],['7','Vent · lull'],['8','Window-washer approach'],['9','Rush · moving washer'],['10','Rush · squeeze'],['11','Rush · headwind']]){const option=document.createElement('option');option.value=value;option.textContent=text;select.append(option);}
+for(const [value,text] of [['6','Vent · steam burst'],['7','Vent · lull'],['8','Window-washer approach'],['9','Rush · moving washer'],['10','Rush · squeeze'],['11','Rush · headwind'],['12','Pickup · moving washer']]){const option=document.createElement('option');option.value=value;option.textContent=text;select.append(option);}
 const check=(condition,message)=>{if(!condition)throw Error(message);};
 function capture(r){return {...r,plane:{...r.plane},previous:null};}
 function draw(){if(scenes[Number(select.value)])renderer.draw(scenes[Number(select.value)],false,1);}
@@ -27,6 +27,8 @@ function runRoute(){
   for(const [index,feature] of [[9,world.hazards.find(h=>h.kind==='platform'&&h.moving)],[10,world.hazards.find(h=>h.squeeze)],[11,world.winds[0]]]){
     const preview=createRun('standard',world);preview.plane.x=(feature.x??feature.x0)-90;preview.plane.y=150;preview.worldTicks=240;scenes[index]=capture(preview);
   }
+  const pickupWorld=buildWorld(undefined,{...TIERS.rush,pickups:[{district:2,slot:2,place:'underWasher',dy:6,r:4,rewardTicks:540}]});
+  const pickupScene=createRun('standard',pickupWorld),pk=pickupWorld.pickups[0];pickupScene.plane.x=pk.x-90;pickupScene.plane.y=pk.y;pickupScene.worldTicks=240;scenes[12]=capture(pickupScene);
   return r;
 }
 select.onchange=draw;document.getElementById('reduced').onchange=e=>{renderer.reduced=e.target.checked;draw();};window.addEventListener('resize',()=>{renderer.resize();draw();});
@@ -54,7 +56,7 @@ document.getElementById('run').onclick=async()=>{
       if(last)frameIntervals.push(now-last);last=now;const start=performance.now();renderer.draw(scenes[i%scenes.length],false,1);draws.push(performance.now()-start);resolve();
     }));
     draws.sort((a,b)=>a-b);frameIntervals.sort((a,b)=>a-b);draw();sound.setPaused(true);if(sound.interval)clearInterval(sound.interval);if(sound.ctx)await sound.ctx.close();
-    output.textContent=`PASS: Casual + Rush, both modes, real collisions, ${formatTime(r.ticks/60)}, ${formatDistance(r.world.length)}.\nPASS: twelve scenes including moving washer, squeeze and headwind, decoded sprites, session + browser records.\n${sound.ctx?'PASS: Web Audio unlock, event synthesis, pause, resume, mute.':'LIMIT: Web Audio unavailable.'}\n90-frame sample: draw p95 ${draws[Math.floor(draws.length*.95)].toFixed(2)} ms; frame interval median ${frameIntervals[Math.floor(frameIntervals.length*.5)].toFixed(2)} ms.\nThis browser sample does not verify physical phone performance or first-time usability.`;
+    output.textContent=`PASS: Casual + Rush, both modes, real collisions, ${formatTime(r.ticks/60)}, ${formatDistance(r.world.length)}.\nPASS: ${scenes.length} scenes including pickup, moving washer, squeeze and headwind, decoded sprites, session + browser records.\n${sound.ctx?'PASS: Web Audio unlock, event synthesis, pause, resume, mute.':'LIMIT: Web Audio unavailable.'}\n90-frame sample: draw p95 ${draws[Math.floor(draws.length*.95)].toFixed(2)} ms; frame interval median ${frameIntervals[Math.floor(frameIntervals.length*.5)].toFixed(2)} ms.\nThis browser sample does not verify physical phone performance or first-time usability.`;
   }catch(error){output.textContent='FAIL: '+error.message;console.error(error);}
 };
 runRoute();draw();
