@@ -29,3 +29,4 @@
 - Transient HUD feedback keyed to a simulation clock must reset with that clock: a Nonstop restart resets world ticks, so clear the previous throw's reward message on respawn.
 - Validate authored pickup coverage before pricing the generated world: placements that lack a matching hazard are skipped during world construction and otherwise disappear from every pricing gate.
 - Before an explicit CLI exit, wait for queued stdout writes: a delayed pipe reader can otherwise receive truncated JSON even when the process exits successfully.
+- A quiet Nonstop restart must rebase a visible impact notice's remaining lifetime when world ticks reset. Keeping the old deadline prolongs it into the new throw; hiding it immediately loses the intended feedback. Exercise the real respawn and expiry boundary.

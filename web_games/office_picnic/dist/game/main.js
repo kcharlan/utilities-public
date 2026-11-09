@@ -7,7 +7,7 @@ import {airAt} from './world.js';
 import {flightGuidance,noticeMessages} from './guidance.js';
 import {Renderer} from './render.js';
 import {Sound,dispatchRunEvents} from './audio.js';
-import {consumeTime,formatTime,formatDistance,formatSpeed,formatFeet} from './session.js';
+import {consumeTime,rebaseNoticeDeadline,formatTime,formatDistance,formatSpeed,formatFeet} from './session.js';
 import {loadRecords,saveResult,savePreferences,titleBestText} from './records.js';
 const $=id=>document.getElementById(id),canvas=$('flight'),renderer=new Renderer(canvas);
 const tracing=new URLSearchParams(location.search).has('trace');let trace=null;
@@ -59,7 +59,7 @@ function finish(){
   setTimeout(()=>{if(run?.status==='finished'&&resultShown){$('result-screen').hidden=false;$('replay').focus();if(!previous||seconds<previous)sound.event('best');}},reduced.matches?300:1400);
 }
 function tick(){
-  run.previous={x:run.plane.x,y:run.plane.y};if(trace)recordInput(trace,held);stepRun(run,held);sound.district=run.district;
+  run.previous={x:run.plane.x,y:run.plane.y};if(trace)recordInput(trace,held);const before=run.worldTicks;stepRun(run,held);noticeEnd=rebaseNoticeDeadline(noticeEnd,before,run.worldTicks);sound.district=run.district;
   dispatchRunEvents(sound,run);
   if(run.events.includes('impact'))held=false;
   if(run.mode==='nonstop'&&run.events.includes('respawn')){rewardEnd=0;$('pickup-reward').hidden=true;$('pickup-reward').textContent='';}

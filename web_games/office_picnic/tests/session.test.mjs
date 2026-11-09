@@ -32,3 +32,21 @@ test('player distances and speeds use American units with useful near-goal preci
   assert.equal(helpers.formatVerticalMotion(-3.048),'↓ Descending 10 ft/s');
   assert.equal(helpers.formatFeet(30.48),'100 ft');
 });
+test('quiet Nonstop impact notice expires on the rebased clock after a real restart',async()=>{
+  const {TIERS}=await import('../dist/game/tiers.js');
+  const {buildWorld}=await import('../dist/game/world.js');
+  const {createRun,stepRun}=await import('../dist/game/simulation.js');
+  const {noticeMessages}=await import('../dist/game/guidance.js');
+  const run=createRun('nonstop',buildWorld(undefined,TIERS.overtime));
+  run.worldTicks=1000;run.plane.y=0;stepRun(run,false);
+  assert.ok(noticeMessages(run).length);let deadline=run.worldTicks+480;
+  while(!run.events.includes('respawn')){
+    const before=run.worldTicks;stepRun(run,false);
+    deadline=helpers.rebaseNoticeDeadline(deadline,before,run.worldTicks);
+  }
+  assert.equal(run.worldTicks,0);assert.deepEqual(noticeMessages(run),[]);
+  assert.equal(deadline,444);
+  for(let i=0;i<444;i++)stepRun(run,true);
+  assert.equal(run.worldTicks,444);assert.ok(run.worldTicks<=deadline);
+  stepRun(run,true);assert.ok(run.worldTicks>deadline);
+});

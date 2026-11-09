@@ -20,15 +20,11 @@ function runRoute(){
   }
   const nonstop=createRun('nonstop');for(let n=0;n<60*480&&nonstop.status!=='finished';n++)stepRun(nonstop,chooseInput(nonstop));check(nonstop.status==='finished'&&nonstop.crashes===0,'Nonstop route failed');
   const world=buildWorld(undefined,TIERS.rush);
-  for(const mode of ['standard','nonstop']){
-    const rush=createRun(mode,world);
-    for(let n=0;n<60*900&&rush.status!=='finished';n++)stepRun(rush,referenceInput(rush));
-    check(rush.status==='finished'&&!rush.crashes,`Rush ${mode} failed`);
-  }
-  for(const mode of ['standard','nonstop']){
-    const overtime=createRun(mode,buildWorld(undefined,TIERS.overtime));
-    for(let n=0;n<60*900&&overtime.status!=='finished';n++)stepRun(overtime,referenceInput(overtime));
-    check(overtime.status==='finished'&&!overtime.crashes,`Overtime ${mode} failed`);
+  const overtimeWorld=buildWorld(undefined,TIERS.overtime);
+  for(const course of [world,overtimeWorld])for(const mode of ['standard','nonstop']){
+    const flight=createRun(mode,course);
+    for(let n=0;n<60*900&&flight.status!=='finished';n++)stepRun(flight,referenceInput(flight));
+    check(flight.status==='finished'&&!flight.crashes,`${course.tier.name} ${mode} failed`);
   }
   for(const [index,feature] of [[9,world.hazards.find(h=>h.kind==='platform'&&h.moving)],[10,world.hazards.find(h=>h.squeeze)],[11,world.winds[0]]]){
     const preview=createRun('standard',world);preview.plane.x=(feature.x??feature.x0)-90;preview.plane.y=150;preview.worldTicks=240;scenes[index]=capture(preview);
