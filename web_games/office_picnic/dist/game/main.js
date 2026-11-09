@@ -8,7 +8,7 @@ import {flightGuidance,noticeMessages} from './guidance.js';
 import {Renderer} from './render.js';
 import {Sound,dispatchRunEvents} from './audio.js';
 import {consumeTime,formatTime,formatDistance,formatSpeed,formatFeet} from './session.js';
-import {loadRecords,saveResult,savePreferences} from './records.js';
+import {loadRecords,saveResult,savePreferences,titleBestText} from './records.js';
 const $=id=>document.getElementById(id),canvas=$('flight'),renderer=new Renderer(canvas);
 const tracing=new URLSearchParams(location.search).has('trace');let trace=null;
 let storage;try{storage=window.localStorage;}catch{storage=null;}
@@ -16,11 +16,7 @@ let records=loadRecords(storage),sound=new Sound(records.muted),run=null,paused=
 const reduced=matchMedia('(prefers-reduced-motion: reduce)');reduced.addEventListener('change',()=>renderer.reduced=reduced.matches);
 function titleBests(){
   for(const tier of Object.values(TIERS)){
-    const best=records.best[tier.id]||{};
-    const describe=mode=>best[mode]
-      ?`${formatTime(best[mode])} · ${medalFor(tier.id,best[mode])||'no medal'}`
-      :'—';
-    $(`best-${tier.id}`).textContent=`Standard: ${describe('standard')} / Nonstop: ${describe('nonstop')}`;
+    $(`best-${tier.id}`).textContent=titleBestText(records,tier.id);
   }
 }
 function muteUI(){$('mute').textContent=records.muted?'Sound off':'Sound on';$('mute').setAttribute('aria-pressed',String(records.muted));$('mute').setAttribute('aria-label',records.muted?'Unmute sound':'Mute sound');}

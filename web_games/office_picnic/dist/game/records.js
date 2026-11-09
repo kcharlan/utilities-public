@@ -1,4 +1,6 @@
 import {TIERS} from './tiers.js';
+import {medalFor} from './medals.js';
+import {formatTime} from './session.js';
 const KEY='office-picnic-v5',OLD_KEY='office-picnic-v4';
 const modes=['standard','nonstop'];
 function validTier(id){return typeof id==='string'&&Object.hasOwn(TIERS,id);}
@@ -36,4 +38,12 @@ export function saveResult(storage,tier,mode,seconds,current){
     savePreferences(storage,records);
   }
   return records;
+}
+
+export function titleBestText(records,tier){
+  const best=records.best[tier]||{};
+  const describe=mode=>best[mode]
+    ?`${formatTime(best[mode])} · ${medalFor(tier,best[mode])||'no medal'}`
+    :'—';
+  return `Standard: ${describe('standard')} / Nonstop: ${describe('nonstop')}`;
 }

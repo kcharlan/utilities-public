@@ -48,8 +48,9 @@ document.getElementById('run').onclick=async()=>{
     const prefix='office-picnic-browser-check-',store={getItem:k=>localStorage.getItem(prefix+k),setItem:(k,v)=>localStorage.setItem(prefix+k,v)};
     store.setItem('office-picnic-v4',JSON.stringify({best:{standard:320},muted:true}));
     check(loadRecords(store).best.casual.standard===320&&loadRecords(store).muted,'Migration failed');
-    saveResult(store,'rush','nonstop',310);check(loadRecords(store).best.rush.nonstop===310&&loadRecords(store).best.casual.standard===320,'Browser storage failed');
+    saveResult(store,'rush','nonstop',MEDALS.rush.silver);
     const saved=loadRecords(store);
+    check(saved.best.rush.nonstop===MEDALS.rush.silver&&saved.best.casual.standard===320,'Browser storage failed');
     check(medalFor('rush',saved.best.rush.nonstop)==='silver','Stored Nonstop medal failed');
     check(medalFor('casual',MEDALS.casual.bronze+.01)===null,'Medal cutoff failed');
     localStorage.removeItem(prefix+'office-picnic-v4');localStorage.removeItem(prefix+'office-picnic-v5');
