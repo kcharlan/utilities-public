@@ -32,7 +32,7 @@ export function stepRun(r,held){
     if(--r.respawnTicks<=0){
       if(r.mode==='nonstop'){
         const fresh=createRun(r.mode,r.world),crashes=r.crashes,log=r.crashLog,attempts=r.attempts+1;Object.assign(r,fresh);r.crashes=crashes;r.crashLog=log;r.attempts=attempts;
-      }else r.plane=createPlane(r.checkpoint);
+      }else {r.plane=createPlane(r.checkpoint);r.district=r.checkpoint.district;}
       r.status='flying';r.warned.clear();r.lastAir=null;r.lastStall=false;r.events=['respawn'];
     }return r;
   }

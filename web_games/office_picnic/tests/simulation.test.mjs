@@ -35,7 +35,7 @@ test('swept collisions catch thin platforms',()=>{
 test('standard crash restores checkpoint in under half a second and keeps time; nonstop restarts',()=>{
   assert.equal(typeof sim.createRun,'function');
   for(const mode of ['standard','nonstop']){
-    const r=sim.createRun(mode);r.ticks=600;r.checkpoint={x:500,y:150,speed:26,pitch:-.2};
+    const r=sim.createRun(mode);r.ticks=600;r.checkpoint={district:0,x:500,y:150,speed:26,pitch:-.2};
     r.plane.y=-10;sim.stepRun(r,false); assert.equal(r.status,'respawning');
     for(let n=0;n<24;n++)sim.stepRun(r,false);
     assert.equal(r.status,'flying');
@@ -127,4 +127,14 @@ test('district events occur in both modes independently of checkpoint events',()
     const r=sim.createRun(mode),d=r.world.districts[1];r.plane.x=d.start-.1;r.plane.y=200;sim.stepRun(r,false);
     assert.ok(r.events.includes('district'));assert.equal(r.events.includes('checkpoint'),false);
   }
+});
+test('respawn restores checkpoint district and emits district on re-entry without resetting world time',()=>{
+  const r=sim.createRun('standard'),next=r.world.districts[1],cp=r.world.checkpoints.filter(c=>c.district===0).at(-1);
+  r.checkpoint={...cp};r.plane.x=next.start-.1;r.plane.y=200;sim.stepRun(r,false);
+  assert.equal(r.district,1);assert.ok(r.events.includes('district'));assert.equal(r.checkpoint.id,cp.id);
+  r.plane.y=-10;sim.stepRun(r,false);assert.equal(r.status,'respawning');const before=r.worldTicks;
+  for(let i=0;i<24;i++)sim.stepRun(r,false);
+  assert.equal(r.status,'flying');assert.equal(r.district,0);assert.equal(r.plane.x,cp.x);assert.equal(r.worldTicks,before+24);
+  r.plane.x=next.start-.1;r.plane.y=200;sim.stepRun(r,false);
+  assert.equal(r.district,1);assert.ok(r.events.includes('district'));assert.equal(r.worldTicks,before+25);
 });

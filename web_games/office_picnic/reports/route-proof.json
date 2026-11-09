@@ -965,1002 +965,1202 @@
       {
         "checkpoint": "1.1",
         "offset": 0,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "1.1",
         "offset": 53,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "1.1",
         "offset": 107,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "1.1",
         "offset": 163,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "1.1",
         "offset": 211,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "1.1",
         "offset": 269,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "1.1",
         "offset": 331,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "1.1",
         "offset": 397,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "1.2",
         "offset": 0,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "1.2",
         "offset": 53,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "1.2",
         "offset": 107,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "1.2",
         "offset": 163,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "1.2",
         "offset": 211,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "1.2",
         "offset": 269,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "1.2",
         "offset": 331,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "1.2",
         "offset": 397,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "1.3",
         "offset": 0,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "1.3",
         "offset": 53,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "1.3",
         "offset": 107,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "1.3",
         "offset": 163,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "1.3",
         "offset": 211,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "1.3",
         "offset": 269,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "1.3",
         "offset": 331,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "1.3",
         "offset": 397,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "1.4",
         "offset": 0,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "1.4",
         "offset": 53,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "1.4",
         "offset": 107,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "1.4",
         "offset": 163,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "1.4",
         "offset": 211,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "1.4",
         "offset": 269,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "1.4",
         "offset": 331,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "1.4",
         "offset": 397,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "1.5",
         "offset": 0,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "1.5",
         "offset": 53,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "1.5",
         "offset": 107,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "1.5",
         "offset": 163,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "1.5",
         "offset": 211,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "1.5",
         "offset": 269,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "1.5",
         "offset": 331,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "1.5",
         "offset": 397,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "2.1",
         "offset": 0,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "2.1",
         "offset": 53,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "2.1",
         "offset": 107,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "2.1",
         "offset": 163,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "2.1",
         "offset": 211,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "2.1",
         "offset": 269,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "2.1",
         "offset": 331,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "2.1",
         "offset": 397,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "2.2",
         "offset": 0,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "2.2",
         "offset": 53,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "2.2",
         "offset": 107,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "2.2",
         "offset": 163,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "2.2",
         "offset": 211,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "2.2",
         "offset": 269,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "2.2",
         "offset": 331,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "2.2",
         "offset": 397,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "2.3",
         "offset": 0,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "2.3",
         "offset": 53,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "2.3",
         "offset": 107,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "2.3",
         "offset": 163,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "2.3",
         "offset": 211,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "2.3",
         "offset": 269,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "2.3",
         "offset": 331,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "2.3",
         "offset": 397,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "2.4",
         "offset": 0,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "2.4",
         "offset": 53,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "2.4",
         "offset": 107,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "2.4",
         "offset": 163,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "2.4",
         "offset": 211,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "2.4",
         "offset": 269,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "2.4",
         "offset": 331,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "2.4",
         "offset": 397,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "2.5",
         "offset": 0,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "2.5",
         "offset": 53,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "2.5",
         "offset": 107,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "2.5",
         "offset": 163,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "2.5",
         "offset": 211,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "2.5",
         "offset": 269,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "2.5",
         "offset": 331,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "2.5",
         "offset": 397,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "3.1",
         "offset": 0,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "3.1",
         "offset": 53,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "3.1",
         "offset": 107,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "3.1",
         "offset": 163,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "3.1",
         "offset": 211,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "3.1",
         "offset": 269,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "3.1",
         "offset": 331,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "3.1",
         "offset": 397,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "3.2",
         "offset": 0,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "3.2",
         "offset": 53,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "3.2",
         "offset": 107,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "3.2",
         "offset": 163,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "3.2",
         "offset": 211,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "3.2",
         "offset": 269,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "3.2",
         "offset": 331,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "3.2",
         "offset": 397,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "3.3",
         "offset": 0,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "3.3",
         "offset": 53,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "3.3",
         "offset": 107,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "3.3",
         "offset": 163,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "3.3",
         "offset": 211,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "3.3",
         "offset": 269,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "3.3",
         "offset": 331,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "3.3",
         "offset": 397,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "3.4",
         "offset": 0,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "3.4",
         "offset": 53,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "3.4",
         "offset": 107,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "3.4",
         "offset": 163,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "3.4",
         "offset": 211,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "3.4",
         "offset": 269,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "3.4",
         "offset": 331,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "3.4",
         "offset": 397,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "3.5",
         "offset": 0,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "3.5",
         "offset": 53,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "3.5",
         "offset": 107,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "3.5",
         "offset": 163,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "3.5",
         "offset": 211,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "3.5",
         "offset": 269,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "3.5",
         "offset": 331,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "3.5",
         "offset": 397,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "4.1",
         "offset": 0,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "4.1",
         "offset": 53,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "4.1",
         "offset": 107,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "4.1",
         "offset": 163,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "4.1",
         "offset": 211,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "4.1",
         "offset": 269,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "4.1",
         "offset": 331,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "4.1",
         "offset": 397,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "4.2",
         "offset": 0,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "4.2",
         "offset": 53,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "4.2",
         "offset": 107,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "4.2",
         "offset": 163,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "4.2",
         "offset": 211,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "4.2",
         "offset": 269,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "4.2",
         "offset": 331,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "4.2",
         "offset": 397,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "4.3",
         "offset": 0,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "4.3",
         "offset": 53,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "4.3",
         "offset": 107,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "4.3",
         "offset": 163,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "4.3",
         "offset": 211,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "4.3",
         "offset": 269,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "4.3",
         "offset": 331,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "4.3",
         "offset": 397,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "4.4",
         "offset": 0,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "4.4",
         "offset": 53,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "4.4",
         "offset": 107,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "4.4",
         "offset": 163,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "4.4",
         "offset": 211,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "4.4",
         "offset": 269,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "4.4",
         "offset": 331,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "4.4",
         "offset": 397,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "4.5",
         "offset": 0,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "4.5",
         "offset": 53,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "4.5",
         "offset": 107,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "4.5",
         "offset": 163,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "4.5",
         "offset": 211,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "4.5",
         "offset": 269,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "4.5",
         "offset": 331,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "4.5",
         "offset": 397,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "5.1",
         "offset": 0,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "5.1",
         "offset": 53,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "5.1",
         "offset": 107,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "5.1",
         "offset": 163,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "5.1",
         "offset": 211,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "5.1",
         "offset": 269,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "5.1",
         "offset": 331,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "5.1",
         "offset": 397,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "5.2",
         "offset": 0,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "5.2",
         "offset": 53,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "5.2",
         "offset": 107,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "5.2",
         "offset": 163,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "5.2",
         "offset": 211,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "5.2",
         "offset": 269,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "5.2",
         "offset": 331,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "5.2",
         "offset": 397,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "5.3",
         "offset": 0,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "5.3",
         "offset": 53,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "5.3",
         "offset": 107,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "5.3",
         "offset": 163,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "5.3",
         "offset": 211,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "5.3",
         "offset": 269,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "5.3",
         "offset": 331,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "5.3",
         "offset": 397,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "5.4",
         "offset": 0,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "5.4",
         "offset": 53,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "5.4",
         "offset": 107,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "5.4",
         "offset": 163,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "5.4",
         "offset": 211,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "5.4",
         "offset": 269,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "5.4",
         "offset": 331,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "5.4",
         "offset": 397,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "5.5",
         "offset": 0,
-        "cleared": true
+        "cleared": true,
+        "status": "finished"
       },
       {
         "checkpoint": "5.5",
         "offset": 53,
-        "cleared": true
+        "cleared": true,
+        "status": "finished"
       },
       {
         "checkpoint": "5.5",
         "offset": 107,
-        "cleared": true
+        "cleared": true,
+        "status": "finished"
       },
       {
         "checkpoint": "5.5",
         "offset": 163,
-        "cleared": true
+        "cleared": true,
+        "status": "finished"
       },
       {
         "checkpoint": "5.5",
         "offset": 211,
-        "cleared": true
+        "cleared": true,
+        "status": "finished"
       },
       {
         "checkpoint": "5.5",
         "offset": 269,
-        "cleared": true
+        "cleared": true,
+        "status": "finished"
       },
       {
         "checkpoint": "5.5",
         "offset": 331,
-        "cleared": true
+        "cleared": true,
+        "status": "finished"
       },
       {
         "checkpoint": "5.5",
         "offset": 397,
-        "cleared": true
+        "cleared": true,
+        "status": "finished"
       }
     ],
     "gaps": [
@@ -3881,1002 +4081,1202 @@
       {
         "checkpoint": "1.1",
         "offset": 0,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "1.1",
         "offset": 53,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "1.1",
         "offset": 107,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "1.1",
         "offset": 163,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "1.1",
         "offset": 211,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "1.1",
         "offset": 269,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "1.1",
         "offset": 331,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "1.1",
         "offset": 397,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "1.2",
         "offset": 0,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "1.2",
         "offset": 53,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "1.2",
         "offset": 107,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "1.2",
         "offset": 163,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "1.2",
         "offset": 211,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "1.2",
         "offset": 269,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "1.2",
         "offset": 331,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "1.2",
         "offset": 397,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "1.3",
         "offset": 0,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "1.3",
         "offset": 53,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "1.3",
         "offset": 107,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "1.3",
         "offset": 163,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "1.3",
         "offset": 211,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "1.3",
         "offset": 269,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "1.3",
         "offset": 331,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "1.3",
         "offset": 397,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "1.4",
         "offset": 0,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "1.4",
         "offset": 53,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "1.4",
         "offset": 107,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "1.4",
         "offset": 163,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "1.4",
         "offset": 211,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "1.4",
         "offset": 269,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "1.4",
         "offset": 331,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "1.4",
         "offset": 397,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "1.5",
         "offset": 0,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "1.5",
         "offset": 53,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "1.5",
         "offset": 107,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "1.5",
         "offset": 163,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "1.5",
         "offset": 211,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "1.5",
         "offset": 269,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "1.5",
         "offset": 331,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "1.5",
         "offset": 397,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "2.1",
         "offset": 0,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "2.1",
         "offset": 53,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "2.1",
         "offset": 107,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "2.1",
         "offset": 163,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "2.1",
         "offset": 211,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "2.1",
         "offset": 269,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "2.1",
         "offset": 331,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "2.1",
         "offset": 397,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "2.2",
         "offset": 0,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "2.2",
         "offset": 53,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "2.2",
         "offset": 107,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "2.2",
         "offset": 163,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "2.2",
         "offset": 211,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "2.2",
         "offset": 269,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "2.2",
         "offset": 331,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "2.2",
         "offset": 397,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "2.3",
         "offset": 0,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "2.3",
         "offset": 53,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "2.3",
         "offset": 107,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "2.3",
         "offset": 163,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "2.3",
         "offset": 211,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "2.3",
         "offset": 269,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "2.3",
         "offset": 331,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "2.3",
         "offset": 397,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "2.4",
         "offset": 0,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "2.4",
         "offset": 53,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "2.4",
         "offset": 107,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "2.4",
         "offset": 163,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "2.4",
         "offset": 211,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "2.4",
         "offset": 269,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "2.4",
         "offset": 331,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "2.4",
         "offset": 397,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "2.5",
         "offset": 0,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "2.5",
         "offset": 53,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "2.5",
         "offset": 107,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "2.5",
         "offset": 163,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "2.5",
         "offset": 211,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "2.5",
         "offset": 269,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "2.5",
         "offset": 331,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "2.5",
         "offset": 397,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "3.1",
         "offset": 0,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "3.1",
         "offset": 53,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "3.1",
         "offset": 107,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "3.1",
         "offset": 163,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "3.1",
         "offset": 211,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "3.1",
         "offset": 269,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "3.1",
         "offset": 331,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "3.1",
         "offset": 397,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "3.2",
         "offset": 0,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "3.2",
         "offset": 53,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "3.2",
         "offset": 107,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "3.2",
         "offset": 163,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "3.2",
         "offset": 211,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "3.2",
         "offset": 269,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "3.2",
         "offset": 331,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "3.2",
         "offset": 397,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "3.3",
         "offset": 0,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "3.3",
         "offset": 53,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "3.3",
         "offset": 107,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "3.3",
         "offset": 163,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "3.3",
         "offset": 211,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "3.3",
         "offset": 269,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "3.3",
         "offset": 331,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "3.3",
         "offset": 397,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "3.4",
         "offset": 0,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "3.4",
         "offset": 53,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "3.4",
         "offset": 107,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "3.4",
         "offset": 163,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "3.4",
         "offset": 211,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "3.4",
         "offset": 269,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "3.4",
         "offset": 331,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "3.4",
         "offset": 397,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "3.5",
         "offset": 0,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "3.5",
         "offset": 53,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "3.5",
         "offset": 107,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "3.5",
         "offset": 163,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "3.5",
         "offset": 211,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "3.5",
         "offset": 269,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "3.5",
         "offset": 331,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "3.5",
         "offset": 397,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "4.1",
         "offset": 0,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "4.1",
         "offset": 53,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "4.1",
         "offset": 107,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "4.1",
         "offset": 163,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "4.1",
         "offset": 211,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "4.1",
         "offset": 269,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "4.1",
         "offset": 331,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "4.1",
         "offset": 397,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "4.2",
         "offset": 0,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "4.2",
         "offset": 53,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "4.2",
         "offset": 107,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "4.2",
         "offset": 163,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "4.2",
         "offset": 211,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "4.2",
         "offset": 269,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "4.2",
         "offset": 331,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "4.2",
         "offset": 397,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "4.3",
         "offset": 0,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "4.3",
         "offset": 53,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "4.3",
         "offset": 107,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "4.3",
         "offset": 163,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "4.3",
         "offset": 211,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "4.3",
         "offset": 269,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "4.3",
         "offset": 331,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "4.3",
         "offset": 397,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "4.4",
         "offset": 0,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "4.4",
         "offset": 53,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "4.4",
         "offset": 107,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "4.4",
         "offset": 163,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "4.4",
         "offset": 211,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "4.4",
         "offset": 269,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "4.4",
         "offset": 331,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "4.4",
         "offset": 397,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "4.5",
         "offset": 0,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "4.5",
         "offset": 53,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "4.5",
         "offset": 107,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "4.5",
         "offset": 163,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "4.5",
         "offset": 211,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "4.5",
         "offset": 269,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "4.5",
         "offset": 331,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "4.5",
         "offset": 397,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "5.1",
         "offset": 0,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "5.1",
         "offset": 53,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "5.1",
         "offset": 107,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "5.1",
         "offset": 163,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "5.1",
         "offset": 211,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "5.1",
         "offset": 269,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "5.1",
         "offset": 331,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "5.1",
         "offset": 397,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "5.2",
         "offset": 0,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "5.2",
         "offset": 53,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "5.2",
         "offset": 107,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "5.2",
         "offset": 163,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "5.2",
         "offset": 211,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "5.2",
         "offset": 269,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "5.2",
         "offset": 331,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "5.2",
         "offset": 397,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "5.3",
         "offset": 0,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "5.3",
         "offset": 53,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "5.3",
         "offset": 107,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "5.3",
         "offset": 163,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "5.3",
         "offset": 211,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "5.3",
         "offset": 269,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "5.3",
         "offset": 331,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "5.3",
         "offset": 397,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "5.4",
         "offset": 0,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "5.4",
         "offset": 53,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "5.4",
         "offset": 107,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "5.4",
         "offset": 163,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "5.4",
         "offset": 211,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "5.4",
         "offset": 269,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "5.4",
         "offset": 331,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "5.4",
         "offset": 397,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "5.5",
         "offset": 0,
-        "cleared": true
+        "cleared": true,
+        "status": "finished"
       },
       {
         "checkpoint": "5.5",
         "offset": 53,
-        "cleared": true
+        "cleared": true,
+        "status": "finished"
       },
       {
         "checkpoint": "5.5",
         "offset": 107,
-        "cleared": true
+        "cleared": true,
+        "status": "finished"
       },
       {
         "checkpoint": "5.5",
         "offset": 163,
-        "cleared": true
+        "cleared": true,
+        "status": "finished"
       },
       {
         "checkpoint": "5.5",
         "offset": 211,
-        "cleared": true
+        "cleared": true,
+        "status": "finished"
       },
       {
         "checkpoint": "5.5",
         "offset": 269,
-        "cleared": true
+        "cleared": true,
+        "status": "finished"
       },
       {
         "checkpoint": "5.5",
         "offset": 331,
-        "cleared": true
+        "cleared": true,
+        "status": "finished"
       },
       {
         "checkpoint": "5.5",
         "offset": 397,
-        "cleared": true
+        "cleared": true,
+        "status": "finished"
       }
     ],
     "gaps": [
@@ -6935,1002 +7335,1202 @@
       {
         "checkpoint": "1.1",
         "offset": 0,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "1.1",
         "offset": 53,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "1.1",
         "offset": 107,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "1.1",
         "offset": 163,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "1.1",
         "offset": 211,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "1.1",
         "offset": 269,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "1.1",
         "offset": 331,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "1.1",
         "offset": 397,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "1.2",
         "offset": 0,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "1.2",
         "offset": 53,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "1.2",
         "offset": 107,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "1.2",
         "offset": 163,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "1.2",
         "offset": 211,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "1.2",
         "offset": 269,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "1.2",
         "offset": 331,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "1.2",
         "offset": 397,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "1.3",
         "offset": 0,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "1.3",
         "offset": 53,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "1.3",
         "offset": 107,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "1.3",
         "offset": 163,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "1.3",
         "offset": 211,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "1.3",
         "offset": 269,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "1.3",
         "offset": 331,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "1.3",
         "offset": 397,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "1.4",
         "offset": 0,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "1.4",
         "offset": 53,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "1.4",
         "offset": 107,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "1.4",
         "offset": 163,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "1.4",
         "offset": 211,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "1.4",
         "offset": 269,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "1.4",
         "offset": 331,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "1.4",
         "offset": 397,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "1.5",
         "offset": 0,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "1.5",
         "offset": 53,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "1.5",
         "offset": 107,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "1.5",
         "offset": 163,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "1.5",
         "offset": 211,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "1.5",
         "offset": 269,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "1.5",
         "offset": 331,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "1.5",
         "offset": 397,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "2.1",
         "offset": 0,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "2.1",
         "offset": 53,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "2.1",
         "offset": 107,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "2.1",
         "offset": 163,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "2.1",
         "offset": 211,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "2.1",
         "offset": 269,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "2.1",
         "offset": 331,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "2.1",
         "offset": 397,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "2.2",
         "offset": 0,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "2.2",
         "offset": 53,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "2.2",
         "offset": 107,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "2.2",
         "offset": 163,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "2.2",
         "offset": 211,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "2.2",
         "offset": 269,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "2.2",
         "offset": 331,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "2.2",
         "offset": 397,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "2.3",
         "offset": 0,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "2.3",
         "offset": 53,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "2.3",
         "offset": 107,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "2.3",
         "offset": 163,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "2.3",
         "offset": 211,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "2.3",
         "offset": 269,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "2.3",
         "offset": 331,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "2.3",
         "offset": 397,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "2.4",
         "offset": 0,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "2.4",
         "offset": 53,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "2.4",
         "offset": 107,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "2.4",
         "offset": 163,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "2.4",
         "offset": 211,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "2.4",
         "offset": 269,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "2.4",
         "offset": 331,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "2.4",
         "offset": 397,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "2.5",
         "offset": 0,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "2.5",
         "offset": 53,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "2.5",
         "offset": 107,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "2.5",
         "offset": 163,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "2.5",
         "offset": 211,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "2.5",
         "offset": 269,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "2.5",
         "offset": 331,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "2.5",
         "offset": 397,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "3.1",
         "offset": 0,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "3.1",
         "offset": 53,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "3.1",
         "offset": 107,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "3.1",
         "offset": 163,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "3.1",
         "offset": 211,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "3.1",
         "offset": 269,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "3.1",
         "offset": 331,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "3.1",
         "offset": 397,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "3.2",
         "offset": 0,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "3.2",
         "offset": 53,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "3.2",
         "offset": 107,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "3.2",
         "offset": 163,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "3.2",
         "offset": 211,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "3.2",
         "offset": 269,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "3.2",
         "offset": 331,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "3.2",
         "offset": 397,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "3.3",
         "offset": 0,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "3.3",
         "offset": 53,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "3.3",
         "offset": 107,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "3.3",
         "offset": 163,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "3.3",
         "offset": 211,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "3.3",
         "offset": 269,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "3.3",
         "offset": 331,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "3.3",
         "offset": 397,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "3.4",
         "offset": 0,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "3.4",
         "offset": 53,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "3.4",
         "offset": 107,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "3.4",
         "offset": 163,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "3.4",
         "offset": 211,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "3.4",
         "offset": 269,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "3.4",
         "offset": 331,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "3.4",
         "offset": 397,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "3.5",
         "offset": 0,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "3.5",
         "offset": 53,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "3.5",
         "offset": 107,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "3.5",
         "offset": 163,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "3.5",
         "offset": 211,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "3.5",
         "offset": 269,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "3.5",
         "offset": 331,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "3.5",
         "offset": 397,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "4.1",
         "offset": 0,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "4.1",
         "offset": 53,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "4.1",
         "offset": 107,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "4.1",
         "offset": 163,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "4.1",
         "offset": 211,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "4.1",
         "offset": 269,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "4.1",
         "offset": 331,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "4.1",
         "offset": 397,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "4.2",
         "offset": 0,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "4.2",
         "offset": 53,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "4.2",
         "offset": 107,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "4.2",
         "offset": 163,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "4.2",
         "offset": 211,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "4.2",
         "offset": 269,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "4.2",
         "offset": 331,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "4.2",
         "offset": 397,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "4.3",
         "offset": 0,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "4.3",
         "offset": 53,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "4.3",
         "offset": 107,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "4.3",
         "offset": 163,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "4.3",
         "offset": 211,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "4.3",
         "offset": 269,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "4.3",
         "offset": 331,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "4.3",
         "offset": 397,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "4.4",
         "offset": 0,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "4.4",
         "offset": 53,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "4.4",
         "offset": 107,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "4.4",
         "offset": 163,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "4.4",
         "offset": 211,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "4.4",
         "offset": 269,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "4.4",
         "offset": 331,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "4.4",
         "offset": 397,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "4.5",
         "offset": 0,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "4.5",
         "offset": 53,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "4.5",
         "offset": 107,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "4.5",
         "offset": 163,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "4.5",
         "offset": 211,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "4.5",
         "offset": 269,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "4.5",
         "offset": 331,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "4.5",
         "offset": 397,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "5.1",
         "offset": 0,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "5.1",
         "offset": 53,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "5.1",
         "offset": 107,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "5.1",
         "offset": 163,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "5.1",
         "offset": 211,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "5.1",
         "offset": 269,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "5.1",
         "offset": 331,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "5.1",
         "offset": 397,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "5.2",
         "offset": 0,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "5.2",
         "offset": 53,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "5.2",
         "offset": 107,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "5.2",
         "offset": 163,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "5.2",
         "offset": 211,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "5.2",
         "offset": 269,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "5.2",
         "offset": 331,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "5.2",
         "offset": 397,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "5.3",
         "offset": 0,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "5.3",
         "offset": 53,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "5.3",
         "offset": 107,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "5.3",
         "offset": 163,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "5.3",
         "offset": 211,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "5.3",
         "offset": 269,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "5.3",
         "offset": 331,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "5.3",
         "offset": 397,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "5.4",
         "offset": 0,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "5.4",
         "offset": 53,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "5.4",
         "offset": 107,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "5.4",
         "offset": 163,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "5.4",
         "offset": 211,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "5.4",
         "offset": 269,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "5.4",
         "offset": 331,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "5.4",
         "offset": 397,
-        "cleared": true
+        "cleared": true,
+        "status": "flying"
       },
       {
         "checkpoint": "5.5",
         "offset": 0,
-        "cleared": true
+        "cleared": true,
+        "status": "finished"
       },
       {
         "checkpoint": "5.5",
         "offset": 53,
-        "cleared": true
+        "cleared": true,
+        "status": "finished"
       },
       {
         "checkpoint": "5.5",
         "offset": 107,
-        "cleared": true
+        "cleared": true,
+        "status": "finished"
       },
       {
         "checkpoint": "5.5",
         "offset": 163,
-        "cleared": true
+        "cleared": true,
+        "status": "finished"
       },
       {
         "checkpoint": "5.5",
         "offset": 211,
-        "cleared": true
+        "cleared": true,
+        "status": "finished"
       },
       {
         "checkpoint": "5.5",
         "offset": 269,
-        "cleared": true
+        "cleared": true,
+        "status": "finished"
       },
       {
         "checkpoint": "5.5",
         "offset": 331,
-        "cleared": true
+        "cleared": true,
+        "status": "finished"
       },
       {
         "checkpoint": "5.5",
         "offset": 397,
-        "cleared": true
+        "cleared": true,
+        "status": "finished"
       }
     ],
     "gaps": [

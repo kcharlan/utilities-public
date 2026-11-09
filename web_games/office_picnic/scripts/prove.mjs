@@ -13,11 +13,11 @@ const world=buildWorld(undefined,tier),input=tier.id==='casual'?chooseInput:refe
 const checkpointTrials=[];
 for(const [index,checkpoint] of world.checkpoints.entries())for(const offset of [0,53,107,163,211,269,331,397]){
   const r=createRun('standard',world);r.district=checkpoint.district;r.checkpoint={...checkpoint};r.plane=createPlane(checkpoint);r.worldTicks=offset;
-  const target=world.checkpoints[index+1]?.x??world.length;
-  for(let n=0;n<60*150&&r.plane.x<target&&r.crashes===0;n++)stepRun(r,referenceInput(r));
+  const target=world.checkpoints[index+1]?.x,finished=()=>target===undefined?r.status==='finished':r.plane.x>=target;
+  for(let n=0;n<60*150&&!finished()&&r.crashes===0;n++)stepRun(r,referenceInput(r));
   assert.equal(r.crashes,0,`checkpoint ${checkpoint.id} offset ${offset}: ${r.crashLog[0]?.where}`);
-  assert.ok(r.plane.x>=target,`checkpoint ${checkpoint.id} offset ${offset}: timeout`);
-  checkpointTrials.push({checkpoint:checkpoint.id,offset,cleared:true});
+  assert.ok(finished(),`checkpoint ${checkpoint.id} offset ${offset}: timeout`);
+  checkpointTrials.push({checkpoint:checkpoint.id,offset,cleared:true,status:r.status});
 }
 const encounters=world.hazards.map(h=>({id:h.id,district:h.district,kind:h.kind,pass:h.pass,minClearance:Infinity,warningSeconds:null,arrivalSeconds:null,passed:false}));
 const engagement=world.districts.map(d=>({district:d.name,heldTicks:0,totalTicks:0}));

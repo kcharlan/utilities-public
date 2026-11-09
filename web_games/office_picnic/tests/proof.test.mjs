@@ -10,6 +10,8 @@ test('CLI measurement and collision-enabled proof verify every available tier',a
   for(const [id,tier] of Object.entries(TIERS)){
     const world=buildWorld(undefined,tier),report=reports[id];
     assert.equal(report.checkpointTrials.length,world.checkpoints.length*8);
+    const finalTrials=report.checkpointTrials.filter(t=>t.checkpoint===world.checkpoints.at(-1).id);
+    assert.equal(finalTrials.length,8);assert.ok(finalTrials.every(t=>t.status==='finished'));
     assert.equal(report.summary.districtTrials,world.districts.length*DISTRICT_SPEEDS.length*DISTRICT_OFFSETS.length*DISTRICT_DELAYS.length);assert.equal(report.gaps.length,world.gaps.length);
     assert.ok(report.runs.every(r=>r.crashes===0&&r.seconds<=900&&(id!=='casual'||r.seconds>=240&&r.seconds<=480)));
     assert.ok(report.gaps.every(g=>g.actualBotEntry&&g.actualEntryUtilization<=1));
