@@ -23,3 +23,8 @@
 #pickup-reward{color:#ffe3a8;font-weight:600}.result-breakdown{font-size:13px;line-height:1.6;color:#f0e1df}.result-screen{overflow:auto}.result-screen .modal{max-height:calc(100dvh - 24px);overflow:auto}@media(max-height:560px){.result-stats{margin:8px 0}.result-breakdown{font-size:11px;line-height:1.35}.result-screen .modal p{margin:6px}.result-screen .modal .primary{margin-top:5px}}
 .medal-result{font-weight:700;color:#ffe1a8!important;margin-bottom:0}
 #result-target{margin-top:2px}
+@media(min-width:601px) and (min-height:561px) and (max-height:850px){
+  .title-copy{margin-top:24px;margin-bottom:14px}
+  .title-copy h1{font-size:72px;margin-bottom:12px}
+  .opening{margin-bottom:14px}
+}

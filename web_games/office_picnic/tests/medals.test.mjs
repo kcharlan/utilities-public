@@ -77,3 +77,9 @@ test('title grades both modes from saved v5 tier records',async()=>{
   assert.equal(titleBestText(records,'casual'),`Standard: ${formatTime(MEDALS.casual.gold)} · gold / Nonstop: —`);
   assert.equal(titleBestText(records,'rush'),`Standard: ${formatTime(MEDALS.rush.bronze+1)} · no medal / Nonstop: ${formatTime(MEDALS.rush.silver)} · silver`);
 });
+test('Overtime title grades both saved modes against its own table',async()=>{
+  const {titleBestText}=await import('../dist/game/records.js');
+  const {formatTime}=await import('../dist/game/session.js');
+  const saved={best:{overtime:{standard:MEDALS.overtime.gold,nonstop:MEDALS.overtime.silver}},tier:'overtime'};
+  assert.equal(titleBestText(saved,'overtime'),`Standard: ${formatTime(MEDALS.overtime.gold)} · gold / Nonstop: ${formatTime(MEDALS.overtime.silver)} · silver`);
+});

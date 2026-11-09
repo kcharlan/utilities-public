@@ -36,7 +36,7 @@ function start(mode){
   for(const id of ['hud','route-hud','flight-hud'])$(id).hidden=false;
   $('district-dots').replaceChildren(...Array.from({length:5},()=>document.createElement('i')));
   $('run-mode').textContent=modeText(world,mode);$('pause-mode').textContent=modeText(world,mode);
-  canvas.focus({preventScroll:true});if(world.tier.prompts!=='quiet')notice('Hold to climb over the first flock. Release to dive and regain speed.',8);updateHUD();
+  $('notice').hidden=true;canvas.focus({preventScroll:true});if(world.tier.prompts!=='quiet')notice('Hold to climb over the first flock. Release to dive and regain speed.',8);updateHUD();
 }
 function pause(){if(!run||run.status==='finished'||paused)return;setHeld(false);paused=true;clock.accumulator=0;sound.event('pause');sound.setPaused(true);$('pause-screen').hidden=false;$('resume').focus();}
 function resume(){if(!run)return;paused=false;held=false;clock.accumulator=0;last=performance.now();sound.setPaused(false);sound.unlock().then(()=>sound.event('resume'));$('pause-screen').hidden=true;canvas.focus({preventScroll:true});}

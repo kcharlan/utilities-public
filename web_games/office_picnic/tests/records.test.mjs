@@ -39,3 +39,12 @@ test('v4 migration persists once, without overwriting v4, and survives blocked w
   const blocked={getItem:k=>k==='office-picnic-v4'?v4:null,setItem(){throw Error('blocked')}};
   assert.deepEqual(loadRecords(blocked),migrated);
 });
+test('Overtime selection and records round trip separately by mode',()=>{
+  const s=storage();
+  savePreferences(s,{best:{},tier:'overtime',muted:false});
+  saveResult(s,'overtime','standard',400);
+  saveResult(s,'overtime','nonstop',390);
+  const r=loadRecords(s);
+  assert.equal(r.tier,'overtime');
+  assert.deepEqual(r.best.overtime,{standard:400,nonstop:390});
+});

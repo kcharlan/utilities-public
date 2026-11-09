@@ -62,6 +62,15 @@ test('simultaneous checkpoint, impact and warning notices retain each message',a
   r.world={...r.world,tier:{...r.world.tier,prompts:'warnings'},winds:[{district:3,wind:-3}]};
   const text=noticeMessages(r).join(' ');assert.match(text,/Impact correction/);assert.match(text,/Crosswind Court/);assert.match(text,/Headwinds ahead/);assert.match(text,/Squeeze/);
 });
+test('quiet notices keep impact and windy checkpoint but suppress respawn and warning',async()=>{
+  const {noticeMessages}=await import('../dist/game/guidance.js');
+  const {buildWorld}=await import('../dist/game/world.js');const {TIERS}=await import('../dist/game/tiers.js');
+  const r=createRun('standard',buildWorld(undefined,TIERS.overtime));
+  r.district=3;r.events=['checkpoint','impact','respawn','warning'];r.cause='Impact correction';r.warningHazards=[{squeeze:true}];
+  assert.deepEqual(noticeMessages(r),['Impact correction','Crosswind Court · Headwinds ahead']);
+  r.events=['respawn','warning'];assert.deepEqual(noticeMessages(r),[]);
+  assert.ok(module.flightGuidance(r,false).instruction);
+});
 test('headwind uses still-air flight and rooftop guidance',async()=>{
   const {buildWorld}=await import('../dist/game/world.js');const {TIERS}=await import('../dist/game/tiers.js');
   const r=createRun('standard',buildWorld(undefined,TIERS.rush)),zone=r.world.winds[0];r.plane.x=zone.x0+20;r.plane.y=140;r.world={...r.world,hazards:[],buildings:[]};

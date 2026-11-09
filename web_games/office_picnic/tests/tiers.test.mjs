@@ -106,3 +106,17 @@ test('Rush has the authored moving hazards, squeeze and headwinds',()=>{
   assert.equal(world.hazards.filter(h=>h.squeeze).length,4);
   assert.ok(world.hazards.some(h=>h.moving));
 });
+test('Overtime has full checkpoints and the authored moving course',()=>{
+  const world=buildWorld(undefined,TIERS.overtime);
+  assert.equal(world.tier.prompts,'quiet');
+  assert.equal(world.rules.crashPenaltyTicks,600);
+  assert.equal(world.winds.length,5);
+  assert.equal(world.hazards.length,22);
+  assert.equal(world.districts.filter(d=>d.checkpoint).length,5);
+  for(const mode of ['standard','nonstop']){
+    const proof=referenceProof(world).full[mode];
+    assert.equal(proof.finished,true);
+    assert.equal(proof.crashes,0);
+    assert.equal(proof.ticks,20241);
+  }
+});

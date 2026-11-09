@@ -25,6 +25,11 @@ function runRoute(){
     for(let n=0;n<60*900&&rush.status!=='finished';n++)stepRun(rush,referenceInput(rush));
     check(rush.status==='finished'&&!rush.crashes,`Rush ${mode} failed`);
   }
+  for(const mode of ['standard','nonstop']){
+    const overtime=createRun(mode,buildWorld(undefined,TIERS.overtime));
+    for(let n=0;n<60*900&&overtime.status!=='finished';n++)stepRun(overtime,referenceInput(overtime));
+    check(overtime.status==='finished'&&!overtime.crashes,`Overtime ${mode} failed`);
+  }
   for(const [index,feature] of [[9,world.hazards.find(h=>h.kind==='platform'&&h.moving)],[10,world.hazards.find(h=>h.squeeze)],[11,world.winds[0]]]){
     const preview=createRun('standard',world);preview.plane.x=(feature.x??feature.x0)-90;preview.plane.y=150;preview.worldTicks=240;scenes[index]=capture(preview);
   }
@@ -49,8 +54,11 @@ document.getElementById('run').onclick=async()=>{
     store.setItem('office-picnic-v4',JSON.stringify({best:{standard:320},muted:true}));
     check(loadRecords(store).best.casual.standard===320&&loadRecords(store).muted,'Migration failed');
     saveResult(store,'rush','nonstop',MEDALS.rush.silver);
+    saveResult(store,'overtime','standard',MEDALS.overtime.gold);
+    saveResult(store,'overtime','nonstop',MEDALS.overtime.silver);
     const saved=loadRecords(store);
     check(saved.best.rush.nonstop===MEDALS.rush.silver&&saved.best.casual.standard===320,'Browser storage failed');
+    check(saved.best.overtime.standard===MEDALS.overtime.gold&&saved.best.overtime.nonstop===MEDALS.overtime.silver,'Overtime records failed');
     check(medalFor('rush',saved.best.rush.nonstop)==='silver','Stored Nonstop medal failed');
     check(medalFor('casual',MEDALS.casual.bronze+.01)===null,'Medal cutoff failed');
     localStorage.removeItem(prefix+'office-picnic-v4');localStorage.removeItem(prefix+'office-picnic-v5');
@@ -61,7 +69,7 @@ document.getElementById('run').onclick=async()=>{
       if(last)frameIntervals.push(now-last);last=now;const start=performance.now();renderer.draw(scenes[i%scenes.length],false,1);draws.push(performance.now()-start);resolve();
     }));
     draws.sort((a,b)=>a-b);frameIntervals.sort((a,b)=>a-b);draw();sound.setPaused(true);if(sound.interval)clearInterval(sound.interval);if(sound.ctx)await sound.ctx.close();
-    output.textContent=`PASS: Casual + Rush, both modes, real collisions, ${formatTime(r.ticks/60)}, ${formatDistance(r.world.length)}.\nPASS: ${scenes.length} scenes including pickup, moving washer, squeeze and headwind, decoded sprites, session + browser records.\n${sound.ctx?'PASS: Web Audio unlock, event synthesis, pause, resume, mute.':'LIMIT: Web Audio unavailable.'}\n90-frame sample: draw p95 ${draws[Math.floor(draws.length*.95)].toFixed(2)} ms; frame interval median ${frameIntervals[Math.floor(frameIntervals.length*.5)].toFixed(2)} ms.\nThis browser sample does not verify physical phone performance or first-time usability.`;
+    output.textContent=`PASS: Casual + Rush + Overtime, both modes, real collisions, ${formatTime(r.ticks/60)}, ${formatDistance(r.world.length)}.\nPASS: ${scenes.length} scenes including pickup, moving washer, squeeze and headwind, decoded sprites, session + browser records.\n${sound.ctx?'PASS: Web Audio unlock, event synthesis, pause, resume, mute.':'LIMIT: Web Audio unavailable.'}\n90-frame sample: draw p95 ${draws[Math.floor(draws.length*.95)].toFixed(2)} ms; frame interval median ${frameIntervals[Math.floor(frameIntervals.length*.5)].toFixed(2)} ms.\nThis browser sample does not verify physical phone performance or first-time usability.`;
   }catch(error){output.textContent='FAIL: '+error.message;console.error(error);}
 };
 runRoute();draw();
