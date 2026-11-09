@@ -42,7 +42,7 @@ export function stepRun(r,held){
   if(p.y<2){crash(r,'Street level — use the rising air over rooftops.',`street ${gapAt(r.world,p.x)}`);return r;}
   for(const b of r.world.buildings){
     if(b.x>p.x+3||b.x+b.w<previous.x-3)continue;
-    if(segmentHitsBox(previous,p,{x:b.x,y:-1000,w:b.w,h:1000+b.y})){crash(r,'Rooftop — enter the lift earlier and carry more height.',`${b.perch?'perch':'roof'} ${gapAt(r.world,p.x)}`);return r;}
+    if(segmentHitsBox(previous,p,{x:b.x,y:-1000,w:b.w,h:1000+b.y})){crash(r,b.squeeze?'Squeeze — fly through the window between the washer and the flock.':'Rooftop — enter the lift earlier and carry more height.',`${b.perch?'perch':'roof'} ${gapAt(r.world,p.x)}`);return r;}
   }
   for(const h of r.world.hazards){
     const box=hazardBox(h,time),dx=box.x-p.x;

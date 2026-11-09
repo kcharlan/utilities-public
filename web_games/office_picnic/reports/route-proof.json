@@ -980,7 +980,6 @@
         "receiverRoof": 40,
         "clearanceMeaning": "Synthetic 134m envelope target; actual roof and hazard clearances are separate.",
         "syntheticPerturbedClearance": 20.05780949285861,
-        "releaseOnlySkipped": false,
         "realGeometryMinSampledRoofClearance": 111.69692584831334,
         "actualBotEntry": {
           "height": 164.53075097644245,
@@ -1013,7 +1012,6 @@
         "receiverRoof": 40,
         "clearanceMeaning": "Synthetic 120m envelope target; actual roof and hazard clearances are separate.",
         "syntheticPerturbedClearance": 20.05780949285861,
-        "releaseOnlySkipped": false,
         "realGeometryMinSampledRoofClearance": 97.69692584831331,
         "actualBotEntry": {
           "height": 167.53768963831516,
@@ -1046,7 +1044,6 @@
         "receiverRoof": 85,
         "clearanceMeaning": "Synthetic 92m envelope target; actual roof and hazard clearances are separate.",
         "syntheticPerturbedClearance": 20.057809492858624,
-        "releaseOnlySkipped": false,
         "realGeometryMinSampledRoofClearance": 24.696925848313388,
         "actualBotEntry": {
           "height": 125.96024812206082,
@@ -1079,7 +1076,6 @@
         "receiverRoof": 110,
         "clearanceMeaning": "Synthetic 120m envelope target; actual roof and hazard clearances are separate.",
         "syntheticPerturbedClearance": 20.05780949285861,
-        "releaseOnlySkipped": false,
         "realGeometryMinSampledRoofClearance": 27.696925848313345,
         "actualBotEntry": {
           "height": 169.85468883102752,
@@ -1112,7 +1108,6 @@
         "receiverRoof": 45,
         "clearanceMeaning": "Synthetic 120m envelope target; actual roof and hazard clearances are separate.",
         "syntheticPerturbedClearance": 20.05780949285861,
-        "releaseOnlySkipped": false,
         "realGeometryMinSampledRoofClearance": 92.66499952991056,
         "actualBotEntry": {
           "height": 175.2365659101578,
@@ -1145,7 +1140,6 @@
         "receiverRoof": 45,
         "clearanceMeaning": "Synthetic 134m envelope target; actual roof and hazard clearances are separate.",
         "syntheticPerturbedClearance": 16.171700497347047,
-        "releaseOnlySkipped": false,
         "realGeometryMinSampledRoofClearance": 102.77970757597136,
         "actualBotEntry": {
           "height": 163.11805262348068,
@@ -1178,7 +1172,6 @@
         "receiverRoof": 45,
         "clearanceMeaning": "Synthetic 120m envelope target; actual roof and hazard clearances are separate.",
         "syntheticPerturbedClearance": 16.171700497347047,
-        "releaseOnlySkipped": false,
         "realGeometryMinSampledRoofClearance": 88.74506059341591,
         "actualBotEntry": {
           "height": 169.9959028879201,
@@ -1211,7 +1204,6 @@
         "receiverRoof": 45,
         "clearanceMeaning": "Synthetic 92m envelope target; actual roof and hazard clearances are separate.",
         "syntheticPerturbedClearance": 16.171700497347146,
-        "releaseOnlySkipped": false,
         "realGeometryMinSampledRoofClearance": 60.77970757597146,
         "actualBotEntry": {
           "height": 125.89348498332943,
@@ -1244,7 +1236,6 @@
         "receiverRoof": 45,
         "clearanceMeaning": "Synthetic 120m envelope target; actual roof and hazard clearances are separate.",
         "syntheticPerturbedClearance": 16.171700497347047,
-        "releaseOnlySkipped": false,
         "realGeometryMinSampledRoofClearance": 88.74685278284757,
         "actualBotEntry": {
           "height": 169.78630302623935,
@@ -1277,7 +1268,6 @@
         "receiverRoof": 55,
         "clearanceMeaning": "Synthetic 120m envelope target; actual roof and hazard clearances are separate.",
         "syntheticPerturbedClearance": 16.171700497347047,
-        "releaseOnlySkipped": false,
         "realGeometryMinSampledRoofClearance": 78.77139230015801,
         "actualBotEntry": {
           "height": 174.93404123489506,
@@ -1310,7 +1300,6 @@
         "receiverRoof": 55,
         "clearanceMeaning": "Synthetic 134m envelope target; actual roof and hazard clearances are separate.",
         "syntheticPerturbedClearance": 11.669484460955175,
-        "releaseOnlySkipped": false,
         "realGeometryMinSampledRoofClearance": 88.24251348578353,
         "actualBotEntry": {
           "height": 161.45696031251896,
@@ -1343,7 +1332,6 @@
         "receiverRoof": 55,
         "clearanceMeaning": "Synthetic 120m envelope target; actual roof and hazard clearances are separate.",
         "syntheticPerturbedClearance": 11.669484460955175,
-        "releaseOnlySkipped": false,
         "realGeometryMinSampledRoofClearance": 74.20614443352791,
         "actualBotEntry": {
           "height": 169.91396670095565,
@@ -1376,7 +1364,6 @@
         "receiverRoof": 55,
         "clearanceMeaning": "Synthetic 92m envelope target; actual roof and hazard clearances are separate.",
         "syntheticPerturbedClearance": 11.669484460955289,
-        "releaseOnlySkipped": false,
         "realGeometryMinSampledRoofClearance": 46.2337849132423,
         "actualBotEntry": {
           "height": 125.98887215900483,
@@ -1409,7 +1396,6 @@
         "receiverRoof": 55,
         "clearanceMeaning": "Synthetic 120m envelope target; actual roof and hazard clearances are separate.",
         "syntheticPerturbedClearance": 11.669484460955175,
-        "releaseOnlySkipped": false,
         "realGeometryMinSampledRoofClearance": 74.24251348578353,
         "actualBotEntry": {
           "height": 169.79604373566465,
@@ -1442,7 +1428,6 @@
         "receiverRoof": 65,
         "clearanceMeaning": "Synthetic 120m envelope target; actual roof and hazard clearances are separate.",
         "syntheticPerturbedClearance": 11.669484460955175,
-        "releaseOnlySkipped": false,
         "realGeometryMinSampledRoofClearance": 64.23198096833106,
         "actualBotEntry": {
           "height": 171.3501001692666,
@@ -1475,7 +1460,6 @@
         "receiverRoof": 65,
         "clearanceMeaning": "Synthetic 134m envelope target; actual roof and hazard clearances are separate.",
         "syntheticPerturbedClearance": 7.816838187458501,
-        "releaseOnlySkipped": false,
         "realGeometryMinSampledRoofClearance": 74.36197557265139,
         "actualBotEntry": {
           "height": 160.1513473808093,
@@ -1508,7 +1492,6 @@
         "receiverRoof": 65,
         "clearanceMeaning": "Synthetic 120m envelope target; actual roof and hazard clearances are separate.",
         "syntheticPerturbedClearance": 7.816838187458515,
-        "releaseOnlySkipped": false,
         "realGeometryMinSampledRoofClearance": 60.32428162783799,
         "actualBotEntry": {
           "height": 169.98415712263983,
@@ -1541,7 +1524,6 @@
         "receiverRoof": 65,
         "clearanceMeaning": "Synthetic 92m envelope target; actual roof and hazard clearances are separate.",
         "syntheticPerturbedClearance": 7.816838187458671,
-        "releaseOnlySkipped": false,
         "realGeometryMinSampledRoofClearance": 32.3529290258963,
         "actualBotEntry": {
           "height": 125.98453045605929,
@@ -1574,7 +1556,6 @@
         "receiverRoof": 65,
         "clearanceMeaning": "Synthetic 120m envelope target; actual roof and hazard clearances are separate.",
         "syntheticPerturbedClearance": 7.816838187458515,
-        "releaseOnlySkipped": false,
         "realGeometryMinSampledRoofClearance": 60.351062184985125,
         "actualBotEntry": {
           "height": 167.4264844337586,
@@ -1607,7 +1588,6 @@
         "receiverRoof": 75,
         "clearanceMeaning": "Synthetic 120m envelope target; actual roof and hazard clearances are separate.",
         "syntheticPerturbedClearance": 7.816838187458515,
-        "releaseOnlySkipped": false,
         "realGeometryMinSampledRoofClearance": 50.38082254505804,
         "actualBotEntry": {
           "height": 171.1848531490919,
@@ -1640,7 +1620,6 @@
         "receiverRoof": 75,
         "clearanceMeaning": "Synthetic 134m envelope target; actual roof and hazard clearances are separate.",
         "syntheticPerturbedClearance": 2.0089018038222264,
-        "releaseOnlySkipped": false,
         "realGeometryMinSampledRoofClearance": 58.76920113353613,
         "actualBotEntry": {
           "height": 158.04747372456436,
@@ -1673,7 +1652,6 @@
         "receiverRoof": 75,
         "clearanceMeaning": "Synthetic 120m envelope target; actual roof and hazard clearances are separate.",
         "syntheticPerturbedClearance": 2.008901803822255,
-        "releaseOnlySkipped": false,
         "realGeometryMinSampledRoofClearance": 44.7418506181113,
         "actualBotEntry": {
           "height": 169.959693905858,
@@ -1706,7 +1684,6 @@
         "receiverRoof": 75,
         "clearanceMeaning": "Synthetic 92m envelope target; actual roof and hazard clearances are separate.",
         "syntheticPerturbedClearance": 2.008901803822411,
-        "releaseOnlySkipped": false,
         "realGeometryMinSampledRoofClearance": 16.76262621653402,
         "actualBotEntry": {
           "height": 125.89104593330356,
@@ -1739,7 +1716,6 @@
         "receiverRoof": 75,
         "clearanceMeaning": "Synthetic 120m envelope target; actual roof and hazard clearances are separate.",
         "syntheticPerturbedClearance": 2.008901803822255,
-        "releaseOnlySkipped": false,
         "realGeometryMinSampledRoofClearance": 44.76120414707114,
         "actualBotEntry": {
           "height": 162.14660318206035,
@@ -1772,7 +1748,6 @@
         "receiverRoof": 2,
         "clearanceMeaning": "Synthetic 120m envelope target; actual roof and hazard clearances are separate.",
         "syntheticPerturbedClearance": 2.008901803822255,
-        "releaseOnlySkipped": false,
         "realGeometryMinSampledRoofClearance": null,
         "actualBotEntry": {
           "height": 163.68594776515928,
@@ -2920,6 +2895,7 @@
         "clearanceMeaning": "Synthetic 134m envelope target; actual roof and hazard clearances are separate.",
         "syntheticPerturbedClearance": 20.05780949285861,
         "releaseOnlySkipped": true,
+        "releaseOnlySamples": 0,
         "realGeometryMinSampledRoofClearance": null,
         "actualBotEntry": {
           "height": 183.97080831093416,
@@ -2953,6 +2929,7 @@
         "clearanceMeaning": "Synthetic 120m envelope target; actual roof and hazard clearances are separate.",
         "syntheticPerturbedClearance": 20.05780949285861,
         "releaseOnlySkipped": false,
+        "releaseOnlySamples": 9,
         "realGeometryMinSampledRoofClearance": 97.69692584831331,
         "actualBotEntry": {
           "height": 148.18597383127263,
@@ -2986,6 +2963,7 @@
         "clearanceMeaning": "Synthetic 92m envelope target; actual roof and hazard clearances are separate.",
         "syntheticPerturbedClearance": 20.057809492858624,
         "releaseOnlySkipped": true,
+        "releaseOnlySamples": 0,
         "realGeometryMinSampledRoofClearance": null,
         "actualBotEntry": {
           "height": 114.11912330466494,
@@ -3019,6 +2997,7 @@
         "clearanceMeaning": "Synthetic 120m envelope target; actual roof and hazard clearances are separate.",
         "syntheticPerturbedClearance": 20.05780949285861,
         "releaseOnlySkipped": false,
+        "releaseOnlySamples": 9,
         "realGeometryMinSampledRoofClearance": 27.696925848313345,
         "actualBotEntry": {
           "height": 169.89515558889735,
@@ -3052,6 +3031,7 @@
         "clearanceMeaning": "Synthetic 120m envelope target; actual roof and hazard clearances are separate.",
         "syntheticPerturbedClearance": 20.05780949285861,
         "releaseOnlySkipped": false,
+        "releaseOnlySamples": 9,
         "realGeometryMinSampledRoofClearance": 92.66499952991056,
         "actualBotEntry": {
           "height": 173.89285589922164,
@@ -3085,6 +3065,7 @@
         "clearanceMeaning": "Synthetic 134m envelope target; actual roof and hazard clearances are separate.",
         "syntheticPerturbedClearance": 16.171700497347047,
         "releaseOnlySkipped": true,
+        "releaseOnlySamples": 0,
         "realGeometryMinSampledRoofClearance": null,
         "actualBotEntry": {
           "height": 164.9162037700154,
@@ -3118,6 +3099,7 @@
         "clearanceMeaning": "Synthetic 120m envelope target; actual roof and hazard clearances are separate.",
         "syntheticPerturbedClearance": 16.171700497347047,
         "releaseOnlySkipped": true,
+        "releaseOnlySamples": 0,
         "realGeometryMinSampledRoofClearance": null,
         "actualBotEntry": {
           "height": 124.62785738678707,
@@ -3151,6 +3133,7 @@
         "clearanceMeaning": "Synthetic 92m envelope target; actual roof and hazard clearances are separate.",
         "syntheticPerturbedClearance": 16.171700497347146,
         "releaseOnlySkipped": true,
+        "releaseOnlySamples": 0,
         "realGeometryMinSampledRoofClearance": null,
         "actualBotEntry": {
           "height": 113.16442468224281,
@@ -3184,6 +3167,7 @@
         "clearanceMeaning": "Synthetic 120m envelope target; actual roof and hazard clearances are separate.",
         "syntheticPerturbedClearance": 16.171700497347047,
         "releaseOnlySkipped": false,
+        "releaseOnlySamples": 9,
         "realGeometryMinSampledRoofClearance": 88.74685278284757,
         "actualBotEntry": {
           "height": 157.57376834159854,
@@ -3217,6 +3201,7 @@
         "clearanceMeaning": "Synthetic 120m envelope target; actual roof and hazard clearances are separate.",
         "syntheticPerturbedClearance": 16.171700497347047,
         "releaseOnlySkipped": false,
+        "releaseOnlySamples": 9,
         "realGeometryMinSampledRoofClearance": 78.77139230015801,
         "actualBotEntry": {
           "height": 171.83778746764958,
@@ -3250,6 +3235,7 @@
         "clearanceMeaning": "Synthetic 134m envelope target; actual roof and hazard clearances are separate.",
         "syntheticPerturbedClearance": 11.669484460955175,
         "releaseOnlySkipped": true,
+        "releaseOnlySamples": 0,
         "realGeometryMinSampledRoofClearance": null,
         "actualBotEntry": {
           "height": 183.96536042261445,
@@ -3283,6 +3269,7 @@
         "clearanceMeaning": "Synthetic 120m envelope target; actual roof and hazard clearances are separate.",
         "syntheticPerturbedClearance": 11.669484460955175,
         "releaseOnlySkipped": true,
+        "releaseOnlySamples": 0,
         "realGeometryMinSampledRoofClearance": null,
         "actualBotEntry": {
           "height": 169.28449073858474,
@@ -3316,6 +3303,7 @@
         "clearanceMeaning": "Synthetic 92m envelope target; actual roof and hazard clearances are separate.",
         "syntheticPerturbedClearance": 11.669484460955289,
         "releaseOnlySkipped": true,
+        "releaseOnlySamples": 0,
         "realGeometryMinSampledRoofClearance": null,
         "actualBotEntry": {
           "height": 115.97170234180795,
@@ -3349,6 +3337,7 @@
         "clearanceMeaning": "Synthetic 120m envelope target; actual roof and hazard clearances are separate.",
         "syntheticPerturbedClearance": 11.669484460955175,
         "releaseOnlySkipped": false,
+        "releaseOnlySamples": 9,
         "realGeometryMinSampledRoofClearance": 74.24251348578353,
         "actualBotEntry": {
           "height": 163.3626248069924,
@@ -3382,6 +3371,7 @@
         "clearanceMeaning": "Synthetic 120m envelope target; actual roof and hazard clearances are separate.",
         "syntheticPerturbedClearance": 11.669484460955175,
         "releaseOnlySkipped": false,
+        "releaseOnlySamples": 9,
         "realGeometryMinSampledRoofClearance": 64.23198096833106,
         "actualBotEntry": {
           "height": 179.16225122777206,
@@ -3415,6 +3405,7 @@
         "clearanceMeaning": "Synthetic 134m envelope target; actual roof and hazard clearances are separate.",
         "syntheticPerturbedClearance": 7.816838187458501,
         "releaseOnlySkipped": true,
+        "releaseOnlySamples": 0,
         "realGeometryMinSampledRoofClearance": null,
         "actualBotEntry": {
           "height": 173.7334163323937,
@@ -3448,6 +3439,7 @@
         "clearanceMeaning": "Synthetic 120m envelope target; actual roof and hazard clearances are separate.",
         "syntheticPerturbedClearance": 7.816838187458515,
         "releaseOnlySkipped": true,
+        "releaseOnlySamples": 0,
         "realGeometryMinSampledRoofClearance": null,
         "actualBotEntry": {
           "height": 133.11445863295017,
@@ -3481,6 +3473,7 @@
         "clearanceMeaning": "Synthetic 92m envelope target; actual roof and hazard clearances are separate.",
         "syntheticPerturbedClearance": 7.816838187458671,
         "releaseOnlySkipped": true,
+        "releaseOnlySamples": 0,
         "realGeometryMinSampledRoofClearance": null,
         "actualBotEntry": {
           "height": 119.81216905046097,
@@ -3514,6 +3507,7 @@
         "clearanceMeaning": "Synthetic 120m envelope target; actual roof and hazard clearances are separate.",
         "syntheticPerturbedClearance": 7.816838187458515,
         "releaseOnlySkipped": true,
+        "releaseOnlySamples": 0,
         "realGeometryMinSampledRoofClearance": null,
         "actualBotEntry": {
           "height": 146.99401105254097,
@@ -3547,6 +3541,7 @@
         "clearanceMeaning": "Synthetic 120m envelope target; actual roof and hazard clearances are separate.",
         "syntheticPerturbedClearance": 7.816838187458515,
         "releaseOnlySkipped": false,
+        "releaseOnlySamples": 9,
         "realGeometryMinSampledRoofClearance": 50.38082254505804,
         "actualBotEntry": {
           "height": 169.95407436037652,
@@ -3580,6 +3575,7 @@
         "clearanceMeaning": "Synthetic 134m envelope target; actual roof and hazard clearances are separate.",
         "syntheticPerturbedClearance": 2.0089018038222264,
         "releaseOnlySkipped": true,
+        "releaseOnlySamples": 0,
         "realGeometryMinSampledRoofClearance": null,
         "actualBotEntry": {
           "height": 183.98880543555663,
@@ -3613,6 +3609,7 @@
         "clearanceMeaning": "Synthetic 120m envelope target; actual roof and hazard clearances are separate.",
         "syntheticPerturbedClearance": 2.008901803822255,
         "releaseOnlySkipped": true,
+        "releaseOnlySamples": 0,
         "realGeometryMinSampledRoofClearance": null,
         "actualBotEntry": {
           "height": 169.99378517332374,
@@ -3646,6 +3643,7 @@
         "clearanceMeaning": "Synthetic 92m envelope target; actual roof and hazard clearances are separate.",
         "syntheticPerturbedClearance": 2.008901803822411,
         "releaseOnlySkipped": true,
+        "releaseOnlySamples": 0,
         "realGeometryMinSampledRoofClearance": null,
         "actualBotEntry": {
           "height": 115.04670462125799,
@@ -3679,6 +3677,7 @@
         "clearanceMeaning": "Synthetic 120m envelope target; actual roof and hazard clearances are separate.",
         "syntheticPerturbedClearance": 2.008901803822255,
         "releaseOnlySkipped": true,
+        "releaseOnlySamples": 0,
         "realGeometryMinSampledRoofClearance": null,
         "actualBotEntry": {
           "height": 146.9986291408434,
@@ -3712,6 +3711,7 @@
         "clearanceMeaning": "Synthetic 120m envelope target; actual roof and hazard clearances are separate.",
         "syntheticPerturbedClearance": 2.008901803822255,
         "releaseOnlySkipped": false,
+        "releaseOnlySamples": 9,
         "realGeometryMinSampledRoofClearance": null,
         "actualBotEntry": {
           "height": 169.94327783952087,

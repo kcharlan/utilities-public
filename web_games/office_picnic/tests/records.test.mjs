@@ -33,3 +33,9 @@ test('corrupt storage, unknown modes and nonfinite results do not create records
   assert.deepEqual(loadRecords(bad).best,{});assert.doesNotThrow(()=>saveResult(bad,'casual','standard',300));
   const s=storage();saveResult(s,'casual','cheat',1);saveResult(s,'casual','standard',NaN);assert.deepEqual(loadRecords(s).best,{});
 });
+test('v4 migration persists once, without overwriting v4, and survives blocked writes',()=>{
+  const v4=JSON.stringify({best:{standard:321},muted:true}),s=storage({'office-picnic-v4':v4});
+  const migrated=loadRecords(s);assert.deepEqual(JSON.parse(s.data['office-picnic-v5']),migrated);assert.equal(s.data['office-picnic-v4'],v4);
+  const blocked={getItem:k=>k==='office-picnic-v4'?v4:null,setItem(){throw Error('blocked')}};
+  assert.deepEqual(loadRecords(blocked),migrated);
+});

@@ -15,8 +15,11 @@ export function loadRecords(storage){
   try{
     const saved=storage?.getItem(KEY);
     if(saved!==null&&saved!==undefined)return clean(JSON.parse(saved));
-    const old=JSON.parse(storage?.getItem(OLD_KEY)||'{}');
-    return clean({best:{casual:old?.best},muted:old?.muted});
+    const previous=storage?.getItem(OLD_KEY);
+    if(previous===null||previous===undefined)return clean({});
+    const old=JSON.parse(previous),migrated=clean({best:{casual:old?.best},muted:old?.muted});
+    savePreferences(storage,migrated);
+    return migrated;
   }catch{return clean({});}
 }
 export function savePreferences(storage,records){try{storage?.setItem(KEY,JSON.stringify(clean(records)));}catch{/* Storage can be unavailable. */}}

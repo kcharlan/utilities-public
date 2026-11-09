@@ -5,7 +5,7 @@ import {createRun,stepRun} from './simulation.js';
 import {airAt} from './world.js';
 import {flightGuidance,noticeMessages} from './guidance.js';
 import {Renderer} from './render.js';
-import {Sound} from './audio.js';
+import {Sound,dispatchRunEvents} from './audio.js';
 import {consumeTime,formatTime,formatDistance,formatSpeed,formatFeet} from './session.js';
 import {loadRecords,saveResult,savePreferences} from './records.js';
 const $=id=>document.getElementById(id),canvas=$('flight'),renderer=new Renderer(canvas);
@@ -50,7 +50,7 @@ function finish(){
 }
 function tick(){
   run.previous={x:run.plane.x,y:run.plane.y};if(trace)recordInput(trace,held);stepRun(run,held);sound.district=run.district;
-  for(const event of run.events)sound.event(event);
+  dispatchRunEvents(sound,run);
   if(run.events.includes('impact'))held=false;
   const messages=noticeMessages(run);
   if(messages.length)notice(messages.join(' · '),8);

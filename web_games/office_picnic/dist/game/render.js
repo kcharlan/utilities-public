@@ -79,7 +79,10 @@ export class Renderer{
       }
     }
     // If a warning source is outside the camera vertically, keep its direction legible.
-    const incoming=upcomingHazard(run.world,p.x);
+    const incoming=run.world.tier.prompts==='full'?upcomingHazard(run.world,p.x):run.world.hazards.find(h=>{
+      const box=hazardBox(h,run.worldTicks/60);
+      return box.x+box.w+8>p.x&&box.x-p.x<h.warningDistance;
+    });
     const squeeze=run.world.hazards.find(h=>h.squeeze&&run.warned.has(hazardKey(h))&&hazardBox(h,run.worldTicks/60).x+h.w+8>p.x);
     const marker=squeeze||incoming;
     if(marker){

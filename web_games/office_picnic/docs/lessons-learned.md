@@ -24,3 +24,5 @@
 - Validate diagnostic CLI options before running samples: a missing tier must not silently select the default, and reduced samples must not be presented as passing acceptance. Replay validation should check JSON field types and values without depending on object property order.
 - A squeeze is one encounter with two collision bodies. Key its warning by the pair, but retain each moving body's own arrival and clearance in proof; the visible label also belongs to the shared window rather than both sprites.
 - Validate stored tier IDs as strings before property lookup: JavaScript coerces an array such as `["rush"]` into a valid property key.
+- Carry an encounter's identity through every consumer of an emitted warning. Test both members' actual trigger thresholds and a respawn, and use the same live moving geometry for the warning and its marker.
+- A storage migration needs a best-effort write as well as a readable in-memory result. Keep the old key intact and exercise a denied write separately from successful persistence.

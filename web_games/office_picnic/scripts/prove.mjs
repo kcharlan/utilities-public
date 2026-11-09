@@ -5,7 +5,7 @@ import {createRun,stepRun} from '../dist/game/simulation.js';
 import {chooseInput,referenceInput} from '../dist/game/bot.js';
 import {TIERS} from '../dist/game/tiers.js';
 import {buildWorld,hazardBox,hazardKey} from '../dist/game/world.js';
-import {validateEncounter} from './proof-checks.mjs';
+import {validateEncounter,DISTRICT_SPEEDS,DISTRICT_OFFSETS,DISTRICT_DELAYS,GAP_SPEEDS,GAP_OFFSETS} from './proof-checks.mjs';
 function prove(tier){
 const world=buildWorld(undefined,tier),input=tier.id==='casual'?chooseInput:referenceInput,runs=[],districtTrials=[],gaps=[],actualEntries=new Map(),actualReceivers=new Map();
 const encounters=world.hazards.map(h=>({id:h.id,district:h.district,kind:h.kind,pass:h.pass,minClearance:Infinity,warningSeconds:null,arrivalSeconds:null,passed:false}));
@@ -36,7 +36,7 @@ for(const mode of ['standard','nonstop']){
   assert.equal(r.status,'finished');assert.equal(r.crashes,0);
   runs.push({mode,seconds:r.ticks/60,distance:world.length,crashes:r.crashes});
 }
-for(const d of world.districts)for(const speed of [22,26,30])for(const dy of [-6,0,6])for(const delay of [0,3,6]){
+for(const d of world.districts)for(const speed of DISTRICT_SPEEDS)for(const dy of DISTRICT_OFFSETS)for(const delay of DISTRICT_DELAYS){
   const r=createRun('standard',world);r.district=d.index;r.checkpoint={...d.checkpoint};r.plane=createPlane({...d.checkpoint,speed,y:d.checkpoint.y+dy});
   let held=false;
   for(let n=0;n<60*150&&r.plane.x<d.end&&r.crashes===0;n++){
@@ -48,10 +48,10 @@ for(const d of world.districts)for(const speed of [22,26,30])for(const dy of [-6
   districtTrials.push({district:d.name,speed,entryOffset:dy,inputSampleTicks:delay+1,cleared:true});
 }
 for(const g of world.gaps){
-  let minClearance=Infinity,minActualRoofClearance=Infinity;
+  let minClearance=Infinity,minActualRoofClearance=Infinity,releaseOnlySamples=0;
   const receiver=world.buildings.find(b=>Math.abs(b.x-(g.end-10))<.01);
   const occupied=tier.id!=='casual'&&world.hazards.some(h=>h.x>=g.x&&h.x<=g.end);
-  for(const speed of [18,22,26])for(const dy of [-2,0,2]){
+  for(const speed of GAP_SPEEDS)for(const dy of GAP_OFFSETS){
     const p=createPlane({x:0,y:g.entryHeight+dy,speed,pitch:g.entryPitch});
     while(p.x<g.length)advancePlane(p,false);
     minClearance=Math.min(minClearance,p.y-g.clearance);
@@ -61,14 +61,14 @@ for(const g of world.gaps){
       stepRun(trial,false);
       if(receiver&&trial.plane.x>=receiver.x-1.2&&trial.plane.x<=receiver.x+receiver.w+1.2)minActualRoofClearance=Math.min(minActualRoofClearance,trial.plane.y-receiver.y-1.2);
     }
-    assert.equal(trial.crashes,0,`${g.id}: real-geometry trial impact`);assert.ok(trial.plane.x>=g.end+2);
+    assert.equal(trial.crashes,0,`${g.id}: real-geometry trial impact`);assert.ok(trial.plane.x>=g.end+2);releaseOnlySamples++;
   }
   assert.ok(g.utilization<=1&&minClearance>=0,`${g.id} over limit`);
   const entry=actualEntries.get(g.id),roof=receiver?.y??2,continuation=createPlane({y:entry.height,speed:entry.speed,pitch:entry.pitch});
   while(continuation.y>roof+1.2&&continuation.x<2000)advancePlane(continuation,false);
   const actualRequiredRange=receiver?receiver.x-1.2-g.x:g.length;
   assert.ok(actualRequiredRange<=continuation.x,`${g.id}: actual-entry continuation over limit`);
-  gaps.push({...g,sourceRoofEnd:g.x+10,receiverRoofStart:receiver?.x??null,receiverRoof:roof,clearanceMeaning:`Synthetic ${g.clearance}m envelope target; actual roof and hazard clearances are separate.`,syntheticPerturbedClearance:minClearance,releaseOnlySkipped:occupied,realGeometryMinSampledRoofClearance:Number.isFinite(minActualRoofClearance)?minActualRoofClearance:null,actualBotEntry:entry,actualBotReceiver:actualReceivers.get(g.id)??null,actualEntryMeasuredRange:continuation.x,actualRequiredRange,actualEntryUtilization:actualRequiredRange/continuation.x});
+  gaps.push({...g,sourceRoofEnd:g.x+10,receiverRoofStart:receiver?.x??null,receiverRoof:roof,clearanceMeaning:`Synthetic ${g.clearance}m envelope target; actual roof and hazard clearances are separate.`,syntheticPerturbedClearance:minClearance,...(tier.id==='casual'?{}:{releaseOnlySkipped:occupied,releaseOnlySamples}),realGeometryMinSampledRoofClearance:Number.isFinite(minActualRoofClearance)?minActualRoofClearance:null,actualBotEntry:entry,actualBotReceiver:actualReceivers.get(g.id)??null,actualEntryMeasuredRange:continuation.x,actualRequiredRange,actualEntryUtilization:actualRequiredRange/continuation.x});
 }
 for(const e of encounters)e.warningLeadSeconds=validateEncounter(e);
 const report={runs,districtTrials,gaps,encounters,engagement,summary:{districtTrials:districtTrials.length,gaps:gaps.length,encounters:encounters.length,firstEncounterSeconds:encounters[0].arrivalSeconds,minHazardClearance:Math.min(...encounters.map(e=>e.minClearance)),minWarningLeadSeconds:Math.min(...encounters.map(e=>e.warningLeadSeconds)),maxSyntheticEnvelopeUtilization:Math.max(...gaps.map(g=>g.utilization)),minSyntheticPerturbedClearance:Math.min(...gaps.map(g=>g.syntheticPerturbedClearance)),maxActualEntryUtilization:Math.max(...gaps.map(g=>g.actualEntryUtilization)),minActualBotReceiverClearance:Math.min(...gaps.filter(g=>g.actualBotReceiver).map(g=>g.actualBotReceiver.clearance)),minRealGeometrySampledRoofClearance:Math.min(...gaps.filter(g=>g.realGeometryMinSampledRoofClearance!==null).map(g=>g.realGeometryMinSampledRoofClearance))}};

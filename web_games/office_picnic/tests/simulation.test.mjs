@@ -83,3 +83,9 @@ test('squeeze warning identifies its pair once and wind entry emits no lift',asy
   for(let i=0;i<150;i++){sim.stepRun(r,false);assert.ok(!r.warningHazards.some(h=>h.squeeze));}
   const z=w.winds[0];r.plane.x=z.x0+20;r.plane.y=300;r.lastAir=null;sim.stepRun(r,false);assert.ok(!r.events.includes('lift'));
 });
+test('squeeze perch impact gives window correction with unchanged crash location',async()=>{
+  const {TIERS}=await import('../dist/game/tiers.js');const w=worldMod.buildWorld(undefined,TIERS.rush),flock=w.hazards.find(h=>h.squeeze&&h.kind==='pigeon');
+  const perch=w.buildings.find(b=>b.perch&&b.district===flock.district&&b.x===flock.x-6),r=sim.createRun('standard',w);
+  r.plane.x=perch.x-1;r.plane.y=perch.y;sim.stepRun(r,false);
+  assert.equal(r.status,'respawning');assert.match(r.cause,/window/i);assert.equal(r.crashLog[0].where,'perch 4.4');
+});

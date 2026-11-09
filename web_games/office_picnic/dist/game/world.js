@@ -50,7 +50,7 @@ export function buildWorld(limits=measureFlight(),cfg=TIERS.casual){
           const flock={id:`h${d}-${j}-sq-over`,district:d,slot:j,kind:'pigeon',pass:'above',squeeze:true,windowTop:washerY,windowBottom:flockTop,x:cx-12,y:flockTop-16,w:24,h:16,phase:0,warningDistance:360,moving:false};
           const washer={id:`h${d}-${j}-sq-under`,district:d,slot:j,kind:'platform',pass:'below',squeeze:true,windowTop:washerY,windowBottom:flockTop,x:cx-22.5,y:washerY,w:45,h:30,suspensionTop:upperSuspension,phase:0,warningDistance:250,moving:false};
           world.hazards.push(washer,flock);slot.slotHazards.push(washer,flock);
-          world.buildings.push({x:flock.x-6,y:flock.y-2,w:flock.w+12,h:100,type:0,district:d,perch:true});
+          world.buildings.push({x:flock.x-6,y:flock.y-2,w:flock.w+12,h:100,type:0,district:d,perch:true,squeeze:true});
         }
       }
       x+=width+gap;

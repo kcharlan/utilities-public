@@ -48,3 +48,12 @@ test('long labels wrap within a narrow canvas',()=>{
   renderer.label('Squeeze · fly between the washer and the flock',180,100,'white',12);
   assert.ok(calls[0][0]>=0);assert.ok(calls[0][0]+calls[0][2]<=200);
 });
+test('warnings marker follows a moving flock into range on phone',async()=>{
+  const {TIERS}=await import('../dist/game/tiers.js');const run=createRun('standard',world.buildWorld(undefined,TIERS.rush));
+  const hazard=run.world.hazards.find(h=>h.id==='h1-over');run.worldTicks=60*(Math.PI*1.5-hazard.phase)/(.65*hazard.amp.rate)-1;
+  run.plane.x=hazard.x-364;run.plane.y=150;run.world={...run.world,buildings:[],airs:[],winds:[],hazards:[hazard]};
+  stepRun(run,false);assert.equal(run.warningHazards[0].id,hazard.id);
+  const labels=[],ctx=new Proxy({drawImage(){}},{get:(o,k)=>k in o?o[k]:()=>{}});
+  const renderer=Object.assign(Object.create(Renderer.prototype),{w:390,h:844,ctx,washer:{complete:false},reduced:true,cache:[{},{}],label:(text)=>labels.push(text),sprite:()=>{}});
+  renderer.draw(run,false,1);assert.ok(labels.some(text=>text.startsWith('→ Pigeons')),labels.join(', '));
+});
