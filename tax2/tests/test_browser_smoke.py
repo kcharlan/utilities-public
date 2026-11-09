@@ -592,15 +592,26 @@ def test_missing_state_year_preserves_selection_and_exports(built_browser, tmp_p
 
 
 def test_partial_missing_year_and_selected_year_names(built_browser):
-    page = built_browser(storage={'tax2:selected-states': '["GA","PA"]'}, instant='2026-10-08T12:00:00Z')
-    page.get_by_label('Tax Year', exact=True).select_option('2025')
-    expect(page.locator('.error-card')).to_have_text('Error: State PA has no rules for 2025. Available years: [2026, 2027]')
+    # Derive expected years from the bundled rules so adding a year needs no test edit.
+    payload = build_payload(PROJECT / 'rules', rules_source='bundled', built_at='2025-12-01T00:00:00Z')
+    available = {state['code']: state['years'] for state in payload['states']}
+
+    def missing(code):
+        return next(year for year in sorted(map(int, payload['federal'])) if year not in available[code])
+
+    def message(code, year):
+        years = ', '.join(map(str, available[code]))
+        return f'Error: State {code} has no rules for {year}. Available years: [{years}]'
+
+    page = built_browser(payload, storage={'tax2:selected-states': '["GA","PA"]'}, instant='2026-10-08T12:00:00Z')
+    page.get_by_label('Tax Year', exact=True).select_option(str(missing('PA')))
+    expect(page.locator('.error-card')).to_have_text(message('PA', missing('PA')))
     expect(page.get_by_label('Georgia', exact=True)).to_be_checked()
     expect(page.get_by_label('Pennsylvania', exact=True)).to_be_checked()
     page.get_by_label('Pennsylvania', exact=True).uncheck()
     expect(page.locator('.state .result-label')).to_have_text('Georgia')
-    page.get_by_label('Tax Year', exact=True).select_option('2027')
-    expect(page.locator('.error-card')).to_have_text('Error: State GA has no rules for 2027. Available years: [2025, 2026]')
+    page.get_by_label('Tax Year', exact=True).select_option(str(missing('GA')))
+    expect(page.locator('.error-card')).to_have_text(message('GA', missing('GA')))
     expect(page.get_by_role('button', name='Download QIF')).to_be_disabled()
 
 

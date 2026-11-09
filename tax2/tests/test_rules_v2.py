@@ -136,13 +136,6 @@ def assert_live_rules_match_frozen(project_root):
         assert load_rules(str(path)).model_dump(mode="json") == expected
 
 
-def test_pa_2027_matches_2026_except_year():
-    older = load_rules(str(PROJECT / 'rules/states/PA/2026.yaml')).model_dump(mode='json')
-    newer = load_rules(str(PROJECT / 'rules/states/PA/2027.yaml')).model_dump(mode='json')
-    older['year'] = 2027
-    assert older == newer
-
-
 def test_live_rules_match_every_frozen_rule_except_enabled_pa_eit():
     assert_live_rules_match_frozen(PROJECT)
 

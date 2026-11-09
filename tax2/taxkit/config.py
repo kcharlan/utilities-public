@@ -4,9 +4,6 @@ import logging
 import os
 import contextlib
 import tempfile
-import stat
-import subprocess
-import unicodedata
 from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
@@ -30,126 +27,6 @@ def runtime_home() -> Path:
 
 def config_path() -> Path:
     return runtime_home() / CONFIG_FILENAME
-
-
-def _publication_entry(path: Path) -> Path:
-    path = path.expanduser()
-    return path.parent.resolve(strict=False) / path.name
-
-
-def config_resolution_entries(config_entry: Path) -> list[Path]:
-    """Record link entries and the final target without failing on unreadable chains."""
-    original = config_entry.expanduser().absolute()
-    entries = [original]
-    pending = list(original.parts[1:])
-    current = Path(original.anchor)
-    expansions = 0
-    seen = set()
-    while pending:
-        component = pending.pop(0)
-        if component == '..':
-            current = current.parent
-            continue
-        candidate = current / component
-        try:
-            is_link = stat.S_ISLNK(os.lstat(candidate).st_mode)
-        except OSError:
-            is_link = False
-        if is_link:
-            entries.append(candidate)
-            state = (candidate, tuple(pending))
-            if expansions >= 40 or state in seen:
-                return entries
-            seen.add(state)
-            expansions += 1
-            try:
-                target = Path(os.readlink(candidate))
-            except OSError:
-                current = candidate
-                continue
-            if target.is_absolute():
-                current = Path(target.anchor)
-                pending = list(target.parts[1:]) + pending
-            else:
-                pending = list(target.parts) + pending
-        else:
-            current = candidate
-    entries.append(current)
-    return entries
-
-
-def entry_matches(a: Path, b: Path) -> bool:
-    """Compare entries by identity, then conservatively compare missing names."""
-    def entry_stat(path):
-        try:
-            return os.lstat(path)
-        except OSError:
-            return None
-
-    a_stat, b_stat = entry_stat(a), entry_stat(b)
-    if a_stat is not None and b_stat is not None:
-        return (a_stat.st_dev, a_stat.st_ino) == (b_stat.st_dev, b_stat.st_ino)
-    fold = lambda value: unicodedata.normalize('NFC', value).casefold()
-    if fold(a.name) != fold(b.name):
-        return False
-    try:
-        if a.parent.exists() and b.parent.exists():
-            return os.path.samefile(a.parent, b.parent)
-        return fold(os.path.realpath(a.parent)) == fold(os.path.realpath(b.parent))
-    except OSError:
-        return False
-
-
-def config_conflict(output: Path, config_entry: Path) -> bool:
-    entry = _publication_entry(output)
-    return any(entry_matches(entry, protected)
-               for protected in config_resolution_entries(config_entry))
-
-
-def _git_read(arguments: list[str]) -> bytes:
-    # Repository/index/object-store and injected Git config overrides must not
-    # redirect these local read-only identity checks.
-    environment = {key: value for key, value in os.environ.items() if not key.startswith('GIT_')}
-    try:
-        result = subprocess.run(['git', *arguments], env=environment, capture_output=True,
-                                timeout=5, check=True)
-    except (OSError, subprocess.SubprocessError) as error:
-        raise ValueError('Destination safety: unable to classify Git-marked output ancestry') from error
-    return result.stdout
-
-
-def ensure_no_config_conflict(output: Path, config_entry: Path) -> None:
-    """The single conflict-then-raise step shared by the early gate and pre-publish recheck."""
-    if config_conflict(output, config_entry):
-        raise ValueError('Output destination would replace config.yaml')
-
-
-def validate_output_destination(output: Path, config_path: Path) -> None:
-    """Read-only gate for physical publication entries, before private state access."""
-    try:
-        entry = _publication_entry(output)
-        ensure_no_config_conflict(output, config_path)
-        for candidate in (entry.parent, *entry.parent.parents):
-            metadata = candidate / '.git'
-            try:
-                mode = metadata.lstat().st_mode
-            except FileNotFoundError:
-                continue
-            if stat.S_ISLNK(mode):
-                metadata.stat()
-            root_bytes = _git_read(['-C', str(candidate), 'rev-parse', '--show-toplevel'])
-            root_text = os.fsdecode(root_bytes).rstrip('\n')
-            if not root_text or not Path(root_text).is_absolute():
-                raise ValueError('Destination safety: invalid Git source identity')
-            root = Path(root_text).resolve(strict=True)
-            if not candidate.is_relative_to(root):
-                raise ValueError('Destination safety: inconsistent Git source identity')
-            tracked = _git_read(['-C', str(root), 'ls-files', '--cached', '-z', '--',
-                                 'tax2/tax2', 'tools/check_uv_headers.py']).split(b'\0')
-            if {b'tax2/tax2', b'tools/check_uv_headers.py'}.issubset(tracked):
-                raise ValueError('Destination safety: output is inside a utilities-public source checkout')
-    except OSError as error:
-        raise ValueError('Destination safety: unable to inspect output ancestry') from error
 
 
 def ensure_runtime_home(path: Path) -> Path:

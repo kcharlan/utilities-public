@@ -10,6 +10,9 @@ from .config import load_config, normalize_qif_overrides
 from .rules_loader import load_rules
 from .utils import discover_year_files
 
+# The single Tax2 version declaration; bump it in every release.
+VERSION = "4.0.0"
+
 ASSET_ROOT = Path(__file__).resolve().parents[1] / "web"
 
 
@@ -47,7 +50,7 @@ def build_payload(rules_root: Path, *, rules_source: str, built_at: str | None =
     if not any(state["years"] for state in states):
         raise ValueError(f"No valid state rules in {state_root}")
     cfg = load_config()
-    return {"schema": 1, "app": {"name": "Tax2", "version": "3.1.0"},
+    return {"schema": 1, "app": {"name": "Tax2", "version": VERSION},
             "built_at": built_at if built_at is not None else datetime.now(timezone.utc).isoformat(),
             "rules_source": rules_source, "federal": federal, "states": states,
             "config": {"default_states": cfg["default_states"],

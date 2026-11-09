@@ -151,9 +151,8 @@ def test_payload_schema_sorting_projection_and_unchanged_config(monkeypatch, tmp
     payload = build_payload(synthetic_root(tmp_path), rules_source="custom", built_at="2026-01-01T00:00:00+00:00")
     assert set(payload) == {"schema", "app", "built_at", "rules_source", "federal", "states", "config"}
     assert payload["schema"] == 1
-    version = re.search(r"^Tax2 (\S+) builds", (PROJECT_ROOT / "README.md").read_text(), re.M)
-    assert version is not None
-    assert payload["app"] == {"name": "Tax2", "version": version.group(1)}
+    assert payload["app"]["name"] == "Tax2"
+    assert re.fullmatch(r"\d+\.\d+\.\d+", payload["app"]["version"])
     assert list(payload["federal"]) == ["2025", "2026"]
     assert [state["code"] for state in payload["states"]] == ["XE", "XF"]
     assert payload["states"][0] == {"code": "XE", "display_name": "XE", "years": [], "qif": None, "rules": {}}

@@ -1,14 +1,14 @@
 # Tax2
 
-Tax2 3.1.0 builds a private, self-contained estimated-tax calculator from federal and
+Tax2 builds a private, self-contained estimated-tax calculator from federal and
 state YAML rules. Open the resulting HTML file in a browser to calculate tax
 and download QIF payments, a Markdown rate schedule, or a CSV lookup table.
 All rules, scripts, styles and license notices are embedded; the page uses local
 system fonts. It works offline without a server or frontend build step.
 
-Bundled rules cover federal tax for 2025–2027, Georgia for 2025–2026, and
-Pennsylvania for 2026–2027. Verify rates and eligibility before relying on
-estimates. See [Usage](docs/Usage.md) for tax and lookup limitations, and
+Bundled rules cover federal tax, Georgia and Pennsylvania; the files in
+`rules/` and the page's year menu show which years. Verify rates and
+eligibility before relying on estimates. See [Usage](docs/Usage.md) for tax and lookup limitations, and
 [multi-state design](docs/multi_state_design.md) for interfaces and invariants.
 
 ## Quick start
@@ -29,20 +29,18 @@ after clearing the uv cache or changing dependencies.
 ```bash
 UV_PYTHON_DOWNLOADS=never ./tax2 --help
 UV_PYTHON_DOWNLOADS=never ./tax2 --no-browser
-UV_PYTHON_DOWNLOADS=never ./tax2 --output "$HOME/.tax2/example.html"
 UV_PYTHON_DOWNLOADS=never ./tax2 --rules-dir "$HOME/.tax2/rules"
 UV_PYTHON_DOWNLOADS=never UV_OFFLINE=1 ./tax2 --no-browser
 ```
 
 `TAX2_HOME` overrides the runtime home, whose directory has mode `0700`.
-New config and built pages have mode `0600`. Pages are replaced atomically,
-including explicit outputs. Help writes no files. Build failure preserves the
-previous page; browser-opening failure warns, leaving the printed file available
-to open manually.
+New config and built pages have mode `0600`. The page is always
+`tax2.html` in the runtime home and is replaced atomically. Help writes no
+files. Build failure preserves the previous page; browser-opening failure
+warns, leaving the printed file available to open manually.
 
-Exit codes are 0 for success (including a browser-opening warning after writing),
-1 for a fatal build or destination-safety error, and 2 for a command-line usage
-error.
+Exit codes are 0 for success (including a browser-opening warning after
+writing), 1 for a fatal build error, and 2 for a command-line usage error.
 
 An unreadable or malformed existing config is not a build error. A config entry
 that cannot be read or parsed (including a dangling link, a symlink loop or a
@@ -53,24 +51,6 @@ link chain through an inaccessible directory) warns
 once per build, the build continues with default preferences (exit 0 when
 nothing else fails), and nothing is created or modified at the config entry or
 its link targets (the runtime home itself still gets its usual `0700` mode).
-
-`--output` rejects destinations that replace the config entry, any entry
-in its symlink chain (including directory links and a symlinked `TAX2_HOME`),
-or its final target, even if missing. Existing entries are compared by file
-identity, so hard links to config or its target are rejected even though
-replacing such a link would leave the protected file's other name intact.
-Distinct existing files on a
-case-sensitive volume remain allowed; when either entry is missing, names use
-NFC normalization and Unicode case folding and parents use identity when both
-exist, otherwise folded physical paths. This rule is conservative on
-case-sensitive volumes: missing `CONFIG.yaml` conflicts with `config.yaml`,
-missing `STRASSE.yaml` conflicts with a protected `Straße.yaml`, and differently
-cased missing parent paths also conflict. These name checks cover missing,
-existing and dangling-link targets. Unrelated outputs still build when config
-has a loop or unreadable chain, with a config warning and defaults.
-Utilities-public source checkouts are rejected, and Git-marked ancestry that
-cannot be classified fails closed. An unrelated output leaf symlink is replaced
-as an entry, without writing through it to its target.
 
 Rerun after changing rules or config: browser refresh only reloads the snapshot.
 Rules with a numeric final bracket threshold or a bracket rate of at least 1
@@ -167,6 +147,16 @@ repo. Pennsylvania's earned-only local EIT is enabled at a generic configured
 rate of 1%, added to the 3.07% state tax on both income buckets. Verify the
 applicable local rate before use; edit private rules and rebuild if it differs.
 
+### Adding a tax year
+
+1. Add the year's YAML files under `rules/`.
+2. Add a hand-checked figure for the new year to
+   `tests/test_calculator_contracts.py`, with the arithmetic in a comment.
+3. Bump `VERSION` in `taxkit/page.py`, the only version declaration.
+4. Run the suite (below).
+
+Tests and docs don't list the bundled years, so nothing else needs editing.
+
 ## Project layout
 
 ```text
@@ -195,12 +185,9 @@ requirements. If Chromium is missing, install it explicitly with
 `UV_PYTHON_DOWNLOADS=never ../tools/run_project_tests.py tax2 --install-browsers`.
 
 The complete suite includes offline Chromium interaction and all three real
-downloads, parity, bundled expectations, and publication safety. Other browsers
-require manual verification. After launcher-header changes, run from repo root:
+downloads, parity, bundled expectations, and private atomic publication. Other
+browsers require manual verification. After launcher-header changes, run from repo root:
 
 ```bash
 uv run --no-python-downloads --script tools/check_uv_headers.py
 ```
-
-For executable changes, also follow the private build, permissions and warmed
-offline acceptance steps in the repository's Tax2 validation matrix.
