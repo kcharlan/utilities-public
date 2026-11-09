@@ -1,4 +1,5 @@
 import {TIERS} from './tiers.js';
+import {MEDALS,medalFor} from './medals.js';
 import {buildWorld} from './world.js';
 import {createTrace,recordInput,finishTrace} from './trace.js';
 import {createRun,stepRun,netTicks} from './simulation.js';
@@ -14,8 +15,13 @@ let storage;try{storage=window.localStorage;}catch{storage=null;}
 let records=loadRecords(storage),sound=new Sound(records.muted),run=null,paused=false,held=false,last=0,clock={accumulator:0},noticeEnd=0,lastDistrict=-1,lastVent=null,lastVentActive=false,resultShown=false,rewardEnd=0;
 const reduced=matchMedia('(prefers-reduced-motion: reduce)');reduced.addEventListener('change',()=>renderer.reduced=reduced.matches);
 function titleBests(){
-  const best=records.best[records.tier]||{},a=best.standard,b=best.nonstop;
-  $('best-title').textContent=a||b?`Best standard: ${a?formatTime(a):'—'}   /   Nonstop: ${b?formatTime(b):'—'}`:'A short flight. A long way from your desk.';
+  for(const tier of Object.values(TIERS)){
+    const best=records.best[tier.id]||{};
+    const describe=mode=>best[mode]
+      ?`${formatTime(best[mode])} · ${medalFor(tier.id,best[mode])||'no medal'}`
+      :'—';
+    $(`best-${tier.id}`).textContent=`Standard: ${describe('standard')} / Nonstop: ${describe('nonstop')}`;
+  }
 }
 function muteUI(){$('mute').textContent=records.muted?'Sound off':'Sound on';$('mute').setAttribute('aria-pressed',String(records.muted));$('mute').setAttribute('aria-label',records.muted?'Unmute sound':'Mute sound');}
 function notice(text,seconds=6){$('notice').textContent=text;$('notice').hidden=false;noticeEnd=(run?.worldTicks||0)+seconds*60;}
@@ -45,6 +51,11 @@ function finish(){
   const penalty=run.mode==='standard'?run.crashes*run.world.rules.crashPenaltyTicks:0;
   const impacts=run.mode==='standard'?`Impacts: ${run.crashes} · +${formatTime(penalty/60)}`:`Restarts: ${run.crashes} · no time penalty`;
   $('result-breakdown').replaceChildren(...[`Flight: ${formatTime((run.finishTicks-penalty)/60)}`,impacts,`Pickups: ${run.collected.size}/${run.world.pickups.length} · −${formatTime(run.bonusTicks/60)}`].map(text=>{const row=document.createElement('div');row.textContent=text;return row;}));
+  const medal=medalFor(run.world.tier.id,seconds);
+  const table=MEDALS[run.world.tier.id];
+  const next=medal==='gold'?null:medal==='silver'?'gold':medal==='bronze'?'silver':'bronze';
+  $('result-medal').textContent=medal?`${medal[0].toUpperCase()+medal.slice(1)} medal earned`:'No medal earned';
+  $('result-target').textContent=next?`Next: ${next} at ${formatTime(table[next])} or faster`:'Gold is the highest medal.';
   $('result-best').textContent=`${run.mode==='standard'?'Standard':'Nonstop'} · ${!previous||seconds<previous?'Your best flight.':`Best ${formatTime(previous)}`}`;
   $('notice').hidden=true;
   if(trace){finishTrace(trace,run);const link=document.createElement('a');link.textContent='Download flight trace';link.download='office-picnic-trace.json';link.href=URL.createObjectURL(new Blob([JSON.stringify(trace)],{type:'application/json'}));link.id='trace-download';clearTraceDownload();$('result-screen').querySelector('.modal').append(link);}
@@ -94,7 +105,12 @@ for(const tier of Object.values(TIERS)){
   const radio=document.createElement('input');radio.type='radio';radio.name='tier';radio.value=tier.id;radio.checked=records.tier===tier.id;
   const copy=document.createElement('span');const name=document.createElement('strong');name.textContent=tier.name;
   const detail=document.createElement('small');detail.textContent=`${tier.blurb} Standard impacts +${tier.rules.crashPenaltyTicks/60}s.`;
-  copy.append(name,detail);label.append(radio,copy);$('tier-picker').append(label);
+  const thresholds=document.createElement('small');
+  const table=MEDALS[tier.id];
+  thresholds.textContent=`Gold ${formatTime(table.gold)} · Silver ${formatTime(table.silver)} · Bronze ${formatTime(table.bronze)}`;
+  const best=document.createElement('small');
+  best.id=`best-${tier.id}`;
+  copy.append(name,detail,thresholds,best);label.append(radio,copy);$('tier-picker').append(label);
   radio.addEventListener('change',()=>{if(radio.checked){records.tier=tier.id;savePreferences(storage,records);titleBests();}});
 }
 titleBests();muteUI();requestAnimationFrame(frame);

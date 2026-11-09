@@ -1,4 +1,5 @@
 // Browser-only verification harness, separate from the shipped play flow.
+import {medalFor,MEDALS} from './medals.js';
 import {TIERS} from './tiers.js';import {buildWorld} from './world.js';
 import {createRun,stepRun} from './simulation.js';import {chooseInput,referenceInput} from './bot.js';import {Renderer} from './render.js';import {Sound} from './audio.js';import {saveResult,loadRecords} from './records.js';import {formatTime,formatDistance} from './session.js';
 const output=document.getElementById('output'),canvas=document.getElementById('preview'),renderer=new Renderer(canvas),scenes=[],select=document.getElementById('scene');
@@ -48,6 +49,9 @@ document.getElementById('run').onclick=async()=>{
     store.setItem('office-picnic-v4',JSON.stringify({best:{standard:320},muted:true}));
     check(loadRecords(store).best.casual.standard===320&&loadRecords(store).muted,'Migration failed');
     saveResult(store,'rush','nonstop',310);check(loadRecords(store).best.rush.nonstop===310&&loadRecords(store).best.casual.standard===320,'Browser storage failed');
+    const saved=loadRecords(store);
+    check(medalFor('rush',saved.best.rush.nonstop)==='silver','Stored Nonstop medal failed');
+    check(medalFor('casual',MEDALS.casual.bronze+.01)===null,'Medal cutoff failed');
     localStorage.removeItem(prefix+'office-picnic-v4');localStorage.removeItem(prefix+'office-picnic-v5');
     if(sound.ctx){check(sound.ctx.state==='running','Audio did not unlock');sound.setMuted(false);sound.event('checkpoint');sound.setPaused(true);await sound.ctx.suspend();check(sound.ctx.state==='suspended','Audio pause failed');sound.setPaused(false);await sound.ctx.resume();sound.setMuted(true);check(sound.master.gain.value>=0,'Invalid gain');}
     // Measure actual draw work; this is not a physical-phone FPS claim.

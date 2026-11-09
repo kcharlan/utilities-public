@@ -1,4 +1,4 @@
-import {createRun,stepRun} from '../dist/game/simulation.js';
+import {createRun,stepRun,netTicks} from '../dist/game/simulation.js';
 import {createPlane} from '../dist/game/physics.js';
 import {referenceInput} from '../dist/game/bot.js';
 import {makePilot,PROFILES} from './pilot.mjs';
@@ -8,7 +8,7 @@ export function playOnce(world,profile,seed,{mode='standard',capSeconds=1200,ext
   let steps=0;
   for(;steps<60*capSeconds&&run.status!=='finished';steps++)stepRun(run,pilot(run));
   return {
-    finished:run.status==='finished',seconds:run.ticks/60,crashes:run.crashes,
+    finished:run.status==='finished',seconds:run.ticks/60,net:netTicks(run)/60,collected:run.collected.size,crashes:run.crashes,
     log:run.crashLog,attempts:run.attempts,wall:steps/60
   };
 }

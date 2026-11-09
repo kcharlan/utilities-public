@@ -64,3 +64,5 @@ At `/checks.html`, browser verification runs the same collision-enabled simulati
 - Runtime deployment is local, with no public game hosting, analytics or external runtime requests. The development server is optional once deployed.
 
 See `docs/assets.md` for asset provenance and `reports/dive-art-qa.md` for current verification and remaining limits. Earlier QA reports describe historical courses. Physical mid-range-phone FPS and independent first-time-player success require testing on that hardware/with that participant; responsive browser emulation does not establish either.
+
+Medals use net time after pickups and penalties. Each tier row shows its gold, silver and bronze targets and its saved Standard and Nonstop bests, graded against the current table. Both modes use the same thresholds. Regenerate tables with `node scripts/medals.mjs`; use `--tier casual --gold-quantile 0.45` to override a tier's quantile. `node scripts/playtest.mjs --tier rush --headwinds` compares stale and regenerated thresholds on matched wind studies.

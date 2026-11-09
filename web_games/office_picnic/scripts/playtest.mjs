@@ -1,9 +1,11 @@
 import {pricePickup,pickupMenu,pickupCoverage,menuSampleSize} from './pickup-study.mjs';
+import {MEDALS} from '../dist/game/medals.js';
+import {deriveMedals,evaluate,medalGates} from './medals.mjs';
 import {TIERS} from '../dist/game/tiers.js';
 import {buildWorld} from '../dist/game/world.js';
 import {playOnce,quantile,referenceProof,shortcutOutcomes} from './flight-study.mjs';
 
-let selected=null,n=150,diagnostic=false,check=false,json=false,menu=false;
+let selected=null,n=150,diagnostic=false,check=false,json=false,menu=false,headwinds=false;
 for(let i=2;i<process.argv.length;i++){
   const arg=process.argv[i];
   if(arg==='--tier'){
@@ -16,6 +18,7 @@ for(let i=2;i<process.argv.length;i++){
     n=Number(process.argv[++i]);
     diagnostic=true;
   }else if(arg==='--menu')menu=true;
+  else if(arg==='--headwinds')headwinds=true;
   else if(arg==='--check')check=true;
   else if(arg==='--json')json=true;
   else{
@@ -83,6 +86,32 @@ for(const [id,tier] of Object.entries(TIERS)){
   }
   row.pickups=world.pickups.map(pk=>pricePickup(world,pk,diagnostic?n:100));
   for(let i=0;i<row.pickups.length;i++)gate(`${id} pickup ${i+1}`,row.pickups[i].qualifies&&row.pickups[i].reward*60===world.pickups[i].rewardTicks);
+  const table=MEDALS[id];
+  const derived=deriveMedals(tier,table.derived.quantiles);
+  row.medals={table,holdout:evaluate(world,table)};
+  gate(`${id} medal derivation`,JSON.stringify(derived)===JSON.stringify(table));
+  for(const [name,pass] of Object.entries(medalGates(id,row.medals.holdout)))gate(`${id} medal ${name}`,pass);
+  row.medals.reference={};
+  for(const mode of ['standard','nonstop']){
+    const run=playOnce(world,'ideal',1,{mode,capSeconds:mode==='nonstop'?2700:1200,extra:{pickups:()=>true}});
+    row.medals.reference[mode]=run;
+    gate(`${id} ${mode} reference gold`,run.finished&&run.crashes===0&&run.net<=table.gold);
+  }
+  if(headwinds&&tier.winds.length){
+    const count=100,baseline=deriveMedals(tier,table.derived.quantiles,count);
+    const baselineRates=evaluate(world,baseline,count);
+    row.headwinds={baseline:{table:baseline,rates:baselineRates,verdicts:medalGates(id,baselineRates)}};
+    for(const wind of id==='rush'?[0,-5]:[-3,-7]){
+      const variant={...tier,winds:tier.winds.map(zone=>({...zone,wind}))};
+      const variantWorld=buildWorld(undefined,variant);
+      const fresh=deriveMedals(variant,table.derived.quantiles,count);
+      const staleRates=evaluate(variantWorld,baseline,count),freshRates=evaluate(variantWorld,fresh,count);
+      row.headwinds[wind]={
+        stale:{table:baseline,rates:staleRates,verdicts:medalGates(id,staleRates)},
+        fresh:{table:fresh,rates:freshRates,verdicts:medalGates(id,freshRates)}
+      };
+    }
+  }
   row.reference=referenceProof(world);
   row.shortcuts=shortcutOutcomes(world);
   out[id]=row;
