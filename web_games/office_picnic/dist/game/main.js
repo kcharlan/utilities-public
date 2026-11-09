@@ -7,7 +7,7 @@ import {airAt} from './world.js';
 import {flightGuidance,noticeMessages} from './guidance.js';
 import {Renderer} from './render.js';
 import {Sound,dispatchRunEvents} from './audio.js';
-import {consumeTime,rebaseNoticeDeadline,formatTime,formatDistance,formatSpeed,formatFeet} from './session.js';
+import {dialogTabTarget,shouldRetry,consumeTime,rebaseNoticeDeadline,formatTime,formatDistance,formatSpeed,formatFeet} from './session.js';
 import {loadRecords,finishResult,savePreferences,titleBestText} from './records.js';
 const $=id=>document.getElementById(id),canvas=$('flight'),renderer=new Renderer(canvas);
 const tracing=new URLSearchParams(location.search).has('trace');let trace=null;
@@ -28,7 +28,9 @@ function clearTraceDownload(){
 }
 const worlds=new Map();
 function modeText(world,mode){return `${world.tier.name} · ${mode==='standard'?`Standard · impacts +${world.rules.crashPenaltyTicks/60}s`:'Nonstop · restart from the office'}`;}
+function modalOpen(open){for(const id of ['flight','hud','route-hud','flight-hud'])$(id).inert=open;}
 function start(mode){
+  modalOpen(false);
   clearTraceDownload();
   let world=worlds.get(records.tier);if(!world){world=buildWorld(undefined,TIERS[records.tier]);worlds.set(records.tier,world);}
   run=createRun(mode,world);trace=tracing?createTrace(run):null;paused=false;held=false;clock.accumulator=0;last=performance.now();lastDistrict=-1;lastVent=null;lastVentActive=false;resultShown=false;rewardEnd=0;sound.district=0;sound.setPaused(false);sound.unlock().then(()=>sound.event('launch'));
@@ -38,9 +40,9 @@ function start(mode){
   $('run-mode').textContent=modeText(world,mode);$('pause-mode').textContent=modeText(world,mode);
   $('notice').hidden=true;canvas.focus({preventScroll:true});if(world.tier.prompts!=='quiet')notice('Hold to climb over the first flock. Release to dive and regain speed.',8);updateHUD();
 }
-function pause(){if(!run||run.status==='finished'||paused)return;setHeld(false);paused=true;clock.accumulator=0;sound.event('pause');sound.setPaused(true);$('pause-screen').hidden=false;$('resume').focus();}
-function resume(){if(!run)return;paused=false;held=false;clock.accumulator=0;last=performance.now();sound.setPaused(false);sound.unlock().then(()=>sound.event('resume'));$('pause-screen').hidden=true;canvas.focus({preventScroll:true});}
-function home(){clearTraceDownload();held=false;paused=true;run=null;sound.setPaused(true);for(const id of ['pause-screen','result-screen','hud','route-hud','flight-hud','notice'])$(id).hidden=true;$('title-screen').hidden=false;titleBests();$('start').focus();}
+function pause(){if(!run||run.status==='finished'||paused)return;setHeld(false);paused=true;clock.accumulator=0;sound.event('pause');sound.setPaused(true);$('pause-screen').hidden=false;modalOpen(true);$('resume').focus();}
+function resume(){if(!run)return;paused=false;held=false;clock.accumulator=0;last=performance.now();sound.setPaused(false);sound.unlock().then(()=>sound.event('resume'));$('pause-screen').hidden=true;modalOpen(false);canvas.focus({preventScroll:true});}
+function home(){modalOpen(false);clearTraceDownload();held=false;paused=true;run=null;sound.setPaused(true);for(const id of ['pause-screen','result-screen','hud','route-hud','flight-hud','notice'])$(id).hidden=true;$('title-screen').hidden=false;titleBests();$('start').focus();}
 function finish(){
   if(resultShown)return;
   resultShown=true;held=false;
@@ -60,7 +62,7 @@ function finish(){
   $('notice').hidden=true;
   if(trace){finishTrace(trace,run);const link=document.createElement('a');link.textContent='Download flight trace';link.download='office-picnic-trace.json';link.href=URL.createObjectURL(new Blob([JSON.stringify(trace)],{type:'application/json'}));link.id='trace-download';clearTraceDownload();$('result-screen').querySelector('.modal').append(link);}
   // Let the visible landing settle before revealing the invitation card.
-  setTimeout(()=>{if(run?.status==='finished'&&resultShown){$('result-screen').hidden=false;$('replay').focus();if(!previous||seconds<previous)sound.event('best');}},reduced.matches?300:1400);
+  setTimeout(()=>{if(run?.status==='finished'&&resultShown){$('result-screen').hidden=false;modalOpen(true);$('replay').focus();if(!previous||seconds<previous)sound.event('best');}},reduced.matches?300:1400);
 }
 function tick(){
   run.previous={x:run.plane.x,y:run.plane.y};if(trace)recordInput(trace,held);const before=run.worldTicks;stepRun(run,held);noticeEnd=rebaseNoticeDeadline(noticeEnd,before,run.worldTicks);sound.district=run.district;
@@ -95,6 +97,11 @@ $('mute').onclick=()=>{records=savePreferences(storage,records,{muted:!records.m
 canvas.addEventListener('pointerdown',e=>{if(e.button!==0||!run||paused||run.status!=='flying')return;e.preventDefault();canvas.setPointerCapture(e.pointerId);setHeld(true);sound.unlock();});
 canvas.addEventListener('pointerup',()=>setHeld(false));canvas.addEventListener('pointercancel',pause);canvas.addEventListener('lostpointercapture',()=>setHeld(false));
 document.addEventListener('keydown',e=>{
+  if(e.code==='Tab'){
+    const dialog=['pause-screen','result-screen'].map(id=>document.getElementById(id)).find(el=>!el.hidden);
+    if(dialog){const items=[...dialog.querySelectorAll('button:not([disabled]),a[href]')],target=dialogTabTarget(items.indexOf(document.activeElement),items.length,e.shiftKey);if(target!==null){e.preventDefault();items[target].focus();}return;}
+  }
+  if(e.code==='KeyR'&&!e.repeat&&run&&shouldRetry({mode:run.mode,paused,finished:!$('result-screen').hidden})){e.preventDefault();start(run.mode);return;}
   if(e.code==='Space'&&run&&!paused&&run.status==='flying'&&e.target.tagName!=='BUTTON'){e.preventDefault();if(!e.repeat)setHeld(true);}
   if(e.code==='Escape'||e.code==='KeyP'){e.preventDefault();if(paused&&run)resume();else pause();}
   if(e.code==='KeyM'&&!e.repeat)$('mute').click();
@@ -113,4 +120,4 @@ for(const tier of Object.values(TIERS)){
   copy.append(name,detail,thresholds,best);label.append(radio,copy);$('tier-picker').append(label);
   radio.addEventListener('change',()=>{if(radio.checked){records=savePreferences(storage,records,{tier:tier.id});titleBests();}});
 }
-titleBests();muteUI();requestAnimationFrame(frame);
+titleBests();muteUI();$('start').focus();requestAnimationFrame(frame);

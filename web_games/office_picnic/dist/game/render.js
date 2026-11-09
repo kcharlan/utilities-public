@@ -50,6 +50,12 @@ export class Renderer{
       // Rooftop railings mark the solid top; lift machinery below.
       ctx.strokeStyle='#9c9aaa';ctx.lineWidth=Math.max(1,s*.6);ctx.beginPath();ctx.moveTo(bx,Y(b.y+4));ctx.lineTo(bx+bw,Y(b.y+4));ctx.stroke();
     }
+    if(run.mode==='standard')for(const cp of run.world.checkpoints){
+      const roof=run.world.airs.find(a=>a.gapId===cp.id);if(!roof)continue;
+      const x=X(Math.max(roof.x,Math.min(cp.x,roof.x+roof.w))),y=Y(roof.y-4);
+      if(x<0||x>w)continue;
+      ctx.beginPath();ctx.arc(x,y-4,Math.max(2,2.5*s),0,Math.PI*2);ctx.fillStyle=cp.x<=run.checkpoint.x?'#ffe3a8':'#77758a';ctx.fill();
+    }
     for(const zone of run.world.winds)drawWind(this,zone,run,X,Y);
     for(const a of run.world.airs)drawAir(this,a,run,X,Y,s,cam.verticalScale);
     for(const hazard of run.world.hazards){

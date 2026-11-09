@@ -66,6 +66,16 @@ export function buildWorld(limits=measureFlight(),cfg=TIERS.casual){
       if(h.squeeze&&cfg.motion.squeezeSync!=null){h.phase=h.district*2.1;h.amp={platformY:cfg.motion.squeezeSync,pigeonY:cfg.motion.squeezeSync,pigeonX:0,rate:cfg.motion.rate};}
     });
   }
+  world.checkpoints=world.airs.map((air,i)=>{
+    if(i===0)return {id:air.gapId,district:air.district,x:0,y:130,speed:26,pitch:PHYSICS.divePitch};
+    let x=air.x+12;
+    for(const h of world.hazards){
+      const reach=(h.amp?.pigeonX??0)+2;
+      if(h.x-reach<x+10&&h.x+h.w+reach>air.x-5)x=Math.max(x,h.x+h.w+reach+15);
+    }
+    return {id:air.gapId,district:air.district,x,y:150,speed:26,pitch:PHYSICS.divePitch};
+  });
+  for(const d of world.districts)d.checkpoint=world.checkpoints.find(cp=>cp.district===d.index);
   for(const w of cfg.winds){
     const from=slots.find(s=>s.d===w.district&&s.j===w.fromSlot),to=slots.find(s=>s.d===w.district&&s.j===w.toSlot);
     world.winds.push({x0:w.startAtGap?from.release:from.x,x1:to.release+(w.includeGap===false?0:to.gap),y0:w.y0,y1:w.y1,wind:w.wind,lift:w.lift??0,district:w.district});

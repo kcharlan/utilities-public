@@ -31,3 +31,5 @@
 - Validate authored pickup coverage before pricing the generated world: placements that lack a matching hazard are skipped during world construction and otherwise disappear from every pricing gate.
 - Before an explicit CLI exit, wait for queued stdout writes: a delayed pipe reader can otherwise receive truncated JSON even when the process exits successfully.
 - A quiet Nonstop restart must rebase a visible impact notice's remaining lifetime when world ticks reset. Keeping the old deadline prolongs it into the new throw; hiding it immediately loses the intended feedback. Exercise the real respawn and expiry boundary.
+- Checkpoint placement must account for the entire moving hazard footprint before saving a respawn position. Prove the next crossing at multiple hazard phases and test both held and released inputs immediately after respawn.
+- Simulated pilots cache observation error for a hazard. With rooftop retries that context may never change, producing hundreds of identical failed attempts; resample the observation after an impact while preserving learned margins so a new attempt can adapt.

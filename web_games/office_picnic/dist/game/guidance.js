@@ -1,4 +1,4 @@
-import {airAt,hazardBox,hazardAdvice} from './world.js';
+import {airAt,hazardBox,hazardAdvice,upcomingHazard} from './world.js';
 import {formatVerticalMotion} from './session.js';
 export function flightGuidance(run,held){
   const p=run.plane,time=run.worldTicks/60,air=airAt(run.world,p,time);
@@ -32,10 +32,10 @@ export function flightGuidance(run,held){
 export function noticeMessages(run){
   const messages=[],prompts=run.world.tier.prompts;
   if(run.events.includes('impact'))messages.push(run.cause);
-  if(run.events.includes('respawn')&&prompts!=='quiet')messages.push(run.mode==='standard'?'Back at the last rooftop. Build height for the flock.':'A fresh throw. Climb over the first flock.');
-  if(run.events.includes('checkpoint')){
+  if(run.events.includes('respawn')&&prompts!=='quiet'){const hazard=upcomingHazard(run.world,run.plane.x);messages.push(run.mode==='standard'?`Back at the last rooftop.${hazard?' '+hazardAdvice(hazard):''}`:'A fresh throw. Climb over the first flock.');}
+  if(run.events.includes('district')){
     const district=run.world.districts[run.district];
-    let message=prompts==='full'?`${district.name}. ${run.mode==='standard'?'Rooftop checkpoint saved. ':''}${district.tip}`:district.name;
+    let message=prompts==='full'?`${district.name}. ${district.tip}`:district.name;
     if(run.world.winds.some(z=>z.district===run.district&&z.wind<0))message+=' · Headwinds ahead';
     messages.push(message);
   }

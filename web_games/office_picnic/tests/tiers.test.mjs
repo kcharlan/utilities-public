@@ -25,7 +25,8 @@ function projection(world){
 }
 test('Casual retains shipped geometry and clean route',()=>{
   const world=buildWorld();
-  assert.equal(createHash('sha256').update(JSON.stringify(projection(world))).digest('hex'),'51e86ce090aa730f09a3fa3a8ae087a4dbf30531e1db88091109129d47cd43ec');
+  // District checkpoints now identify the first rooftop (including the launch state).
+  assert.equal(createHash('sha256').update(JSON.stringify(projection(world))).digest('hex'),'546d249f7584ae1dda7728c1ec2bac4d14f888bb3b7556ede9842b30f39f3b9a');
   assert.deepEqual(world.hazards.map(h=>h.id),Array.from({length:5},(_,i)=>[`h${i}-over`,`h${i}-under`]).flat());
   assert.equal(world.length,6245);
   for(const mode of ['standard','nonstop']){
@@ -55,7 +56,7 @@ test('squeeze geometry matches the authored slot and synced motion preserves the
 test('tier hash reflects gameplay, not presentation or key insertion order',()=>{
   const tier=TIERS.casual;
   assert.equal(tierHash(tier),tierHash({...tier,name:'Other',blurb:'Different',prompts:'quiet'}));
-  assert.equal(tierHash(tier),tierHash({...tier,rules:{respawnTicks:36,crashPenaltyTicks:180}}));
+  assert.equal(tierHash(tier),tierHash({...tier,rules:{respawnTicks:24,crashPenaltyTicks:180}}));
   assert.notEqual(tierHash(tier),tierHash({...tier,ratios:[...tier.ratios.slice(0,4),.8]}));
 });
 test('rules control crashes and nonstop retains the history',()=>{

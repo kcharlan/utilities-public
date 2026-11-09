@@ -1,3 +1,5 @@
+export function dialogTabTarget(index,count,reverse){if(!count)return null;if(reverse&&index<=0)return count-1;if(!reverse&&(index<0||index===count-1))return 0;return null;}
+export function shouldRetry({mode,paused,finished}){return mode==='nonstop'||paused||finished;}
 export function consumeTime(clock,seconds,paused,step){
   if(paused){clock.accumulator=0;return;}
   clock.accumulator+=Math.min(.1,Math.max(0,seconds));

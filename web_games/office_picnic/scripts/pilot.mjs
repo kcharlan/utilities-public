@@ -43,7 +43,7 @@ export function makePilot(profile,seed,extra={}){
   const failures={};let seenCrashes=0;
   if(prof.pickups){const want=prof.pickups;prof.pickups=k=>want(k)&&(failures[k.id]||0)<(prof.maxTries??2);}
   return run=>{
-    if(run.crashes>seenCrashes){seenCrashes=run.crashes;if(prof.lastPickup)failures[prof.lastPickup]=(failures[prof.lastPickup]||0)+1;prof.lastPickup=null;}
+    if(run.crashes>seenCrashes){seenCrashes=run.crashes;ctxKey=null;if(prof.lastPickup)failures[prof.lastPickup]=(failures[prof.lastPickup]||0)+1;prof.lastPickup=null;}
     if(run.status!=='flying'){queue.length=0;held=false;return false;}
     queue.push((prof.policy??sensible)(run,prof));
     let want=queue.length>delay?queue.shift():held;

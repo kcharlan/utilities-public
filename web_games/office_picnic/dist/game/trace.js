@@ -3,7 +3,7 @@ import {buildWorld} from './world.js';
 import {createRun,stepRun,netTicks} from './simulation.js';
 
 // Increment when changes to the simulation or format invalidate old replays.
-export const TRACE_VERSION=2;
+export const TRACE_VERSION=3;
 
 export function createTrace(run){
   return {version:TRACE_VERSION,tier:run.world.tier.id,hash:tierHash(run.world.tier),mode:run.mode,inputs:[]};

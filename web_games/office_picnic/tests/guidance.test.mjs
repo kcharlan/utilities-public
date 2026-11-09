@@ -58,7 +58,7 @@ test('moving hazard guidance uses its live box rather than its authored height',
 });
 test('simultaneous checkpoint, impact and warning notices retain each message',async()=>{
   const {noticeMessages}=await import('../dist/game/guidance.js');
-  const r=createRun();r.district=3;r.events=['checkpoint','impact','warning'];r.cause='Impact correction';r.warningHazards=[{squeeze:true}];
+  const r=createRun();r.district=3;r.events=['district','impact','warning'];r.cause='Impact correction';r.warningHazards=[{squeeze:true}];
   r.world={...r.world,tier:{...r.world.tier,prompts:'warnings'},winds:[{district:3,wind:-3}]};
   const text=noticeMessages(r).join(' ');assert.match(text,/Impact correction/);assert.match(text,/Crosswind Court/);assert.match(text,/Headwinds ahead/);assert.match(text,/Squeeze/);
 });
@@ -66,7 +66,7 @@ test('quiet notices keep impact and windy checkpoint but suppress respawn and wa
   const {noticeMessages}=await import('../dist/game/guidance.js');
   const {buildWorld}=await import('../dist/game/world.js');const {TIERS}=await import('../dist/game/tiers.js');
   const r=createRun('standard',buildWorld(undefined,TIERS.overtime));
-  r.district=3;r.events=['checkpoint','impact','respawn','warning'];r.cause='Impact correction';r.warningHazards=[{squeeze:true}];
+  r.district=3;r.events=['district','impact','respawn','warning'];r.cause='Impact correction';r.warningHazards=[{squeeze:true}];
   assert.deepEqual(noticeMessages(r),['Impact correction','Crosswind Court · Headwinds ahead']);
   r.events=['respawn','warning'];assert.deepEqual(noticeMessages(r),[]);
   assert.ok(module.flightGuidance(r,false).instruction);

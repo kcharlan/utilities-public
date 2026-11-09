@@ -2,7 +2,7 @@ import {createPlane,advancePlane,PHYSICS} from './physics.js';
 import {buildWorld,airAt,hazardBox,hazardParts,hazardKey,pickupPos} from './world.js';
 export function createRun(mode='standard',world=buildWorld()){
   if(!['standard','nonstop'].includes(mode))mode='standard';
-  return {mode,world,plane:createPlane(),ticks:0,worldTicks:0,district:0,checkpoint:{...world.districts[0].checkpoint,x:0,y:130},status:'flying',respawnTicks:0,crashes:0,events:['launch'],warned:new Set(),lastAir:null,lastStall:false,cause:'',finishTicks:0,collected:new Set(),bonusTicks:0,crashLog:[],attempts:1};
+  return {mode,world,plane:createPlane(),ticks:0,worldTicks:0,district:0,checkpoint:{...world.checkpoints[0]},status:'flying',respawnTicks:0,crashes:0,events:['launch'],warned:new Set(),lastAir:null,lastStall:false,cause:'',finishTicks:0,collected:new Set(),bonusTicks:0,crashLog:[],attempts:1};
 }
 export const netTicks=r=>r.ticks-r.bonusTicks;
 export function segmentHitsBox(a,b,box,pad=1.2){
@@ -57,7 +57,11 @@ export function stepRun(r,held){
     if(segmentHitsBox(previous,p,{x:pk.x-pk.r,y:pk.y-pk.r,w:pk.r*2,h:pk.r*2},0)){r.collected.add(pk.id);r.bonusTicks+=base.rewardTicks;r.pickupReward=base.rewardTicks;r.events.push('pickup');}
   }
   const next=r.world.districts[r.district+1];
-  if(next&&p.x>=next.start){r.district++;if(r.mode==='standard')r.checkpoint={...next.checkpoint};r.events.push('checkpoint','district');}
+  if(next&&p.x>=next.start){r.district++;r.events.push('district');}
+  if(r.mode==='standard'){
+    const passed=r.world.checkpoints.filter(cp=>cp.x>r.checkpoint.x&&previous.x<cp.x&&cp.x<=p.x);
+    if(passed.length){r.checkpoint={...passed[passed.length-1]};r.events.push('checkpoint');}
+  }
   if(p.x>=r.world.length){r.status='landing';r.landingTicks=0;r.landingStart={x:p.x,y:p.y,pitch:p.pitch};}
   return r;
 }
