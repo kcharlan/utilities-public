@@ -1,23 +1,83 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-const records=await import('../dist/game/records.js').catch(()=>({}));
-test('records keep fastest completed result separately by mode',()=>{
-  assert.equal(typeof records.saveResult,'function');
-  let data=null;const s={getItem:()=>data,setItem:(_,v)=>data=v};
-  records.saveResult(s,'standard',320);records.saveResult(s,'standard',340);records.saveResult(s,'nonstop',310);
-  assert.deepEqual(records.loadRecords(s).best,{standard:320,nonstop:310});
+import {loadRecords,saveResult,savePreferences,finishResult} from '../dist/game/records.js';
+function storage(initial={}){const data={...initial};return {data,getItem:k=>data[k]??null,setItem:(k,v)=>data[k]=v};}
+test('records migrate v4 and v5 takes precedence',()=>{
+  const s=storage({'office-picnic-v4':JSON.stringify({best:{standard:320,nonstop:310},muted:true})});
+  assert.deepEqual(loadRecords(s),{best:{casual:{standard:320,nonstop:310}},tier:'casual',muted:true});
+  savePreferences(s,{best:{rush:{standard:200}},tier:'rush',muted:false},{tier:'rush',muted:false});
+  assert.deepEqual(loadRecords(s),{best:{casual:{standard:320,nonstop:310},rush:{standard:200}},tier:'rush',muted:false});
+  assert.ok(s.data['office-picnic-v4']);
 });
-test('corrupt, nonfinite, unknown modes and blocked storage cannot break play or create records',()=>{
-  assert.equal(typeof records.loadRecords,'function');
+test('records validate values, tiers and storage and preserve in-session best',()=>{
+  const s=storage({'office-picnic-v5':JSON.stringify({best:{rush:{standard:-1,nonstop:'fast'},bogus:{standard:1}},tier:'bogus'})});
+  assert.deepEqual(loadRecords(s),{best:{},tier:'casual',muted:false});
+  let r=saveResult(null,'rush','standard',300);
+  r=saveResult(null,'rush','standard',340,r);
+  r=saveResult(null,'casual','nonstop',310,r);
+  assert.deepEqual(r.best,{rush:{standard:300},casual:{nonstop:310}});
+  assert.deepEqual(saveResult(null,'bogus','standard',1,r).best,r.best);
+  assert.doesNotThrow(()=>saveResult({getItem(){throw Error()},setItem(){throw Error()}},'rush','standard',300));
+});
+test('array tier IDs cannot select a registered tier through coercion',()=>{
+  const s=storage({'office-picnic-v5':JSON.stringify({tier:['rush']})});
+  assert.equal(loadRecords(s).tier,'casual');
+  assert.deepEqual(saveResult(null,['rush'],'standard',1).best,{});
+  assert.equal(finishResult(null,['rush'],'standard',1,{best:{rush:{standard:200}}}).previous,undefined);
+});
+test('persisted results keep fastest time separately by tier and mode',()=>{
+  const s=storage();saveResult(s,'casual','standard',320);saveResult(s,'casual','standard',340);saveResult(s,'casual','nonstop',310);saveResult(s,'rush','standard',330);
+  assert.deepEqual(loadRecords(s).best,{casual:{standard:320,nonstop:310},rush:{standard:330}});
+});
+test('corrupt storage, unknown modes and nonfinite results do not create records',()=>{
   const bad={getItem:()=>'{oops',setItem:()=>{throw Error('blocked')}};
-  assert.deepEqual(records.loadRecords(bad).best,{});
-  assert.doesNotThrow(()=>records.saveResult(bad,'standard',300));
-  let data='{"best":{"standard":-1,"nonstop":"fast"}}';const s={getItem:()=>data,setItem:(_,v)=>data=v};
-  records.saveResult(s,'cheat',1);records.saveResult(s,'standard',NaN);
-  assert.deepEqual(records.loadRecords(s).best,{});
+  assert.deepEqual(loadRecords(bad).best,{});assert.doesNotThrow(()=>saveResult(bad,'casual','standard',300));
+  const s=storage();saveResult(s,'casual','cheat',1);saveResult(s,'casual','standard',NaN);assert.deepEqual(loadRecords(s).best,{});
 });
-test('unavailable storage retains the in-session best across slower replays',()=>{
-  const first=records.saveResult(null,'standard',300);
-  const second=records.saveResult(null,'standard',340,first);
-  assert.equal(second.best.standard,300);
+test('v4 migration persists once, without overwriting v4, and survives blocked writes',()=>{
+  const v4=JSON.stringify({best:{standard:321},muted:true}),s=storage({'office-picnic-v4':v4});
+  const migrated=loadRecords(s);assert.deepEqual(JSON.parse(s.data['office-picnic-v5']),migrated);assert.equal(s.data['office-picnic-v4'],v4);
+  const blocked={getItem:k=>k==='office-picnic-v4'?v4:null,setItem(){throw Error('blocked')}};
+  assert.deepEqual(loadRecords(blocked),migrated);
+});
+test('Overtime selection and records round trip separately by mode',()=>{
+  const s=storage();
+  savePreferences(s,{best:{},tier:'overtime',muted:false},{tier:'overtime'});
+  saveResult(s,'overtime','standard',400);
+  saveResult(s,'overtime','nonstop',390);
+  const r=loadRecords(s);
+  assert.equal(r.tier,'overtime');
+  assert.deepEqual(r.best.overtime,{standard:400,nonstop:390});
+});
+test('stale tabs merge bests and change only the intended preference',()=>{
+  const s=storage();let a=loadRecords(s),b=loadRecords(s);
+  b=saveResult(s,'casual','standard',200,b);
+  a=savePreferences(s,a,{tier:'rush'});
+  assert.equal(loadRecords(s).best.casual.standard,200);
+  b=savePreferences(s,b,{muted:true});
+  assert.equal(loadRecords(s).tier,'rush');
+  const finished=finishResult(s,'casual','standard',250,b);
+  assert.equal(finished.previous,200);
+  assert.equal(finished.records.tier,'casual');
+  assert.equal(finished.records.muted,true);
+  assert.deepEqual(loadRecords(s),{best:{casual:{standard:200}},tier:'rush',muted:true});
+  a=savePreferences(s,a,{muted:false});
+  assert.equal(loadRecords(s).tier,'rush');
+  assert.equal(loadRecords(s).best.casual.standard,200);
+  a=saveResult(s,'rush','nonstop',190,a);
+  b=savePreferences(s,b,{tier:'overtime'});
+  assert.equal(loadRecords(s).best.rush.nonstop,190);
+  assert.equal(loadRecords(s).muted,false);
+  const fasterSession=finishResult(s,'rush','nonstop',210,{...b,best:{rush:{nonstop:180}}});
+  assert.equal(fasterSession.previous,180);
+  assert.equal(loadRecords(s).best.rush.nonstop,180);
+  assert.equal(loadRecords(s).tier,'overtime');
+});
+test('unavailable storage keeps session bests and local preferences',()=>{
+  const s={getItem(){throw Error('blocked')},setItem(){throw Error('blocked')}};
+  let r=loadRecords(s);r=savePreferences(s,r,{tier:'rush'});r=savePreferences(s,r,{muted:true});
+  r=saveResult(s,'rush','standard',220,r);
+  const finished=finishResult(s,'rush','standard',240,r);
+  assert.equal(finished.previous,220);
+  assert.deepEqual(finished.records,{best:{rush:{standard:220}},tier:'rush',muted:true});
 });

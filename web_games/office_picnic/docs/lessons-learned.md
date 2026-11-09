@@ -7,6 +7,7 @@
 - Use separate vertical framing on portrait screens; equal x/y scale with long horizontal lookahead left the plane at the bottom of a tall phone screen. Keep warning distance and readable vertical space.
 - Stalled-and-held behavior must be checked inside lift, not only in still air. Otherwise the player can gain height despite the intended energy constraint.
 - Best times need an in-memory fallback. Reloading unavailable storage at every finish discards the best result between replays.
+- Multiple tabs can hold stale snapshots: merge session and stored best times before every write, update only the preference the player changed, and compare finish feedback with the merged prior best while keeping the active tab's settings for replay.
 - Landing is a real simulation state: smoothly descend from the actual approach position to the bowl before freezing results. Substituting the bowl coordinate only in the renderer creates a visible teleport.
 - Test district feature coverage explicitly. A clamped feature index introduced new lift types but silently dropped AC lift from every later district; use an authored teaching-first cycle that covers all prior types.
 - Version best-time storage when route length/geometry changes, so old development runs do not compete with the final course.
@@ -21,3 +22,12 @@
 - Separate the environmental force, pilot action and observed motion in the HUD. Upward push can coexist with descent; pitching up still spends airspeed. Tailwind with an upward component must disclose both effects.
 - Sprite minimum sizes can detach art from collision and cable anchors on portrait cameras. Test actual draw calls against projected collision bounds at multiple aspect ratios, then inspect the result visually.
 - Deployment recovery must read a complete saved managed inventory independently of current source edits. Changed-file-only snapshots can mix releases when restoring an older backup. Rollback preserves prior recovery history; only forward deployment prunes it. Existing server directory routes open the file browser, so game links must include `index.html`.
+- Validate diagnostic CLI options before running samples: a missing tier must not silently select the default, and reduced samples must not be presented as passing acceptance. Replay validation should check JSON field types and values without depending on object property order.
+- A squeeze is one encounter with two collision bodies. Key its warning by the pair, but retain each moving body's own arrival and clearance in proof; the visible label also belongs to the shared window rather than both sprites.
+- Validate stored tier IDs as strings before property lookup: JavaScript coerces an array such as `["rush"]` into a valid property key.
+- Carry an encounter's identity through every consumer of an emitted warning. Test both members' actual trigger thresholds and a respawn, and use the same live moving geometry for the warning and its marker.
+- A storage migration needs a best-effort write as well as a readable in-memory result. Keep the old key intact and exercise a denied write separately from successful persistence.
+- Transient HUD feedback keyed to a simulation clock must reset with that clock: a Nonstop restart resets world ticks, so clear the previous throw's reward message on respawn.
+- Validate authored pickup coverage before pricing the generated world: placements that lack a matching hazard are skipped during world construction and otherwise disappear from every pricing gate.
+- Before an explicit CLI exit, wait for queued stdout writes: a delayed pipe reader can otherwise receive truncated JSON even when the process exits successfully.
+- A quiet Nonstop restart must rebase a visible impact notice's remaining lifetime when world ticks reset. Keeping the old deadline prolongs it into the new throw; hiding it immediately loses the intended feedback. Exercise the real respawn and expiry boundary.

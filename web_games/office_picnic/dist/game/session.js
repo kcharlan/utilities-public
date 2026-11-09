@@ -4,6 +4,9 @@ export function consumeTime(clock,seconds,paused,step){
   let count=0;
   while(clock.accumulator>=1/60&&count<6){step();clock.accumulator-=1/60;count++;}
 }
+export function rebaseNoticeDeadline(deadline,before,after){
+  return after<before?after+deadline-before-1:deadline;
+}
 export function formatTime(seconds){
   const n=Math.max(0,Math.floor(seconds*100+.00001));
   return `${Math.floor(n/6000)}:${String(Math.floor(n/100)%60).padStart(2,'0')}.${String(n%100).padStart(2,'0')}`;

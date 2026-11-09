@@ -59,10 +59,24 @@ export function drawAir(renderer,a,run,X,Y,s,v){
   ctx.fillStyle='#7b8191';ctx.fillRect(mx,my-7*s,16*s,8*s);ctx.fillStyle='#343e55';ctx.fillRect(mx+3*s,my-5*s,10*s,4*s);
   if(a.type===0){ctx.strokeStyle='#c9c4ca';ctx.beginPath();ctx.arc(mx+8*s,my-3*s,3*s,0,Math.PI*2);ctx.stroke();}
   const name=a.type===1?(effect.activity>.35?'Vent · steam burst ↑':'Vent · lull · save speed'):names[a.type];
-  renderer.label(name,Math.max(10,Math.min(w-185,left+8)),Math.max(155,top-12),color,11);
-  if(active){
+  if(run.world.tier.prompts!=='quiet')renderer.label(run.world.tier.prompts==='warnings'?['AC','Vent','Roof heat','Tailwind','Thermal'][a.type]:name,Math.max(10,Math.min(w-185,left+8)),Math.max(155,top-12),color,11);
+  if(active&&run.world.tier.prompts==='full'){
     const explanation=['AC adds upward push','Steam gusts push upward','Warm roof: gentle upward push','Wind pushes forward and upward','Higher means less upward push'];
     const direction=a.gapId?.endsWith('.1')?'Hold early · climb over the flock':a.gapId?.endsWith('.3')?'Release to dive · then level out':explanation[a.type];
     renderer.label(direction,Math.max(10,Math.min(w-218,left+10)),Math.max(185,Math.min(h-115,Y(190))),'#ffe3a8',11);
   }
+}
+
+export function drawWind(renderer,zone,run,X,Y){
+  const ctx=renderer.ctx,left=Math.max(0,X(zone.x0)),right=Math.min(renderer.w,X(zone.x1));
+  if(right<=left)return;
+  const top=Math.max(0,Y(zone.y1)),bottom=Math.min(renderer.h,Y(zone.y0));
+  ctx.save();ctx.beginPath();ctx.rect(left,top,right-left,bottom-top);ctx.clip();
+  ctx.fillStyle='#c5d2d012';ctx.fillRect(left,top,right-left,bottom-top);
+  ctx.strokeStyle='#d8dfd3a0';ctx.lineWidth=1.5;
+  const shift=renderer.reduced?0:(run.worldTicks/60*36)%70;
+  for(let y=top+24;y<bottom;y+=38)for(let x=left+20-shift;x<right+70;x+=70){
+    ctx.beginPath();ctx.moveTo(x+27,y);ctx.lineTo(x-18,y);ctx.lineTo(x-11,y-4);ctx.moveTo(x-18,y);ctx.lineTo(x-11,y+4);ctx.stroke();
+  }
+  ctx.restore();
 }

@@ -1,1 +1,13 @@
-{"name":"office-picnic","private":true,"type":"module","scripts":{"test":"node --test","prove":"node scripts/prove.mjs","measure":"node scripts/measure.mjs","start":"node scripts/serve.mjs","deploy":"node scripts/deploy.mjs"}}
+{
+  "name": "office-picnic",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "node --test",
+    "prove": "node scripts/prove.mjs",
+    "measure": "node scripts/measure.mjs",
+    "start": "node scripts/serve.mjs",
+    "deploy": "node scripts/deploy.mjs",
+    "playtest": "node scripts/playtest.mjs --check"
+  }
+}
