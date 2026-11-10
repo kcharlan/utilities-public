@@ -23,7 +23,11 @@ export function formatVerticalMotion(speed){
   return rate<2?'→ Level':`${speed>0?'↑ Rising':'↓ Descending'} ${rate} ft/s`;
 }
 export function formatSpeed(metersPerSecond){return `${Math.round(Math.max(0,metersPerSecond)*2.2369362920544)} mph`;}
-export function cameraFor(width,height,p){
+export function cameraFor(width,height,p,options={}){
   const scale=Math.min(2.7,width/420,height/270),verticalScale=Math.max(scale,height/360),planeX=width*.23;
-  return {scale,verticalScale,planeX,left:p.x-planeX/scale,bottom:Math.max(-12,p.y-height*.43/verticalScale),width,height};
+  const base={scale,verticalScale,planeX,left:p.x-planeX/scale,bottom:Math.max(-12,p.y-height*.43/verticalScale),width,height};
+  if(!options.focus||!options.progress)return base;
+  const t=Math.max(0,Math.min(1,options.progress)),z=options.zoom??scale;
+  const mix=(a,b)=>a+(b-a)*t, nextScale=mix(scale,z),nextVertical=mix(verticalScale,z);
+  return {scale:nextScale,verticalScale:nextVertical,planeX:mix(planeX,width/2),left:mix(base.left,options.focus.x-width/2/z),bottom:mix(base.bottom,options.focus.y-height*.45/z),width,height};
 }

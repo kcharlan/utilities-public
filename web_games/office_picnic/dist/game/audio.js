@@ -29,6 +29,11 @@ export class Sound{
     if(!this.ctx||this.muted||this.paused)return;
     const now=this.ctx.currentTime,key=identity===undefined?name:`${name}:${identity}`;
     if(now-(this.last.get(key)??-10)<.3)return;this.last.set(key,now);
+    if(name==='landing'){
+      this.tone(120,now,.16,.08,'triangle');
+      for(const f of [392,494,587])this.tone(f,now+.12,.55,.055);
+      return;
+    }
     (eventNotes[name]||eventNotes.ui).forEach((f,i)=>this.tone(f,now+i*.09,name==='impact'?.23:.35,name==='warning'?.11:.12,name==='impact'?'triangle':'sine'));
   }
   setMuted(value){this.muted=value;if(this.master)this.master.gain.setTargetAtTime(value?0:.26,this.ctx.currentTime,.03);}

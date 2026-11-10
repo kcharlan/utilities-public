@@ -34,7 +34,8 @@ export class Renderer{
   draw(run,held,alpha=0,effects=null){
     const ctx=this.ctx,w=this.w,h=this.h,p=run.plane;
     const display={...p};if(run.previous&&run.status==='flying'){display.x=run.previous.x+(p.x-run.previous.x)*alpha;display.y=run.previous.y+(p.y-run.previous.y)*alpha;}
-    const cam=cameraFor(w,h,display),s=cam.scale;
+    const landing=run.status==='landing'||run.status==='finished',t=run.status==='finished'?1:Math.min(1,(run.landingTicks||0)/120),ease=t*t*(3-2*t);
+    const cam=cameraFor(w,h,display,landing?{focus:{x:run.world.length,y:30},zoom:Math.min(3.2,w/210,h/130),progress:this.reduced?1:ease}:{}),s=cam.scale;
     const X=x=>(x-cam.left)*s,Y=y=>h-(y-cam.bottom)*cam.verticalScale;
     ctx.fillStyle=this.gradient;ctx.fillRect(0,0,w,h);
     ctx.save();if(effects?.bump&&!this.reduced)ctx.translate(Math.sin(effects.bump*2)*Math.min(4,effects.bump),0);
@@ -44,7 +45,7 @@ export class Renderer{
       ctx.globalAlpha=layer?.75:.65;
       for(let x=-offset-tw;x<w;x+=tw)ctx.drawImage(this.cache[layer],x,h-th,tw,th);
     }ctx.globalAlpha=1;
-    if(p.x>run.world.finishStart-550)this.park(ctx,X,Y,s,run);
+    if(p.x>run.world.finishStart-550)this.park(ctx,X,Y,s,run,effects);
     for(const b of run.world.buildings){
       if(X(b.x+b.w)<-10||X(b.x)>w+10)continue;
       const bx=X(b.x),by=Y(b.y),bw=b.w*s;
@@ -124,7 +125,7 @@ export class Renderer{
     const finished=run.status==='finished';
     const planeX=X(display.x),planeY=Y(display.y);
     if(run.status!=='respawning'||run.respawnTicks%10<5){
-      let size=Math.max(58,21*s),rotation=finished?-.12:-p.pitch,stretch=1;
+      let size=Math.max(58,21*s),rotation=finished?-.48:-p.pitch,stretch=1;
       if(effects&&!this.reduced)for(const cue of effects.cues){
         if(cue.name==='respawn')size*=Math.min(1,.45+cue.age/20);
         if(cue.name==='pitch'||cue.name==='release')stretch=1+.16*(1-cue.age/cue.life);
@@ -149,7 +150,7 @@ export class Renderer{
     const ctx=this.ctx;
     if(!this.reduced)for(const p of effects.particles){
       const x=X(p.x),y=Y(p.y);ctx.globalAlpha=1-p.age/p.life;
-      ctx.fillStyle=p.kind==='drop'?'#a9d5e6':p.kind==='sparkle'?'#ffe3a8':p.kind==='steam'?'#e8e1df':'#fff0d3';
+      ctx.fillStyle=p.kind==='drop'?'#a9d5e6':p.kind==='sparkle'?'#ffe3a8':p.kind==='steam'?'#e8e1df':p.kind==='salad'?'#f5dfad':'#fff0d3';
       if(p.kind==='sheet')ctx.fillRect(x-3,y-2,6,4);
       else if(p.kind==='feather'){ctx.fillStyle='#e7d5c9';ctx.beginPath();ctx.ellipse(x,y,2,5,-.6,0,Math.PI*2);ctx.fill();}
       else{ctx.beginPath();ctx.arc(x,y,p.kind==='steam'?5:2.5,0,Math.PI*2);ctx.fill();}
@@ -158,6 +159,10 @@ export class Renderer{
     for(const cue of effects.cues){
       if(cue.name==='warning'&&cue.hazardKey)continue;
       if(cue.name==='district'){const offset=cue.reduced||this.reduced?0:(1-Math.min(1,cue.age/15))*100;this.label(cue.district,Math.max(12,this.w*.38-offset),this.h-180,'#fff0d3',16);continue;}
+      if(cue.visual==='splash'){
+        if(cue.reduced||this.reduced){ctx.fillStyle='#f5dfad';for(const [dx,dy] of [[-16,-12],[-8,-23],[9,-21],[18,-10]]){ctx.beginPath();ctx.ellipse(X(cue.x)+dx,Y(cue.y)+dy,4,3,0,0,Math.PI*2);ctx.fill();}}
+        continue;
+      }
       const fixed=cue.reduced||this.reduced,x=X(cue.x),y=Y(cue.y),radius=fixed?20:14+cue.age*.35;
       ctx.globalAlpha=fixed?1:1-cue.age/cue.life;ctx.strokeStyle='#ffe3a8';ctx.lineWidth=2;ctx.beginPath();ctx.arc(x,y,radius,0,Math.PI*2);ctx.stroke();ctx.globalAlpha=1;
       if(cue.name==='pickup')this.label('−'+cue.reward/60+'s',x+12,y-20-(fixed?0:cue.age*.4),'#fff0d3',12);
@@ -177,15 +182,31 @@ export class Renderer{
     if(img.complete&&img.naturalWidth){const cell=img.naturalWidth/2;ctx.drawImage(img,(frame%2)*cell,Math.floor(frame/2)*cell,cell,cell,-w/2,-h/2,w,h);}
     else{ctx.fillStyle=C.paper;ctx.beginPath();ctx.moveTo(w/2,0);ctx.lineTo(-w/2,-h/4);ctx.lineTo(-w/3,0);ctx.lineTo(-w/2,h/4);ctx.closePath();ctx.fill();}ctx.restore();
   }
-  park(ctx,X,Y,s,run){
+  park(ctx,X,Y,s,run,effects){
     const start=X(run.world.finishStart),ground=Y(4);ctx.fillStyle='#697f79';ctx.fillRect(start,ground,this.w-start,this.h-ground);
     for(let i=0;i<12;i++){
       const x=X(run.world.finishStart+i*36),y=Y(18);ctx.fillStyle='#485e67';ctx.fillRect(x-2*s,y,4*s,15*s);ctx.fillStyle=i%2?'#74877b':'#8b977d';ctx.beginPath();ctx.arc(x,y-12*s,18*s,0,Math.PI*2);ctx.fill();
     }
-    const x=X(run.world.length),y=Y(18);ctx.fillStyle='#bd947f';ctx.fillRect(x-30*s,y,60*s,4*s);ctx.fillStyle='#ddd1bb';ctx.fillRect(x-23*s,y,46*s,3*s);ctx.fillStyle='#665e68';ctx.fillRect(x-23*s,y+4*s,3*s,14*s);ctx.fillRect(x+20*s,y+4*s,3*s,14*s);
-    ctx.fillStyle='#e9c7ae';ctx.beginPath();ctx.ellipse(x,Y(22),11*s,5*s,0,0,Math.PI);ctx.fill();ctx.fillStyle='#f5dfad';ctx.beginPath();ctx.ellipse(x,Y(23),11*s,3*s,0,0,Math.PI*2);ctx.fill();
-    ctx.fillStyle='#77927f';for(let i=0;i<5;i++)ctx.fillRect(x+(i*3-6)*s,Y(24)+(i%2)*s,1.5*s,1.5*s);
-    if(x<this.w+100)this.label('Office picnic · potato salad',Math.min(this.w-180,Math.max(12,x-90)),Y(40),'#fff0d3',12);
-    if(run.plane.x>run.world.finishStart)this.label('The park. Release to descend home.',Math.max(16,this.w*.38),this.h-112,'#fff0d3',12);
+    const x=X(run.world.length),y=Y(18),cue=run.status==='finished'?(effects?.cues.find(c=>c.name==='landing')?.age??45):null;
+    // Blanket and cooler anchor the gathering on the grass.
+    ctx.fillStyle='#b88d89';ctx.fillRect(x-83*s,Y(5),60*s,5*s);ctx.fillStyle='#d6b4a3';for(let i=0;i<5;i++)ctx.fillRect(x+(-80+i*12)*s,Y(5),2*s,5*s);
+    ctx.fillStyle='#687d8c';ctx.fillRect(x+58*s,Y(14),21*s,12*s);ctx.fillStyle=C.paper;ctx.fillRect(x+57*s,Y(15),23*s,3*s);
+    // Colleagues stand behind the table; the impact gives them a brief raised-arm reaction.
+    const reaction=cue!==null&&!this.reduced&&cue<45?Math.sin(cue*.15)*3:0;
+    for(const [dx,color] of [[-55,'#9b8cbb'],[-32,'#f1a290'],[36,'#718899'],[59,'#bc977d']]){
+      ctx.fillStyle=color;ctx.fillRect(x+(dx-5)*s,Y(31),10*s,17*s);ctx.fillStyle='#e9c7ae';ctx.beginPath();ctx.arc(x+dx*s,Y(35),4.5*s,0,Math.PI*2);ctx.fill();
+      ctx.strokeStyle=color;ctx.lineWidth=3*s;ctx.beginPath();ctx.moveTo(x+(dx-5)*s,Y(29));ctx.lineTo(x+(dx-10)*s,Y(24+reaction));ctx.moveTo(x+(dx+5)*s,Y(29));ctx.lineTo(x+(dx+10)*s,Y(24+reaction));ctx.stroke();
+    }
+    // Bunting is part of the gathering, not a label for the food.
+    ctx.strokeStyle=C.paper;ctx.lineWidth=s;ctx.beginPath();ctx.moveTo(x-78*s,Y(51));ctx.lineTo(x+78*s,Y(51));ctx.stroke();
+    ctx.fillStyle=C.paper;ctx.font=`bold ${Math.max(9,7*s)}px sans-serif`;ctx.textAlign='center';ctx.fillText('Office Picnic',x,Y(54));ctx.textAlign='start';
+    for(let i=0;i<9;i++){ctx.fillStyle=i%2?C.warm:C.sky;ctx.beginPath();ctx.moveTo(x+(-72+i*18)*s,Y(51));ctx.lineTo(x+(-62+i*18)*s,Y(51));ctx.lineTo(x+(-67+i*18)*s,Y(46));ctx.closePath();ctx.fill();}
+    ctx.fillStyle='#665e68';ctx.fillRect(x-57*s,y,4*s,15*s);ctx.fillRect(x+53*s,y,4*s,15*s);
+    ctx.fillStyle='#bd947f';ctx.fillRect(x-70*s,y,140*s,4*s);ctx.fillStyle=C.paper;ctx.fillRect(x-67*s,y,134*s,8*s);
+    ctx.fillStyle='#d9b5a5';for(let i=0;i<11;i++)ctx.fillRect(x+(-65+i*12)*s,y,2*s,8*s);
+    const wobble=cue!==null&&!this.reduced&&cue<45?Math.sin(cue*.45)*(1-cue/45)*.12:0;
+    ctx.save();ctx.translate(x,Y(23));ctx.rotate(wobble);
+    ctx.fillStyle='#e9c7ae';ctx.beginPath();ctx.ellipse(0,0,16*s,7*s,0,0,Math.PI);ctx.fill();ctx.fillStyle='#f5dfad';ctx.beginPath();ctx.ellipse(0,0,16*s,4*s,0,0,Math.PI*2);ctx.fill();
+    for(let i=0;i<9;i++){ctx.fillStyle=i%3?'#fff0d3':'#77927f';ctx.fillRect((i*3.5-14)*s,((i%3)-1)*s,2.5*s,2*s);}ctx.restore();
   }
 }

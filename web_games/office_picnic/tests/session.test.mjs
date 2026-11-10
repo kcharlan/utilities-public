@@ -61,3 +61,10 @@ test('dialog tab navigation wraps at either end and includes optional links',()=
   assert.equal(helpers.dialogTabTarget(2,4,false),null);
   assert.equal(helpers.dialogTabTarget(3,4,false),0);
 });
+test('landing camera eases toward a centered bowl and preserves the default camera',()=>{
+  const p={x:100,y:100},base=helpers.cameraFor(390,844,p),focus={x:120,y:25};
+  assert.deepEqual(helpers.cameraFor(390,844,p,{focus,zoom:2,progress:0}),base);
+  const end=helpers.cameraFor(390,844,p,{focus,zoom:2,progress:1});
+  assert.equal((focus.x-end.left)*end.scale,195);
+  assert.ok(844-(focus.y-end.bottom)*end.verticalScale>300);
+});

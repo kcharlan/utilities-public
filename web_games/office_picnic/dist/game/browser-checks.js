@@ -1,8 +1,8 @@
 // Browser-only verification harness, separate from the shipped play flow.
 import {medalFor,MEDALS} from './medals.js';
 import {TIERS} from './tiers.js';import {buildWorld,hazardBox,hazardKey} from './world.js';
-import {createRun,stepRun} from './simulation.js';import {chooseInput,referenceInput} from './bot.js';import {Renderer} from './render.js';import {Sound} from './audio.js';import {saveResult,loadRecords} from './records.js';import {formatTime,formatDistance} from './session.js';
-import {createEffects,spawnEffects,stepEffects} from './effects.js';
+import {createRun,stepRun} from './simulation.js';import {chooseInput,referenceInput} from './bot.js';import {Renderer} from './render.js';import {Sound} from './audio.js';import {saveResult,loadRecords} from './records.js';import {formatTime,formatDistance,consumeTime} from './session.js';
+import {createEffects,spawnEffects,stepEffects,advanceFinishedEffects} from './effects.js';
 const output=document.getElementById('output'),canvas=document.getElementById('preview'),renderer=new Renderer(canvas),scenes=[],select=document.getElementById('scene');
 // The harness checkbox explicitly selects either path, independent of system preference.
 renderer.reduced=document.getElementById('reduced').checked;
@@ -10,7 +10,7 @@ for(const [value,text] of [['6','Vent · steam burst'],['7','Vent · lull'],['8'
 const check=(condition,message)=>{if(!condition)throw Error(message);};
 function capture(r){return {...r,plane:{...r.plane},previous:null};}
 const sceneEffects=[];
-function prepareEffects(){for(const i of [14,15,16,17,18,19]){if(!scenes[i])continue;sceneEffects[i]=createEffects();spawnEffects(sceneEffects[i],scenes[i],scenes[i].events,{reduced:renderer.reduced});for(let n=0;n<8;n++)stepEffects(sceneEffects[i]);}}
+function prepareEffects(){for(const i of [5,14,15,16,17,18,19]){if(!scenes[i])continue;sceneEffects[i]=createEffects();spawnEffects(sceneEffects[i],scenes[i],scenes[i].events,{reduced:renderer.reduced});for(let n=0;n<8;n++)stepEffects(sceneEffects[i]);}}
 function draw(){const i=Number(select.value);if(scenes[i])renderer.draw(scenes[i],false,1,sceneEffects[i]);}
 function runRoute(){
   const r=createRun(),washer=r.world.hazards.find(h=>h.kind==='platform');for(let n=0;n<60*480&&r.status!=='finished';n++){
@@ -56,7 +56,13 @@ select.onchange=draw;document.getElementById('reduced').onchange=e=>{renderer.re
 document.getElementById('landing').onclick=()=>{
   const r=createRun();for(let n=0;n<60*480&&r.status==='flying';n++)stepRun(r,chooseInput(r));check(r.status==='landing','Landing approach did not clear');
   output.textContent='Playing the actual two-second landing state…';
-  const animate=()=>{stepRun(r,false);renderer.draw(r,false,1);if(r.status!=='finished')requestAnimationFrame(animate);else output.textContent='PASS: continuous landing completed at the potato salad.';};requestAnimationFrame(animate);
+  const fx=createEffects(),clock={accumulator:0},flightClock={accumulator:0};let last=0,finishedAt=0;
+  const animate=now=>{const delta=last?(now-last)/1000:0;last=now;
+    if(r.status!=='finished'){consumeTime(flightClock,delta,false,()=>{if(r.status==='finished')return;stepRun(r,false);stepEffects(fx);spawnEffects(fx,r,r.events,{reduced:renderer.reduced});});if(r.status==='finished')finishedAt=now;}
+    else advanceFinishedEffects(clock,delta,false,r,fx);
+    renderer.draw(r,false,1,fx);
+    if(!finishedAt||now-finishedAt<1400)requestAnimationFrame(animate);else output.textContent='PASS: continuous landing completed at the potato salad.';
+  };requestAnimationFrame(animate);
 };
 document.getElementById('run').onclick=async()=>{
   try{

@@ -94,3 +94,11 @@ test('warning cue outlines the matching visible hazard and labels it offscreen',
   renderer.drawWarningCue(hazard,cue,run,x=>x+1000,y=>400-y);
   assert.equal(rects.length,1);assert.ok(labels[0].includes('washer'));
 });
+test('landing creates salad splash particles or a static reduced-motion splash',()=>{
+  const run=createRun();run.status='finished';
+  for(const reduced of [false,true]){
+    const fx=createEffects();spawnEffects(fx,run,['landing'],{reduced});
+    assert.equal(fx.cues[0].visual,'splash');
+    assert.equal(fx.particles.some(p=>p.kind==='salad'),!reduced);
+  }
+});

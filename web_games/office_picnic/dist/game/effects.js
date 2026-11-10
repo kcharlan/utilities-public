@@ -4,7 +4,7 @@ import {consumeTime} from './session.js';
 export const FEEDBACK=Object.fromEntries([
   ['launch','sheets'],['pitch','stretch'],['release','stretch'],['lift','motes'],['vent','steam'],
   ['stall','wobble'],['recovery','ring'],['impact','burst'],['respawn','pop'],['checkpoint','pulse'],
-  ['district','card'],['pickup','sparkle'],['warning','pulse'],['landing','ring'],['best','ring'],
+  ['district','card'],['pickup','sparkle'],['warning','pulse'],['landing','splash'],['best','ring'],
   ['ui',null],['pause',null],['resume',null]
 ].map(([name,visual])=>[name,{visual}]));
 export function createEffects(){const fx={particles:[],cues:[],seed:0x51f15e,bump:0};fx.step=()=>stepEffects(fx);return fx;}
@@ -21,9 +21,9 @@ export function spawnEffects(fx,run,events,{reduced=false}={}){
     fx.cues.push({name,visual,x,y,age:0,life:name==='district'?100:45,reduced,reward:run.pickupReward||0,district:run.world.districts[run.district].name,hazardKey:source?hazardKey(source):null});
     if(reduced)continue;
     if(name==='impact')fx.bump=9;
-    const count=({launch:9,lift:6,vent:7,impact:12,pickup:8})[name]||0;
+    const count=({launch:9,lift:6,vent:7,impact:12,pickup:8,landing:14})[name]||0;
     const hazard=name==='impact'?run.world.hazards.find(h=>h.id===run.crashLog.at(-1)?.where):null;
-    const kind=name==='impact'?(hazard?.kind==='pigeon'?'feather':hazard?.kind==='platform'?'drop':'sheet'):({launch:'sheet',lift:'mote',vent:'steam',pickup:'sparkle'})[name];
+    const kind=name==='impact'?(hazard?.kind==='pigeon'?'feather':hazard?.kind==='platform'?'drop':'sheet'):({launch:'sheet',lift:'mote',vent:'steam',pickup:'sparkle',landing:'salad'})[name];
     for(let i=0;i<count&&fx.particles.length<96;i++)fx.particles.push({x,y,vx:(random(fx)-.5)*3,vy:random(fx)*2+.3,age:0,life:30+Math.floor(random(fx)*20),kind});
   }
 }

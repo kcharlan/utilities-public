@@ -75,6 +75,7 @@ function tick(){
   if(run.mode==='nonstop'&&run.events.includes('respawn')){rewardEnd=0;$('pickup-reward').hidden=true;$('pickup-reward').textContent='';}
   if(run.events.includes('pickup')){rewardEnd=run.worldTicks+150;$('pickup-reward').textContent=`−${run.pickupReward/60}s pickup`;}
   const messages=noticeMessages(run);
+  if(run.previous.x<=run.world.finishStart&&run.plane.x>run.world.finishStart)messages.push('The park. Release to descend home.');
   if(messages.length)notice(messages.join(' · '),8);
   const air=airAt(run.world,run.plane,run.worldTicks/60),source=air.source;
   const ventActive=source?.type===1&&air.activity>.35;
