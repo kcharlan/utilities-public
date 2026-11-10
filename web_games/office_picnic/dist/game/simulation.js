@@ -19,8 +19,10 @@ function gapAt(world,x){return world.gaps.find(g=>x>=g.x-10&&x<g.end+10)?.id??'?
 function beginLanding(r,kind){
   const p=r.plane,park=r.world.park;
   r.status='landing';r.landingKind=kind;r.landingTicks=0;
+  const steep=kind==='floor'&&p.y-park.bowlY>Math.tan(40*Math.PI/180)*(r.world.length-p.x);
+  r.landingStyle=kind==='overhead'||steep?'flutter':'glide';
   r.landingStart={x:p.x,y:p.y,pitch:p.pitch,speed:p.speed};
-  const seconds=kind==='overhead'?Math.max(2,Math.min(6,(p.y-park.bowlY)/12)):Math.max(1,Math.min(6,Math.hypot(r.world.length-p.x,p.y-park.bowlY)/Math.max(20,p.speed)));
+  const seconds=r.landingStyle==='flutter'?Math.max(2,Math.min(6,(p.y-park.bowlY)/12)):Math.max(1,Math.min(6,Math.hypot(r.world.length-p.x,p.y-park.bowlY)/Math.max(20,p.speed)));
   r.landingDurationTicks=Math.ceil(seconds/PHYSICS.dt);
 }
 export function stepRun(r,held){
@@ -29,14 +31,14 @@ export function stepRun(r,held){
   r.ticks++;r.worldTicks++;
   if(r.status==='landing'){
     const t=Math.min(1,++r.landingTicks/r.landingDurationTicks),ease=t*t*(3-2*t),p=r.plane;
-    if(r.landingKind==='overhead'){
+    if(r.landingStyle==='flutter'){
       p.x=r.landingStart.x+(r.world.length-r.landingStart.x)*ease+12*Math.sin(4*Math.PI*t)*(1-t);
       p.pitch=r.landingStart.pitch+(-.12-r.landingStart.pitch)*ease+.2*Math.sin(4*Math.PI*t)*(1-t);
     }else{
       p.x=r.landingStart.x+(r.world.length-r.landingStart.x)*t;
       p.pitch=r.landingStart.pitch+(-.12-r.landingStart.pitch)*ease;
     }
-    p.y=r.landingStart.y+(r.world.park.bowlY-r.landingStart.y)*(r.landingKind==='overhead'?ease:t);
+    p.y=r.landingStart.y+(r.world.park.bowlY-r.landingStart.y)*(r.landingStyle==='flutter'?ease:t);
     if(t===1){r.status='finished';r.finishTicks=r.ticks;r.events.push('landing');}
     return r;
   }

@@ -24,7 +24,7 @@ function checkPath(run){
   assert.ok(duration>=60&&duration<=360,`${kind} duration ${duration}`);
   while(run.status==='landing'){
     const before={...run.plane};stepRun(run,false);
-    if(kind!=='overhead'){
+    if(run.landingStyle!=='flutter'){
       assert.ok(run.plane.x>before.x,`${kind} x`);
       assert.ok(before.y-run.plane.y<=Math.tan(40*Math.PI/180)*(run.plane.x-before.x)+1e-7,`${kind} slope`);
     }
@@ -43,6 +43,7 @@ for(const tier of Object.values(TIERS)){
       const run=startAtFlock(world,speed),x=run.plane.x,y=run.plane.y;
       for(let n=0;n<3000&&run.status==='flying';n++)stepRun(run,run.plane.x<x+delay&&run.plane.y<y);
       assert.ok(delay?run.landingKind==='cone':['cone','floor'].includes(run.landingKind),`${speed}, ${delay}: ${run.landingKind} ${run.status}`);
+      assert.equal(run.landingStyle,'glide',`${speed}, ${delay} must glide`);
       checkPath(run);
     }
   });
@@ -57,7 +58,7 @@ for(const tier of Object.values(TIERS)){
         }
         assert.ok(run.crashLog.every(c=>c.x<=world.finishStart),`${profile} ${seed}: park impact`);
         if(run.status==='landing'){
-          finished++;if(['cone','floor'].includes(run.landingKind))safe++;checkPath(run);
+          finished++;if(['cone','floor'].includes(run.landingKind)&&run.landingStyle==='glide')safe++;checkPath(run);
         }
       }
       assert.ok(finished>0&&safe/finished>=.95,`${profile}: ${safe}/${finished}`);
@@ -81,4 +82,11 @@ test('park floor beats street and park obstacles cannot cause an impact',()=>{
   run.world={...world,buildings:[{x:world.finishStart,y:500,w:200}],hazards:[{id:'synthetic',kind:'pigeon',x:world.finishStart,y:0,w:200,h:500,moving:false,warningDistance:0}]};
   run.plane.x=world.finishStart+20;run.plane.y=-1;stepRun(run,false);
   assert.equal(run.status,'landing');assert.equal(run.landingKind,'floor');assert.equal(run.crashes,0);
+});
+test('late floor capture flutters instead of diving almost vertically',()=>{
+  const world=buildWorld(undefined,TIERS.overtime),run=startAtFlock(world,20);
+  for(let n=0;n<4000&&run.status==='flying';n++)stepRun(run,run.plane.x<world.finishStart+274&&run.plane.y<183);
+  assert.equal(run.landingKind,'floor');assert.ok(run.plane.x>world.length-1);assert.equal(run.landingStyle,'flutter');
+  const first={...run.plane};stepRun(run,false);
+  assert.ok(Math.abs(run.plane.x-first.x)>0);checkPath(run);
 });

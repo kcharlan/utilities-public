@@ -47,6 +47,18 @@ test('finished framing excludes buildings and hazard motion bounds at all playfi
     }
   }
 });
+test('finished renderer excludes buildings and hazards at all playfield sizes and tiers',async()=>{
+  const {TIERS}=await import('../dist/game/tiers.js'),{buildWorld}=await import('../dist/game/world.js');
+  for(const tier of Object.values(TIERS))for(const [w,h] of [[1440,900],[844,390],[390,844]]){
+    const run=createRun('standard',buildWorld(undefined,tier));run.status='finished';run.plane.x=run.world.length;run.plane.y=25;
+    const buildings=[],hazards=[],washer={complete:true,naturalWidth:1536,naturalHeight:1024},pigeon={complete:true,naturalWidth:1254};
+    const ctx=new Proxy({fillRect(...v){if(this.fillStyle==='#41485e')buildings.push(v);},drawImage(...v){if(v[0]===washer)hazards.push(v.slice(1));}},{get:(o,k)=>k in o?o[k]:()=>{}});
+    const renderer=Object.assign(Object.create(Renderer.prototype),{w,h,ctx,washer,pigeon,reduced:true,cache:[{},{}],sprite:(img,...v)=>{if(img===pigeon)hazards.push(v);},label:()=>{}});
+    renderer.draw(run,false,1);
+    assert.ok(buildings.every(([x,y,width,height])=>x+width<=0||x>=w||y+height<=0||y>=h),tier.id+' building '+w);
+    assert.equal(hazards.length,0,tier.id+' hazard '+w);
+  }
+});
 test('approach guidance appears only in full and warnings modes',async()=>{
   const {TIERS}=await import('../dist/game/tiers.js');const {buildWorld}=await import('../dist/game/world.js');
   for(const tier of Object.values(TIERS)){
@@ -55,5 +67,34 @@ test('approach guidance appears only in full and warnings modes',async()=>{
     const renderer=Object.assign(Object.create(Renderer.prototype),{w:844,h:390,ctx,washer:{complete:false},reduced:false,cache:[{},{}],sprite:()=>{},label:()=>{}});
     run.plane.x=run.world.finishStart+10;run.plane.y=175;renderer.draw(run,false,1);
     assert.equal(dashes.some(v=>v[0]===3&&v[1]===6),tier.prompts!=='quiet',tier.id);
+  }
+});
+test('reference approaches keep the actual table and aircraft in view at every park tick',async()=>{
+  const {TIERS}=await import('../dist/game/tiers.js'),{buildWorld}=await import('../dist/game/world.js');
+  const {stepRun}=await import('../dist/game/simulation.js'),{referenceInput}=await import('../dist/game/bot.js');
+  for(const tier of Object.values(TIERS))for(const reduced of [false,true])for(const [w,h] of [[1440,900],[844,390],[390,844]]){
+    const run=createRun('standard',buildWorld(undefined,tier));
+    while(run.status==='flying'&&run.plane.x<=run.world.finishStart)stepRun(run,referenceInput(run));
+    while(run.status==='flying'||run.status==='landing'){
+      const rects=[],sprites=[],ctx=new Proxy({fillRect(...v){if(this.fillStyle==='#bd947f')rects.push(v);},drawImage(){}},{get:(o,k)=>k in o?o[k]:()=>{}});
+      const renderer=Object.assign(Object.create(Renderer.prototype),{w,h,ctx,washer:{complete:false},reduced,cache:[{},{}],sprite:(...v)=>sprites.push(v),label:()=>{}});
+      renderer.draw(run,false,1);const table=rects[0],plane=sprites.at(-1);
+      assert.ok(table&&table[0]>=0&&table[0]+table[2]<=w&&table[1]>=0&&table[1]+table[3]<=h,`${tier.id} reduced=${reduced} table at ${run.plane.x-run.world.finishStart}`);
+      assert.ok(plane&&plane[2]-plane[4]/2>=0&&plane[2]+plane[4]/2<=w&&plane[3]-plane[5]/2>=0&&plane[3]+plane[5]/2<=h,`${tier.id} reduced=${reduced} plane`);
+      stepRun(run,referenceInput(run));
+    }
+  }
+});
+test('reduced-motion overhead descent keeps actual aircraft and table in view',async()=>{
+  const {stepRun}=await import('../dist/game/simulation.js');const run=createRun();run.plane.x=run.world.length+.1;run.plane.y=180;stepRun(run,false);
+  let initialTable;
+  while(run.status==='landing'){
+    const rects=[],sprites=[],ctx=new Proxy({fillRect(...v){if(this.fillStyle==='#bd947f')rects.push(v);},drawImage(){}},{get:(o,k)=>k in o?o[k]:()=>{}});
+    const renderer=Object.assign(Object.create(Renderer.prototype),{w:844,h:390,ctx,washer:{complete:false},reduced:true,cache:[{},{}],sprite:(...v)=>sprites.push(v),label:()=>{}});
+    renderer.draw(run,false,1);const table=rects[0],plane=sprites.at(-1);
+    assert.ok(table&&table[0]>=0&&table[0]+table[2]<=844&&table[1]>=0&&table[1]+table[3]<=390,'table');
+    if(initialTable)assert.deepEqual(table,initialTable,'reduced-motion framing stays fixed');else initialTable=table;
+    assert.ok(plane&&plane[3]-plane[5]/2>=0&&plane[3]+plane[5]/2<=390,`plane tick ${run.landingTicks}`);
+    stepRun(run,false);
   }
 });

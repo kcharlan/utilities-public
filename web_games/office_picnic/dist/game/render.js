@@ -55,10 +55,19 @@ export class Renderer{
     this.labelRects=[];
     const display={...p};if(run.previous&&run.status==='flying'){display.x=run.previous.x+(p.x-run.previous.x)*alpha;display.y=run.previous.y+(p.y-run.previous.y)*alpha;}
     const landing=run.status==='landing'||run.status==='finished',t=run.status==='finished'?1:Math.min(1,(run.landingTicks||0)/run.landingDurationTicks),ease=t*t*(3-2*t);
-    const cam=cameraFor(w,h,display,landing?{focus:{x:run.world.length,y:30},zoom:Math.min(3.2,w/210,h/130),progress:this.reduced?1:ease}:{});
-    if(run.status==='landing'&&run.landingKind==='overhead'&&!this.reduced){
-      cam.verticalScale=Math.min(cam.verticalScale,(h-60)/Math.max(1,display.y+20));
-      cam.bottom=Math.min(cam.bottom,0);
+    const fixedLanding=run.status==='landing'&&this.reduced;
+    const anchor=fixedLanding?run.landingStart:display;
+    const cam=cameraFor(w,h,anchor,landing&&!fixedLanding?{focus:{x:run.world.length,y:30},zoom:Math.min(3.2,w/210,h/130),progress:ease}:{});
+    if(w>0&&h>0&&(run.status==='landing'||(run.status==='flying'&&display.x>run.world.finishStart))){
+      // Keep the table and plane in view through the approach. Reduced motion
+      // uses the capture position for a fixed landing camera until the cut.
+      const minX=Math.min(anchor.x-12,run.world.length-70),maxX=Math.max(anchor.x+12,run.world.length+70);
+      const minY=Math.min(0,anchor.y),maxY=Math.max(51,anchor.y);
+      const margin=Math.min(36,w/4,h/4);
+      cam.scale=Math.min(cam.scale,(w-2*margin)/(maxX-minX));
+      cam.verticalScale=Math.min(cam.verticalScale,(h-2*margin)/(maxY-minY));
+      cam.left=Math.max(maxX-(w-margin)/cam.scale,Math.min(cam.left,minX-margin/cam.scale));
+      cam.bottom=Math.max(maxY-(h-margin)/cam.verticalScale,Math.min(cam.bottom,minY-margin/cam.verticalScale));
     }
     const s=cam.scale;
     const X=x=>(x-cam.left)*s,Y=y=>h-(y-cam.bottom)*cam.verticalScale;
