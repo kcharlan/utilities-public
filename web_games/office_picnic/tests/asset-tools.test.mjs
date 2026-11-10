@@ -328,3 +328,16 @@ test("assembler preserves thin asymmetric detail while centering resampled alpha
     assert.ok(right - left > 20, "thin bar survived downscaling");
   }
 });
+
+test('transparent pixels from one subject cannot erase its neighbor', () => {
+  const full=image(100,40),delicate=image(100,40);
+  rect(full,0,0,100,40,[80,90,100,255]);
+  rect(delicate,95,0,5,40,[80,90,100,255]);
+  rect(delicate,0,0,95,1,[80,90,100,9]);
+  const baseline=assemble([full,full],{cols:2,rows:1,cell:64});
+  const mixed=assemble([full,delicate],{cols:2,rows:1,cell:64});
+  for(let y=0;y<64;y++)for(let x=0;x<64;x++){
+    const k=(y*baseline.width+x)*4;
+    assert.deepEqual([...mixed.pixels.subarray(k,k+4)],[...baseline.pixels.subarray(k,k+4)],`neighbor pixel ${x},${y}`);
+  }
+});

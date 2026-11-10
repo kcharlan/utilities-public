@@ -219,11 +219,14 @@ export function assemble(
               ? cell * 0.92 - (subject.maxY + 1)
               : (cell - subject.im.height) / 2),
         );
+    const left = single ? 0 : cellX, top = single ? 0 : cellY;
+    const right = single ? width : cellX + cell;
+    const bottom = single ? height : cellY + cell;
     for (let y = 0; y < subject.im.height; y++)
       for (let x = 0; x < subject.im.width; x++) {
         const dx = ox + x,
           dy = oy + y;
-        if (dx >= 0 && dx < width && dy >= 0 && dy < height)
+        if (dx >= left && dx < right && dy >= top && dy < bottom)
           pixels.set(
             subject.im.pixels.subarray(
               (y * subject.im.width + x) * 4,
