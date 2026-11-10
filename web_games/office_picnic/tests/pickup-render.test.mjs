@@ -169,3 +169,19 @@ test("decoded clock frames occupy reserved token bounds while the true collectio
     assert.ok(ellipses.some((a) => a[2] === 10 && a[3] === 15));
   }
 });
+
+test('narrow landscape keeps the real Casual novice warning clear of its pickup marker',async()=>{
+ const {makePilot,PROFILES}=await import('../scripts/pilot.mjs');
+ const {stepRun}=await import('../dist/game/simulation.js');
+ const {createEffects,spawnEffects,stepEffects}=await import('../dist/game/effects.js');
+ const run=createRun('standard',buildWorld(undefined,TIERS.casual)),fx=createEffects(),pilot=makePilot(PROFILES.novice,1000);
+ for(let i=0;i<7300;i++){stepRun(run,pilot(run));stepEffects(fx);spawnEffects(fx,run,run.events,{reduced:true});}
+ for(const charWidth of [5.5,6,6.5,7]){
+  const labels=[],markers=[];let text='';
+  const ctx=new Proxy({measureText:s=>({width:s.length*charWidth}),drawImage(){},fillRect(x,y,w,h){if(this.fillStyle==='#303149d9')labels.push({text,left:x,right:x+w,top:y,bottom:y+h});if(this.fillStyle==='#303149e8')markers.push({left:x,right:x+w,top:y,bottom:y+h});}},{get:(o,k)=>k in o?o[k]:()=>{}});
+  const renderer=Object.assign(Object.create(Renderer.prototype),{w:568,h:320,ctx,washer:{complete:false},reduced:true,cache:[{},{}],sprite(){},label(name,...args){text=name;return Renderer.prototype.label.call(this,name,...args);}});
+  renderer.draw(run,false,1,fx);
+  const warning=labels.find(a=>a.text==='Pigeons · climb over');assert.ok(warning,'warning was painted');assert.ok(markers.length,'pickup marker was painted');
+  for(const marker of markers)assert.ok(!(warning.left<marker.right&&warning.right>marker.left&&warning.top<marker.bottom&&warning.bottom>marker.top),`warning overlaps pickup marker at ${charWidth}px`);
+ }
+});

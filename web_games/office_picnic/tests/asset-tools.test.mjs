@@ -341,3 +341,27 @@ test('transparent pixels from one subject cannot erase its neighbor', () => {
     assert.deepEqual([...mixed.pixels.subarray(k,k+4)],[...baseline.pixels.subarray(k,k+4)],`neighbor pixel ${x},${y}`);
   }
 });
+
+test('metrics and preview reject invalid grids before producing output',async()=>{
+  const {preview}=await import('../scripts/asset-metrics.mjs');
+  const {spawnSync}=await import('node:child_process');
+  const {mkdtempSync,readdirSync,rmSync}=await import('node:fs');
+  const {tmpdir}=await import('node:os');
+  const {join}=await import('node:path');
+  const src=image(12,12);
+  for(const [cols,rows] of [[0,1],[-1,1],[1.5,1],[Infinity,1],[NaN,1],[1,0],[1,-1],[1,1.5],[1,Infinity],[1,NaN]]){
+    assert.throws(()=>measure(src,cols,rows),/positive integers/);
+    assert.throws(()=>preview(src,cols,rows,28),/positive integers/);
+  }
+  assert.throws(()=>preview(src,1,1,0),/metres.*positive/i);
+  assert.throws(()=>preview(src,1,1,NaN),/metres.*positive/i);
+  const dir=mkdtempSync(join(tmpdir(),'office-picnic-cli-test-'));
+  try {
+    const script=new URL('../scripts/asset-metrics.mjs',import.meta.url).pathname;
+    const file=new URL('../dist/assets/pickup-token.png',import.meta.url).pathname;
+    for(const args of [[file,'--cols','0'],['--preview',file,'--cols','0'],['--preview',file,'--metres','0']]){
+      const result=spawnSync(process.execPath,[script,...args],{encoding:'utf8',env:{...process.env,TMPDIR:dir}});
+      assert.notEqual(result.status,0);assert.match(result.stderr,/positive/i);assert.deepEqual(readdirSync(dir),[]);
+    }
+  } finally {rmSync(dir,{recursive:true,force:true});}
+});

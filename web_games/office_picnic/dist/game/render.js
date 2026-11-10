@@ -231,7 +231,8 @@ export class Renderer{
       let placed=false;for(let row=0;row<30&&!placed;row++){
         const candidate=original+(row%2?1:-1)*Math.ceil(row/2)*(height+3),top=candidate-size-4;
         if(top<145||top+height>this.h-5)continue;
-        for(const left of [x,6,this.w-width-6])if(!this.labelRects.some(r=>left-6<r.right&&left+width+6>r.left&&top<r.bottom&&top+height>r.top)){x=left;y=candidate;placed=true;break;}
+        const positions=[x,6,this.w-width-6,...this.labelRects.flatMap(r=>[r.right+6,r.left-width-6])];
+        for(const left of positions)if(left>=6&&left+width+6<=this.w&&!this.labelRects.some(r=>left-6<r.right&&left+width+6>r.left&&top<r.bottom&&top+height>r.top)){x=left;y=candidate;placed=true;break;}
       }
       this.labelRects.push({left:x-6,right:x+width+6,top:y-size-4,bottom:y-size-4+height});
     }

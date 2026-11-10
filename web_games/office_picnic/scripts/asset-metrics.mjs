@@ -143,9 +143,14 @@ export function cellFailures(
   if (cell.texture < limits.texture) failures.push("A7");
   return failures;
 }
-export function measure(im, cols, rows, metres = 28) {
+function validateGrid(im, cols, rows) {
+  if (!Number.isInteger(cols) || cols <= 0 || !Number.isInteger(rows) || rows <= 0)
+    throw new Error("Grid columns and rows must be positive integers");
   if (im.width % cols || im.height % rows)
     throw new Error("Image dimensions do not divide evenly by grid");
+}
+export function measure(im, cols, rows, metres = 28) {
+  validateGrid(im, cols, rows);
   const cw = im.width / cols,
     ch = im.height / rows,
     cells = [];
@@ -248,6 +253,9 @@ export function measure(im, cols, rows, metres = 28) {
   };
 }
 export function preview(im, cols, rows, metres) {
+  validateGrid(im, cols, rows);
+  if (!Number.isFinite(metres) || metres <= 0)
+    throw new Error("Preview metres must be finite and positive");
   const palette = JSON.parse(readFileSync(new URL("palette.json", root)));
   const colors = [palette.sampled.sky, palette.derived.park].map((s) =>
     [1, 3, 5].map((i) => parseInt(s.slice(i, i + 2), 16)),
@@ -343,18 +351,17 @@ if (
     }
     if (makePreview) {
       if (!file) throw new Error("Missing preview file");
+      const picture = preview(
+        readPng(readFileSync(file)),
+        options.cols,
+        options.rows,
+        options.metres,
+      );
       const dir = mkdtempSync(join(tmpdir(), "office-picnic-preview-")),
         out = join(dir, "preview.png");
       writeFileSync(
         out,
-        writePng(
-          preview(
-            readPng(readFileSync(file)),
-            options.cols,
-            options.rows,
-            options.metres,
-          ),
-        ),
+        writePng(picture),
       );
       console.log(out);
     } else {
