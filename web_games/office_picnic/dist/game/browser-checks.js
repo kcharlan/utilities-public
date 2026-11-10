@@ -1,16 +1,16 @@
 // Browser-only verification harness, separate from the shipped play flow.
 import {medalFor,MEDALS} from './medals.js';
-import {TIERS} from './tiers.js';import {buildWorld,hazardBox} from './world.js';
+import {TIERS} from './tiers.js';import {buildWorld,hazardBox,hazardKey} from './world.js';
 import {createRun,stepRun} from './simulation.js';import {chooseInput,referenceInput} from './bot.js';import {Renderer} from './render.js';import {Sound} from './audio.js';import {saveResult,loadRecords} from './records.js';import {formatTime,formatDistance} from './session.js';
 import {createEffects,spawnEffects,stepEffects} from './effects.js';
 const output=document.getElementById('output'),canvas=document.getElementById('preview'),renderer=new Renderer(canvas),scenes=[],select=document.getElementById('scene');
 // The harness checkbox explicitly selects either path, independent of system preference.
 renderer.reduced=document.getElementById('reduced').checked;
-for(const [value,text] of [['6','Vent · steam burst'],['7','Vent · lull'],['8','Window-washer approach'],['9','Rush · moving washer'],['10','Rush · squeeze'],['11','Rush · headwind'],['12','Pickup · moving washer'],['13','Tailwind lane'],['14','Roof impact'],['15','Pickup feedback'],['16','Flock impact'],['17','Washer impact'],['18','District transition']]){const option=document.createElement('option');option.value=value;option.textContent=text;select.append(option);}
+for(const [value,text] of [['6','Vent · steam burst'],['7','Vent · lull'],['8','Window-washer approach'],['9','Rush · moving washer'],['10','Rush · squeeze'],['11','Rush · headwind'],['12','Pickup · moving washer'],['13','Tailwind lane'],['14','Roof impact'],['15','Pickup feedback'],['16','Flock impact'],['17','Washer impact'],['18','District transition'],['19','Squeeze warning feedback']]){const option=document.createElement('option');option.value=value;option.textContent=text;select.append(option);}
 const check=(condition,message)=>{if(!condition)throw Error(message);};
 function capture(r){return {...r,plane:{...r.plane},previous:null};}
 const sceneEffects=[];
-function prepareEffects(){for(const i of [14,15,16,17,18]){if(!scenes[i])continue;sceneEffects[i]=createEffects();spawnEffects(sceneEffects[i],scenes[i],scenes[i].events,{reduced:renderer.reduced});for(let n=0;n<8;n++)stepEffects(sceneEffects[i]);}}
+function prepareEffects(){for(const i of [14,15,16,17,18,19]){if(!scenes[i])continue;sceneEffects[i]=createEffects();spawnEffects(sceneEffects[i],scenes[i],scenes[i].events,{reduced:renderer.reduced});for(let n=0;n<8;n++)stepEffects(sceneEffects[i]);}}
 function draw(){const i=Number(select.value);if(scenes[i])renderer.draw(scenes[i],false,1,sceneEffects[i]);}
 function runRoute(){
   const r=createRun(),washer=r.world.hazards.find(h=>h.kind==='platform');for(let n=0;n<60*480&&r.status!=='finished';n++){
@@ -44,6 +44,11 @@ function runRoute(){
     check(flight.events.includes('impact')&&flight.crashLog.at(-1).where===hazard.id,`${kind} impact scene did not collide`);scenes[index]=capture(flight);
   }
   const district=createRun();district.plane.x=district.world.districts[1].start-.1;district.plane.y=300;stepRun(district,false);check(district.events.includes('district'),'District scene did not transition');scenes[18]=capture(district);
+  const warning=createRun('standard',world),flock=world.hazards.find(h=>h.squeeze&&h.kind==='pigeon'&&h.district===4),key=hazardKey(flock);
+  warning.district=4;warning.plane.x=flock.x-flock.warningDistance-1;warning.plane.y=300;
+  for(let i=0;i<20&&!warning.warningHazards?.some(h=>hazardKey(h)===key);i++)stepRun(warning,false);
+  check(warning.warningHazards.some(h=>hazardKey(h)===key),'Squeeze warning scene did not emit');
+  scenes[19]=capture(warning);scenes[19].plane.x=flock.x-40;scenes[19].plane.y=150;
   prepareEffects();
   return r;
 }

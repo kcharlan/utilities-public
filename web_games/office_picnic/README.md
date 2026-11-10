@@ -53,7 +53,7 @@ Open the game with `?trace` to record inputs; after a finished flight, download 
 
 The full Node suite includes physics, collision/run state, timing/camera, records, assets and HTTP serving. The measurement command writes `reports/flight-limits.json`. The proof command writes `reports/route-proof.json` and fails on an uncleared route, collision, over-limit crossing, or failed perturbed trial.
 
-At `/checks.html`, browser verification runs the same collision-enabled simulation in both modes for all three tiers, renders nineteen scenes (including actual roof, flock and washer impacts, pickup feedback, a district transition, vent burst/lull, moving washer, squeeze, headwind and tailwind), checks actual sprite decoding, records and Web Audio, and samples drawing cost with live effects. This harness is separate from the play flow; it does not substitute for human playtesting.
+At `/checks.html`, browser verification runs the same collision-enabled simulation in both modes for all three tiers, renders twenty scenes (including actual roof, flock and washer impacts, squeeze warning and pickup feedback, a district transition, vent burst/lull, moving washer, headwind and tailwind), checks actual sprite decoding, records and Web Audio, and samples drawing cost with live effects. This harness is separate from the play flow; it does not substitute for human playtesting.
 
 ## Architecture and limits
 

@@ -52,3 +52,16 @@ test('first squeeze is introduced once on its warning during a clean flight',asy
     if(tier.id==='overtime'&&tier.prompts==='warnings')assert.ok(laterNotice,'later squeeze still warns');
   }
 });
+test('real squeeze warning draws one outline around the shared passage',async()=>{
+  const {createEffects,spawnEffects}=await import('../dist/game/effects.js');
+  const world=buildWorld(undefined,TIERS.rush),run=createRun('standard',world);
+  const pair=world.hazards.filter(h=>h.squeeze&&h.district===4),flock=pair.find(h=>h.kind==='pigeon'),washer=pair.find(h=>h.kind==='platform'),key=hazardKey(flock);
+  run.district=4;run.plane.x=flock.x-flock.warningDistance-1;run.plane.y=300;
+  for(let i=0;i<20&&!run.warningHazards?.some(h=>hazardKey(h)===key);i++)stepRun(run,false);
+  assert.ok(run.warningHazards.some(h=>hazardKey(h)===key&&h.kind==='pigeon'));
+  const fx=createEffects();spawnEffects(fx,run,run.events,{reduced:true});assert.equal(fx.cues.filter(c=>c.hazardKey===key).length,1);
+  const rects=[],ctx=new Proxy({strokeRect:(...args)=>rects.push(args)},{get:(o,k)=>k in o?o[k]:()=>{}}),renderer=Object.assign(Object.create(Renderer.prototype),{w:1000,h:1000,ctx,reduced:true,label:()=>{}});
+  const a=hazardBox(washer,run.worldTicks/60),b=hazardBox(flock,run.worldTicks/60),X=x=>x-a.x+100,Y=y=>500-y;
+  renderer.drawWarningCue(washer,fx.cues.find(c=>c.hazardKey===key),run,X,Y);
+  assert.deepEqual(rects,[[X(Math.max(a.x,b.x)),Y(a.y),Math.min(a.x+a.w,b.x+b.w)-Math.max(a.x,b.x),a.y-(b.y+b.h)]]);
+});

@@ -27,6 +27,7 @@
 - Validate stored tier IDs as strings before property lookup: JavaScript coerces an array such as `["rush"]` into a valid property key.
 - Carry an encounter's identity through every consumer of an emitted warning. Test both members' actual trigger thresholds and a respawn, and use the same live moving geometry for the warning and its marker.
 - A warning effect must keep the emitted encounter key even when a different hazard is the nearest marker. Effects also need a bounded presentation clock after the simulation finishes; otherwise landing and best cues never expire.
+- A squeeze key identifies a pair, not one collision body. Derive its warning cue and marker from the live shared passage, and exercise an actual emitted warning so a lookup cannot silently highlight just the first body.
 - A storage migration needs a best-effort write as well as a readable in-memory result. Keep the old key intact and exercise a denied write separately from successful persistence.
 - Transient HUD feedback keyed to a simulation clock must reset with that clock: a Nonstop restart resets world ticks, so clear the previous throw's reward message on respawn.
 - Validate authored pickup coverage before pricing the generated world: placements that lack a matching hazard are skipped during world construction and otherwise disappear from every pricing gate.

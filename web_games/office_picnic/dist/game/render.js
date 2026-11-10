@@ -3,6 +3,13 @@ import {hazardBox,hazardParts,hazardAdvice,upcomingHazard,hazardKey,pickupPos} f
 import {drawAir,drawWind} from './air-render.js';
 const C={ink:'#302f48',shadow:'#4f4b64',sky:'#9b8cbb',warm:'#f1a290',paper:'#fff0d3',window:'#f3bd86',green:'#7d887d'};
 const hash=n=>{const x=Math.sin(n*127.1+311.7)*43758.5453;return x-Math.floor(x);};
+function squeezePassage(world,hazard,time){
+  const pair=world.hazards.filter(h=>h.squeeze&&hazardKey(h)===hazardKey(hazard));
+  const washer=pair.find(h=>h.kind==='platform'),flock=pair.find(h=>h.kind==='pigeon');
+  if(!washer||!flock)return hazardBox(hazard,time);
+  const a=hazardBox(washer,time),b=hazardBox(flock,time),x=Math.max(a.x,b.x),y=b.y+b.h;
+  return {x,y,w:Math.max(0,Math.min(a.x+a.w,b.x+b.w)-x),h:Math.max(0,a.y-y)};
+}
 export class Renderer{
   constructor(canvas){
     this.canvas=canvas;this.ctx=canvas.getContext('2d',{alpha:false});this.reduced=matchMedia('(prefers-reduced-motion: reduce)').matches;
@@ -101,11 +108,8 @@ export class Renderer{
     const squeeze=run.world.hazards.find(h=>h.squeeze&&run.warned.has(hazardKey(h))&&hazardBox(h,run.worldTicks/60).x+h.w+8>p.x);
     const marker=squeeze||incoming;
     if(marker){
-      const b=hazardBox(marker,run.worldTicks/60);
-      if(marker.squeeze){
-        const pair=run.world.hazards.filter(h=>h.squeeze&&hazardKey(h)===hazardKey(marker)).map(h=>hazardBox(h,run.worldTicks/60));
-        b.x=Math.min(...pair.map(h=>h.x));b.y=(Math.max(...pair.map(h=>h.y))+Math.min(...pair.map(h=>h.y+h.h)))/2;
-      }
+      const b=marker.squeeze?squeezePassage(run.world,marker,run.worldTicks/60):hazardBox(marker,run.worldTicks/60);
+      if(marker.squeeze)b.y+=b.h/2;
       const offscreen=X(b.x)>w-15;if(offscreen||Y(b.y)<155){
         const mx=Math.max(10,Math.min(w-218,w*.35));
         this.label((run.world.tier.prompts==='full'?(offscreen?'→ ':''):'→ ')+(run.world.tier.prompts==='quiet'?'':hazardAdvice(marker)),mx,182,'#ffe3a8',12);
@@ -135,9 +139,9 @@ export class Renderer{
     ctx.restore();
   }
   drawWarningCue(hazard,cue,run,X,Y){
-    const ctx=this.ctx,b=hazardBox(hazard,run.worldTicks/60),x=X(b.x),y=Y(b.y+b.h),right=X(b.x+b.w),bottom=Y(b.y);
+    const ctx=this.ctx,b=hazard.squeeze?squeezePassage(run.world,hazard,run.worldTicks/60):hazardBox(hazard,run.worldTicks/60),x=X(b.x),y=Y(b.y+b.h),right=X(b.x+b.w),bottom=Y(b.y);
     const fixed=this.reduced||cue.reduced;ctx.strokeStyle='#ffe3a8';ctx.lineWidth=2;ctx.globalAlpha=fixed?1:.55+.45*Math.sin(Math.PI*cue.age/cue.life);
-    if(right>=0&&x<=this.w&&bottom>=0&&y<=this.h)ctx.strokeRect(x-5,y-5,Math.max(10,right-x+10),Math.max(10,bottom-y+10));
+    if(right>=0&&x<=this.w&&bottom>=0&&y<=this.h){if(hazard.squeeze)ctx.strokeRect(x,y,right-x,bottom-y);else ctx.strokeRect(x-5,y-5,Math.max(10,right-x+10),Math.max(10,bottom-y+10));}
     else this.label('→ '+hazardAdvice(hazard),Math.max(10,Math.min(this.w-218,this.w*.35)),215,'#ffe3a8',12);
     ctx.globalAlpha=1;
   }
