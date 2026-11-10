@@ -57,6 +57,15 @@ export class Renderer{
     const landing=run.status==='landing'||run.status==='finished',t=run.status==='finished'?1:Math.min(1,(run.landingTicks||0)/120),ease=t*t*(3-2*t);
     const cam=cameraFor(w,h,display,landing?{focus:{x:run.world.length,y:30},zoom:Math.min(3.2,w/210,h/130),progress:this.reduced?1:ease}:{}),s=cam.scale;
     const X=x=>(x-cam.left)*s,Y=y=>h-(y-cam.bottom)*cam.verticalScale;
+    // Reserve the plane's rotated, possibly stretched sprite footprint before any labels.
+    const planeX=X(display.x),planeY=Y(display.y),planeRadius=Math.max(58,21*s);
+    this.labelRects.push({left:planeX-planeRadius,right:planeX+planeRadius,top:planeY-planeRadius,bottom:planeY+planeRadius});
+    for(const washer of run.world.hazards.filter(h=>h.squeeze&&h.kind==='platform')){
+      const flock=run.world.hazards.find(h=>h.squeeze&&h.kind==='pigeon'&&hazardKey(h)===hazardKey(washer));if(!flock)continue;
+      const a=hazardBox(washer,run.worldTicks/60),b=hazardBox(flock,run.worldTicks/60),margin=Math.max(17,7.5*s);
+      const rect={left:Math.min(X(a.x),X(b.x))-margin,right:Math.max(X(a.x+a.w),X(b.x+b.w))+margin,top:Math.min(Y(a.y+a.h),Y(b.y+b.h))-margin,bottom:Math.max(Y(a.y),Y(b.y))+margin};
+      if(rect.right>0&&rect.left<w&&rect.bottom>0&&rect.top<h)this.labelRects.push(rect);
+    }
     if(this.scenery)ctx.drawImage(this.scenery.sky,0,0,w,h);else{ctx.fillStyle=this.gradient;ctx.fillRect(0,0,w,h);}
     ctx.save();if(effects?.bump&&!this.reduced)ctx.translate(Math.sin(effects.bump*2)*Math.min(4,effects.bump),0);
     // Cached city layers, painted once on resize.
@@ -147,7 +156,6 @@ export class Renderer{
       const bx=X(-34),by=Y(138);ctx.fillStyle='#384459';ctx.fillRect(bx,by,30*s,h-by);ctx.fillStyle='#f4c68d';ctx.fillRect(bx+5*s,by+7*s,20*s,29*s);ctx.strokeStyle='#aeb2bd';ctx.strokeRect(bx+5*s,by+7*s,20*s,29*s);this.label('40th floor',Math.max(8,bx),by-10,'#fff0d3',11);
     }
     const finished=run.status==='finished';
-    const planeX=X(display.x),planeY=Y(display.y);
     if(run.status!=='respawning'||run.respawnTicks%10<5){
       let size=Math.max(58,21*s),rotation=finished?-.48:-p.pitch,stretch=1;
       if(effects&&!this.reduced)for(const cue of effects.cues){
@@ -200,10 +208,10 @@ export class Renderer{
     x=Math.max(6,Math.min(x,this.w-width-6));
     if(this.labelRects){
       const height=lines.length*(size+4)+7,original=y;
-      for(let row=0;row<30;row++){
+      let placed=false;for(let row=0;row<30&&!placed;row++){
         const candidate=original+(row%2?1:-1)*Math.ceil(row/2)*(height+3),top=candidate-size-4;
         if(top<145||top+height>this.h-5)continue;
-        if(!this.labelRects.some(r=>x-6<r.right&&x+width+6>r.left&&top<r.bottom&&top+height>r.top)){y=candidate;break;}
+        for(const left of [x,6,this.w-width-6])if(!this.labelRects.some(r=>left-6<r.right&&left+width+6>r.left&&top<r.bottom&&top+height>r.top)){x=left;y=candidate;placed=true;break;}
       }
       this.labelRects.push({left:x-6,right:x+width+6,top:y-size-4,bottom:y-size-4+height});
     }
