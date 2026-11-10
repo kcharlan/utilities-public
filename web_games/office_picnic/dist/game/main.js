@@ -64,8 +64,9 @@ function finish(){
   $('result-best').textContent=`${run.mode==='standard'?'Standard':'Nonstop'} · ${!previous||seconds<previous?'Your best flight.':`Best ${formatTime(previous)}`}`;
   $('notice').hidden=true;
   if(trace){finishTrace(trace,run);const link=document.createElement('a');link.textContent='Download flight trace';link.download='office-picnic-trace.json';link.href=URL.createObjectURL(new Blob([JSON.stringify(trace)],{type:'application/json'}));link.id='trace-download';clearTraceDownload();$('result-screen').querySelector('.modal').append(link);}
+  if(!previous||seconds<previous)feedback('best');
   // Let the visible landing settle before revealing the invitation card.
-  setTimeout(()=>{if(run?.status==='finished'&&resultShown){$('result-screen').hidden=false;modalOpen(true);$('replay').focus();if(!previous||seconds<previous)feedback('best');}},reduced.matches?300:1400);
+  setTimeout(()=>{if(run?.status==='finished'&&resultShown){$('result-screen').hidden=false;modalOpen(true);$('replay').focus();}},reduced.matches?300:1400);
 }
 function tick(){
   run.previous={x:run.plane.x,y:run.plane.y};if(trace)recordInput(trace,held);const before=run.worldTicks;stepRun(run,held);noticeEnd=rebaseNoticeDeadline(noticeEnd,before,run.worldTicks);sound.district=run.district;

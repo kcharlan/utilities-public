@@ -1,3 +1,4 @@
+import {COURSE} from './course.js';
 import {PHYSICS} from './physics.js';
 
 function freeze(value){
@@ -56,7 +57,7 @@ function stable(value){
 }
 export function tierHash(tier){
   const {name,blurb,prompts,...gameplay}=tier;
-  const json=JSON.stringify(stable({tier:gameplay,physics:PHYSICS}));
+  const json=JSON.stringify(stable({tier:gameplay,physics:PHYSICS,course:COURSE}));
   let hash=2166136261;
   for(const byte of new TextEncoder().encode(json)){
     hash^=byte;

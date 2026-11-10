@@ -4,7 +4,7 @@ export const MEDALS = {
     "gold": 360,
     "silver": 390,
     "bronze": 412,
-    "configHash": "081c660c",
+    "configHash": "b6663dee",
     "derived": {
       "n": 150,
       "seeds": {
@@ -24,7 +24,7 @@ export const MEDALS = {
     "gold": 379,
     "silver": 412,
     "bronze": 450,
-    "configHash": "fd4a5c43",
+    "configHash": "0837b3b5",
     "derived": {
       "n": 150,
       "seeds": {
@@ -44,7 +44,7 @@ export const MEDALS = {
     "gold": 358,
     "silver": 419,
     "bronze": 490,
-    "configHash": "545e4566",
+    "configHash": "20cc5b80",
     "derived": {
       "n": 150,
       "seeds": {

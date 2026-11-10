@@ -127,3 +127,8 @@ test('Nonstop fresh throw can introduce tier features again',async()=>{
   r.plane.y=0;stepRun(r,false);while(r.status==='respawning')stepRun(r,false);
   r.district=1;r.events=['district'];assert.match(module.noticeMessages(r).join(' '),/Moving flock/);
 });
+test('authored Overtime overlap reports present headwind and nearby lane',async()=>{
+  const {buildWorld}=await import('../dist/game/world.js');const {TIERS}=await import('../dist/game/tiers.js');
+  const r=createRun('standard',buildWorld(undefined,TIERS.overtime));r.plane.x=4825;r.plane.y=150;
+  const g=module.flightGuidance(r,false);assert.ok(g.air.wind<0);assert.match(g.airLabel,/headwind/i);assert.match(g.airLabel,/lane below/i);
+});

@@ -156,3 +156,8 @@ test('Rush retains authored geometry and wind zones',()=>{
   const winds=world.winds.map(({x0,x1,y0,y1,wind,lift,district,teaching})=>({x0,x1,y0,y1,wind,lift,district,teaching}));
   assert.equal(createHash('sha256').update(JSON.stringify({geometry:projection(world),winds})).digest('hex'),'e171184fc78ce8b17e1203ca83cd2e6da0eb4947391c5516a902f7703a3fd548');
 });
+test('shared authored course changes alter tier fingerprints',async()=>{
+  const {COURSE}=await import('../dist/game/world.js');const before=tierHash(TIERS.casual);
+  COURSE[0].widths[1]+=20;
+  try{assert.notEqual(tierHash(TIERS.casual),before);}finally{COURSE[0].widths[1]-=20;}
+});

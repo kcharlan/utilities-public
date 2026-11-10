@@ -51,3 +51,4 @@ A delayed-input window measured from a checkpoint can miss height-judgment diffi
 
 - A notice deadline can outlive the control phase it describes and obscure the landing close-up. Exercise the actual presentation transition, including the DOM notice, at narrow landscape sizes and both motion settings.
 - Nearby air columns can place their labels at the same screen height on portrait displays. Lay out labels against the other labels in the frame and retain every cue; check the resulting bounds at narrow sizes.
+- Air guidance must combine the forces at the plane with directions to nearby lanes; an authored headwind can overlap the horizontal span of an out-of-reach tailwind. Fingerprints must include shared course geometry as well as tier and physics configuration. Trigger landing feedback while its canvas remains visible, and exercise the real transition in both motion settings.
