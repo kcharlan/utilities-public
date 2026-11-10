@@ -1,4 +1,4 @@
-import {COURSE} from './course.js';
+import {COURSE,PARK} from './course.js';
 export {COURSE} from './course.js';
 import {TIERS} from './tiers.js';
 import {measureFlight} from './measure.js';
@@ -100,7 +100,7 @@ export function buildWorld(limits=measureFlight(),cfg=TIERS.casual){
     world.pickups.push({sourceIndex,placement:{...pk},id:`p${pid++}`,district:pk.district,slot:pk.slot,place:pk.place,x:px,y:py,r:pk.r??4,rewardTicks:pk.rewardTicks,label:`${pk.place}${pk.dy??pk.above??pk.y}`,attach:pk.attach===false?null:attach,ox,oy});
   }
   // A generous final park descent follows the last technical crossing.
-  world.finishStart=x;world.length=x+140;
+  world.finishStart=x;world.park={...PARK};world.length=x+PARK.runIn;
   return world;
 }
 export function airAt(world,p,time){

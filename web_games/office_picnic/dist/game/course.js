@@ -6,3 +6,5 @@ export const COURSE=[
   {types:[3,1,0,2,2,3],widths:[30,200,170,220,220,350],roofs:[65,65,65,65,65,65],entries:[150,184,170,142,170,210],flockTop:146.20409861648483,washerY:144,laterFlock:160,lanes:[{slot:-1,y0:130,y1:170,wind:2,teaching:true}]},
   {types:[4,0,1,2,3,4],widths:[30,170,200,220,170,280],roofs:[75,75,75,75,75,75],entries:[150,184,170,142,170,210],flockTop:143.91114518984554,washerY:144,laterFlock:160}
 ];
+
+export const PARK={runIn:340,bowlY:25,coneRange:120,coneSlope:.7,floor:30};

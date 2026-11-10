@@ -68,11 +68,11 @@ test('derivation rejects an empty finished sample rather than generating null th
   assert.throws(()=>deriveMedals(TIERS.casual,undefined,0),/No finished medal derivation samples/);
 });
 
-test('title grades both modes from saved v6 tier records',async()=>{
+test('title grades both modes from saved v7 tier records',async()=>{
   const {loadRecords,titleBestText}=await import('../dist/game/records.js');
   const {formatTime}=await import('../dist/game/session.js');
   const saved={best:{casual:{standard:MEDALS.casual.gold},rush:{standard:MEDALS.rush.bronze+1,nonstop:MEDALS.rush.silver}},tier:'rush'};
-  const storage={getItem:key=>key==='office-picnic-v6'?JSON.stringify(saved):null};
+  const storage={getItem:key=>key==='office-picnic-v7'?JSON.stringify(saved):null};
   const records=loadRecords(storage);
   assert.equal(titleBestText(records,'casual'),`Standard: ${formatTime(MEDALS.casual.gold)} · gold / Nonstop: —`);
   assert.equal(titleBestText(records,'rush'),`Standard: ${formatTime(MEDALS.rush.bronze+1)} · no medal / Nonstop: ${formatTime(MEDALS.rush.silver)} · silver`);

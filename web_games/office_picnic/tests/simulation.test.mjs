@@ -54,9 +54,9 @@ test('later crossings require a pull-up rather than clearing with release alone'
 test('park arrival descends continuously into the salad before results',()=>{
   const r=sim.createRun();r.plane.x=r.world.length-.1;r.plane.y=90;
   sim.stepRun(r,false);assert.equal(r.status,'landing');assert.ok(r.plane.y>80);
-  for(let n=0;n<60;n++)sim.stepRun(r,false);
-  assert.equal(r.status,'landing');assert.ok(r.plane.y>25&&r.plane.y<80);
-  for(let n=0;n<60;n++)sim.stepRun(r,false);
+  for(let n=0;n<Math.floor(r.landingDurationTicks/2);n++)sim.stepRun(r,false);
+  assert.equal(r.status,'landing');assert.ok(r.plane.y>25&&r.plane.y<90);
+  while(r.status==='landing')sim.stepRun(r,false);
   assert.equal(r.status,'finished');assert.equal(r.plane.y,25);assert.ok(r.events.includes('landing'));
 });
 test('both recognizable hazard types and roofs cause real impacts',()=>{

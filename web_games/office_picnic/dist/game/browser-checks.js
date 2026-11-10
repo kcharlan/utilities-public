@@ -6,7 +6,7 @@ import {createEffects,spawnEffects,stepEffects,advanceFinishedEffects} from './e
 const output=document.getElementById('output'),canvas=document.getElementById('preview'),renderer=new Renderer(canvas),scenes=[],select=document.getElementById('scene');
 // The harness checkbox explicitly selects either path, independent of system preference.
 renderer.reduced=document.getElementById('reduced').checked;
-for(const [value,text] of [['6','Vent · steam burst'],['7','Vent · lull'],['8','Window-washer approach'],['9','Rush · moving washer'],['10','Rush · squeeze'],['11','Rush · headwind'],['12','Pickup · moving washer'],['13','Tailwind lane'],['14','Roof impact'],['15','Pickup feedback'],['16','Flock impact'],['17','Washer impact'],['18','District transition'],['19','Squeeze warning feedback']]){const option=document.createElement('option');option.value=value;option.textContent=text;select.append(option);}
+for(const [value,text] of [['6','Vent · steam burst'],['7','Vent · lull'],['8','Window-washer approach'],['9','Rush · moving washer'],['10','Rush · squeeze'],['11','Rush · headwind'],['12','Pickup · moving washer'],['13','Tailwind lane'],['14','Roof impact'],['15','Pickup feedback'],['16','Flock impact'],['17','Washer impact'],['18','District transition'],['19','Squeeze warning feedback'],['20','Landing · on the glide line'],['21','Landing · from overhead'],['22','Landing · floor capture']]){const option=document.createElement('option');option.value=value;option.textContent=text;select.append(option);}
 const check=(condition,message)=>{if(!condition)throw Error(message);};
 function capture(r){return {...r,plane:{...r.plane},previous:null};}
 const sceneEffects=[];
@@ -49,13 +49,21 @@ function runRoute(){
   for(let i=0;i<20&&!warning.warningHazards?.some(h=>hazardKey(h)===key);i++)stepRun(warning,false);
   check(warning.warningHazards.some(h=>hazardKey(h)===key),'Squeeze warning scene did not emit');
   scenes[19]=capture(warning);scenes[19].plane.x=flock.x-40;scenes[19].plane.y=150;
+  for(const [index,kind] of [[20,'cone'],[21,'overhead'],[22,'floor']]){
+    const flight=createRun(),w=flight.world;
+    flight.plane.x=kind==='cone'?w.length-100:kind==='floor'?w.finishStart+10:w.length-.1;
+    flight.plane.y=kind==='cone'?90:kind==='floor'?29:180;
+    stepRun(flight,false);check(flight.landingKind===kind,kind+' scene failed');
+    for(let n=0;n<Math.floor(flight.landingDurationTicks*.3);n++)stepRun(flight,false);
+    scenes[index]=capture(flight);
+  }
   prepareEffects();
   return r;
 }
 select.onchange=draw;document.getElementById('reduced').onchange=e=>{renderer.reduced=e.target.checked;prepareEffects();draw();};window.addEventListener('resize',()=>{renderer.resize();draw();});
 document.getElementById('landing').onclick=()=>{
   const r=createRun();for(let n=0;n<60*480&&r.status==='flying';n++)stepRun(r,chooseInput(r));check(r.status==='landing','Landing approach did not clear');
-  output.textContent='Playing the actual two-second landing state…';
+  output.textContent='Playing the actual landing state…';
   const fx=createEffects(),clock={accumulator:0},flightClock={accumulator:0};let last=0,finishedAt=0;
   const animate=now=>{const delta=last?(now-last)/1000:0;last=now;
     if(r.status!=='finished'){consumeTime(flightClock,delta,false,()=>{if(r.status==='finished')return;stepRun(r,false);stepEffects(fx);spawnEffects(fx,r,r.events,{reduced:renderer.reduced});});if(r.status==='finished')finishedAt=now;}
@@ -72,7 +80,7 @@ document.getElementById('run').onclick=async()=>{
     check(renderer.washer.complete&&renderer.washer.naturalWidth>0,'Washer illustration did not decode');
     const current=saveResult(null,'rush','standard',300);check(saveResult(null,'rush','standard',340,current).best.rush.standard===300,'Session records regressed');
     const prefix='office-picnic-browser-check-',store={getItem:k=>localStorage.getItem(prefix+k),setItem:(k,v)=>localStorage.setItem(prefix+k,v)};
-    store.setItem('office-picnic-v5',JSON.stringify({best:{casual:{standard:320}},tier:'rush',muted:true}));
+    store.setItem('office-picnic-v6',JSON.stringify({best:{casual:{standard:320}},tier:'rush',muted:true}));
     check(Object.keys(loadRecords(store).best).length===0&&loadRecords(store).tier==='rush'&&loadRecords(store).muted,'Migration failed');
     saveResult(store,'rush','nonstop',MEDALS.rush.silver);
     saveResult(store,'overtime','standard',MEDALS.overtime.gold);
@@ -82,7 +90,7 @@ document.getElementById('run').onclick=async()=>{
     check(saved.best.overtime.standard===MEDALS.overtime.gold&&saved.best.overtime.nonstop===MEDALS.overtime.silver,'Overtime records failed');
     check(medalFor('rush',saved.best.rush.nonstop)==='silver','Stored Nonstop medal failed');
     check(medalFor('casual',MEDALS.casual.bronze+.01)===null,'Medal cutoff failed');
-    localStorage.removeItem(prefix+'office-picnic-v5');localStorage.removeItem(prefix+'office-picnic-v6');
+    localStorage.removeItem(prefix+'office-picnic-v5');localStorage.removeItem(prefix+'office-picnic-v6');localStorage.removeItem(prefix+'office-picnic-v7');
     if(sound.ctx){check(sound.ctx.state==='running','Audio did not unlock');sound.setMuted(false);sound.event('checkpoint');sound.setPaused(true);await sound.ctx.suspend();check(sound.ctx.state==='suspended','Audio pause failed');sound.setPaused(false);await sound.ctx.resume();sound.setMuted(true);check(sound.master.gain.value>=0,'Invalid gain');}
     // Measure actual draw work; this is not a physical-phone FPS claim.
     const draws=[],frameIntervals=[];let last=0;

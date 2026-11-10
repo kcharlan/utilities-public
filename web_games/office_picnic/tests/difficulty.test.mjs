@@ -63,9 +63,9 @@ test('casual: no crossing is a novice wall',()=>{
   }
   assert.ok(Math.max(...counts)<=150,`crossing crashes per 150 runs: ${counts}`);
 });
-test('last crossing measures impacts beyond the final district',()=>{
+test('last crossing measures impacts before the park',()=>{
   const base=buildWorld(undefined,TIERS.casual);
-  const world={...base,buildings:[...base.buildings,{x:base.finishStart+30,y:400,w:20,h:100}]};
+  const world={...base,buildings:[...base.buildings,{x:base.finishStart-30,y:400,w:20,h:100}]};
   const row=difficulty(world).at(-1),last=row.crossings.find(c=>c.id==='5.5');
   assert.equal(last.window,0,'the pilot cannot reach the finish without hitting the added roof');
 });

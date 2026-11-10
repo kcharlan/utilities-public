@@ -21,7 +21,7 @@ test('live notice remains during park approach and clears on automatic landing',
       const source=readFileSync(new URL('../dist/game/main.js',import.meta.url),'utf8').replaceAll("from './",`from '${base}`)+`\nexport {start,tick}; export const currentRun=()=>run;\n// ${reduced}`;
       const app=await import('data:text/javascript;base64,'+Buffer.from(source).toString('base64'));
       app.start('standard');const run=app.currentRun();run.plane.x=run.world.finishStart-.1;run.plane.y=200;app.tick();
-      assert.equal(run.status,'flying');assert.equal(element('notice').hidden,false);assert.match(element('notice').textContent,/The park/);
+      assert.equal(run.status,'flying');assert.equal(element('notice').hidden,false);assert.equal(element('notice').textContent,'The park. Release now and glide down to the table.');
       run.plane.x=run.world.length-.1;app.tick();
       assert.equal(run.status,'landing');assert.equal(element('notice').hidden,true,`reduced=${reduced}`);
     }

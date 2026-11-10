@@ -22,3 +22,38 @@ test('finished picnic table, bowl and group fit desktop and phone viewports',()=
     assert.ok(text.every(([s])=>!s.toLowerCase().includes('potato salad')));
   }
 });
+test('overhead descent keeps the plane and table in the landscape view',()=>{
+  const run=createRun();run.plane.x=run.world.length+.1;run.plane.y=180;
+  // Use the real simulation to enter and advance the overhead landing.
+  return import('../dist/game/simulation.js').then(({stepRun})=>{
+    stepRun(run,false);for(let n=0;n<Math.floor(run.landingDurationTicks*.3);n++)stepRun(run,false);
+    const rects=[],sprites=[],ctx=new Proxy({fillRect:(...v)=>rects.push(v),drawImage(){}},{get:(o,k)=>k in o?o[k]:()=>{}});
+    const renderer=Object.assign(Object.create(Renderer.prototype),{w:844,h:390,ctx,washer:{complete:false},reduced:false,cache:[{},{}],sprite:(...v)=>sprites.push(v),label:()=>{}});
+    renderer.draw(run,false,1);const plane=sprites.at(-1);assert.ok(plane[3]>0&&plane[3]<390,'plane visible');
+    const table=rects.find(([x,y,w,h])=>w>100&&h>0&&y>200&&y<390);assert.ok(table&&table[1]+table[3]<=390,'table visible');
+  });
+});
+test('finished framing excludes buildings and hazard motion bounds at all playfield sizes',async()=>{
+  const {cameraFor}=await import('../dist/game/session.js');
+  const {hazardParts}=await import('../dist/game/world.js');
+  for(const [w,h] of [[1440,900],[844,390],[390,844]]){
+    const run=createRun(),world=run.world,p={x:world.length,y:world.park.bowlY};
+    const cam=cameraFor(w,h,p,{focus:{x:world.length,y:30},zoom:Math.min(3.2,w/210,h/130),progress:1});
+    const intersects=b=>b.x+b.w>=cam.left&&b.x<=cam.left+w/cam.scale&&b.y+b.h>=cam.bottom&&b.y<=cam.bottom+h/cam.verticalScale;
+    for(const b of world.buildings)assert.ok(!intersects({x:b.x,y:-1000,w:b.w,h:1000+b.y}),`${w} building`);
+    for(const hzd of world.hazards){
+      const dx=hzd.moving?(hzd.amp?.pigeonX??0):0,dy=hzd.moving?(hzd.kind==='platform'?(hzd.amp?.platformY??0):(hzd.amp?.pigeonY??0)):0;
+      for(const b of hazardParts({...hzd,moving:false},0))assert.ok(!intersects({x:b.x-dx,y:b.y-dy,w:b.w+2*dx,h:b.h+2*dy}),`${w} ${hzd.id}`);
+    }
+  }
+});
+test('approach guidance appears only in full and warnings modes',async()=>{
+  const {TIERS}=await import('../dist/game/tiers.js');const {buildWorld}=await import('../dist/game/world.js');
+  for(const tier of Object.values(TIERS)){
+    const run=createRun('standard',buildWorld(undefined,tier)),dashes=[];
+    const ctx=new Proxy({setLineDash:v=>dashes.push(v),drawImage(){}},{get:(o,k)=>k in o?o[k]:()=>{}});
+    const renderer=Object.assign(Object.create(Renderer.prototype),{w:844,h:390,ctx,washer:{complete:false},reduced:false,cache:[{},{}],sprite:()=>{},label:()=>{}});
+    run.plane.x=run.world.finishStart+10;run.plane.y=175;renderer.draw(run,false,1);
+    assert.equal(dashes.some(v=>v[0]===3&&v[1]===6),tier.prompts!=='quiet',tier.id);
+  }
+});

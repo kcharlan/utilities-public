@@ -54,8 +54,13 @@ export class Renderer{
     const ctx=this.ctx,w=this.w,h=this.h,p=run.plane;
     this.labelRects=[];
     const display={...p};if(run.previous&&run.status==='flying'){display.x=run.previous.x+(p.x-run.previous.x)*alpha;display.y=run.previous.y+(p.y-run.previous.y)*alpha;}
-    const landing=run.status==='landing'||run.status==='finished',t=run.status==='finished'?1:Math.min(1,(run.landingTicks||0)/120),ease=t*t*(3-2*t);
-    const cam=cameraFor(w,h,display,landing?{focus:{x:run.world.length,y:30},zoom:Math.min(3.2,w/210,h/130),progress:this.reduced?1:ease}:{}),s=cam.scale;
+    const landing=run.status==='landing'||run.status==='finished',t=run.status==='finished'?1:Math.min(1,(run.landingTicks||0)/run.landingDurationTicks),ease=t*t*(3-2*t);
+    const cam=cameraFor(w,h,display,landing?{focus:{x:run.world.length,y:30},zoom:Math.min(3.2,w/210,h/130),progress:this.reduced?1:ease}:{});
+    if(run.status==='landing'&&run.landingKind==='overhead'&&!this.reduced){
+      cam.verticalScale=Math.min(cam.verticalScale,(h-60)/Math.max(1,display.y+20));
+      cam.bottom=Math.min(cam.bottom,0);
+    }
+    const s=cam.scale;
     const X=x=>(x-cam.left)*s,Y=y=>h-(y-cam.bottom)*cam.verticalScale;
     // Reserve the plane's rotated, possibly stretched sprite footprint before any labels.
     const planeX=X(display.x),planeY=Y(display.y),planeRadius=Math.max(58,21*s);
@@ -224,6 +229,10 @@ export class Renderer{
     else{ctx.fillStyle=C.paper;ctx.beginPath();ctx.moveTo(w/2,0);ctx.lineTo(-w/2,-h/4);ctx.lineTo(-w/3,0);ctx.lineTo(-w/2,h/4);ctx.closePath();ctx.fill();}ctx.restore();
   }
   park(ctx,X,Y,s,run,effects){
+    const park=run.world.park;
+    if(run.world.tier.prompts!=='quiet'){
+      ctx.save();ctx.strokeStyle='rgba(255,240,211,.35)';ctx.lineWidth=1;ctx.setLineDash([3,6]);ctx.beginPath();ctx.moveTo(X(run.world.finishStart),Y(175));ctx.lineTo(X(run.world.length-park.coneRange),Y(park.bowlY+park.coneSlope*park.coneRange));ctx.lineTo(X(run.world.length),Y(park.bowlY));ctx.stroke();ctx.restore();
+    }
     const start=X(run.world.finishStart),ground=Y(4);if(this.scenery&&this.w>start&&this.h>ground)ctx.drawImage(this.scenery.ground,start,ground,this.w-start,this.h-ground);else{ctx.fillStyle='#697f79';ctx.fillRect(start,ground,this.w-start,this.h-ground);}
     for(let i=0;i<12;i++){
       const x=X(run.world.finishStart+i*36),y=Y(18);if(this.scenery)ctx.drawImage(this.scenery.tree,x-20*s,y-30*s,40*s,55*s);else{ctx.fillStyle='#74877b';ctx.beginPath();ctx.arc(x,y-12*s,18*s,0,Math.PI*2);ctx.fill();}
