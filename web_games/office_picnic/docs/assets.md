@@ -68,3 +68,5 @@ The final subject prompts follow. Except for props, each was preceded by “Use 
 - Trees: “Two clearly separated different park trees, full canopy and trunk, same scale and baseline; wide transparent gap and generous margins.”
 - Token: “Two clearly separated small round office wall clocks with paper tags, unmistakably time; left idle and right brighter for pulse, equal scale and baseline, generous transparent margins.”
 - Window: “Office tower corner with one open window, warm interior light, blinds half raised, plant on sill, no person. Fully isolated.”
+
+For layout, the manifest records source-relative baseline fractions. The table is 24.5 m high at 140 m wide, placing its visible top near 20 m while its feet meet the 4 m ground horizon. Vertical sprite dimensions use the camera's vertical projection, including portrait approach. The assembler associates a smaller component with a nearby large seed only when it is at most 25% of the seed and within 3% of source width; distance uses the original seed rather than accumulated specks, so chains do not fuse adjacent people. Its shared scale accounts for the furthest edge from each alpha centroid.

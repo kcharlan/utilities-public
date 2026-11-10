@@ -3,6 +3,7 @@ import {medalFor,MEDALS} from './medals.js';
 import {TIERS} from './tiers.js';import {buildWorld,hazardBox,hazardKey} from './world.js';
 import {createRun,stepRun} from './simulation.js';import {chooseInput,referenceInput} from './bot.js';import {Renderer} from './render.js';import {Sound} from './audio.js';import {saveResult,loadRecords} from './records.js';import {formatTime,formatDistance,consumeTime} from './session.js';
 import {createEffects,spawnEffects,stepEffects,advanceFinishedEffects} from './effects.js';
+import {restorePreviewSize} from './checks-layout.js';
 const output=document.getElementById('output'),canvas=document.getElementById('preview'),renderer=new Renderer(canvas),scenes=[],select=document.getElementById('scene');
 // The harness checkbox explicitly selects either path, independent of system preference.
 renderer.reduced=document.getElementById('reduced').checked;
@@ -15,7 +16,7 @@ function prepareEffects(){for(const i of [5,14,15,16,17,18,19,25]){if(!scenes[i]
 function draw(){
  const i=Number(select.value);
  if(i===26){drawAssetSheet();return;}
- if(canvas.style.height){canvas.style.height='';renderer.resize();}
+ restorePreviewSize(select,canvas,renderer);
  if(scenes[i])renderer.draw(scenes[i],false,1,sceneEffects[i]);
 }
 function drawAssetSheet(){
@@ -97,6 +98,7 @@ function runRoute(){
 }
 select.onchange=draw;document.getElementById('reduced').onchange=e=>{renderer.reduced=e.target.checked;prepareEffects();draw();};window.addEventListener('resize',()=>{renderer.resize();draw();});
 document.getElementById('landing').onclick=()=>{
+  restorePreviewSize(select,canvas,renderer);
   const r=createRun();for(let n=0;n<60*480&&r.status==='flying';n++)stepRun(r,chooseInput(r));check(r.status==='landing','Landing approach did not clear');
   output.textContent='Playing the actual landing state…';
   const fx=createEffects(),clock={accumulator:0},flightClock={accumulator:0};let last=0,finishedAt=0;
@@ -108,6 +110,7 @@ document.getElementById('landing').onclick=()=>{
   };requestAnimationFrame(animate);
 };
 document.getElementById('run').onclick=async()=>{
+  restorePreviewSize(select,canvas,renderer);
   try{
     output.textContent='Running…';const sound=new Sound(true);await sound.unlock();
     const r=runRoute();await renderer.artReady;draw();

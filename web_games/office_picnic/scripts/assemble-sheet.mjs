@@ -30,13 +30,7 @@ function components(im) {
         for (let dx = -1; dx <= 1; dx++) {
           const nx = x + dx,
             ny = y + dy;
-          if (
-            nx < 0 ||
-            ny < 0 ||
-            nx >= w ||
-            ny >= h
-          )
-            continue;
+          if (nx < 0 || ny < 0 || nx >= w || ny >= h) continue;
           const k = ny * w + nx;
           if (!labels[k] && p[k * 4 + 3] > 8) {
             labels[k] = id;
@@ -67,15 +61,15 @@ export function assemble(
       largest = Math.max(0, ...regions.map((r) => r.count));
     // A detached detail can join its nearest large body, but chains of tiny
     // flecks must never merge two distinct figures.
-    const groups = regions
-      .filter((r) => r.count >= largest * 0.05)
-      .map((r) => ({ ...r, im, index, labels, ids: new Set([r.id]) }));
-    for (const r of regions.filter((r) => r.count < largest * 0.05)) {
+    const groups = [];
+    for (const r of regions.sort((a, b) => b.count - a.count)) {
       let nearest = null,
         distance = Infinity;
       for (const g of groups) {
-        const dx = Math.max(0, g.x0 - r.x1, r.x0 - g.x1),
-          dy = Math.max(0, g.y0 - r.y1, r.y0 - g.y1),
+        if (r.count > g.seed.count * 0.25) continue;
+        const seed = g.seed;
+        const dx = Math.max(0, seed.x0 - r.x1 - 1, r.x0 - seed.x1 - 1),
+          dy = Math.max(0, seed.y0 - r.y1 - 1, r.y0 - seed.y1 - 1),
           d = Math.hypot(dx, dy);
         if (d < distance) {
           nearest = g;
@@ -90,7 +84,7 @@ export function assemble(
         nearest.y1 = Math.max(nearest.y1, r.y1);
         nearest.count += r.count;
       } else if (r.count >= largest * 0.005)
-        groups.push({ ...r, im, index, labels, ids: new Set([r.id]) });
+        groups.push({ ...r, seed: r, im, index, labels, ids: new Set([r.id]) });
     }
     subjects.push(...groups);
   });
@@ -112,31 +106,41 @@ export function assemble(
   const single = cols * rows === 1,
     maxw = Math.max(...subjects.map((s) => s.x1 - s.x0 + 1)),
     maxh = Math.max(...subjects.map((s) => s.y1 - s.y0 + 1));
+  for (const subject of subjects) {
+    let weight = 0,
+      weightedX = 0;
+    for (let y = subject.y0; y <= subject.y1; y++)
+      for (let x = subject.x0; x <= subject.x1; x++) {
+        const k = y * subject.im.width + x;
+        if (subject.ids.has(subject.labels[k])) {
+          const alpha = subject.im.pixels[k * 4 + 3];
+          weight += alpha;
+          weightedX += (mirror ? subject.x1 - x : x - subject.x0) * alpha;
+        }
+      }
+    subject.centroid = weightedX / weight;
+  }
+  const maxExtent = Math.max(
+    ...subjects.map((subject) => {
+      const width = subject.x1 - subject.x0 + 1;
+      const centreX = centre ? subject.centroid : (width - 1) / 2;
+      return Math.max(centreX + 1, width - centreX);
+    }),
+  );
   const scale = single
       ? 1
-      : Math.min(1, (cell * 0.84) / maxw, (cell * 0.84) / maxh),
+      : Math.min(1, (cell * 0.42) / maxExtent, (cell * 0.84) / maxh),
     width = single ? maxw + 2 * Math.ceil(maxw * 0.02) : cols * cell,
     height = single ? maxh + 2 * Math.ceil(maxh * 0.02) : rows * cell,
     pixels = new Uint8Array(width * height * 4);
   subjects.forEach((s, i) => {
-    let sum = 0,
-      sx = 0;
-    for (let y = s.y0; y <= s.y1; y++)
-      for (let x = s.x0; x <= s.x1; x++) {
-        const k = y * s.im.width + x;
-        if (s.ids.has(s.labels[k])) {
-          const a = s.im.pixels[k * 4 + 3];
-          sum += a;
-          sx += (mirror ? s.x1 - x : x - s.x0) * a;
-        }
-      }
     const sw = s.x1 - s.x0 + 1,
       sh = s.y1 - s.y0 + 1,
       dw = Math.max(1, Math.floor(sw * scale)),
       dh = Math.max(1, Math.floor(sh * scale)),
       cellX = (i % cols) * cell,
       cellY = Math.floor(i / cols) * cell;
-    const cx = centre ? sx / sum : (sw - 1) / 2;
+    const cx = centre ? s.centroid : (sw - 1) / 2;
     let ox = single
         ? Math.ceil(maxw * 0.02)
         : Math.round(cellX + cell / 2 - cx * scale),

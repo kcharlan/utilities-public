@@ -2,7 +2,17 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {createRun} from '../dist/game/simulation.js';
 import {Renderer} from '../dist/game/render.js';
-import {createEffects,spawnEffects} from '../dist/game/effects.js';
+import {createEffects,spawnEffects,stepEffects} from '../dist/game/effects.js';
+
+function paintedFootprintsOverlap(first,second){
+  for(const polygon of [first,second])for(let i=0;i<polygon.length;i++){
+    const a=polygon[i],b=polygon[(i+1)%polygon.length],axis={x:-(b.y-a.y),y:b.x-a.x};
+    const project=shape=>shape.map(p=>p.x*axis.x+p.y*axis.y);
+    const p=project(first),q=project(second);
+    if(Math.max(...p)<Math.min(...q)||Math.max(...q)<Math.min(...p))return false;
+  }
+  return true;
+}
 
 test('finished picnic table, bowl and group fit desktop and phone viewports',()=>{
   for(const [w,h] of [[1280,800],[390,844],[844,390]]){
@@ -111,6 +121,19 @@ test("painted picnic cells layer correctly and switch people rows at three viewp
   const { readFileSync } = await import('node:fs');
   const source = readPng(readFileSync(new URL('../dist/assets/picnic-people.png', import.meta.url)));
   const personGeometry = measure(source, 4, 2);
+  const planeSource = readPng(readFileSync(new URL('../dist/assets/plane-sheet.png', import.meta.url)));
+  const bowlSource = readPng(readFileSync(new URL('../dist/assets/salad-bowl.png', import.meta.url)));
+  const tableSource = readPng(readFileSync(new URL('../dist/assets/picnic-table.png', import.meta.url)));
+  const contentBounds = (image, cols, rows, frame) => {
+    const width=image.width/cols, height=image.height/rows, ox=(frame%cols)*width, oy=Math.floor(frame/cols)*height;
+    let left=width,top=height,right=-1,bottom=-1;
+    for(let y=0;y<height;y++)for(let x=0;x<width;x++)if(image.pixels[((oy+y)*image.width+ox+x)*4+3]>8){left=Math.min(left,x);right=Math.max(right,x);top=Math.min(top,y);bottom=Math.max(bottom,y);}
+    return {left:left/width,right:(right+1)/width,top:top/height,bottom:(bottom+1)/height};
+  };
+  let tableTop=0;
+  const centreColumn=Math.floor(tableSource.width/2);
+  while(tableTop<tableSource.height && tableSource.pixels[(tableTop*tableSource.width+centreColumn)*4+3]<=8)tableTop++;
+  assert.ok(tableTop<tableSource.height,'painted tabletop found');
   const dimensions = Object.fromEntries(Object.entries(manifest).map(([name, meta]) => {
     const decoded = readPng(readFileSync(new URL('../dist/assets/' + meta.file, import.meta.url)));
     return [name, { width: decoded.width, height: decoded.height }];
@@ -126,10 +149,16 @@ test("painted picnic cells layer correctly and switch people rows at three viewp
         run.plane.x = run.world.length;
         run.plane.y = run.world.park.bowlY;
         if (finished) run.status = "finished";
-        const draws = [],
+        const draws = [], stack = [];
+        let matrix = [1,0,0,1,0,0];
+        const
           ctx = new Proxy(
             {
-              drawImage: (...v) => draws.push(v),
+              drawImage: (...v) => {v.matrix=[...matrix];draws.push(v);},
+              save:()=>stack.push([...matrix]),
+              restore:()=>{matrix=stack.pop();},
+              translate:(x,y)=>{const [a,b,c,d,e,f]=matrix;matrix=[a,b,c,d,e+a*x+c*y,f+b*x+d*y];},
+              rotate:angle=>{const [a,b,c,d,e,f]=matrix,co=Math.cos(angle),si=Math.sin(angle);matrix=[a*co+c*si,b*co+d*si,c*co-a*si,d*co-b*si,e,f];},
               measureText: (s) => ({ width: s.length * 6 }),
             },
             { get: (o, k) => (k in o ? o[k] : () => {}) },
@@ -163,13 +192,19 @@ test("painted picnic cells layer correctly and switch people rows at three viewp
         });
         const fx = createEffects();
         if (finished) spawnEffects(fx, run, ["landing"], { reduced });
+        if (finished && !reduced) for(let i=0;i<8;i++)stepEffects(fx);
         let planeBounds;
         const sprite = renderer.sprite;
-        renderer.sprite = function(image, frame, x, y, width, height, ...rest) {
+        renderer.sprite = function(image, frame, x, y, width, height, rotation, ...rest) {
           if (image === this.plane) {
-            planeBounds = { left: x-width/2, right: x+width/2, top: y-height/2, bottom: y+height/2 };
+            const content=contentBounds(planeSource,2,2,frame),corners=[];
+            for(const [px,py] of [[content.left,content.top],[content.right,content.top],[content.right,content.bottom],[content.left,content.bottom]]){
+              const dx=(px-.5)*width,dy=(py-.5)*height;
+              corners.push({x:x+dx*Math.cos(rotation)-dy*Math.sin(rotation),y:y+dx*Math.sin(rotation)+dy*Math.cos(rotation)});
+            }
+            planeBounds=corners;
           }
-          return sprite.call(this, image, frame, x, y, width, height, ...rest);
+          return sprite.call(this, image, frame, x, y, width, height, rotation, ...rest);
         };
         renderer.draw(run, false, 1, fx);
         const people = draws.filter((a) => a[0] === art.people.image),
@@ -186,18 +221,61 @@ test("painted picnic cells layer correctly and switch people rows at three viewp
           const geometry = personGeometry.cells[i+(finished ? 4 : 0)];
           const head = a[6] + (geometry.bottom-geometry.height+1)/personGeometry.cellHeight*a[8];
           const foot = a[6] + geometry.bottom/personGeometry.cellHeight*a[8];
-          const tabletop = table[6] + table[8]*.32;
+          const tabletop = table[6] + table[8]*tableTop/tableSource.height;
           assert.ok(head < tabletop && foot >= tabletop, 'painted figure straddles table top');
         }
-        for (const a of [table, bowl, props])
+        for (const a of [table, props])
           assert.ok(
             a && a[5] >= 0 && a[6] >= 0 && a[5] + a[7] <= w && a[6] + a[8] <= h,
           );
         assert.ok(draws.indexOf(bowl) > draws.indexOf(people[3]));
+        const frame=Math.floor(bowl[1]/(bowlSource.width/2));
+        const content=contentBounds(bowlSource,2,1,frame);
+        const [a,b,c,d,e,f]=bowl.matrix,points=[];
+        for(const [px,py] of [[content.left,content.top],[content.right,content.top],[content.right,content.bottom],[content.left,content.bottom]]){
+          const x=bowl[5]+px*bowl[7],y=bowl[6]+py*bowl[8];points.push({x:a*x+c*y+e,y:b*x+d*y+f});
+        }
+        const visible={left:Math.min(...points.map(p=>p.x)),right:Math.max(...points.map(p=>p.x)),top:Math.min(...points.map(p=>p.y)),bottom:Math.max(...points.map(p=>p.y))};
+        assert.ok(visible.left>=0&&visible.right<=w&&visible.top>=0&&visible.bottom<=h,'painted bowl is in view');
         if (finished) {
           assert.ok(plane, "plane is drawn");
-          assert.ok(planeBounds.left < bowl[5]+bowl[7] && planeBounds.right > bowl[5] &&
-            planeBounds.top < bowl[6]+bowl[8] && planeBounds.bottom > bowl[6], 'plane overlaps bowl');
+          assert.ok(paintedFootprintsOverlap(planeBounds,points), 'painted plane overlaps painted bowl');
         }
       }
+});
+
+test('painted footprint overlap rejects intersecting bounding boxes for separated rotated shapes',()=>{
+  const first=[{x:0,y:0},{x:4,y:4},{x:3,y:5},{x:-1,y:1}];
+  const second=[{x:1,y:-1},{x:5,y:3},{x:4,y:4},{x:0,y:0}].map(p=>({x:p.x+1,y:p.y-1}));
+  assert.equal(paintedFootprintsOverlap(first,second),false);
+});
+
+test('portrait approach grounds the painted people, table and trees at the park horizon', async()=>{
+  const {readFileSync}=await import('node:fs');
+  const {readPng}=await import('../scripts/png.mjs');
+  const {measure}=await import('../scripts/asset-metrics.mjs');
+  const manifest=JSON.parse(readFileSync(new URL('../dist/assets/manifest.json',import.meta.url)));
+  const art={},geometry={};
+  for(const [name,meta] of Object.entries(manifest)){
+    const image=readPng(readFileSync(new URL('../dist/assets/'+meta.file,import.meta.url)));
+    art[name]={meta,image:{name,complete:true,naturalWidth:image.width,naturalHeight:image.height}};
+    geometry[name]=measure(image,meta.cols,meta.rows);
+  }
+  const run=createRun();run.plane.x=run.world.length-100;run.plane.y=70;
+  const draws=[],grounds=[];
+  const ctx=new Proxy({drawImage:(...args)=>draws.push(args),fillRect(x,y,w,h){if(this.fillStyle==='#697f79')grounds.push(y)},measureText:s=>({width:s.length*6})},{get:(o,k)=>k in o?o[k]:()=>{}});
+  const renderer=Object.assign(Object.create(Renderer.prototype),{w:390,h:844,ctx,art,plane:{complete:false},washer:{complete:false},reduced:true,cache:[{},{}],label:()=>{}});
+  renderer.draw(run,false,1);
+  assert.ok(grounds.length,'ground horizon drawn');
+  const ground=grounds[0];
+  for(const name of ['people','table','trees']){
+    const entries=draws.filter(d=>d[0]===art[name].image);
+    assert.ok(entries.length,`${name} was drawn`);
+    for(const draw of entries){
+      const frame=Math.floor(draw[2]/(art[name].image.naturalHeight/manifest[name].rows))*manifest[name].cols+Math.floor(draw[1]/(art[name].image.naturalWidth/manifest[name].cols));
+      const bounds=geometry[name].cells[frame];
+      const bottom=draw[6]+(bounds.bottom+1)/geometry[name].cellHeight*draw[8];
+      assert.ok(Math.abs(bottom-ground)<3,`${name} bottom ${bottom} vs ground ${ground}`);
+    }
+  }
 });

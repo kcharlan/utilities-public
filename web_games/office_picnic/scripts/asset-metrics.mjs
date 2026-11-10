@@ -130,14 +130,16 @@ export function cellFailures(
   const failures = [];
   if (cutout && !transparency(cell, multi)) failures.push("A3");
   if (cell.matteShare > 0.02) failures.push("A4");
+  const paletteFailures = [];
+  if (cell.foreignVividShare > 0.02) paletteFailures.push("A6-hue");
+  if (cell.neonShare > limits.vivid) paletteFailures.push("A6-vivid");
+  if (cell.blackShare > 0.03) paletteFailures.push("A6-black");
   if (
-    cell.foreignVividShare > 0.02 ||
-    cell.neonShare > limits.vivid ||
-    cell.blackShare > 0.03 ||
     cell.meanSaturation < limits.minSaturation ||
     cell.meanSaturation > limits.maxSaturation
   )
-    failures.push("A6");
+    paletteFailures.push("A6-saturation");
+  if (paletteFailures.length) failures.push("A6", ...paletteFailures);
   if (cell.texture < limits.texture) failures.push("A7");
   return failures;
 }

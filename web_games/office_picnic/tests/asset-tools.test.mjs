@@ -242,3 +242,55 @@ test("renderer selects rectangular grid source cells from decoded images", async
   renderer.sprite(im, 5, 10, 20, 60, 40, 0, 3, 2);
   assert.deepEqual(draws[0].slice(1, 5), [600, 200, 300, 200]);
 });
+
+test("assembler joins a nearby detached detail", () => {
+  const source = image(100, 100);
+  rect(source, 20, 35, 20, 20, [100, 90, 80, 255]);
+  rect(source, 42, 42, 5, 5, [100, 90, 80, 255]);
+  assert.doesNotThrow(() => assemble([source], { cols: 1, rows: 1, cell: 64 }));
+});
+
+test("assembler centres asymmetric content without clipping", () => {
+  const asymmetric = image(100, 100);
+  rect(asymmetric, 10, 20, 20, 31, [100, 90, 80, 255]);
+  rect(asymmetric, 30, 20, 60, 2, [100, 90, 80, 255]);
+  const result = assemble([asymmetric, asymmetric], {
+    cols: 2,
+    rows: 1,
+    cell: 64,
+  });
+  for (const c of measure(result, 2, 1).cells)
+    assert.ok(Math.abs(c.centroid - 32) <= 2.56, `centroid ${c.centroid}`);
+});
+
+test("A6 reports the specific vivid-colour rule that rejected each control", () => {
+  const limits = {
+    vivid: 0.17,
+    minSaturation: 0,
+    maxSaturation: 1,
+    texture: 0,
+  };
+  for (const [colour, rule] of [
+    [[0, 255, 0, 255], "A6-hue"],
+    [[255, 128, 0, 255], "A6-vivid"],
+  ]) {
+    const figure = controlFigure();
+    for (let i = 0; i < figure.width * figure.height; i++)
+      if (figure.pixels[i * 4 + 3]) figure.pixels.set(colour, i * 4);
+    assert.ok(
+      cellFailures(measure(figure, 1, 1).cells[0], limits).includes(rule),
+    );
+  }
+});
+
+test("assembler does not join distinct bodies through speck chains", () => {
+  const src = image(200, 80);
+  rect(src, 20, 20, 25, 30, [100, 90, 80, 255]);
+  rect(src, 90, 20, 25, 30, [100, 90, 80, 255]);
+  for (let x = 49; x < 90; x += 4) rect(src, x, 30, 1, 1, [100, 90, 80, 255]);
+  assert.doesNotThrow(() => assemble([src], { cols: 2, rows: 1, cell: 64 }));
+  assert.throws(
+    () => assemble([src], { cols: 1, rows: 1, cell: 64 }),
+    /subjects/,
+  );
+});

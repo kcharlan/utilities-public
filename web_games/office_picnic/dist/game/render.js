@@ -99,7 +99,7 @@ export class Renderer{
       ctx.globalAlpha=layer?.75:.65;
       for(let x=-offset-tw;x<w;x+=tw)ctx.drawImage(this.cache[layer],x,h-th,tw,th);
     }ctx.globalAlpha=1;
-    if(p.x>run.world.finishStart-550)this.park(ctx,X,Y,s,run,effects);
+    if(p.x>run.world.finishStart-550)this.park(ctx,X,Y,s,run,effects,cam.verticalScale);
     for(const b of run.world.buildings){
       if(X(b.x+b.w)<-10||X(b.x)>w+10)continue;
       const bx=X(b.x),by=Y(b.y),bw=b.w*s;
@@ -276,7 +276,7 @@ export class Renderer{
     const {image,meta}=item,cw=image.naturalWidth/meta.cols,ch=image.naturalHeight/meta.rows;
     this.ctx.drawImage(image,(frame%meta.cols)*cw,Math.floor(frame/meta.cols)*ch,cw,ch,x,y,w,h);return true;
   }
-  park(ctx,X,Y,s,run,effects){
+  park(ctx,X,Y,s,run,effects,verticalScale=s){
     const park=run.world.park;
     if(run.world.tier.prompts!=='quiet'){
       ctx.save();ctx.strokeStyle='rgba(255,240,211,.35)';ctx.lineWidth=1;ctx.setLineDash([3,6]);ctx.beginPath();ctx.moveTo(X(run.world.finishStart),Y(175));ctx.lineTo(X(run.world.length-park.coneRange),Y(park.bowlY+park.coneSlope*park.coneRange));ctx.lineTo(X(run.world.length),Y(park.bowlY));ctx.stroke();ctx.restore();
@@ -287,14 +287,15 @@ export class Renderer{
       const x=X(run.world.length),cue=run.status==='finished'?(effects?.cues.find(c=>c.name==='landing')?.age??45):null;
       const {trees,props,people,table,bowl}=Object.fromEntries(['trees','props','people','table','bowl'].map(name=>[name,this.art[name].meta]));
       const draw=(name,frame,left,top,width,height)=>{if(!this.paint(name,frame,left,top,width,height)){ctx.fillStyle='#9b8cbb';ctx.fillRect(left,top,width,height);}};
-      for(let i=0;i<12;i++)draw('trees',i%2,X(run.world.finishStart+i*36)-trees.width*s/2,Y(trees.height),trees.width*s,trees.height*s);
-      draw('props',2,x-props.width[2]*s/2,Y(55),props.width[2]*s,props.height[2]*s);
-      for(const [i,dx] of [-55,-32,36,59].entries())draw('people',i+(cue!==null&&cue<45?people.cols:0),x+(dx-people.width/2)*s,Y(people.height),people.width*s,people.height*s);
-      draw('table',0,x-table.width*s/2,Y(33),table.width*s,table.height*s);
+      for(let i=0;i<12;i++)draw('trees',i%2,X(run.world.finishStart+i*36)-trees.width*s/2,Y(4+trees.height*trees.baseline),trees.width*s,trees.height*verticalScale);
+      draw('props',2,x-props.width[2]*s/2,Y(58.4),props.width[2]*s,props.height[2]*verticalScale);
+      for(const [i,dx] of [-55,-32,36,59].entries())draw('people',i+(cue!==null&&cue<45?people.cols:0),x+(dx-people.width/2)*s,Y(4+people.height*people.baseline),people.width*s,people.height*verticalScale);
+      draw('table',0,x-table.width*s/2,Y(4+table.height*table.baseline),table.width*s,table.height*verticalScale);
       const wobble=cue!==null&&!this.reduced&&cue<45?Math.sin(cue*.45)*(1-cue/45)*.12:0;
-      if(wobble){ctx.save();ctx.translate(x,Y(24));ctx.rotate(wobble);draw('bowl',1,-bowl.width*s/2,-21*s,bowl.width*s,bowl.height*s);ctx.restore();}
-      else draw('bowl',cue!==null?1:0,x-bowl.width*s/2,Y(45),bowl.width*s,bowl.height*s);
-      draw('props',0,x+58*s,Y(17),props.width[0]*s,props.height[0]*s);draw('props',1,x-100*s,Y(15),props.width[1]*s,props.height[1]*s);
+      const bowlTop=20+bowl.height*bowl.baseline;
+      if(wobble){ctx.save();ctx.translate(x,Y(bowlTop-bowl.height/2));ctx.rotate(wobble);draw('bowl',1,-bowl.width*s/2,-bowl.height*verticalScale/2,bowl.width*s,bowl.height*verticalScale);ctx.restore();}
+      else draw('bowl',cue!==null?1:0,x-bowl.width*s/2,Y(bowlTop),bowl.width*s,bowl.height*verticalScale);
+      draw('props',0,x+58*s,Y(4+props.height[0]*props.baseline[0]),props.width[0]*s,props.height[0]*verticalScale);draw('props',1,x-100*s,Y(4+props.height[1]*props.baseline[1]),props.width[1]*s,props.height[1]*verticalScale);
       return;
     }
     for(let i=0;i<12;i++){
