@@ -102,3 +102,14 @@ test('landing creates salad splash particles or a static reduced-motion splash',
     assert.equal(fx.particles.some(p=>p.kind==='salad'),!reduced);
   }
 });
+
+test('quiet tier suppresses pickup advance visuals while retaining its chime',async()=>{
+  const {TIERS}=await import('../dist/game/tiers.js'),{buildWorld}=await import('../dist/game/world.js');
+  for(const reduced of [false,true])for(const tier of Object.values(TIERS)){
+    const run=createRun('standard',buildWorld(undefined,tier)),fx=createEffects();spawnEffects(fx,run,['pickupAhead'],{reduced});
+    assert.equal(fx.cues.some(c=>c.name==='pickupAhead'),tier.id!=='overtime',`${tier.id} ${reduced}`);
+  }
+  assert.equal(eventNotes.pickupAhead.length,2);assert.notDeepEqual(eventNotes.pickupAhead,eventNotes.pickup);
+  const {Sound,dispatchRunEvents}=await import('../dist/game/audio.js'),sound=new Sound(),played=[];sound.ctx={currentTime:1};sound.tone=(frequency)=>played.push(frequency);
+  const run=createRun('standard',buildWorld(undefined,TIERS.overtime));run.events=['pickupAhead'];dispatchRunEvents(sound,run);assert.deepEqual(played,eventNotes.pickupAhead);
+});

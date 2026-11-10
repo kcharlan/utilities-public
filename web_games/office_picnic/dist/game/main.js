@@ -3,7 +3,7 @@ import {MEDALS,medalFor} from './medals.js';
 import {buildWorld} from './world.js';
 import {createTrace,recordInput,finishTrace} from './trace.js';
 import {createRun,stepRun,netTicks} from './simulation.js';
-import {airAt} from './world.js';
+import {airAt,hazardAdvice} from './world.js';
 import {flightGuidance,noticeMessages} from './guidance.js';
 import {Renderer} from './render.js';
 import {Sound,dispatchRunEvents} from './audio.js';
@@ -22,6 +22,7 @@ function titleBests(){
   }
 }
 function muteUI(){$('mute').textContent=records.muted?'Sound off':'Sound on';$('mute').setAttribute('aria-pressed',String(records.muted));$('mute').setAttribute('aria-label',records.muted?'Unmute sound':'Mute sound');}
+let hazardNotice='',hazardNoticeEnd=0;
 function notice(text,seconds=6){$('notice').textContent=text;$('notice').hidden=false;noticeEnd=(run?.worldTicks||0)+seconds*60;}
 function feedback(name){sound.event(name);if(run)spawnEffects(effects,run,[name],{reduced:reduced.matches});}
 function setHeld(value){if(held!==value&&run&&!paused&&run.status==='flying')feedback(value?'pitch':'release');held=value;}
@@ -41,7 +42,7 @@ function start(mode){
   for(const id of ['hud','route-hud','flight-hud'])$(id).hidden=false;
   $('district-dots').replaceChildren(...Array.from({length:5},()=>document.createElement('i')));
   $('run-mode').textContent=modeText(world,mode);$('pause-mode').textContent=modeText(world,mode);
-  $('notice').hidden=true;canvas.focus({preventScroll:true});if(world.tier.prompts!=='quiet')notice('Hold to climb over the first flock. Release to dive and regain speed.',8);updateHUD();
+  hazardNotice='';hazardNoticeEnd=0;$('notice').hidden=true;canvas.focus({preventScroll:true});if(world.tier.prompts!=='quiet')notice('Hold to climb over the first flock. Release to dive and regain speed.',8);updateHUD();
 }
 function pause(){if(!run||run.status==='finished'||paused)return;setHeld(false);paused=true;clock.accumulator=0;sound.event('pause');sound.setPaused(true);$('pause-screen').hidden=false;modalOpen(true);$('resume').focus();}
 function resume(){if(!run)return;paused=false;held=false;clock.accumulator=0;last=performance.now();sound.setPaused(false);sound.unlock().then(()=>sound.event('resume'));$('pause-screen').hidden=true;modalOpen(false);canvas.focus({preventScroll:true});}
@@ -73,9 +74,13 @@ function tick(){
   dispatchRunEvents(sound,run);
   stepEffects(effects);if(run.events.length)spawnEffects(effects,run,run.events,{reduced:reduced.matches});
   if(run.events.includes('impact'))held=false;
+  if(run.events.includes('respawn')){hazardNotice='';hazardNoticeEnd=0;}
   if(run.mode==='nonstop'&&run.events.includes('respawn')){rewardEnd=0;$('pickup-reward').hidden=true;$('pickup-reward').textContent='';}
   if(run.events.includes('pickup')){rewardEnd=run.worldTicks+150;$('pickup-reward').textContent=`−${run.pickupReward/60}s pickup`;}
   const messages=noticeMessages(run);
+  const emittedHazard=(run.warningHazards||[]).map(hazardAdvice).find(text=>messages.includes(text));
+  if(emittedHazard){hazardNotice=emittedHazard;hazardNoticeEnd=run.worldTicks+8*60;}
+  if(run.world.tier.notice?.banner&&run.announcedPickups.length&&messages.length===run.announcedPickups.length&&hazardNotice&&run.worldTicks<=hazardNoticeEnd)messages.unshift(hazardNotice);
   if(run.previous.x<=run.world.finishStart&&run.plane.x>run.world.finishStart)messages.push('The park. Release now and glide down to the table.');
   if(messages.length)notice(messages.join(' · '),8);
   if(run.status==='landing')$('notice').hidden=true;

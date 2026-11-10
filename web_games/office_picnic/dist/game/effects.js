@@ -12,7 +12,7 @@ function random(fx){fx.seed=(Math.imul(fx.seed,1664525)+1013904223)>>>0;return f
 export function spawnEffects(fx,run,events,{reduced=false}={}){
   let warning=0;
   for(const name of events){
-    const visual=FEEDBACK[name]?.visual;if(!visual)continue;
+    const visual=FEEDBACK[name]?.visual;if(!visual||(name==='pickupAhead'&&run.world.tier.prompts==='quiet'))continue;
     if(name==='respawn'&&run.mode==='nonstop'){fx.particles.length=0;fx.cues.length=0;fx.bump=0;}
     const roof=name==='checkpoint'?run.world.airs.find(a=>a.gapId===run.checkpoint.id):null;
     const x=roof?Math.max(roof.x,Math.min(run.checkpoint.x,roof.x+roof.w)):run.plane.x,y=roof?roof.y:run.plane.y;

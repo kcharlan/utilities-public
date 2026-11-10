@@ -87,8 +87,7 @@ export class Renderer{
       const visible=x>=0&&x<=w&&y>=0&&y<=h,marker=x>w&&run.world.tier.notice?.hint&&run.announced.has(base.id);
       if(!visible&&!marker)continue;
       const layout=this.pickupLayout(pk,x,y,s,run,cam.verticalScale);
-      if(layout.token){this.labelRects.push(layout.rect);pickupLayouts.push([pk,layout]);}
-      else if(x>w&&run.world.tier.notice?.hint&&run.announced.has(base.id))pickupLayouts.push([pk,layout]);
+      this.labelRects.push(layout.rect);pickupLayouts.push([pk,layout]);
     }
     if(this.scenery)ctx.drawImage(this.scenery.sky,0,0,w,h);else{ctx.fillStyle=this.gradient;ctx.fillRect(0,0,w,h);}
     ctx.save();if(effects?.bump&&!this.reduced)ctx.translate(Math.sin(effects.bump*2)*Math.min(4,effects.bump),0);
@@ -241,8 +240,10 @@ export class Renderer{
     this.ctx.font='bold 12px sans-serif';const width=this.ctx.measureText(text).width+12;
     const left=Math.max(0,Math.min(this.w-width,x+radius+5>this.w-width?x-radius-width-5:x+radius+5));
     const top=Math.max(0,Math.min(this.h-22,y-11));
-    const rect={left:Math.max(0,Math.min(x-radius,left)),right:Math.min(this.w,Math.max(x+radius,left+width)),top:Math.max(0,Math.min(y-radius,top)),bottom:Math.min(this.h,Math.max(y+radius,top+22))};
-    return {token,x,y,radius,collectX:pk.r*scale,collectY:pk.r*verticalScale,text,left,top,width,rect};
+    const markerY=Math.max(24,Math.min(this.h-24,y)),markerText=text+' · '+formatDistance(Math.max(0,pk.x-run.plane.x));
+    const markerWidth=this.ctx.measureText(markerText).width+34,markerX=Math.max(0,this.w-markerWidth-6);
+    const rect=token?{left:Math.max(0,Math.min(x-radius,left)),right:Math.min(this.w,Math.max(x+radius,left+width)),top:Math.max(0,Math.min(y-radius,top)),bottom:Math.min(this.h,Math.max(y+radius,top+22))}:{left:markerX,right:markerX+markerWidth,top:markerY-13,bottom:markerY+13};
+    return {token,x,y,radius,collectX:pk.r*scale,collectY:pk.r*verticalScale,text,left,top,width,rect,markerY,markerText,markerWidth,markerX};
   }
   drawPickup(pk,layout,run){
     const ctx=this.ctx,{token,radius,text,left,top,width,rect}=layout;
@@ -253,8 +254,8 @@ export class Renderer{
       ctx.fillStyle='#302f48';ctx.font='bold 15px sans-serif';ctx.textAlign='center';ctx.fillText('◷',x,y+5);ctx.textAlign='start';
       ctx.fillStyle='#303149e8';ctx.fillRect(left,top,width,22);ctx.fillStyle='#fff0d3';ctx.font='bold 12px sans-serif';ctx.fillText(text,left+6,top+15);ctx.restore();
     }else{
-      const markerY=Math.max(24,Math.min(this.h-24,layout.y)),label=text+' · '+formatDistance(Math.max(0,pk.x-run.plane.x));
-      ctx.save();ctx.font='bold 12px sans-serif';const markerWidth=ctx.measureText(label).width+34,markerX=Math.max(0,this.w-markerWidth-6);
+      const {markerY,markerText:label,markerWidth,markerX}=layout;
+      ctx.save();ctx.font='bold 12px sans-serif';
       ctx.fillStyle='#303149e8';ctx.fillRect(markerX,markerY-13,markerWidth,26);ctx.beginPath();ctx.arc(markerX+13,markerY,8,0,Math.PI*2);ctx.fillStyle='#ffe3a8';ctx.fill();ctx.strokeStyle='#302f48';ctx.stroke();ctx.fillStyle='#fff0d3';ctx.fillText(label,markerX+25,markerY+4);ctx.restore();
     }
     return {token,radius,rect};

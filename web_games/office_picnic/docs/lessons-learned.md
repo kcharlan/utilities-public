@@ -57,3 +57,4 @@ A delayed-input window measured from a checkpoint can miss height-judgment diffi
 - A floor trigger can fire beside the bowl, leaving too little horizontal distance for a shallow glide. Test late releases and switch that case to a flutter while preserving the floor trigger and capture ordering. Frame both table and plane throughout the approach, including the first reduced-motion frame.
 
 - A distance cue alone does not guarantee enough decision time at different flight speeds. Measure each announcement against an actual reference flight and price pickups again when their collection radius or placement changes.
+- An offscreen marker competes for the same canvas space as hazard labels: reserve its actual painted bounds before placing labels. Simultaneous notices also need tier-aware priority, so a pickup cue cannot erase or duplicate an active hazard warning.
