@@ -53,5 +53,6 @@ export function noticeMessages(run){
       if(!introduced.has('squeeze')){messages.push(hazardAdvice(hazard));introduced.add('squeeze');}
     }else if(prompts!=='quiet')messages.push(hazardAdvice(hazard));
   }
+  if(run.world.tier.notice?.banner)for(const pk of run.announcedPickups||[])messages.push(`Time pickup ahead · −${pk.rewardTicks/60}s · ${pk.hint}`);
   return messages;
 }

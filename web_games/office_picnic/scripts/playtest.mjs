@@ -55,6 +55,9 @@ if(menu){
 const out={},gates=[];
 const gate=(name,pass)=>gates.push({name,pass});
 if(check){
+  const landing=spawnSync(process.execPath,['--test',fileURLToPath(new URL('../tests/landing.test.mjs',import.meta.url))],{encoding:'utf8'});
+  gate('landing approaches and pilot safety',landing.status===0);
+  if(landing.status!==0)console.error(landing.stdout,landing.stderr);
   const difficulty=spawnSync(process.execPath,['--test',fileURLToPath(new URL('../tests/difficulty.test.mjs',import.meta.url))],{encoding:'utf8'});
   gate('difficulty ramp, fairness, pilots and lanes',difficulty.status===0);
   if(difficulty.status!==0)console.error(difficulty.stdout,difficulty.stderr);

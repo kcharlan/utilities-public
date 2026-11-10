@@ -1,4 +1,4 @@
-import {COURSE} from './course.js';
+import {COURSE,PARK} from './course.js';
 export {COURSE} from './course.js';
 import {TIERS} from './tiers.js';
 import {measureFlight} from './measure.js';
@@ -97,10 +97,10 @@ export function buildWorld(limits=measureFlight(),cfg=TIERS.casual){
     else if(pk.place==='roofEdge'){if(!next)continue;px=next.building.x+(pk.dx??6);py=next.building.y+pk.dy;}
     else if(pk.place==='gapLow'){px=slot.release+slot.gap*(pk.at??.5);py=pk.y;}
     else if(pk.place==='high'){px=slot.x+slot.width*(pk.at??.5);py=pk.y??(world.airs.find(a=>a.x===slot.x).targetExit+pk.above);}
-    world.pickups.push({sourceIndex,placement:{...pk},id:`p${pid++}`,district:pk.district,slot:pk.slot,place:pk.place,x:px,y:py,r:pk.r??4,rewardTicks:pk.rewardTicks,label:`${pk.place}${pk.dy??pk.above??pk.y}`,attach:pk.attach===false?null:attach,ox,oy});
+    world.pickups.push({sourceIndex,placement:{...pk},id:`p${pid++}`,district:pk.district,slot:pk.slot,place:pk.place,x:px,y:py,r:pk.r??5,announceX:px-(cfg.notice?.lead??0),hint:({overFlock:'above the flock',underWasher:'under the washer',roofEdge:'over the roof edge',gapLow:'low in the gap',high:'high in the lift'})[pk.place],rewardTicks:pk.rewardTicks,label:`${pk.place}${pk.dy??pk.above??pk.y}`,attach:pk.attach===false?null:attach,ox,oy});
   }
   // A generous final park descent follows the last technical crossing.
-  world.finishStart=x;world.length=x+140;
+  world.finishStart=x;world.park={...PARK};world.length=x+PARK.runIn;
   return world;
 }
 export function airAt(world,p,time){

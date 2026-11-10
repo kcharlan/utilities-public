@@ -4,7 +4,7 @@ import {consumeTime} from './session.js';
 export const FEEDBACK=Object.fromEntries([
   ['launch','sheets'],['pitch','stretch'],['release','stretch'],['lift','motes'],['vent','steam'],
   ['stall','wobble'],['recovery','ring'],['impact','burst'],['respawn','pop'],['checkpoint','pulse'],
-  ['district','card'],['pickup','sparkle'],['warning','pulse'],['landing','splash'],['best','ring'],
+  ['district','card'],['pickupAhead','pulse'],['pickup','sparkle'],['warning','pulse'],['landing','splash'],['best','ring'],
   ['ui',null],['pause',null],['resume',null]
 ].map(([name,visual])=>[name,{visual}]));
 export function createEffects(){const fx={particles:[],cues:[],seed:0x51f15e,bump:0};fx.step=()=>stepEffects(fx);return fx;}
@@ -12,7 +12,7 @@ function random(fx){fx.seed=(Math.imul(fx.seed,1664525)+1013904223)>>>0;return f
 export function spawnEffects(fx,run,events,{reduced=false}={}){
   let warning=0;
   for(const name of events){
-    const visual=FEEDBACK[name]?.visual;if(!visual)continue;
+    const visual=FEEDBACK[name]?.visual;if(!visual||(name==='pickupAhead'&&run.world.tier.prompts==='quiet'))continue;
     if(name==='respawn'&&run.mode==='nonstop'){fx.particles.length=0;fx.cues.length=0;fx.bump=0;}
     const roof=name==='checkpoint'?run.world.airs.find(a=>a.gapId===run.checkpoint.id):null;
     const x=roof?Math.max(roof.x,Math.min(run.checkpoint.x,roof.x+roof.w)):run.plane.x,y=roof?roof.y:run.plane.y;

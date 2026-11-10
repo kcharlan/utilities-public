@@ -5,7 +5,7 @@ import {createRun,stepRun} from '../dist/game/simulation.js';
 import {eventNotes} from '../dist/game/audio.js';
 import {FEEDBACK,createEffects,spawnEffects,stepEffects} from '../dist/game/effects.js';
 
-const gameplay=['launch','pitch','release','lift','vent','stall','recovery','impact','respawn','checkpoint','district','pickup','warning','landing','best'];
+const gameplay=['launch','pitch','release','lift','vent','stall','recovery','impact','respawn','checkpoint','district','pickupAhead','pickup','warning','landing','best'];
 test('event feedback covers sound and visible gameplay cues',()=>{
   for(const name of [...gameplay,'ui','pause','resume']){
     assert.ok(FEEDBACK[name],name);assert.ok(eventNotes[name],name);
@@ -80,7 +80,7 @@ test('renderer highlights the warned hazard instead of an earlier marker',async(
   const {Renderer}=await import('../dist/game/render.js'),{hazardKey}=await import('../dist/game/world.js');
   const run=createRun(),warned=run.world.hazards[1],fx=createEffects(),highlighted=[];
   run.warningHazards=[warned];spawnEffects(fx,run,['warning'],{reduced:true});
-  const ctx=new Proxy({drawImage(){}},{get:(o,k)=>k in o?o[k]:()=>{}});
+  const ctx=new Proxy({drawImage(){},measureText:s=>({width:s.length*6})},{get:(o,k)=>k in o?o[k]:()=>{}});
   const renderer=Object.assign(Object.create(Renderer.prototype),{ctx,w:390,h:844,washer:{complete:false},reduced:true,cache:[{},{}],label:()=>{},sprite:()=>{},drawWarningCue:(hazard)=>highlighted.push(hazardKey(hazard))});
   renderer.draw(run,false,1,fx);assert.deepEqual(highlighted,[hazardKey(warned)]);
 });
@@ -101,4 +101,15 @@ test('landing creates salad splash particles or a static reduced-motion splash',
     assert.equal(fx.cues[0].visual,'splash');
     assert.equal(fx.particles.some(p=>p.kind==='salad'),!reduced);
   }
+});
+
+test('quiet tier suppresses pickup advance visuals while retaining its chime',async()=>{
+  const {TIERS}=await import('../dist/game/tiers.js'),{buildWorld}=await import('../dist/game/world.js');
+  for(const reduced of [false,true])for(const tier of Object.values(TIERS)){
+    const run=createRun('standard',buildWorld(undefined,tier)),fx=createEffects();spawnEffects(fx,run,['pickupAhead'],{reduced});
+    assert.equal(fx.cues.some(c=>c.name==='pickupAhead'),tier.id!=='overtime',`${tier.id} ${reduced}`);
+  }
+  assert.equal(eventNotes.pickupAhead.length,2);assert.notDeepEqual(eventNotes.pickupAhead,eventNotes.pickup);
+  const {Sound,dispatchRunEvents}=await import('../dist/game/audio.js'),sound=new Sound(),played=[];sound.ctx={currentTime:1};sound.tone=(frequency)=>played.push(frequency);
+  const run=createRun('standard',buildWorld(undefined,TIERS.overtime));run.events=['pickupAhead'];dispatchRunEvents(sound,run);assert.deepEqual(played,eventNotes.pickupAhead);
 });

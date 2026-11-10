@@ -1,7 +1,7 @@
 import {TIERS} from './tiers.js';
 import {medalFor} from './medals.js';
 import {formatTime} from './session.js';
-const KEY='office-picnic-v6',OLD_KEY='office-picnic-v5';
+const KEY='office-picnic-v7',OLD_KEY='office-picnic-v6';
 const modes=['standard','nonstop'];
 function validTier(id){return typeof id==='string'&&Object.hasOwn(TIERS,id);}
 function clean(raw){

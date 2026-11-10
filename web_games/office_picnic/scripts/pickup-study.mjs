@@ -1,10 +1,15 @@
-import {buildWorld} from '../dist/game/world.js';
+import {buildWorld,hazardParts,pickupPos} from '../dist/game/world.js';
 import {createRun,stepRun} from '../dist/game/simulation.js';
 import {createPlane} from '../dist/game/physics.js';
 import {sensible} from '../dist/game/bot.js';
 import {makePilot,PROFILES} from './pilot.mjs';
 
 export const MENU=[
+  ...[14,20,30].flatMap(above=>[0,2].map(slot=>({slot,place:'high',at:slot===0?.7:.5,above}))),
+  ...[32,36,40].map(dy=>({slot:0,place:'overFlock',dy})),
+  ...[15,20,40,75].flatMap(dy=>[1,2].map(slot=>({slot,place:'roofEdge',dy,dx:6}))),
+  {slot:1,place:'underWasher',dy:18},
+  ...[90,120,145].map(y=>({slot:3,place:'gapLow',y})),
   {slot:0,place:'overFlock',dy:5},{slot:0,place:'overFlock',dy:7},{slot:0,place:'overFlock',dy:10},
   {slot:2,place:'underWasher',dy:6},{slot:2,place:'underWasher',dy:9},
   {slot:2,place:'roofEdge',dy:6,dx:6},{slot:2,place:'roofEdge',dy:9,dx:6},
@@ -58,6 +63,16 @@ export function pickupGrid(world,pk){
   }
   return successes;
 }
+export function pickupClearance(world,pk){
+  let minimum=Infinity;
+  const distance=(a,b)=>Math.hypot(Math.max(0,a.x-b.x-b.w,b.x-a.x-a.w),Math.max(0,a.y-b.y-b.h,b.y-a.y-a.h));
+  for(let frame=0;frame<=600;frame++){
+    const time=frame/30,pos=pickupPos(world,pk,time),box={x:pos.x-pos.r,y:pos.y-pos.r,w:2*pos.r,h:2*pos.r};
+    for(const h of world.hazards)for(const part of hazardParts(h,time))minimum=Math.min(minimum,distance(box,{x:part.x-1.2,y:part.y-1.2,w:part.w+2.4,h:part.h+2.4}));
+    for(const b of world.buildings)minimum=Math.min(minimum,distance(box,{x:b.x,y:-1000,w:b.w,h:1000+b.y}));
+  }
+  return minimum;
+}
 export function pricePickup(world,pk,n=100){
   const d=world.districts[pk.district];
   let col=0,inc=0,dt=0,dc=0,timeouts=0;
@@ -73,18 +88,20 @@ export function pricePickup(world,pk,n=100){
   const be=col>inc?+(Math.max(0,dt/n)/((col-inc)/n)).toFixed(1):null;
   const penalty=world.rules.crashPenaltyTicks/60;
   const reward=rewardPrice(penalty,be),grid=pickupGrid(world,pk);
-  const qualifies=grid>=20&&inc/n<=.3&&col>inc&&!timeouts&&
+  const clearance=pickupClearance(world,pk),limits={casual:[8,.7,.1],rush:[6,.6,.2],overtime:[4,.5,.35]}[world.tier.id];
+  const qualifies=grid>=20&&inc/n<=.3&&col>inc&&!timeouts&&clearance>=limits[0]&&col/n>=limits[1]&&dc/n<=limits[2]&&
     reward!==null&&reward<=3*penalty;
   return {...pk.placement,district:pk.district+1,label:pk.label,samples:n,grid,
-    collected:col,onPath:inc,crashDelta:dc/n,be,reward,timeouts,qualifies};
+    collected:col,onPath:inc,crashDelta:dc/n,clearance,be,reward,timeouts,qualifies};
 }
 export function pickupMenu(tier,n=100){
   const rows=[];
   for(let district=0;district<5;district++){
-    const candidates=menuCandidates(tier.id,district).map(m=>({...m,district,r:4,rewardTicks:0}));
+    const candidates=menuCandidates(tier.id,district).map(m=>({...m,district,r:5,rewardTicks:0}));
     const world=buildWorld(undefined,{...tier,pickups:candidates});
     for(const pk of world.pickups){
-      rows.push(pricePickup(world,pk,n));
+      // Other menu candidates are not pilot targets and need not be simulated.
+      rows.push(pricePickup({...world,pickups:[pk]},pk,n));
     }
   }
   return rows;

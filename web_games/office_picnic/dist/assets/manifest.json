@@ -1,0 +1,9 @@
+{
+  "people": {"file":"picnic-people.png","cols":4,"rows":2,"width":33.3,"height":33.3,"anchor":"bottom","baseline":0.92,"cutout":true},
+  "table": {"file":"picnic-table.png","cols":1,"rows":1,"width":140,"height":24.5,"anchor":"bottom","baseline":0.981,"cutout":true},
+  "bowl": {"file":"salad-bowl.png","cols":2,"rows":1,"width":32,"height":32,"anchor":"bottom","baseline":0.92,"cutout":true},
+  "props": {"file":"picnic-props.png","cols":3,"rows":1,"width":[21,60,156],"height":[21,30,20],"anchor":"centre","baseline":[0.684,0.719,0.63],"cutout":true},
+  "trees": {"file":"park-trees.png","cols":2,"rows":1,"width":40,"height":55,"anchor":"bottom","baseline":0.92,"cutout":true},
+  "token": {"file":"pickup-token.png","cols":2,"rows":1,"width":10,"height":10,"anchor":"centre","cutout":true},
+  "window": {"file":"launch-window.png","cols":1,"rows":1,"width":30,"height":43,"anchor":"top","cutout":false}
+}

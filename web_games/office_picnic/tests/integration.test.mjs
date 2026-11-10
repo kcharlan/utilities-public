@@ -23,3 +23,13 @@ test('static server serves browser modules, checks and assets with correct MIME 
   const module=await fetch(base+'/game/physics.js');assert.equal(module.status,200);assert.match(module.headers.get('content-type'),/^text\/javascript/);
   assert.equal((await fetch(base+'/checks.html')).status,200);assert.equal((await fetch(base+'/assets/plane-sheet.png')).status,200);assert.equal((await fetch(base+'/missing')).status,404);assert.equal((await fetch(base+'/%2e%2e%2fpackage.json')).status,403);
 });
+
+test('landing replay and benchmark restore the normal preview size',async()=>{
+  const {restorePreviewSize}=await import('../dist/game/checks-layout.js');
+  const select={value:'26'},canvas={style:{height:'1800px'}};let resized=0;
+  restorePreviewSize(select,canvas,{resize(){resized++}});
+  assert.equal(select.value,'5');assert.equal(canvas.style.height,'');assert.equal(resized,1);
+  const source=await readFile(new URL('../dist/game/browser-checks.js',import.meta.url),'utf8');
+  assert.match(source,/getElementById\('landing'\)\.onclick=\(\)=>\{\s*restorePreviewSize\(select,canvas,renderer\)/);
+  assert.match(source,/getElementById\('run'\)\.onclick=async\(\)=>\{\s*restorePreviewSize\(select,canvas,renderer\)/);
+});

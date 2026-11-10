@@ -3,14 +3,14 @@
     "runs": [
       {
         "mode": "standard",
-        "seconds": 364.68333333333334,
-        "distance": 7186,
+        "seconds": 369.3333333333333,
+        "distance": 7386,
         "crashes": 0
       },
       {
         "mode": "nonstop",
-        "seconds": 364.68333333333334,
-        "distance": 7186,
+        "seconds": 369.3333333333333,
+        "distance": 7386,
         "crashes": 0
       }
     ],
@@ -3542,7 +3542,7 @@
       {
         "district": "Park Approach",
         "heldTicks": 2199,
-        "totalTicks": 5093
+        "totalTicks": 5372
       }
     ],
     "summary": {
@@ -3563,14 +3563,14 @@
     "runs": [
       {
         "mode": "standard",
-        "seconds": 379.28333333333336,
-        "distance": 7186,
+        "seconds": 383.9166666666667,
+        "distance": 7386,
         "crashes": 0
       },
       {
         "mode": "nonstop",
-        "seconds": 379.28333333333336,
-        "distance": 7186,
+        "seconds": 383.9166666666667,
+        "distance": 7386,
         "crashes": 0
       }
     ],
@@ -7217,7 +7217,7 @@
       {
         "district": "Park Approach",
         "heldTicks": 2404,
-        "totalTicks": 5425
+        "totalTicks": 5703
       }
     ],
     "summary": {
@@ -7238,14 +7238,14 @@
     "runs": [
       {
         "mode": "standard",
-        "seconds": 397.6666666666667,
-        "distance": 7186,
+        "seconds": 402.3333333333333,
+        "distance": 7386,
         "crashes": 0
       },
       {
         "mode": "nonstop",
-        "seconds": 397.6666666666667,
-        "distance": 7186,
+        "seconds": 402.3333333333333,
+        "distance": 7386,
         "crashes": 0
       }
     ],
@@ -10936,7 +10936,7 @@
       {
         "district": "Park Approach",
         "heldTicks": 2372,
-        "totalTicks": 5428
+        "totalTicks": 5708
       }
     ],
     "summary": {

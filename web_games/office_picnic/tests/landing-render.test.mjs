@@ -2,7 +2,53 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {createRun} from '../dist/game/simulation.js';
 import {Renderer} from '../dist/game/render.js';
-import {createEffects,spawnEffects} from '../dist/game/effects.js';
+import {createEffects,spawnEffects,stepEffects} from '../dist/game/effects.js';
+
+function paintedFootprintsOverlap(first,second){
+  for(const polygon of [first,second])for(let i=0;i<polygon.length;i++){
+    const a=polygon[i],b=polygon[(i+1)%polygon.length],axis={x:-(b.y-a.y),y:b.x-a.x};
+    const project=shape=>shape.map(p=>p.x*axis.x+p.y*axis.y);
+    const p=project(first),q=project(second);
+    if(Math.max(...p)<Math.min(...q)||Math.max(...q)<Math.min(...p))return false;
+  }
+  return true;
+}
+function alphaIntersection(plane, bowl, width, height, offsetY = 0) {
+  const [a, b, c, d, e, f] = bowl.matrix,
+    det = a * d - b * c,
+    co = Math.cos(plane.rotation),
+    si = Math.sin(plane.rotation);
+  let count = 0;
+  for (let y = 0; y < height; y++)
+    for (let x = 0; x < width; x++) {
+      const dx = x + 0.5 - plane.x,
+        dy = y + 0.5 - plane.y - offsetY;
+      const u = (co * dx + si * dy) / plane.width + 0.5,
+        v = (-si * dx + co * dy) / plane.height + 0.5;
+      if (u < 0 || u >= 1 || v < 0 || v >= 1) continue;
+      const px =
+        Math.floor((u * plane.image.width) / 2) +
+        ((plane.frame % 2) * plane.image.width) / 2;
+      const py =
+        Math.floor((v * plane.image.height) / 2) +
+        (Math.floor(plane.frame / 2) * plane.image.height) / 2;
+      if (plane.image.pixels[(py * plane.image.width + px) * 4 + 3] <= 8)
+        continue;
+      const bx = x + 0.5 - e,
+        by = y + 0.5 - f,
+        localX = (d * bx - c * by) / det,
+        localY = (-b * bx + a * by) / det;
+      const bu = (localX - bowl.x) / bowl.width,
+        bv = (localY - bowl.y) / bowl.height;
+      if (bu < 0 || bu >= 1 || bv < 0 || bv >= 1) continue;
+      const sx =
+          Math.floor((bu * bowl.image.width) / 2) +
+          (bowl.frame * bowl.image.width) / 2,
+        sy = Math.floor(bv * bowl.image.height);
+      if (bowl.image.pixels[(sy * bowl.image.width + sx) * 4 + 3] > 8) count++;
+    }
+  return count;
+}
 
 test('finished picnic table, bowl and group fit desktop and phone viewports',()=>{
   for(const [w,h] of [[1280,800],[390,844],[844,390]]){
@@ -20,5 +66,250 @@ test('finished picnic table, bowl and group fit desktop and phone viewports',()=
     assert.ok(rects.filter(([x,y,width,height])=>Math.abs(width-10*z)<.001&&Math.abs(height-17*z)<.001&&x>=0&&x+width<=w&&y>=0&&y+height<=h).length===4,`${w} colleagues`);
     assert.ok(cy>=0&&cy<=h);assert.ok(text.some(([s])=>s==='Office Picnic'));
     assert.ok(text.every(([s])=>!s.toLowerCase().includes('potato salad')));
+  }
+});
+test('overhead descent keeps the plane and table in the landscape view',()=>{
+  const run=createRun();run.plane.x=run.world.length+.1;run.plane.y=180;
+  // Use the real simulation to enter and advance the overhead landing.
+  return import('../dist/game/simulation.js').then(({stepRun})=>{
+    stepRun(run,false);for(let n=0;n<Math.floor(run.landingDurationTicks*.3);n++)stepRun(run,false);
+    const rects=[],sprites=[],ctx=new Proxy({fillRect:(...v)=>rects.push(v),drawImage(){}},{get:(o,k)=>k in o?o[k]:()=>{}});
+    const renderer=Object.assign(Object.create(Renderer.prototype),{w:844,h:390,ctx,washer:{complete:false},reduced:false,cache:[{},{}],sprite:(...v)=>sprites.push(v),label:()=>{}});
+    renderer.draw(run,false,1);const plane=sprites.at(-1);assert.ok(plane[3]>0&&plane[3]<390,'plane visible');
+    const table=rects.find(([x,y,w,h])=>w>100&&h>0&&y>200&&y<390);assert.ok(table&&table[1]+table[3]<=390,'table visible');
+  });
+});
+test('finished framing excludes buildings and hazard motion bounds at all playfield sizes',async()=>{
+  const {cameraFor}=await import('../dist/game/session.js');
+  const {hazardParts}=await import('../dist/game/world.js');
+  for(const [w,h] of [[1440,900],[844,390],[390,844]]){
+    const run=createRun(),world=run.world,p={x:world.length,y:world.park.bowlY};
+    const cam=cameraFor(w,h,p,{focus:{x:world.length,y:30},zoom:Math.min(3.2,w/210,h/130),progress:1});
+    const intersects=b=>b.x+b.w>=cam.left&&b.x<=cam.left+w/cam.scale&&b.y+b.h>=cam.bottom&&b.y<=cam.bottom+h/cam.verticalScale;
+    for(const b of world.buildings)assert.ok(!intersects({x:b.x,y:-1000,w:b.w,h:1000+b.y}),`${w} building`);
+    for(const hzd of world.hazards){
+      const dx=hzd.moving?(hzd.amp?.pigeonX??0):0,dy=hzd.moving?(hzd.kind==='platform'?(hzd.amp?.platformY??0):(hzd.amp?.pigeonY??0)):0;
+      for(const b of hazardParts({...hzd,moving:false},0))assert.ok(!intersects({x:b.x-dx,y:b.y-dy,w:b.w+2*dx,h:b.h+2*dy}),`${w} ${hzd.id}`);
+    }
+  }
+});
+test('finished renderer excludes buildings and hazards at all playfield sizes and tiers',async()=>{
+  const {TIERS}=await import('../dist/game/tiers.js'),{buildWorld}=await import('../dist/game/world.js');
+  for(const tier of Object.values(TIERS))for(const [w,h] of [[1440,900],[844,390],[390,844]]){
+    const run=createRun('standard',buildWorld(undefined,tier));run.status='finished';run.plane.x=run.world.length;run.plane.y=25;
+    const buildings=[],hazards=[],washer={complete:true,naturalWidth:1536,naturalHeight:1024},pigeon={complete:true,naturalWidth:1254};
+    const ctx=new Proxy({fillRect(...v){if(this.fillStyle==='#41485e')buildings.push(v);},drawImage(...v){if(v[0]===washer)hazards.push(v.slice(1));}},{get:(o,k)=>k in o?o[k]:()=>{}});
+    const renderer=Object.assign(Object.create(Renderer.prototype),{w,h,ctx,washer,pigeon,reduced:true,cache:[{},{}],sprite:(img,...v)=>{if(img===pigeon)hazards.push(v);},label:()=>{}});
+    renderer.draw(run,false,1);
+    assert.ok(buildings.every(([x,y,width,height])=>x+width<=0||x>=w||y+height<=0||y>=h),tier.id+' building '+w);
+    assert.equal(hazards.length,0,tier.id+' hazard '+w);
+  }
+});
+test('approach guidance appears only in full and warnings modes',async()=>{
+  const {TIERS}=await import('../dist/game/tiers.js');const {buildWorld}=await import('../dist/game/world.js');
+  for(const tier of Object.values(TIERS)){
+    const run=createRun('standard',buildWorld(undefined,tier)),dashes=[];
+    const ctx=new Proxy({setLineDash:v=>dashes.push(v),drawImage(){}},{get:(o,k)=>k in o?o[k]:()=>{}});
+    const renderer=Object.assign(Object.create(Renderer.prototype),{w:844,h:390,ctx,washer:{complete:false},reduced:false,cache:[{},{}],sprite:()=>{},label:()=>{}});
+    run.plane.x=run.world.finishStart+10;run.plane.y=175;renderer.draw(run,false,1);
+    assert.equal(dashes.some(v=>v[0]===3&&v[1]===6),tier.prompts!=='quiet',tier.id);
+  }
+});
+test('reference approaches keep the actual table and aircraft in view at every park tick',async()=>{
+  const {TIERS}=await import('../dist/game/tiers.js'),{buildWorld}=await import('../dist/game/world.js');
+  const {stepRun}=await import('../dist/game/simulation.js'),{referenceInput}=await import('../dist/game/bot.js');
+  for(const tier of Object.values(TIERS))for(const reduced of [false,true])for(const [w,h] of [[1440,900],[844,390],[390,844]]){
+    const run=createRun('standard',buildWorld(undefined,tier));
+    while(run.status==='flying'&&run.plane.x<=run.world.finishStart)stepRun(run,referenceInput(run));
+    while(run.status==='flying'||run.status==='landing'){
+      const rects=[],sprites=[],ctx=new Proxy({fillRect(...v){if(this.fillStyle==='#bd947f')rects.push(v);},drawImage(){}},{get:(o,k)=>k in o?o[k]:()=>{}});
+      const renderer=Object.assign(Object.create(Renderer.prototype),{w,h,ctx,washer:{complete:false},reduced,cache:[{},{}],sprite:(...v)=>sprites.push(v),label:()=>{}});
+      renderer.draw(run,false,1);const table=rects[0],plane=sprites.at(-1);
+      assert.ok(table&&table[0]>=0&&table[0]+table[2]<=w&&table[1]>=0&&table[1]+table[3]<=h,`${tier.id} reduced=${reduced} table at ${run.plane.x-run.world.finishStart}`);
+      assert.ok(plane&&plane[2]-plane[4]/2>=0&&plane[2]+plane[4]/2<=w&&plane[3]-plane[5]/2>=0&&plane[3]+plane[5]/2<=h,`${tier.id} reduced=${reduced} plane`);
+      stepRun(run,referenceInput(run));
+    }
+  }
+});
+test('reduced-motion overhead descent keeps actual aircraft and table in view',async()=>{
+  const {stepRun}=await import('../dist/game/simulation.js');const run=createRun();run.plane.x=run.world.length+.1;run.plane.y=180;stepRun(run,false);
+  let initialTable;
+  while(run.status==='landing'){
+    const rects=[],sprites=[],ctx=new Proxy({fillRect(...v){if(this.fillStyle==='#bd947f')rects.push(v);},drawImage(){}},{get:(o,k)=>k in o?o[k]:()=>{}});
+    const renderer=Object.assign(Object.create(Renderer.prototype),{w:844,h:390,ctx,washer:{complete:false},reduced:true,cache:[{},{}],sprite:(...v)=>sprites.push(v),label:()=>{}});
+    renderer.draw(run,false,1);const table=rects[0],plane=sprites.at(-1);
+    assert.ok(table&&table[0]>=0&&table[0]+table[2]<=844&&table[1]>=0&&table[1]+table[3]<=390,'table');
+    if(initialTable)assert.deepEqual(table,initialTable,'reduced-motion framing stays fixed');else initialTable=table;
+    assert.ok(plane&&plane[3]-plane[5]/2>=0&&plane[3]+plane[5]/2<=390,`plane tick ${run.landingTicks}`);
+    stepRun(run,false);
+  }
+});
+
+
+test("painted picnic cells layer correctly and switch people rows at three viewports", async () => {
+  const manifest = JSON.parse(
+    (await import("node:fs")).readFileSync(
+      new URL("../dist/assets/manifest.json", import.meta.url),
+    ),
+  );
+  const { readPng } = await import('../scripts/png.mjs');
+  const { measure } = await import('../scripts/asset-metrics.mjs');
+  const { readFileSync } = await import('node:fs');
+  const source = readPng(readFileSync(new URL('../dist/assets/picnic-people.png', import.meta.url)));
+  const personGeometry = measure(source, 4, 2);
+  const planeSource = readPng(readFileSync(new URL('../dist/assets/plane-sheet.png', import.meta.url)));
+  const bowlSource = readPng(readFileSync(new URL('../dist/assets/salad-bowl.png', import.meta.url)));
+  const tableSource = readPng(readFileSync(new URL('../dist/assets/picnic-table.png', import.meta.url)));
+  const contentBounds = (image, cols, rows, frame) => {
+    const width=image.width/cols, height=image.height/rows, ox=(frame%cols)*width, oy=Math.floor(frame/cols)*height;
+    let left=width,top=height,right=-1,bottom=-1;
+    for(let y=0;y<height;y++)for(let x=0;x<width;x++)if(image.pixels[((oy+y)*image.width+ox+x)*4+3]>8){left=Math.min(left,x);right=Math.max(right,x);top=Math.min(top,y);bottom=Math.max(bottom,y);}
+    return {left:left/width,right:(right+1)/width,top:top/height,bottom:(bottom+1)/height};
+  };
+  let tableTop=0;
+  const centreColumn=Math.floor(tableSource.width/2);
+  while(tableTop<tableSource.height && tableSource.pixels[(tableTop*tableSource.width+centreColumn)*4+3]<=8)tableTop++;
+  assert.ok(tableTop<tableSource.height,'painted tabletop found');
+  const dimensions = Object.fromEntries(Object.entries(manifest).map(([name, meta]) => {
+    const decoded = readPng(readFileSync(new URL('../dist/assets/' + meta.file, import.meta.url)));
+    return [name, { width: decoded.width, height: decoded.height }];
+  }));
+  for (const [w, h] of [
+    [1440, 900],
+    [844, 390],
+    [390, 844],
+  ])
+    for (const reduced of [false, true])
+      for (const finished of [false, true]) {
+        const run = createRun();
+        run.plane.x = run.world.length;
+        run.plane.y = run.world.park.bowlY;
+        if (finished) run.status = "finished";
+        const draws = [], stack = [];
+        let matrix = [1,0,0,1,0,0];
+        const
+          ctx = new Proxy(
+            {
+              drawImage: (...v) => {v.matrix=[...matrix];draws.push(v);},
+              save:()=>stack.push([...matrix]),
+              restore:()=>{matrix=stack.pop();},
+              translate:(x,y)=>{const [a,b,c,d,e,f]=matrix;matrix=[a,b,c,d,e+a*x+c*y,f+b*x+d*y];},
+              rotate:angle=>{const [a,b,c,d,e,f]=matrix,co=Math.cos(angle),si=Math.sin(angle);matrix=[a*co+c*si,b*co+d*si,c*co-a*si,d*co-b*si,e,f];},
+              measureText: (s) => ({ width: s.length * 6 }),
+            },
+            { get: (o, k) => (k in o ? o[k] : () => {}) },
+          ),
+          art = {};
+        for (const [name, meta] of Object.entries(manifest))
+          art[name] = {
+            meta,
+            image: {
+              name,
+              complete: true,
+              naturalWidth: dimensions[name].width,
+              naturalHeight: dimensions[name].height,
+            },
+          };
+        const renderer = Object.assign(Object.create(Renderer.prototype), {
+          w,
+          h,
+          ctx,
+          art,
+          plane: {
+            name: "plane",
+            complete: true,
+            naturalWidth: 1254,
+            naturalHeight: 1254,
+          },
+          washer: { complete: false },
+          reduced,
+          cache: [{}, {}],
+          label: () => {},
+        });
+        const fx = createEffects();
+        if (finished) spawnEffects(fx, run, ["landing"], { reduced });
+        if (finished && !reduced) for(let i=0;i<8;i++)stepEffects(fx);
+        let planePaint;
+        const sprite = renderer.sprite;
+        renderer.sprite = function(image, frame, x, y, width, height, rotation, ...rest) {
+          if (image === this.plane) {
+            planePaint={image:planeSource,frame,x,y,width,height,rotation};
+          }
+          return sprite.call(this, image, frame, x, y, width, height, rotation, ...rest);
+        };
+        renderer.draw(run, false, 1, fx);
+        const people = draws.filter((a) => a[0] === art.people.image),
+          table = draws.find((a) => a[0] === art.table.image),
+          bowl = draws.find((a) => a[0] === art.bowl.image),
+          props = draws.find((a) => a[0] === art.props.image && a[1] === dimensions.props.width*2/manifest.props.cols),
+          plane = draws.find((a) => a[0] === renderer.plane);
+        assert.equal(people.length, 4);
+        for (const [i,a] of people.entries()) {
+          assert.equal(a[2], finished ? dimensions.people.height/manifest.people.rows : 0);
+          assert.ok(
+            a[5] >= 0 && a[6] >= 0 && a[5] + a[7] <= w && a[6] + a[8] <= h,
+          );
+          const geometry = personGeometry.cells[i+(finished ? 4 : 0)];
+          const head = a[6] + (geometry.bottom-geometry.height+1)/personGeometry.cellHeight*a[8];
+          const foot = a[6] + geometry.bottom/personGeometry.cellHeight*a[8];
+          const tabletop = table[6] + table[8]*tableTop/tableSource.height;
+          assert.ok(head < tabletop && foot >= tabletop, 'painted figure straddles table top');
+        }
+        for (const a of [table, props])
+          assert.ok(
+            a && a[5] >= 0 && a[6] >= 0 && a[5] + a[7] <= w && a[6] + a[8] <= h,
+          );
+        assert.ok(draws.indexOf(bowl) > draws.indexOf(people[3]));
+        const frame=Math.floor(bowl[1]/(bowlSource.width/2));
+        const content=contentBounds(bowlSource,2,1,frame);
+        const [a,b,c,d,e,f]=bowl.matrix,points=[];
+        for(const [px,py] of [[content.left,content.top],[content.right,content.top],[content.right,content.bottom],[content.left,content.bottom]]){
+          const x=bowl[5]+px*bowl[7],y=bowl[6]+py*bowl[8];points.push({x:a*x+c*y+e,y:b*x+d*y+f});
+        }
+        const visible={left:Math.min(...points.map(p=>p.x)),right:Math.max(...points.map(p=>p.x)),top:Math.min(...points.map(p=>p.y)),bottom:Math.max(...points.map(p=>p.y))};
+        assert.ok(visible.left>=0&&visible.right<=w&&visible.top>=0&&visible.bottom<=h,'painted bowl is in view');
+        if (finished) {
+          assert.ok(plane, "plane is drawn");
+          const bowlPaint={image:bowlSource,frame,matrix:bowl.matrix,x:bowl[5],y:bowl[6],width:bowl[7],height:bowl[8]};
+          const pixels=alphaIntersection(planePaint,bowlPaint,w,h);
+          assert.ok(pixels>0,'painted plane overlaps painted bowl');
+          if(w===390&&h===844&&!reduced)assert.equal(alphaIntersection(planePaint,bowlPaint,w,h,15),0,'shifted plane must not overlap painted bowl');
+        }
+      }
+});
+
+test('painted footprint overlap rejects intersecting bounding boxes for separated rotated shapes',()=>{
+  const first=[{x:0,y:0},{x:4,y:4},{x:3,y:5},{x:-1,y:1}];
+  const second=[{x:1,y:-1},{x:5,y:3},{x:4,y:4},{x:0,y:0}].map(p=>({x:p.x+1,y:p.y-1}));
+  assert.equal(paintedFootprintsOverlap(first,second),false);
+});
+
+test('portrait approach grounds the painted people, table and trees at the park horizon', async()=>{
+  const {readFileSync}=await import('node:fs');
+  const {readPng}=await import('../scripts/png.mjs');
+  const {measure}=await import('../scripts/asset-metrics.mjs');
+  const manifest=JSON.parse(readFileSync(new URL('../dist/assets/manifest.json',import.meta.url)));
+  const art={},geometry={};
+  for(const [name,meta] of Object.entries(manifest)){
+    const image=readPng(readFileSync(new URL('../dist/assets/'+meta.file,import.meta.url)));
+    art[name]={meta,image:{name,complete:true,naturalWidth:image.width,naturalHeight:image.height}};
+    geometry[name]=measure(image,meta.cols,meta.rows);
+  }
+  const run=createRun();run.plane.x=run.world.length-100;run.plane.y=70;
+  const draws=[],grounds=[];
+  const ctx=new Proxy({drawImage:(...args)=>draws.push(args),fillRect(x,y,w,h){if(this.fillStyle==='#697f79')grounds.push(y)},measureText:s=>({width:s.length*6})},{get:(o,k)=>k in o?o[k]:()=>{}});
+  const renderer=Object.assign(Object.create(Renderer.prototype),{w:390,h:844,ctx,art,plane:{complete:false},washer:{complete:false},reduced:true,cache:[{},{}],label:()=>{}});
+  renderer.draw(run,false,1);
+  assert.ok(grounds.length,'ground horizon drawn');
+  const ground=grounds[0];
+  for(const name of ['people','table','trees']){
+    const entries=draws.filter(d=>d[0]===art[name].image);
+    assert.ok(entries.length,`${name} was drawn`);
+    for(const draw of entries){
+      const frame=Math.floor(draw[2]/(art[name].image.naturalHeight/manifest[name].rows))*manifest[name].cols+Math.floor(draw[1]/(art[name].image.naturalWidth/manifest[name].cols));
+      const bounds=geometry[name].cells[frame];
+      const bottom=draw[6]+(bounds.bottom+1)/geometry[name].cellHeight*draw[8];
+      assert.ok(Math.abs(bottom-ground)<3,`${name} bottom ${bottom} vs ground ${ground}`);
+    }
   }
 });
