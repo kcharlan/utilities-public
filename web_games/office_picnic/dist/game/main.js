@@ -77,6 +77,7 @@ function tick(){
   const messages=noticeMessages(run);
   if(run.previous.x<=run.world.finishStart&&run.plane.x>run.world.finishStart)messages.push('The park. Release to descend home.');
   if(messages.length)notice(messages.join(' · '),8);
+  if(run.status==='landing')$('notice').hidden=true;
   const air=airAt(run.world,run.plane,run.worldTicks/60),source=air.source;
   const ventActive=source?.type===1&&air.activity>.35;
   if(ventActive&&(lastVent!==source||!lastVentActive))feedback('vent');lastVent=source;lastVentActive=ventActive;
