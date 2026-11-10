@@ -58,3 +58,4 @@ A delayed-input window measured from a checkpoint can miss height-judgment diffi
 
 - A distance cue alone does not guarantee enough decision time at different flight speeds. Measure each announcement against an actual reference flight and price pickups again when their collection radius or placement changes.
 - An offscreen marker competes for the same canvas space as hazard labels: reserve its actual painted bounds before placing labels. Simultaneous notices also need tier-aware priority, so a pickup cue cannot erase or duplicate an active hazard warning.
+- Pickup reachability alone does not establish safety or a meaningful detour. Measure collect-box clearance over hazard motion, compare paired pilots for collection and extra crashes, and check the actual rendered token against sprite and building footprints over the full motion period.

@@ -63,9 +63,9 @@ test('pickup grid requires reaching the district end even when pickup was collec
 
 test('menu extension belongs only to Overtime Crosswind Court',async()=>{
   const {menuCandidates}=await import('../scripts/pickup-study.mjs');
-  assert.equal(menuCandidates('casual',3).length,9);
-  assert.equal(menuCandidates('overtime',2).length,9);
-  assert.equal(menuCandidates('overtime',3).length,19);
+  assert.equal(menuCandidates('casual',3).length,30);
+  assert.equal(menuCandidates('overtime',2).length,30);
+  assert.equal(menuCandidates('overtime',3).length,40);
 });
 
 test('menu uses 100 paired samples by default and identifies each candidate',async()=>{
@@ -93,7 +93,7 @@ test('playtest check fails when an authored pickup cannot be built',async()=>{
     await cp(new URL('../tests/',import.meta.url),join(root,'tests'),{recursive:true});
     await cp(new URL('../package.json',import.meta.url),join(root,'package.json'));
     const path=join(root,'dist/game/tiers.js'),source=await readFile(path,'utf8');
-    const changed=source.replace("P(2,1,'high',35,3)","P(2,1,'underWasher',6,3)");assert.notEqual(changed,source);await writeFile(path,changed);
+    const changed=source.replace("P(2,0,'overFlock',36,3)","P(2,1,'underWasher',6,3)");assert.notEqual(changed,source);await writeFile(path,changed);
     await assert.rejects(promisify(execFile)(process.execPath,['scripts/playtest.mjs','--tier','casual','--check'],{cwd:root}),error=>error.code===1&&error.stdout.includes('FAIL casual pickup coverage'));
   }finally{await rm(root,{recursive:true,force:true});}
 });
@@ -137,4 +137,43 @@ test('collected pickups do not announce and Nonstop restart announces again',()=
   const world=buildWorld(),pk={...world.pickups[0],attach:null};world.pickups=[pk];world.buildings=[];world.hazards=[];world.airs=[];world.winds=[];
   const run=createRun('nonstop',world);run.collected.add(pk.id);run.plane.x=pk.announceX-.1;run.plane.y=300;stepRun(run,false);assert.ok(!run.events.includes('pickupAhead'));
   run.status='respawning';run.respawnTicks=1;stepRun(run,false);run.plane.x=pk.announceX-.1;run.plane.y=300;stepRun(run,false);assert.ok(run.events.includes('pickupAhead'));stepRun(run,false);assert.ok(!run.events.includes('pickupAhead'));
+});
+
+test('authored pickups have tier clearance, three placement kinds, and complete notice',async()=>{
+  const {pickupClearance}=await import('../scripts/pickup-study.mjs');
+  for(const [tier,minimum] of [[TIERS.casual,8],[TIERS.rush,6],[TIERS.overtime,4]]){
+    const world=buildWorld(undefined,tier);
+    assert.equal(world.pickups.length,5);
+    assert.deepEqual(world.pickups.map(pk=>pk.district),[0,1,2,3,4]);
+    assert.ok(new Set(world.pickups.map(pk=>pk.place)).size>=3,`${tier.id} kinds`);
+    for(const pk of world.pickups){assert.ok(pk.announceX>=0);assert.ok(pickupClearance(world,pk)>=minimum,`${tier.id} ${pk.id} clearance`);}
+  }
+});
+
+test('unsafe Rush flock pickup fails the strengthened pricing rule',async()=>{
+  const {pricePickup}=await import('../scripts/pickup-study.mjs');
+  const tier={...TIERS.rush,pickups:[{district:2,slot:0,place:'overFlock',dy:5,r:5,rewardTicks:300}]};
+  const world=buildWorld(undefined,tier),row=pricePickup(world,world.pickups[0],100);
+  assert.equal(row.qualifies,false);assert.ok(row.clearance<6);
+});
+
+test('clearance includes padded hazards, roof boxes and attached motion',async()=>{
+  const {pickupClearance}=await import('../scripts/pickup-study.mjs');
+  const pk={x:0,y:10,r:1};
+  const world={buildings:[{x:4,y:6,w:2}],hazards:[]};
+  assert.equal(pickupClearance(world,pk),Math.hypot(3,3));
+  world.buildings=[];world.hazards=[{id:'bird',kind:'pigeon',x:0,y:0,w:2,h:2,moving:false}];
+  assert.ok(Math.abs(pickupClearance(world,pk)-5.8)<1e-9);
+  world.hazards[0]={...world.hazards[0],moving:true,phase:0,amp:{pigeonX:0,pigeonY:4,rate:1}};
+  assert.ok(pickupClearance(world,pk)<1.81);
+  const attached={...pk,attach:'bird',ox:1,oy:10};
+  assert.ok(Math.abs(pickupClearance(world,attached)-5.8)<1e-9);
+});
+
+test('isolating a priced pickup preserves its paired study results',async()=>{
+  const {pricePickup}=await import('../scripts/pickup-study.mjs');
+  for(const tier of Object.values(TIERS)){
+    const world=buildWorld(undefined,tier);
+    for(const pk of world.pickups)assert.deepEqual(pricePickup({...world,pickups:[pk]},pk,1),pricePickup(world,pk,1));
+  }
 });

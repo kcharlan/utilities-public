@@ -2,9 +2,9 @@
 export const MEDALS = {
   "casual": {
     "gold": 373,
-    "silver": 394,
-    "bronze": 419,
-    "configHash": "506abf0e",
+    "silver": 383,
+    "bronze": 418,
+    "configHash": "27bb37e3",
     "derived": {
       "n": 150,
       "seeds": {
@@ -13,18 +13,18 @@ export const MEDALS = {
         "regular": 30000
       },
       "quantiles": {
-        "gold": 0.4,
+        "gold": 0.25,
         "silver": 0.5,
-        "bronze": 0.94
+        "bronze": 1
       },
-      "idealNet": 359.21666666666664
+      "idealNet": 361.1333333333333
     }
   },
   "rush": {
-    "gold": 375,
-    "silver": 414,
-    "bronze": 443,
-    "configHash": "ad16e673",
+    "gold": 372,
+    "silver": 391,
+    "bronze": 415,
+    "configHash": "1afef81d",
     "derived": {
       "n": 150,
       "seeds": {
@@ -37,14 +37,14 @@ export const MEDALS = {
         "silver": 0.5,
         "bronze": 0.9
       },
-      "idealNet": 359.73333333333335
+      "idealNet": 358.93333333333334
     }
   },
   "overtime": {
-    "gold": 359,
-    "silver": 418,
-    "bronze": 481,
-    "configHash": "a8278c5c",
+    "gold": 365,
+    "silver": 412,
+    "bronze": 460,
+    "configHash": "afbe5603",
     "derived": {
       "n": 150,
       "seeds": {
@@ -57,7 +57,7 @@ export const MEDALS = {
         "silver": 0.5,
         "bronze": 0.94
       },
-      "idealNet": 341.8333333333333
+      "idealNet": 353.85
     }
   }
 };

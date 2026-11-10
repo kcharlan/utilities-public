@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {Renderer} from '../dist/game/render.js';
 import {createRun} from '../dist/game/simulation.js';
-import {buildWorld} from '../dist/game/world.js';
+import {buildWorld,pickupPos as pickupPosForTest} from '../dist/game/world.js';
 import {TIERS} from '../dist/game/tiers.js';
 import {cameraFor} from '../dist/game/session.js';
 
@@ -50,7 +50,7 @@ test('announced pickups use an offscreen marker only on assisted tiers',()=>{
 });
 
 test('offscreen marker does not cover real Rush warning labels',async()=>{
-  const {referenceInput}=await import('../dist/game/bot.js'),{stepRun}=await import('../dist/game/simulation.js');const run=createRun('standard',buildWorld(undefined,TIERS.rush));for(let i=0;i<643;i++)stepRun(run,referenceInput(run));
+  const {referenceInput}=await import('../dist/game/bot.js'),{stepRun}=await import('../dist/game/simulation.js');const run=createRun('standard',buildWorld(undefined,TIERS.rush));for(let i=0;i<681;i++)stepRun(run,referenceInput(run));
   const markers=[],labels=[],ctx=new Proxy({measureText:s=>({width:s.length*6}),drawImage(){},fillRect(x,y,w,h){if(this.fillStyle==='#303149e8')markers.push({left:x,right:x+w,top:y,bottom:y+h});if(this.fillStyle==='#303149d9')labels.push({left:x,right:x+w,top:y,bottom:y+h});}},{get:(o,k)=>k in o?o[k]:()=>{}});
   const renderer=Object.assign(Object.create(Renderer.prototype),{w:390,h:844,ctx,washer:{complete:false},reduced:true,cache:[{},{}],sprite:()=>{}});renderer.draw(run,false,1);assert.ok(markers.length);assert.ok(labels.length);
   for(const a of markers)for(const b of labels)assert.ok(!(a.left<b.right&&a.right>b.left&&a.top<b.bottom&&a.bottom>b.top),'marker overlaps label');
@@ -96,6 +96,28 @@ test('each assisted pickup paints its announced offscreen marker on portrait',as
       const pk=pickupPos(run.world,base,0),cam=cameraFor(390,844,run.plane);assert.ok((pk.x-cam.left)*cam.scale>390,`${tier.id} ${base.id} must be offscreen`);
       const texts=[],arcs=[],ctx=new Proxy({measureText:s=>({width:s.length*6}),drawImage(){},fillText:t=>texts.push(t),arc:(x,y,r)=>arcs.push({x,y,r})},{get:(o,k)=>k in o?o[k]:()=>{}});const renderer=Object.assign(Object.create(Renderer.prototype),{w:390,h:844,ctx,washer:{complete:false},reduced:true,cache:[{},{}],sprite:()=>{}});renderer.draw(run,false,1);
       assert.ok(texts.some(t=>t.startsWith(`−${pk.rewardTicks/60}s`)&&t.includes(pk.hint)),`${tier.id} ${base.id} marker text`);assert.ok(arcs.some(a=>a.r===8&&a.x>0&&a.x<=390),'marker token');
+    }
+  }
+});
+
+test('rendered pickup tokens clear hazard sprites and buildings throughout motion',()=>{
+  const separation=(a,b)=>Math.hypot(Math.max(0,a.left-b.right,b.left-a.right),Math.max(0,a.top-b.bottom,b.top-a.bottom));
+  for(const tier of Object.values(TIERS))for(const [w,h] of [[1440,900],[390,844]]){
+    const run=createRun('standard',buildWorld(undefined,tier));
+    for(const pk of run.world.pickups){
+      run.collected=new Set(run.world.pickups.filter(p=>p!==pk).map(p=>p.id));run.plane.x=pk.x-90;run.plane.y=pk.y;
+      for(let frame=0;frame<=3770;frame++){
+        run.worldTicks=frame*2;const obstacles=[],tokens=[];let arc,line;
+        const washer={complete:true,naturalWidth:1536},pigeon={};
+        const ctx=new Proxy({measureText:s=>({width:s.length*6}),drawImage(img,...a){if(img===washer){const [x,y,width,height]=a;obstacles.push({left:x,right:x+width,top:y,bottom:y+height});}},fillRect(x,y,width,height){if(this.fillStyle==='#41485e')obstacles.push({left:x,right:x+width,top:y,bottom:y+height});},moveTo(x,y){line={x,y};},lineTo(x,y){if(line&&['#9c9aaa','#37405c'].includes(this.strokeStyle)){const pad=this.lineWidth/2;obstacles.push({left:Math.min(x,line.x)-pad,right:Math.max(x,line.x)+pad,top:Math.min(y,line.y)-pad,bottom:Math.max(y,line.y)+pad});}},arc(x,y,r){arc={x,y,r};},fill(){if(this.fillStyle==='#ffe3a8'&&arc)tokens.push(arc);}},{get:(o,k)=>k in o?o[k]:()=>{}});
+        const renderer=Object.assign(Object.create(Renderer.prototype),{w,h,ctx,washer,pigeon,reduced:true,cache:[{},{}],sprite(img,frame,x,y,width,height){if(img===pigeon)obstacles.push({left:x-width/2,right:x+width/2,top:y-height/2,bottom:y+height/2});}});
+        renderer.draw(run,false,1);
+        const cam=cameraFor(w,h,run.plane),pos=pickupPosForTest(run.world,pk,run.worldTicks/60),x=(pos.x-cam.left)*cam.scale,y=h-(pos.y-cam.bottom)*cam.verticalScale;
+        const token=tokens.find(t=>Math.abs(t.x-x)<.001&&Math.abs(t.y-y)<.001);assert.ok(token,`${tier.id} ${pk.id} ${w} token`);
+        // Include the animated halo at its widest, including its stroke.
+        const radius=token.r+5.5,rect={left:x-radius,right:x+radius,top:y-radius,bottom:y+radius};
+        for(const obstacle of obstacles)assert.ok(separation(rect,obstacle)>=6-1e-8,`${tier.id} ${pk.id} ${w} frame ${frame} art clearance`);
+      }
     }
   }
 });

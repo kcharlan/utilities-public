@@ -63,6 +63,8 @@ test('pickup notice preserves the still-active opening hazard instruction',async
     globalThis.document={getElementById:id=>id==='trace-download'?null:element(id),createElement:()=>element(Symbol()),addEventListener(){}};globalThis.window={localStorage:null,addEventListener(){}};globalThis.location={search:''};globalThis.matchMedia=()=>({matches:false,addEventListener(){}});globalThis.Image=class{};globalThis.requestAnimationFrame=()=>{};
     const base=new URL('../dist/game/',import.meta.url).href,source=readFileSync(new URL('../dist/game/main.js',import.meta.url),'utf8').replaceAll("from './",`from '${base}`)+'\nexport {start,tick}; export const currentRun=()=>run;\n// pickup notice regression';
     const app=await import('data:text/javascript;base64,'+Buffer.from(source).toString('base64'));app.start('standard');const run=app.currentRun();app.tick();assert.match(element('notice').textContent,/Pigeons · climb over/);
+    // Stage a pickup announcement while the actual opening warning is still active.
+    run.world.pickups[0].announceX=run.plane.x+1;
     while(!run.events.includes('pickupAhead')&&run.worldTicks<100)app.tick();assert.ok(run.events.includes('pickupAhead'));assert.match(element('notice').textContent,/Pigeons · climb over/);assert.match(element('notice').textContent,/Time pickup ahead/);
   }finally{Renderer.prototype.resize=savedResize;for(const [key,value] of Object.entries(original))globalThis[key]=value;}
 });

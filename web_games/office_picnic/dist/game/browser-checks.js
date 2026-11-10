@@ -34,11 +34,12 @@ function runRoute(){
   for(const [index,feature] of [[9,world.hazards.find(h=>h.kind==='platform'&&h.moving)],[10,world.hazards.find(h=>h.squeeze)],[11,world.winds.find(w=>w.wind<0)],[13,world.winds.find(w=>w.wind>0)]]){
     const preview=createRun('standard',world);preview.plane.x=(feature.x??feature.x0)-90;preview.plane.y=150;preview.worldTicks=240;scenes[index]=capture(preview);
   }
-  const pickupWorld=buildWorld(undefined,{...TIERS.rush,pickups:[{district:2,slot:2,place:'underWasher',dy:6,r:5,rewardTicks:540}]});
+  const pickupWorld=buildWorld(undefined,{...TIERS.rush,pickups:[TIERS.rush.pickups[3]]});
   const pickupScene=createRun('standard',pickupWorld),pk=pickupWorld.pickups[0];pickupScene.plane.x=pk.x-90;pickupScene.plane.y=pk.y;pickupScene.worldTicks=240;scenes[12]=capture(pickupScene);
   {
-    const preview=createRun('standard',world),target=world.pickups.find(p=>p.attach&&p.district===2);
-    preview.plane.x=target.announceX;preview.plane.y=target.y;const hazard=world.hazards.find(h=>h.id===target.attach);
+    const staged=buildWorld(undefined,{...TIERS.rush,pickups:[{district:2,slot:0,place:'overFlock',dy:36,r:5,rewardTicks:300}]});
+    const preview=createRun('standard',staged),target=staged.pickups[0];
+    preview.plane.x=target.announceX;preview.plane.y=target.y;const hazard=staged.hazards.find(h=>h.id===target.attach);
     preview.worldTicks=((Math.PI/2-hazard.phase+Math.PI*4)%(Math.PI*2))/(.65*hazard.amp.rate)*60;preview.announced.add(target.id);scenes[23]=capture(preview);
   }
   {const preview=createRun('standard',pickupWorld),target=pickupWorld.pickups[0];preview.plane.x=target.x-90;preview.plane.y=target.y;preview.worldTicks=240;preview.announced.add(target.id);scenes[24]=capture(preview);}
