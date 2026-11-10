@@ -28,3 +28,5 @@
   .title-copy h1{font-size:72px;margin-bottom:12px}
   .opening{margin-bottom:14px}
 }
+
+.route-track{position:relative}#pickup-ticks{position:absolute;inset:0}.pickup-tick{position:absolute;top:-4px;width:3px;height:10px;background:#ffe3a8;border-radius:2px}

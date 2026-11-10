@@ -1,5 +1,5 @@
 import {hazardKey} from './world.js';
-export const eventNotes={pickup:[659,880],launch:[523,784],lift:[392,587],vent:[196,294],stall:[164,146],recovery:[294,440],warning:[440,349],impact:[98,73],respawn:[330,494],checkpoint:[392],district:[440,554,659],landing:[120,392,494,587],best:[659,784,1047],pitch:[262],release:[220],ui:[330],pause:[294],resume:[392]};
+export const eventNotes={pickupAhead:[392,523],pickup:[659,880],launch:[523,784],lift:[392,587],vent:[196,294],stall:[164,146],recovery:[294,440],warning:[440,349],impact:[98,73],respawn:[330,494],checkpoint:[392],district:[440,554,659],landing:[120,392,494,587],best:[659,784,1047],pitch:[262],release:[220],ui:[330],pause:[294],resume:[392]};
 export class Sound{
   constructor(muted=false){this.muted=muted;this.ctx=null;this.paused=false;this.district=0;this.beat=0;this.voices=0;this.last=new Map();}
   async unlock(){
@@ -35,7 +35,7 @@ export class Sound{
       for(const f of chord)this.tone(f,now+.12,.55,.055);
       return;
     }
-    (eventNotes[name]||eventNotes.ui).forEach((f,i)=>this.tone(f,now+i*.09,name==='impact'?.23:.35,name==='warning'?.11:.12,name==='impact'?'triangle':'sine'));
+    (eventNotes[name]||eventNotes.ui).forEach((f,i)=>this.tone(f,now+i*.09,name==='impact'?.23:.35,name==='pickupAhead'?.06:name==='warning'?.11:.12,name==='impact'?'triangle':'sine'));
   }
   setMuted(value){this.muted=value;if(this.master)this.master.gain.setTargetAtTime(value?0:.26,this.ctx.currentTime,.03);}
   setPaused(value){this.paused=value;if(!this.ctx)return;if(value)this.ctx.suspend().catch(()=>{});else{this.next=this.ctx.currentTime+.08;this.ctx.resume().catch(()=>{});}}

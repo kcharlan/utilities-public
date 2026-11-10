@@ -6,7 +6,7 @@ import {createEffects,spawnEffects,stepEffects,advanceFinishedEffects} from './e
 const output=document.getElementById('output'),canvas=document.getElementById('preview'),renderer=new Renderer(canvas),scenes=[],select=document.getElementById('scene');
 // The harness checkbox explicitly selects either path, independent of system preference.
 renderer.reduced=document.getElementById('reduced').checked;
-for(const [value,text] of [['6','Vent · steam burst'],['7','Vent · lull'],['8','Window-washer approach'],['9','Rush · moving washer'],['10','Rush · squeeze'],['11','Rush · headwind'],['12','Pickup · moving washer'],['13','Tailwind lane'],['14','Roof impact'],['15','Pickup feedback'],['16','Flock impact'],['17','Washer impact'],['18','District transition'],['19','Squeeze warning feedback'],['20','Landing · on the glide line'],['21','Landing · from overhead'],['22','Landing · floor capture']]){const option=document.createElement('option');option.value=value;option.textContent=text;select.append(option);}
+for(const [value,text] of [['6','Vent · steam burst'],['7','Vent · lull'],['8','Window-washer approach'],['9','Rush · moving washer'],['10','Rush · squeeze'],['11','Rush · headwind'],['12','Pickup · moving washer'],['13','Tailwind lane'],['14','Roof impact'],['15','Pickup feedback'],['16','Flock impact'],['17','Washer impact'],['18','District transition'],['19','Squeeze warning feedback'],['20','Landing · on the glide line'],['21','Landing · from overhead'],['22','Landing · floor capture'],['23','Pickup · announced off screen'],['24','Pickup · beside a hazard label']]){const option=document.createElement('option');option.value=value;option.textContent=text;select.append(option);}
 const check=(condition,message)=>{if(!condition)throw Error(message);};
 function capture(r){return {...r,plane:{...r.plane},previous:null};}
 const sceneEffects=[];
@@ -34,8 +34,14 @@ function runRoute(){
   for(const [index,feature] of [[9,world.hazards.find(h=>h.kind==='platform'&&h.moving)],[10,world.hazards.find(h=>h.squeeze)],[11,world.winds.find(w=>w.wind<0)],[13,world.winds.find(w=>w.wind>0)]]){
     const preview=createRun('standard',world);preview.plane.x=(feature.x??feature.x0)-90;preview.plane.y=150;preview.worldTicks=240;scenes[index]=capture(preview);
   }
-  const pickupWorld=buildWorld(undefined,{...TIERS.rush,pickups:[{district:2,slot:2,place:'underWasher',dy:6,r:4,rewardTicks:540}]});
+  const pickupWorld=buildWorld(undefined,{...TIERS.rush,pickups:[{district:2,slot:2,place:'underWasher',dy:6,r:5,rewardTicks:540}]});
   const pickupScene=createRun('standard',pickupWorld),pk=pickupWorld.pickups[0];pickupScene.plane.x=pk.x-90;pickupScene.plane.y=pk.y;pickupScene.worldTicks=240;scenes[12]=capture(pickupScene);
+  {
+    const preview=createRun('standard',world),target=world.pickups.find(p=>p.attach&&p.district===2);
+    preview.plane.x=target.announceX;preview.plane.y=target.y;const hazard=world.hazards.find(h=>h.id===target.attach);
+    preview.worldTicks=((Math.PI/2-hazard.phase+Math.PI*4)%(Math.PI*2))/(.65*hazard.amp.rate)*60;preview.announced.add(target.id);scenes[23]=capture(preview);
+  }
+  {const preview=createRun('standard',pickupWorld),target=pickupWorld.pickups[0];preview.plane.x=target.x-90;preview.plane.y=target.y;preview.worldTicks=240;preview.announced.add(target.id);scenes[24]=capture(preview);}
   const impact=createRun();impact.plane.x=impact.world.buildings[1].x+2;impact.plane.y=impact.world.buildings[1].y-2;stepRun(impact,false);check(impact.events.includes('impact'),'Impact scene did not collide');scenes[14]=capture(impact);
   const pickup=createRun();const target=pickup.world.pickups[0];pickup.plane.x=target.x;pickup.plane.y=target.y;stepRun(pickup,false);check(pickup.events.includes('pickup'),'Pickup scene did not collect');scenes[15]=capture(pickup);
   for(const [index,kind] of [[16,'pigeon'],[17,'platform']]){

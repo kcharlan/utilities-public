@@ -81,7 +81,7 @@ export function pricePickup(world,pk,n=100){
 export function pickupMenu(tier,n=100){
   const rows=[];
   for(let district=0;district<5;district++){
-    const candidates=menuCandidates(tier.id,district).map(m=>({...m,district,r:4,rewardTicks:0}));
+    const candidates=menuCandidates(tier.id,district).map(m=>({...m,district,r:5,rewardTicks:0}));
     const world=buildWorld(undefined,{...tier,pickups:candidates});
     for(const pk of world.pickups){
       rows.push(pricePickup(world,pk,n));

@@ -55,3 +55,5 @@ A delayed-input window measured from a checkpoint can miss height-judgment diffi
 
 - A landing needs a reachable approach as well as a continuous animation. Test release and delayed release from the final moving hazard across speeds and tiers, check the path slope, and give an overhead hold its own slower descent.
 - A floor trigger can fire beside the bowl, leaving too little horizontal distance for a shallow glide. Test late releases and switch that case to a flutter while preserving the floor trigger and capture ordering. Frame both table and plane throughout the approach, including the first reduced-motion frame.
+
+- A distance cue alone does not guarantee enough decision time at different flight speeds. Measure each announcement against an actual reference flight and price pickups again when their collection radius or placement changes.

@@ -89,6 +89,7 @@ function updateHUD(){
   $('timer').textContent=formatTime(netTicks(run)/60);$('pickup-reward').hidden=run.worldTicks>rewardEnd||!rewardEnd;$('district-name').textContent=run.world.districts[run.district].name;$('height-status').textContent=formatFeet(run.plane.y)+' above street';
   $('remaining').textContent=formatDistance(run.world.length-run.plane.x)+' to the picnic';
   $('route-fill').style.width=Math.min(100,run.plane.x/run.world.length*100)+'%';
+  $('pickup-ticks').replaceChildren(...(run.world.tier.notice?.ticks?run.world.pickups.filter(pk=>!run.collected.has(pk.id)).map(pk=>{const tick=document.createElement('i');tick.className='pickup-tick';tick.style.left=(pk.x/run.world.length*100)+'%';return tick;}):[]));
   if(lastDistrict!==run.district){lastDistrict=run.district;[...$('district-dots').children].forEach((el,i)=>el.className=i<=run.district?'done':'');}
   const p=run.plane;$('speed-text').textContent=p.stalled?'Stall!':formatSpeed(p.speed)+' airspeed';$('speed-fill').style.width=p.speed/32*100+'%';$('speed-fill').style.background=p.speed<12?'#f1a290':'#d9dfd4';
   const guidance=flightGuidance(run,held);$('input-hint').textContent=guidance.instruction;$('air-status').textContent=guidance.airLabel;$('motion-status').textContent=guidance.motionLabel;

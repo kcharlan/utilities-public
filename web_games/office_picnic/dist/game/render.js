@@ -1,4 +1,4 @@
-import {cameraFor} from './session.js';
+import {cameraFor,formatDistance} from './session.js';
 import {hazardBox,hazardParts,hazardAdvice,upcomingHazard,hazardKey,pickupPos} from './world.js';
 import {drawAir,drawWind} from './air-render.js';
 const C={ink:'#302f48',shadow:'#4f4b64',sky:'#9b8cbb',warm:'#f1a290',paper:'#fff0d3',window:'#f3bd86',green:'#7d887d'};
@@ -80,6 +80,16 @@ export class Renderer{
       const rect={left:Math.min(X(a.x),X(b.x))-margin,right:Math.max(X(a.x+a.w),X(b.x+b.w))+margin,top:Math.min(Y(a.y+a.h),Y(b.y+b.h))-margin,bottom:Math.max(Y(a.y),Y(b.y))+margin};
       if(rect.right>0&&rect.left<w&&rect.bottom>0&&rect.top<h)this.labelRects.push(rect);
     }
+    const pickupLayouts=[];
+    for(const base of run.world.pickups){
+      if(run.collected.has(base.id))continue;
+      const pk=pickupPos(run.world,base,run.worldTicks/60),x=X(pk.x),y=Y(pk.y);
+      const visible=x>=0&&x<=w&&y>=0&&y<=h,marker=x>w&&run.world.tier.notice?.hint&&run.announced.has(base.id);
+      if(!visible&&!marker)continue;
+      const layout=this.pickupLayout(pk,x,y,s,run,cam.verticalScale);
+      if(layout.token){this.labelRects.push(layout.rect);pickupLayouts.push([pk,layout]);}
+      else if(x>w&&run.world.tier.notice?.hint&&run.announced.has(base.id))pickupLayouts.push([pk,layout]);
+    }
     if(this.scenery)ctx.drawImage(this.scenery.sky,0,0,w,h);else{ctx.fillStyle=this.gradient;ctx.fillRect(0,0,w,h);}
     ctx.save();if(effects?.bump&&!this.reduced)ctx.translate(Math.sin(effects.bump*2)*Math.min(4,effects.bump),0);
     // Cached city layers, painted once on resize.
@@ -132,14 +142,7 @@ export class Renderer{
         if(!hazard.squeeze&&run.world.tier.prompts!=='quiet'&&x<w&&dx>-b.w&&dx<hazard.warningDistance)this.label(hazardAdvice(hazard),Math.min(w-195,Math.max(10,x-65)),Math.min(h-110,y+23),'#ffe3a8',12);
       }
     }
-    for(const base of run.world.pickups){
-      if(run.collected.has(base.id))continue;
-      const pk=pickupPos(run.world,base,run.worldTicks/60),x=X(pk.x),y=Y(pk.y);
-      if(x< -40||x>w+40||y< -40||y>h+40)continue;
-      ctx.beginPath();ctx.arc(x,y,Math.max(7,pk.r*s),0,Math.PI*2);ctx.fillStyle='#ffe3a8';ctx.fill();
-      ctx.strokeStyle='#544457';ctx.lineWidth=2;ctx.stroke();
-      this.label('−'+pk.rewardTicks/60+'s',x+10,y-9,'#fff0d3',12);
-    }
+    for(const [pk,layout] of pickupLayouts)this.drawPickup(pk,layout,run);
     // Label a squeeze once, at its shared window rather than on each member.
     if(run.world.tier.prompts!=='quiet')for(const hazard of run.world.hazards.filter(h=>h.squeeze&&h.kind==='platform')){
       const b=hazardBox(hazard,run.worldTicks/60),flock=run.world.hazards.find(h=>h.squeeze&&h.district===hazard.district&&h.slot===hazard.slot&&h.kind==='pigeon');
@@ -231,6 +234,30 @@ export class Renderer{
     }
     ctx.fillStyle='#303149d9';ctx.fillRect(x-6,y-size-4,width+12,lines.length*(size+4)+7);ctx.fillStyle=color;
     lines.forEach((part,i)=>ctx.fillText(part,x,y+i*(size+4)));
+  }
+  pickupLayout(pk,x,y,scale,run,verticalScale=scale){
+    const radius=Math.max(13,pk.r*scale),token=x>=0&&x<=this.w&&y>=0&&y<=this.h;
+    const text='−'+pk.rewardTicks/60+'s'+(run.world.tier.notice?.hint?' · '+pk.hint:'');
+    this.ctx.font='bold 12px sans-serif';const width=this.ctx.measureText(text).width+12;
+    const left=Math.max(0,Math.min(this.w-width,x+radius+5>this.w-width?x-radius-width-5:x+radius+5));
+    const top=Math.max(0,Math.min(this.h-22,y-11));
+    const rect={left:Math.max(0,Math.min(x-radius,left)),right:Math.min(this.w,Math.max(x+radius,left+width)),top:Math.max(0,Math.min(y-radius,top)),bottom:Math.min(this.h,Math.max(y+radius,top+22))};
+    return {token,x,y,radius,collectX:pk.r*scale,collectY:pk.r*verticalScale,text,left,top,width,rect};
+  }
+  drawPickup(pk,layout,run){
+    const ctx=this.ctx,{token,radius,text,left,top,width,rect}=layout;
+    if(token){
+      const {x,y}=layout;ctx.save();ctx.beginPath();ctx.arc(x,y,radius+3+(this.reduced?0:1.5*Math.sin(run.worldTicks/50)),0,Math.PI*2);ctx.strokeStyle='#ffe3a880';ctx.lineWidth=2;ctx.stroke();
+      ctx.beginPath();ctx.arc(x,y,radius,0,Math.PI*2);ctx.fillStyle='#ffe3a8';ctx.fill();ctx.strokeStyle='#302f48';ctx.lineWidth=2;ctx.stroke();
+      ctx.beginPath();ctx.ellipse(x,y,layout.collectX,layout.collectY,0,0,Math.PI*2);ctx.strokeStyle='#8f554e';ctx.lineWidth=1.5;ctx.stroke();
+      ctx.fillStyle='#302f48';ctx.font='bold 15px sans-serif';ctx.textAlign='center';ctx.fillText('◷',x,y+5);ctx.textAlign='start';
+      ctx.fillStyle='#303149e8';ctx.fillRect(left,top,width,22);ctx.fillStyle='#fff0d3';ctx.font='bold 12px sans-serif';ctx.fillText(text,left+6,top+15);ctx.restore();
+    }else{
+      const markerY=Math.max(24,Math.min(this.h-24,layout.y)),label=text+' · '+formatDistance(Math.max(0,pk.x-run.plane.x));
+      ctx.save();ctx.font='bold 12px sans-serif';const markerWidth=ctx.measureText(label).width+34,markerX=Math.max(0,this.w-markerWidth-6);
+      ctx.fillStyle='#303149e8';ctx.fillRect(markerX,markerY-13,markerWidth,26);ctx.beginPath();ctx.arc(markerX+13,markerY,8,0,Math.PI*2);ctx.fillStyle='#ffe3a8';ctx.fill();ctx.strokeStyle='#302f48';ctx.stroke();ctx.fillStyle='#fff0d3';ctx.fillText(label,markerX+25,markerY+4);ctx.restore();
+    }
+    return {token,radius,rect};
   }
   sprite(img,frame,x,y,w,h,rotation){
     const ctx=this.ctx;ctx.save();ctx.translate(x,y);ctx.rotate(rotation);

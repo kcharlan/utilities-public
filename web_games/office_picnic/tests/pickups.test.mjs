@@ -72,7 +72,7 @@ test('menu uses 100 paired samples by default and identifies each candidate',asy
   const {menuSampleSize,pickupMenu}=await import('../scripts/pickup-study.mjs');
   assert.equal(menuSampleSize(150,false),100);assert.equal(menuSampleSize(3,true),3);
   const rows=pickupMenu({...TIERS.casual,pickups:[]},1);
-  assert.ok(rows.every(row=>row.samples===1&&Number.isInteger(row.slot)&&typeof row.place==='string'));
+  assert.ok(rows.every(row=>row.samples===1&&row.r===5&&Number.isInteger(row.slot)&&typeof row.place==='string'));
   const roof=rows.find(row=>row.place==='roofEdge');assert.equal(roof.dx,6);assert.equal(typeof roof.dy,'number');
 });
 
@@ -93,7 +93,7 @@ test('playtest check fails when an authored pickup cannot be built',async()=>{
     await cp(new URL('../tests/',import.meta.url),join(root,'tests'),{recursive:true});
     await cp(new URL('../package.json',import.meta.url),join(root,'package.json'));
     const path=join(root,'dist/game/tiers.js'),source=await readFile(path,'utf8');
-    const changed=source.replace("P(2,2,'underWasher',6,3)","P(2,1,'underWasher',6,3)");assert.notEqual(changed,source);await writeFile(path,changed);
+    const changed=source.replace("P(2,1,'high',35,3)","P(2,1,'underWasher',6,3)");assert.notEqual(changed,source);await writeFile(path,changed);
     await assert.rejects(promisify(execFile)(process.execPath,['scripts/playtest.mjs','--tier','casual','--check'],{cwd:root}),error=>error.code===1&&error.stdout.includes('FAIL casual pickup coverage'));
   }finally{await rm(root,{recursive:true,force:true});}
 });
@@ -104,4 +104,37 @@ test('menu JSON is complete when stdout is backpressured',async()=>{
   const {stdout}=await promisify(execFile)('sh',['-c',command,'sh',process.execPath],{cwd:new URL('../',import.meta.url),maxBuffer:1024*1024});
   const result=JSON.parse(stdout.slice(60000));
   assert.equal(result.samples,1);assert.ok(result.tiers.casual.length>0);
+});
+
+test('pickup notices have tiered lead distances and fire once across respawns',()=>{
+  const leads=[600,450,300];
+  for(const [tier,lead] of Object.values(TIERS).map((tier,i)=>[tier,leads[i]])){
+    const world=buildWorld(undefined,tier);
+    for(const pk of world.pickups){assert.equal(pk.r,5);assert.ok(pk.announceX>=0);assert.equal(pk.x-pk.announceX,lead);assert.ok(pk.hint);}
+    world.buildings=[];world.hazards=[];world.airs=[];world.winds=[];
+    const pk=world.pickups[0];world.pickups=[{...pk,attach:null}];const run=createRun('standard',world);run.plane.x=pk.announceX-.1;run.plane.y=300;
+    stepRun(run,false);assert.ok(run.events.includes('pickupAhead'));assert.deepEqual(run.announcedPickups.map(p=>p.id),[pk.id]);
+    run.status='respawning';run.respawnTicks=1;stepRun(run,false);run.plane.x=pk.announceX-.1;run.plane.y=300;stepRun(run,false);assert.ok(!run.events.includes('pickupAhead'));
+    const fresh=createRun('nonstop',world);fresh.announced.add(pk.id);fresh.status='respawning';fresh.respawnTicks=1;stepRun(fresh,false);assert.equal(fresh.announced.size,0);
+  }
+});
+
+test('reference flight receives each notice with sufficient time before passing',async()=>{
+  const {referenceInput}=await import('../dist/game/bot.js');
+  for(const [tier,minimum] of [[TIERS.casual,25],[TIERS.rush,18],[TIERS.overtime,12]]){
+    const run=createRun('standard',buildWorld(undefined,tier)),announced=new Map(),passed=new Map();
+    for(let n=0;n<60*900&&run.status!=='finished';n++){
+      stepRun(run,referenceInput(run));
+      for(const pk of run.announcedPickups)announced.set(pk.id,run.worldTicks);
+      for(const pk of run.world.pickups)if(!passed.has(pk.id)&&run.plane.x>=pk.x)passed.set(pk.id,run.worldTicks);
+    }
+    assert.equal(run.status,'finished');assert.equal(run.crashes,0);
+    for(const pk of run.world.pickups){assert.ok(announced.has(pk.id),`${tier.id} ${pk.id} notice`);assert.ok(passed.has(pk.id));assert.ok((passed.get(pk.id)-announced.get(pk.id))/60>=minimum,`${tier.id} ${pk.id} lead`);}
+  }
+});
+
+test('collected pickups do not announce and Nonstop restart announces again',()=>{
+  const world=buildWorld(),pk={...world.pickups[0],attach:null};world.pickups=[pk];world.buildings=[];world.hazards=[];world.airs=[];world.winds=[];
+  const run=createRun('nonstop',world);run.collected.add(pk.id);run.plane.x=pk.announceX-.1;run.plane.y=300;stepRun(run,false);assert.ok(!run.events.includes('pickupAhead'));
+  run.status='respawning';run.respawnTicks=1;stepRun(run,false);run.plane.x=pk.announceX-.1;run.plane.y=300;stepRun(run,false);assert.ok(run.events.includes('pickupAhead'));stepRun(run,false);assert.ok(!run.events.includes('pickupAhead'));
 });

@@ -4,7 +4,7 @@ import {consumeTime} from './session.js';
 export const FEEDBACK=Object.fromEntries([
   ['launch','sheets'],['pitch','stretch'],['release','stretch'],['lift','motes'],['vent','steam'],
   ['stall','wobble'],['recovery','ring'],['impact','burst'],['respawn','pop'],['checkpoint','pulse'],
-  ['district','card'],['pickup','sparkle'],['warning','pulse'],['landing','splash'],['best','ring'],
+  ['district','card'],['pickupAhead','pulse'],['pickup','sparkle'],['warning','pulse'],['landing','splash'],['best','ring'],
   ['ui',null],['pause',null],['resume',null]
 ].map(([name,visual])=>[name,{visual}]));
 export function createEffects(){const fx={particles:[],cues:[],seed:0x51f15e,bump:0};fx.step=()=>stepEffects(fx);return fx;}

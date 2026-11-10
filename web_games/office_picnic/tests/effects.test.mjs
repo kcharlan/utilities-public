@@ -5,7 +5,7 @@ import {createRun,stepRun} from '../dist/game/simulation.js';
 import {eventNotes} from '../dist/game/audio.js';
 import {FEEDBACK,createEffects,spawnEffects,stepEffects} from '../dist/game/effects.js';
 
-const gameplay=['launch','pitch','release','lift','vent','stall','recovery','impact','respawn','checkpoint','district','pickup','warning','landing','best'];
+const gameplay=['launch','pitch','release','lift','vent','stall','recovery','impact','respawn','checkpoint','district','pickupAhead','pickup','warning','landing','best'];
 test('event feedback covers sound and visible gameplay cues',()=>{
   for(const name of [...gameplay,'ui','pause','resume']){
     assert.ok(FEEDBACK[name],name);assert.ok(eventNotes[name],name);
@@ -80,7 +80,7 @@ test('renderer highlights the warned hazard instead of an earlier marker',async(
   const {Renderer}=await import('../dist/game/render.js'),{hazardKey}=await import('../dist/game/world.js');
   const run=createRun(),warned=run.world.hazards[1],fx=createEffects(),highlighted=[];
   run.warningHazards=[warned];spawnEffects(fx,run,['warning'],{reduced:true});
-  const ctx=new Proxy({drawImage(){}},{get:(o,k)=>k in o?o[k]:()=>{}});
+  const ctx=new Proxy({drawImage(){},measureText:s=>({width:s.length*6})},{get:(o,k)=>k in o?o[k]:()=>{}});
   const renderer=Object.assign(Object.create(Renderer.prototype),{ctx,w:390,h:844,washer:{complete:false},reduced:true,cache:[{},{}],label:()=>{},sprite:()=>{},drawWarningCue:(hazard)=>highlighted.push(hazardKey(hazard))});
   renderer.draw(run,false,1,fx);assert.deepEqual(highlighted,[hazardKey(warned)]);
 });
