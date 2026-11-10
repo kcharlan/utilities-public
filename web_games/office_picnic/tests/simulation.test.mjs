@@ -83,6 +83,15 @@ test('squeeze warning identifies its pair once and wind entry emits no lift',asy
   for(let i=0;i<150;i++){sim.stepRun(r,false);assert.ok(!r.warningHazards.some(h=>h.squeeze));}
   const z=w.winds[0];r.plane.x=z.x0+20;r.plane.y=300;r.lastAir=null;sim.stepRun(r,false);assert.ok(!r.events.includes('lift'));
 });
+test('wind over a vent preserves the lift source and event',()=>{
+  const r=sim.createRun(),vent=r.world.airs.find(a=>a.type===1);
+  const zone={x0:vent.x,x1:vent.x+vent.w,y0:130,y1:170,wind:8,lift:0};
+  r.world={...r.world,winds:[zone],hazards:[],buildings:[],pickups:[]};
+  r.plane.x=vent.x+vent.w/2;r.plane.y=150;r.worldTicks=(Math.PI*.5-vent.phase)/1.4*60;
+  const air=worldMod.airAt(r.world,r.plane,r.worldTicks/60);
+  assert.equal(air.source,vent);assert.ok(air.activity>.35);assert.ok(air.wind>0);
+  sim.stepRun(r,false);assert.ok(r.events.includes('lift'));
+});
 test('squeeze perch impact gives window correction with unchanged crash location',async()=>{
   const {TIERS}=await import('../dist/game/tiers.js');const w=worldMod.buildWorld(undefined,TIERS.rush),flock=w.hazards.find(h=>h.squeeze&&h.kind==='pigeon');
   const perch=w.buildings.find(b=>b.perch&&b.district===flock.district&&b.x===flock.x-6),r=sim.createRun('standard',w);

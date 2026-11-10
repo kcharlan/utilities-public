@@ -36,14 +36,15 @@ test('guidance exposes the same vent lull and burst that affect the plane',()=>{
   r.worldTicks=(Math.PI*1.5-vent.phase)/1.4*60;assert.match(module.flightGuidance(r,false).airLabel,/lull/i);
   r.worldTicks=(Math.PI*.5-vent.phase)/1.4*60;assert.match(module.flightGuidance(r,false).airLabel,/burst/i);
 });
-test('tailwind guidance discloses its forward and upward effects',()=>{
+test('tailwind guidance identifies its direction and nearby lane',()=>{
   const r=createRun(),a=r.world.airs.find(a=>a.type===3);r.plane.x=a.x+a.w/2;r.plane.y=150;
   const g=module.flightGuidance(r,false);assert.ok(g.air.lift>0);assert.ok(g.air.wind>0);
-  assert.match(g.airLabel,/forward.*upward/i);
+  assert.match(g.airLabel,/Tailwind · forward/i);
+  r.plane.y=180;assert.match(module.flightGuidance(r,false).airLabel,/Tailwind lane below/i);
 });
 test('headwind names its effect and squeeze guidance targets the live window',async()=>{
   const {buildWorld,hazardAdvice}=await import('../dist/game/world.js');const {TIERS}=await import('../dist/game/tiers.js');
-  const r=createRun('standard',buildWorld(undefined,TIERS.rush)),wind=r.world.winds[0];
+  const r=createRun('standard',buildWorld(undefined,TIERS.rush)),wind=r.world.winds.find(w=>w.wind<0);
   r.plane.x=wind.x0+20;r.plane.y=300;assert.match(module.flightGuidance(r,false).airLabel,/Headwind · slows you/);
   const h=r.world.hazards.find(h=>h.squeeze);r.plane.x=h.x-40;r.plane.y=110;
   assert.match(hazardAdvice(h),/fly between/);assert.match(module.flightGuidance(r,false).instruction,/climb.*window/i);

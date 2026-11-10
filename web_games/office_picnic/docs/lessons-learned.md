@@ -38,3 +38,7 @@
 - Course calibration must cover tier timing and adjacent encounters as well as a single clean route. Later-flock widths and heights that worked in Casual collided with moving hazards or squeezes in Overtime; varying both the flock geometry and squeeze center recovered all perturbed district trials.
 - A warning can arrive before the district containing its hazard. Keep the early warning actionable and introduce the new tier element when the player enters its district; a respawn should not repeat the introduction. Attribute teaching-crossing crashes by logged position, including impacts whose gap label is unknown.
 - A first-sighting notice must have one trigger. Introducing a squeeze at district entry and again at its later warning duplicated the same banner on clean flights; test complete routes and retries as well as individual event handlers.
+
+## 2026-11-09 — Measuring optional wind lanes
+
+Judge a lane from paired checkpoint runs at the same hazard-clock offsets, including time spent inside its band. A whole-flight time comparison can change with moving-hazard phase even when neither pilot enters the lane. Keep wind-zone reporting separate from the lift-column source: otherwise a lane over a vent suppresses lift-entry and vent feedback. With the 8 m/s Casual lanes, the two median savings were 7.12 s and 5.07 s, with blind occupancy 1.82 s and 0.20 s. A candidate Overtime lane passed the paired study but failed the unchanged route proof, so it was not retained.

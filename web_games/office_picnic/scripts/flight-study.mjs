@@ -18,6 +18,29 @@ export function quantile(values,p){
   return sorted[Math.min(sorted.length-1,Math.floor(p*(sorted.length-1)+.5))];
 }
 
+export const CLOCK_OFFSETS=[0,53,107,163,211,269,331,397];
+const median=values=>{const sorted=[...values].sort((a,b)=>a-b);return (sorted[3]+sorted[4])/2;};
+export function laneValue(world,zone){
+  const from=world.checkpoints.filter(cp=>cp.x<=zone.x0).at(-1);
+  const to=world.checkpoints.find(cp=>cp.x>=zone.x1);
+  if(!from)throw Error('No checkpoint before lane');
+  function trial(offset,rideLanes){
+    const run=createRun('standard',world),pilot=makePilot(PROFILES.ideal,1,{rideLanes,pickups:()=>true});
+    run.district=from.district;run.checkpoint={...from};run.plane=createPlane(from);run.worldTicks=offset;
+    let occupancy=0,steps=0;
+    while(steps<54000&&!run.crashes&&(to?run.plane.x<to.x:run.status!=='finished')){
+      const p=run.plane;if(p.x>=zone.x0&&p.x<=zone.x1&&p.y>=zone.y0&&p.y<=zone.y1)occupancy++;
+      stepRun(run,pilot(run));steps++;
+    }
+    return {seconds:steps/60,occupancy:occupancy/60,crashes:run.crashes,finished:to?run.plane.x>=to.x:run.status==='finished'};
+  }
+  const trials=CLOCK_OFFSETS.map(offset=>({offset,riding:trial(offset,true),blind:trial(offset,false)}));
+  const ridingOccupancy=median(trials.map(t=>t.riding.occupancy)),blindOccupancy=median(trials.map(t=>t.blind.occupancy));
+  const saving=median(trials.map(t=>t.blind.seconds-t.riding.seconds));
+  const qualifies=blindOccupancy<=3&&ridingOccupancy>=6&&saving>=2&&trials.every(t=>t.riding.finished&&t.blind.finished&&!t.riding.crashes&&!t.blind.crashes&&t.riding.seconds<t.blind.seconds);
+  return {from:from.id,to:to?.id??'finish',ridingOccupancy,blindOccupancy,saving,qualifies,trials};
+}
+
 export function referenceProof(world){
   const full={};
   for(const mode of ['standard','nonstop']){

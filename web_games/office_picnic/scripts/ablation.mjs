@@ -4,6 +4,8 @@ import {TIERS} from '../dist/game/tiers.js';
 import {createPlane} from '../dist/game/physics.js';
 import {createRun,stepRun} from '../dist/game/simulation.js';
 import {REFERENCE,referenceInput,sensible} from '../dist/game/bot.js';
+import {laneValue,playOnce} from './flight-study.mjs';
+import {MEDALS} from '../dist/game/medals.js';
 
 export const PILOT_FAMILY={
   reference:referenceInput,
@@ -31,6 +33,15 @@ if(process.argv[1] && import.meta.url===pathToFileURL(process.argv[1]).href){
   for(const cfg of Object.values(TIERS)){
     const world=buildWorld(undefined,cfg),empty={...world,airs:[]};
     for(const input of Object.values(PILOT_FAMILY))for(let d=0;d<5;d++)if(completesDistrict(empty,d,input))failed=true;
+  }
+  for(const [id,cfg] of Object.entries(TIERS)){
+    const world=buildWorld(undefined,cfg);
+    const withoutTailwinds={...world,winds:world.winds.map(w=>w.wind>0?{...w,wind:0}:w)};
+    const result=playOnce(withoutTailwinds,'ideal',1,{extra:{rideLanes:false,pickups:()=>true}});
+    console.log(id,'tailwinds zeroed, lane-blind ideal gold',result.finished&&result.net<=MEDALS[id].gold,`net=${result.net}`);
+    for(const lane of world.winds.filter(w=>w.wind>0))console.log(id,'lane',JSON.stringify({zone:lane,...laneValue(world,lane)}));
+    const riding=playOnce(world,'ideal',1,{extra:{rideLanes:true,pickups:()=>true}}),blind=playOnce(world,'ideal',1,{extra:{rideLanes:false,pickups:()=>true}});
+    console.log(id,'whole-run net seconds',JSON.stringify({riding:riding.net,blind:blind.net,difference:blind.net-riding.net}));
   }
   if(failed)process.exitCode=1;
 }

@@ -32,7 +32,7 @@ test('Casual retains authored geometry and clean route',()=>{
   for(const mode of ['standard','nonstop']){
     const run=createRun(mode,world);
     while(run.status!=='finished'&&run.ticks<30000)stepRun(run,chooseInput(run));
-    assert.equal(run.finishTicks,21575);
+    assert.equal(run.finishTicks,21881);
     assert.equal(run.crashes,0);
   }
 });
@@ -103,7 +103,7 @@ test('shared shortcut runner rejects each passive policy in every district',()=>
 test('Rush has the authored moving hazards, squeeze and headwinds',()=>{
   const world=buildWorld(undefined,TIERS.rush);
   assert.equal(world.rules.crashPenaltyTicks,300);
-  assert.equal(world.winds.length,2);
+  assert.equal(world.winds.filter(w=>w.wind<0).length,2);
   assert.equal(world.hazards.filter(h=>h.squeeze).length,2);
   assert.ok(world.hazards.some(h=>h.moving));
 });
@@ -111,13 +111,13 @@ test('Overtime has full checkpoints and the authored moving course',()=>{
   const world=buildWorld(undefined,TIERS.overtime);
   assert.equal(world.tier.prompts,'quiet');
   assert.equal(world.rules.crashPenaltyTicks,600);
-  assert.equal(world.winds.length,6);
+  assert.equal(world.winds.filter(w=>w.wind<0).length,6);
   assert.equal(world.hazards.length,23);
   assert.equal(world.districts.filter(d=>d.checkpoint).length,5);
   for(const mode of ['standard','nonstop']){
     const proof=referenceProof(world).full[mode];
     assert.equal(proof.finished,true);
     assert.equal(proof.crashes,0);
-    assert.equal(proof.ticks,23601);
+    assert.equal(proof.ticks,23987);
   }
 });

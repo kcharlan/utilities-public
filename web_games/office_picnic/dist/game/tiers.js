@@ -13,7 +13,8 @@ export const TIERS=freeze({
     id:'casual',name:'Casual Friday',blurb:'A relaxed flight to the picnic.',prompts:'full',
     encounters:[{slot:0,kind:'pigeon',at:.4},{slot:2,kind:'platform',at:.7}],
     liftScale:[1,1,1,1,1],winds:[],motion:null,
-    pickups:[P(0,1,'high',35,4),P(1,2,'underWasher',9,3),P(2,2,'underWasher',6,3),P(3,0,'overFlock',7,6),P(4,0,'overFlock',5,8)],
+    tailwinds:[{district:3,fromSlot:3,toSlot:3,y0:70,y1:110,wind:8},{district:4,fromSlot:1,toSlot:1,y0:90,y1:130,wind:8}],
+    pickups:[P(0,1,'high',35,4),P(1,2,'underWasher',9,3),P(2,2,'underWasher',6,3),P(3,0,'overFlock',7,9),P(4,0,'overFlock',5,4)],
     rules:{crashPenaltyTicks:180,respawnTicks:24},ratios:[.56,.64,.73,.81,.92]
   },
 
@@ -25,7 +26,7 @@ export const TIERS=freeze({
     liftScale:[1,1,1,1,1],
     winds:[1,3].map(j=>({district:3,fromSlot:j,toSlot:j,startAtGap:true,y0:0,y1:400,wind:-3})),
     motion:{from:1,platformY:13,pigeonX:9,pigeonY:9,rate:1,phaseStep:1.3,squeezeStatic:true},
-    pickups:[P(0,0,'overFlock',7,6),P(1,1,'high',35,5),P(2,0,'overFlock',5,5),P(3,2,'roofEdge',9,5,6),P(4,0,'overFlock',7,6)],
+    pickups:[P(0,0,'overFlock',7,6),P(1,1,'high',35,5),P(2,0,'overFlock',5,5),P(3,2,'roofEdge',9,5,6),P(4,0,'overFlock',7,7)],
     rules:{crashPenaltyTicks:300,respawnTicks:24},ratios:[.56,.64,.73,.81,.92]
   },
   overtime:{
@@ -39,7 +40,7 @@ export const TIERS=freeze({
     winds:[...[0,1,2,3,4].map(j=>({district:3,fromSlot:j,toSlot:j,startAtGap:true,y0:0,y1:400,wind:-5})),
       {district:4,fromSlot:4,toSlot:4,startAtGap:true,y0:0,y1:400,wind:-3}],
     motion:{from:1,platformY:14,pigeonX:9,pigeonY:11,rate:1.25,phaseStep:1.3,squeezeSync:8},
-    pickups:[P(0,0,'overFlock',5,15),P(1,0,'overFlock',7,18),P(2,0,'overFlock',10,10),P(3,0,'overFlock',28,10),P(4,0,'overFlock',7,10)],
+    pickups:[P(0,0,'overFlock',5,15),P(1,0,'overFlock',7,18),P(2,0,'overFlock',10,10),P(3,0,'overFlock',32,10),P(4,0,'overFlock',7,10)],
     rules:{crashPenaltyTicks:600,respawnTicks:24},ratios:[.56,.64,.73,.81,.92]
   }
 });

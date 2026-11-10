@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {buildWorld} from '../dist/game/world.js';
+import {buildWorld,airAt} from '../dist/game/world.js';
 import {TIERS} from '../dist/game/tiers.js';
 
 function teachingImpacts(world,log,d){
@@ -16,7 +16,7 @@ test('each district introduces its feature on a clear teaching crossing',()=>{
       assert.equal(air.gapId,`${d+1}.T`);
       assert.equal(air.type,d);
       assert.equal(world.hazards.some(h=>h.x>=gap.x&&h.x<gap.end),false);
-      assert.equal(world.winds.some(w=>w.x0<gap.end&&w.x1>gap.x),false);
+      assert.equal(world.winds.some(w=>w.wind<0&&w.x0<gap.end&&w.x1>gap.x),false);
       assert.equal(world.pickups.some(p=>p.x>=gap.x&&p.x<gap.end),false);
       const next=world.buildings.find(b=>!b.perch&&b.x>air.x);
       assert.ok(next.y<=world.buildings.find(b=>b.x===air.x-10).y);
@@ -30,7 +30,7 @@ test('tier elements are staged after the first district',()=>{
     assert.ok(world.hazards.filter(h=>h.district===0).every(h=>!h.moving&&!h.squeeze));
     assert.ok(world.hazards.some(h=>h.district===1&&h.moving));
     assert.ok(world.hazards.some(h=>h.squeeze&&h.district===(tier.id==='rush'?4:2)&&!h.moving));
-    assert.deepEqual([...new Set(world.winds.map(w=>w.district))],tier.id==='rush'?[3]:[3,4]);
+    assert.deepEqual([...new Set(world.winds.filter(w=>w.wind<0).map(w=>w.district))],tier.id==='rush'?[3]:[3,4]);
     if(tier.id==='overtime'){
       assert.ok(world.winds.some(w=>w.district===4&&w.wind<0&&w.y0<=0&&w.y1>=400));
       assert.ok(world.hazards.some(h=>h.district===4&&h.moving));
@@ -111,4 +111,37 @@ test('quiet mode announces movement on district entry and squeeze on warning',as
   run.district=3;run.events=['district'];run.warningHazards=[];
   assert.match(noticeMessages(run).join(' '),/Headwinds/);
   assert.doesNotMatch(noticeMessages(run).join(' '),/Headwinds/);
+});
+
+test('tailwind lanes are bounded and leave column lift at other heights',()=>{
+  for(const tier of Object.values(TIERS)){
+    const world=buildWorld(undefined,tier),lane=world.winds.find(w=>w.wind>0);
+    assert.ok(lane);
+    const air=world.airs.find(a=>a.type===3&&a.x>=lane.x0&&a.x+a.w<=lane.x1);
+    assert.ok(air);
+    const x=air.x+air.w/2;
+    assert.ok(airAt(world,{x,y:(lane.y0+lane.y1)/2},0).wind>0);
+    assert.equal(airAt(world,{x,y:lane.y1+10},0).wind,0);
+    assert.ok(airAt(world,{x,y:lane.y1+10},0).lift>0);
+  }
+});
+
+test('each authored choice lane satisfies the paired checkpoint study',async()=>{
+  const {laneValue}=await import('../scripts/flight-study.mjs');
+  for(const tier of Object.values(TIERS)){
+    const world=buildWorld(undefined,tier),lanes=world.winds.filter(w=>w.wind>0&&!w.teaching);
+    if(tier.id==='casual')assert.ok(lanes.length>=2);
+    for(const lane of lanes){const value=laneValue(world,lane);assert.equal(value.qualifies,true,`${tier.id}: ${JSON.stringify(value)}`);}
+    assert.ok(world.winds.every(w=>w.wind<=12));
+  }
+});
+
+test('lane-blind reference finishes each tier in both modes without impacts',async()=>{
+  const {createRun,stepRun}=await import('../dist/game/simulation.js');
+  const {sensible,REFERENCE}=await import('../dist/game/bot.js');
+  for(const tier of Object.values(TIERS))for(const mode of ['standard','nonstop']){
+    const run=createRun(mode,buildWorld(undefined,tier));
+    for(let n=0;n<54000&&run.status!=='finished';n++)stepRun(run,sensible(run,{...REFERENCE,rideLanes:false}));
+    assert.equal(run.status,'finished',`${tier.id} ${mode}`);assert.equal(run.crashes,0,`${tier.id} ${mode}`);
+  }
 });

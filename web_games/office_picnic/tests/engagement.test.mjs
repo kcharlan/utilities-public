@@ -46,7 +46,8 @@ test('wide heat, fading lift and wind produce distinct physical responses',()=>{
   assert.ok(ac.vy-heat.vy>=1,'rooftop heat feels the same as AC');
   assert.ok(sample(4,140).lift-sample(4,210).lift>5,'fading thermal has no meaningful height falloff');
   const still=createPlane({speed:26,pitch:-.2}),wind=createPlane({speed:26,pitch:-.2});
-  advancePlane(still,false);advancePlane(wind,false,sample(3));assert.ok(wind.x-still.x>.08,'tailwind does not advance the plane');
+  const lane=w.winds.find(z=>z.wind>0&&z.wind>=8);
+  advancePlane(still,false);advancePlane(wind,false,airAt(w,{x:lane.x0+20,y:(lane.y0+lane.y1)/2},0));assert.ok(wind.x-still.x>.08,'tailwind does not advance the plane');
 });
 test('staying high throughout the opening cannot bypass the dive-under encounter',()=>{
   for(const height of [185,230,300]){

@@ -13,7 +13,7 @@ export const COURSE=[
   {types:[0,0,0,0,0,0],widths:[30,200,170,170,170,170],roofs:[40,40,40,40,85,110],entries:[150,184,170,142,170,170],flockTop:151.04477807272335,washerY:144},
   {types:[1,0,1,0,0,1],widths:[30,170,200,170,170,350],roofs:[45,45,45,45,45,45],entries:[150,184,170,142,170,210],flockTop:149.5161424549638,washerY:144,laterFlock:160},
   {types:[2,0,2,1,1,2],widths:[30,170,220,200,200,280],roofs:[55,55,55,55,55,55],entries:[150,184,170,142,170,210],flockTop:147.73273423424436,washerY:144,laterFlock:160},
-  {types:[3,1,0,2,2,3],widths:[30,200,170,220,220,350],roofs:[65,65,65,65,65,65],entries:[150,184,170,142,170,210],flockTop:146.20409861648483,washerY:144,laterFlock:160},
+  {types:[3,1,0,2,2,3],widths:[30,200,170,220,220,350],roofs:[65,65,65,65,65,65],entries:[150,184,170,142,170,210],flockTop:146.20409861648483,washerY:144,laterFlock:160,lanes:[{slot:-1,y0:130,y1:170,wind:2,teaching:true}]},
   {types:[4,0,1,2,3,4],widths:[30,170,200,220,170,280],roofs:[75,75,75,75,75,75],entries:[150,184,170,142,170,210],flockTop:143.91114518984554,washerY:144,laterFlock:160}
 ];
 export function buildWorld(limits=measureFlight(),cfg=TIERS.casual){
@@ -85,9 +85,9 @@ export function buildWorld(limits=measureFlight(),cfg=TIERS.casual){
     return {id:air.gapId,district:air.district,x,y:150,speed:26,pitch:PHYSICS.divePitch};
   });
   for(const d of world.districts)d.checkpoint=world.checkpoints.find(cp=>cp.district===d.index);
-  for(const w of cfg.winds){
+  for(const w of [...cfg.winds,...COURSE.flatMap((row,district)=>(row.lanes??[]).map(lane=>({district,fromSlot:lane.slot,toSlot:lane.slot,...lane}))),...(cfg.tailwinds??[])]){
     const from=slots.find(s=>s.d===w.district&&s.j===w.fromSlot),to=slots.find(s=>s.d===w.district&&s.j===w.toSlot);
-    world.winds.push({x0:w.startAtGap?from.release:from.x,x1:to.release+(w.includeGap===false?0:to.gap),y0:w.y0,y1:w.y1,wind:w.wind,lift:w.lift??0,district:w.district});
+    world.winds.push({x0:(w.startAtGap?from.release:from.x)-(w.lead??0),x1:to.release+(w.includeGap===false?0:to.gap),y0:w.y0,y1:w.y1,wind:w.wind,lift:w.lift??0,district:w.district,teaching:w.teaching??false});
   }
   const firstHeadwind=world.winds.find(w=>w.wind<0);
   if(firstHeadwind)firstHeadwind.firstHeadwind=true;
@@ -110,7 +110,7 @@ export function buildWorld(limits=measureFlight(),cfg=TIERS.casual){
   return world;
 }
 export function airAt(world,p,time){
-  let lift=0,wind=0,source=null,activity=0;
+  let lift=0,wind=0,source=null,activity=0,zone=null;
   for(const a of world.airs){
     if(p.x<a.x||p.x>a.x+a.w||p.y<a.y||p.y>a.top)continue;
     const edge=Math.min(1,(p.x-a.x)/12,(a.x+a.w-p.x)/12);
@@ -120,15 +120,16 @@ export function airAt(world,p,time){
   for(const z of world.winds){
     if(p.x<z.x0||p.x>z.x1||p.y<z.y0||p.y>z.y1)continue;
     const edge=Math.min(1,(p.x-z.x0)/12,(z.x1-p.x)/12,(p.y-z.y0)/6,(z.y1-p.y)/6);
-    wind+=z.wind*edge;lift+=z.lift*edge;if(!source)source={type:5,zone:z};
+    wind+=z.wind*edge;lift+=z.lift*edge;zone=z;
   }
-  return {lift,wind,source,activity};
+  if(!source&&zone)source={type:5,zone};
+  return {lift,wind,source,activity,zone};
 }
 export function airEffect(a,height,time){
   const pulse=Math.max(0,Math.sin(time*1.4+a.phase))**2;
   const fade=clamp((a.top-height)/100,0,1);
   const s=a.liftScale??1;
-  return {lift:[6.5,1.5+11*pulse,5.3,5,9*fade][a.type]*s,wind:a.type===3?6:0,activity:a.type===1?pulse:a.type===4?fade:1};
+  return {lift:[6.5,1.5+11*pulse,5.3,5,9*fade][a.type]*s,wind:0,activity:a.type===1?pulse:a.type===4?fade:1};
 }
 export function upcomingHazard(world,x,lookahead){return world.hazards.find(h=>h.x+h.w+8>x&&h.x-x<(lookahead??h.warningDistance));}
 export function hazardKey(h){return h.squeeze?`squeeze-${h.district}-${h.slot}`:h.id;}
