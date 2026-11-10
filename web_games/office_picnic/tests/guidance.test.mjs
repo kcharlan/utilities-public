@@ -39,8 +39,24 @@ test('guidance exposes the same vent lull and burst that affect the plane',()=>{
 test('tailwind guidance identifies its direction and nearby lane',()=>{
   const r=createRun(),a=r.world.airs.find(a=>a.type===3);r.plane.x=a.x+a.w/2;r.plane.y=150;
   const g=module.flightGuidance(r,false);assert.ok(g.air.lift>0);assert.ok(g.air.wind>0);
-  assert.match(g.airLabel,/Tailwind · forward/i);
+  assert.match(g.airLabel,/Tailwind · Wind column ↑/i);
   r.plane.y=180;assert.match(module.flightGuidance(r,false).airLabel,/Tailwind lane below/i);
+});
+test('wind overlapping the Casual vent retains burst and lull guidance',()=>{
+  const r=createRun(),lane=r.world.winds.find(z=>z.wind>0&&!z.teaching&&z.district===4);
+  const vent=r.world.airs.find(a=>a.type===1&&a.x<lane.x1&&a.x+a.w>lane.x0);
+  r.plane.x=Math.max(vent.x,lane.x0)+Math.min(vent.w,20)/2;r.plane.y=(lane.y0+lane.y1)/2;
+  r.worldTicks=(Math.PI*.5-vent.phase)/1.4*60;
+  assert.match(module.flightGuidance(r,false).airLabel,/tailwind.*burst/i);
+  r.worldTicks=(Math.PI*1.5-vent.phase)/1.4*60;
+  assert.match(module.flightGuidance(r,false).airLabel,/tailwind.*lull/i);
+});
+test('zero wind at a solo lane edge falls back to lift or still air',()=>{
+  const r=createRun(),lane=r.world.winds.find(z=>z.teaching),air=r.world.airs.find(a=>a.gapId==='4.T');
+  r.plane.x=air.x+air.w/2;r.plane.y=lane.y0;
+  assert.match(module.flightGuidance(r,false).airLabel,/wind column.*upward/i);
+  r.plane.x=air.x+air.w+15;
+  assert.equal(module.flightGuidance(r,false).airLabel,'Still air');
 });
 test('headwind names its effect and squeeze guidance targets the live window',async()=>{
   const {buildWorld,hazardAdvice}=await import('../dist/game/world.js');const {TIERS}=await import('../dist/game/tiers.js');

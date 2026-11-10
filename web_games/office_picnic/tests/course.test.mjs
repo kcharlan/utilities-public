@@ -136,6 +136,12 @@ test('each authored choice lane satisfies the paired checkpoint study',async()=>
   }
 });
 
+test('lane study rejects a lane with no ending checkpoint',async()=>{
+  const {laneValue}=await import('../scripts/flight-study.mjs');
+  const world=buildWorld(),last=world.checkpoints.at(-1);
+  assert.throws(()=>laneValue(world,{x0:last.x,x1:last.x+100,y0:100,y1:140,wind:8}),/checkpoint after lane/i);
+});
+
 test('lane-blind reference finishes each tier in both modes without impacts',async()=>{
   const {createRun,stepRun}=await import('../dist/game/simulation.js');
   const {sensible,REFERENCE}=await import('../dist/game/bot.js');

@@ -36,6 +36,10 @@ test('Casual retains authored geometry and clean route',()=>{
     assert.equal(run.crashes,0);
   }
 });
+test('Casual retains authored wind zones',()=>{
+  const winds=buildWorld().winds.map(({x0,x1,y0,y1,wind,lift,district,teaching})=>({x0,x1,y0,y1,wind,lift,district,teaching}));
+  assert.equal(createHash('sha256').update(JSON.stringify(winds)).digest('hex'),'bb26e0fa68958be806c9de8942d0ab4f9652cebf761cab3029400a9535468874');
+});
 test('squeeze geometry matches the authored slot and synced motion preserves the window',()=>{
   const config={...TIERS.casual,encounters:[{slot:1,kind:'squeeze',at:.5,center:130,window:40}],motion:{squeezeSync:8,rate:1}};
   const world=buildWorld(undefined,config),pair=world.hazards.filter(h=>h.district===0);

@@ -27,7 +27,10 @@ export function flightGuidance(run,held){
   if(run.status==='landing'){instruction='Landing · no input needed';motionLabel='Final approach';}
   if(run.status==='finished'){instruction='Landed';motionLabel='At the picnic';}
   const lane=run.world.winds.find(z=>z.wind>0&&p.x>=z.x0-60&&p.x<=z.x1&&(p.y<z.y0||p.y>z.y1));
-  const airLabel=lane?`Tailwind lane ${p.y<lane.y0?'above':'below'}`:air.zone?(air.wind>0?'Tailwind · forward push':air.wind<0?'Headwind · slows you':'Winds cancel'):air.source?names[air.source.type]:'Still air';
+  const lift=air.source&&air.source.type!==5?names[air.source.type]:null;
+  const compactLift=['AC ↑',air.activity>.35?'Steam burst ↑':'Vent lull','Roof heat ↑','Wind column ↑',air.activity<.45?'Thermal fading':'Thermal ↑'];
+  const wind=air.wind>0?'Tailwind':air.wind<0?'Headwind':null;
+  const airLabel=lane?`Tailwind lane ${p.y<lane.y0?'above':'below'}`:wind&&lift?`${wind} · ${compactLift[air.source.type]}`:wind?(air.wind>0?'Tailwind · forward push':'Headwind · slows you'):lift??'Still air';
   return {instruction,airLabel,motionLabel,air,hazard};
 }
 
