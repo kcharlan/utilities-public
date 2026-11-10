@@ -15,7 +15,7 @@ const sat = (r, g, b) => {
     min = Math.min(r, g, b);
   return max ? (max - min) / max : 0;
 };
-function resize(im, w, h) {
+export function resize(im, w, h) {
   const out = { width: w, height: h, pixels: new Uint8Array(w * h * 4) };
   for (let y = 0; y < h; y++)
     for (let x = 0; x < w; x++) {

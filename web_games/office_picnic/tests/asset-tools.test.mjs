@@ -294,3 +294,37 @@ test("assembler does not join distinct bodies through speck chains", () => {
     /subjects/,
   );
 });
+
+test("assembler joins substantial details within three percent", () => {
+  const src = image(100, 100);
+  rect(src, 20, 35, 20, 20, [80, 90, 100, 255]);
+  rect(src, 42, 39, 12, 12, [80, 90, 100, 255]);
+  assert.doesNotThrow(() => assemble([src], { cols: 1, rows: 1, cell: 64 }));
+});
+
+test("assembler preserves thin asymmetric detail while centering resampled alpha", () => {
+  const src = image(100, 100);
+  rect(src, 10, 10, 10, 30, [80, 90, 100, 255]);
+  rect(src, 20, 10, 80, 1, [80, 90, 100, 255]);
+  const result = assemble([src, src], { cols: 2, rows: 1, cell: 64 });
+  for (const [i, c] of measure(result, 2, 1).cells.entries()) {
+    assert.ok(Math.abs(c.centroid - 32) <= 2.56, `centroid ${c.centroid}`);
+    let left = 64,
+      right = -1,
+      top = 64,
+      bottom = -1;
+    for (let y = 0; y < 64; y++)
+      for (let x = 0; x < 64; x++)
+        if (result.pixels[(y * result.width + i * 64 + x) * 4 + 3] > 8) {
+          left = Math.min(left, x);
+          right = Math.max(right, x);
+          top = Math.min(top, y);
+          bottom = Math.max(bottom, y);
+        }
+    assert.ok(
+      left >= 6 && right < 59 && top >= 6 && bottom < 59,
+      `content outside 8% gutter: ${left},${right},${top},${bottom}`,
+    );
+    assert.ok(right - left > 20, "thin bar survived downscaling");
+  }
+});

@@ -13,6 +13,42 @@ function paintedFootprintsOverlap(first,second){
   }
   return true;
 }
+function alphaIntersection(plane, bowl, width, height, offsetY = 0) {
+  const [a, b, c, d, e, f] = bowl.matrix,
+    det = a * d - b * c,
+    co = Math.cos(plane.rotation),
+    si = Math.sin(plane.rotation);
+  let count = 0;
+  for (let y = 0; y < height; y++)
+    for (let x = 0; x < width; x++) {
+      const dx = x + 0.5 - plane.x,
+        dy = y + 0.5 - plane.y - offsetY;
+      const u = (co * dx + si * dy) / plane.width + 0.5,
+        v = (-si * dx + co * dy) / plane.height + 0.5;
+      if (u < 0 || u >= 1 || v < 0 || v >= 1) continue;
+      const px =
+        Math.floor((u * plane.image.width) / 2) +
+        ((plane.frame % 2) * plane.image.width) / 2;
+      const py =
+        Math.floor((v * plane.image.height) / 2) +
+        (Math.floor(plane.frame / 2) * plane.image.height) / 2;
+      if (plane.image.pixels[(py * plane.image.width + px) * 4 + 3] <= 8)
+        continue;
+      const bx = x + 0.5 - e,
+        by = y + 0.5 - f,
+        localX = (d * bx - c * by) / det,
+        localY = (-b * bx + a * by) / det;
+      const bu = (localX - bowl.x) / bowl.width,
+        bv = (localY - bowl.y) / bowl.height;
+      if (bu < 0 || bu >= 1 || bv < 0 || bv >= 1) continue;
+      const sx =
+          Math.floor((bu * bowl.image.width) / 2) +
+          (bowl.frame * bowl.image.width) / 2,
+        sy = Math.floor(bv * bowl.image.height);
+      if (bowl.image.pixels[(sy * bowl.image.width + sx) * 4 + 3] > 8) count++;
+    }
+  return count;
+}
 
 test('finished picnic table, bowl and group fit desktop and phone viewports',()=>{
   for(const [w,h] of [[1280,800],[390,844],[844,390]]){
@@ -193,16 +229,11 @@ test("painted picnic cells layer correctly and switch people rows at three viewp
         const fx = createEffects();
         if (finished) spawnEffects(fx, run, ["landing"], { reduced });
         if (finished && !reduced) for(let i=0;i<8;i++)stepEffects(fx);
-        let planeBounds;
+        let planePaint;
         const sprite = renderer.sprite;
         renderer.sprite = function(image, frame, x, y, width, height, rotation, ...rest) {
           if (image === this.plane) {
-            const content=contentBounds(planeSource,2,2,frame),corners=[];
-            for(const [px,py] of [[content.left,content.top],[content.right,content.top],[content.right,content.bottom],[content.left,content.bottom]]){
-              const dx=(px-.5)*width,dy=(py-.5)*height;
-              corners.push({x:x+dx*Math.cos(rotation)-dy*Math.sin(rotation),y:y+dx*Math.sin(rotation)+dy*Math.cos(rotation)});
-            }
-            planeBounds=corners;
+            planePaint={image:planeSource,frame,x,y,width,height,rotation};
           }
           return sprite.call(this, image, frame, x, y, width, height, rotation, ...rest);
         };
@@ -239,7 +270,10 @@ test("painted picnic cells layer correctly and switch people rows at three viewp
         assert.ok(visible.left>=0&&visible.right<=w&&visible.top>=0&&visible.bottom<=h,'painted bowl is in view');
         if (finished) {
           assert.ok(plane, "plane is drawn");
-          assert.ok(paintedFootprintsOverlap(planeBounds,points), 'painted plane overlaps painted bowl');
+          const bowlPaint={image:bowlSource,frame,matrix:bowl.matrix,x:bowl[5],y:bowl[6],width:bowl[7],height:bowl[8]};
+          const pixels=alphaIntersection(planePaint,bowlPaint,w,h);
+          assert.ok(pixels>0,'painted plane overlaps painted bowl');
+          if(w===390&&h===844&&!reduced)assert.equal(alphaIntersection(planePaint,bowlPaint,w,h,15),0,'shifted plane must not overlap painted bowl');
         }
       }
 });
