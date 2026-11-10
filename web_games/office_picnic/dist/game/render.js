@@ -109,8 +109,11 @@ export class Renderer{
       const offscreen=X(b.x)>w-15;if(offscreen||Y(b.y)<155){
         const mx=Math.max(10,Math.min(w-218,w*.35));
         this.label((run.world.tier.prompts==='full'?(offscreen?'→ ':''):'→ ')+(run.world.tier.prompts==='quiet'?'':hazardAdvice(marker)),mx,182,'#ffe3a8',12);
-        if(effects)for(const cue of effects.cues)if(cue.name==='warning'){ctx.strokeStyle='#ffe3a8';ctx.lineWidth=2;ctx.strokeRect(mx-9,163,Math.min(205,w-mx-5),25);break;}
       }}
+    if(effects)for(const cue of effects.cues)if(cue.name==='warning'&&cue.hazardKey){
+      const hazard=run.world.hazards.find(h=>hazardKey(h)===cue.hazardKey);
+      if(hazard)this.drawWarningCue(hazard,cue,run,X,Y);
+    }
     if(p.x<70){
       const bx=X(-34),by=Y(138);ctx.fillStyle='#384459';ctx.fillRect(bx,by,30*s,h-by);ctx.fillStyle='#f4c68d';ctx.fillRect(bx+5*s,by+7*s,20*s,29*s);ctx.strokeStyle='#aeb2bd';ctx.strokeRect(bx+5*s,by+7*s,20*s,29*s);this.label('40th floor',Math.max(8,bx),by-10,'#fff0d3',11);
     }
@@ -131,17 +134,26 @@ export class Renderer{
     if(effects)this.drawEffects(effects,X,Y);
     ctx.restore();
   }
+  drawWarningCue(hazard,cue,run,X,Y){
+    const ctx=this.ctx,b=hazardBox(hazard,run.worldTicks/60),x=X(b.x),y=Y(b.y+b.h),right=X(b.x+b.w),bottom=Y(b.y);
+    const fixed=this.reduced||cue.reduced;ctx.strokeStyle='#ffe3a8';ctx.lineWidth=2;ctx.globalAlpha=fixed?1:.55+.45*Math.sin(Math.PI*cue.age/cue.life);
+    if(right>=0&&x<=this.w&&bottom>=0&&y<=this.h)ctx.strokeRect(x-5,y-5,Math.max(10,right-x+10),Math.max(10,bottom-y+10));
+    else this.label('→ '+hazardAdvice(hazard),Math.max(10,Math.min(this.w-218,this.w*.35)),215,'#ffe3a8',12);
+    ctx.globalAlpha=1;
+  }
   drawEffects(effects,X,Y){
     const ctx=this.ctx;
     if(!this.reduced)for(const p of effects.particles){
       const x=X(p.x),y=Y(p.y);ctx.globalAlpha=1-p.age/p.life;
       ctx.fillStyle=p.kind==='drop'?'#a9d5e6':p.kind==='sparkle'?'#ffe3a8':p.kind==='steam'?'#e8e1df':'#fff0d3';
-      if(p.kind==='sheet'||p.kind==='feather')ctx.fillRect(x-3,y-2,6,4);
+      if(p.kind==='sheet')ctx.fillRect(x-3,y-2,6,4);
+      else if(p.kind==='feather'){ctx.fillStyle='#e7d5c9';ctx.beginPath();ctx.ellipse(x,y,2,5,-.6,0,Math.PI*2);ctx.fill();}
       else{ctx.beginPath();ctx.arc(x,y,p.kind==='steam'?5:2.5,0,Math.PI*2);ctx.fill();}
     }
     ctx.globalAlpha=1;
     for(const cue of effects.cues){
-      if(cue.name==='district'&&!cue.reduced&&!this.reduced){this.label(cue.district,Math.max(12,this.w*.38-(1-Math.min(1,cue.age/15))*100),145,'#fff0d3',16);continue;}
+      if(cue.name==='warning'&&cue.hazardKey)continue;
+      if(cue.name==='district'){const offset=cue.reduced||this.reduced?0:(1-Math.min(1,cue.age/15))*100;this.label(cue.district,Math.max(12,this.w*.38-offset),this.h-180,'#fff0d3',16);continue;}
       const fixed=cue.reduced||this.reduced,x=X(cue.x),y=Y(cue.y),radius=fixed?20:14+cue.age*.35;
       ctx.globalAlpha=fixed?1:1-cue.age/cue.life;ctx.strokeStyle='#ffe3a8';ctx.lineWidth=2;ctx.beginPath();ctx.arc(x,y,radius,0,Math.PI*2);ctx.stroke();ctx.globalAlpha=1;
       if(cue.name==='pickup')this.label('−'+cue.reward/60+'s',x+12,y-20-(fixed?0:cue.age*.4),'#fff0d3',12);

@@ -1,16 +1,16 @@
 // Browser-only verification harness, separate from the shipped play flow.
 import {medalFor,MEDALS} from './medals.js';
-import {TIERS} from './tiers.js';import {buildWorld} from './world.js';
+import {TIERS} from './tiers.js';import {buildWorld,hazardBox} from './world.js';
 import {createRun,stepRun} from './simulation.js';import {chooseInput,referenceInput} from './bot.js';import {Renderer} from './render.js';import {Sound} from './audio.js';import {saveResult,loadRecords} from './records.js';import {formatTime,formatDistance} from './session.js';
 import {createEffects,spawnEffects,stepEffects} from './effects.js';
 const output=document.getElementById('output'),canvas=document.getElementById('preview'),renderer=new Renderer(canvas),scenes=[],select=document.getElementById('scene');
 // The harness checkbox explicitly selects either path, independent of system preference.
 renderer.reduced=document.getElementById('reduced').checked;
-for(const [value,text] of [['6','Vent · steam burst'],['7','Vent · lull'],['8','Window-washer approach'],['9','Rush · moving washer'],['10','Rush · squeeze'],['11','Rush · headwind'],['12','Pickup · moving washer'],['13','Tailwind lane'],['14','Impact feedback'],['15','Pickup feedback']]){const option=document.createElement('option');option.value=value;option.textContent=text;select.append(option);}
+for(const [value,text] of [['6','Vent · steam burst'],['7','Vent · lull'],['8','Window-washer approach'],['9','Rush · moving washer'],['10','Rush · squeeze'],['11','Rush · headwind'],['12','Pickup · moving washer'],['13','Tailwind lane'],['14','Roof impact'],['15','Pickup feedback'],['16','Flock impact'],['17','Washer impact'],['18','District transition']]){const option=document.createElement('option');option.value=value;option.textContent=text;select.append(option);}
 const check=(condition,message)=>{if(!condition)throw Error(message);};
 function capture(r){return {...r,plane:{...r.plane},previous:null};}
 const sceneEffects=[];
-function prepareEffects(){for(const i of [14,15]){if(!scenes[i])continue;sceneEffects[i]=createEffects();spawnEffects(sceneEffects[i],scenes[i],scenes[i].events,{reduced:renderer.reduced});for(let n=0;n<8;n++)stepEffects(sceneEffects[i]);}}
+function prepareEffects(){for(const i of [14,15,16,17,18]){if(!scenes[i])continue;sceneEffects[i]=createEffects();spawnEffects(sceneEffects[i],scenes[i],scenes[i].events,{reduced:renderer.reduced});for(let n=0;n<8;n++)stepEffects(sceneEffects[i]);}}
 function draw(){const i=Number(select.value);if(scenes[i])renderer.draw(scenes[i],false,1,sceneEffects[i]);}
 function runRoute(){
   const r=createRun(),washer=r.world.hazards.find(h=>h.kind==='platform');for(let n=0;n<60*480&&r.status!=='finished';n++){
@@ -38,6 +38,12 @@ function runRoute(){
   const pickupScene=createRun('standard',pickupWorld),pk=pickupWorld.pickups[0];pickupScene.plane.x=pk.x-90;pickupScene.plane.y=pk.y;pickupScene.worldTicks=240;scenes[12]=capture(pickupScene);
   const impact=createRun();impact.plane.x=impact.world.buildings[1].x+2;impact.plane.y=impact.world.buildings[1].y-2;stepRun(impact,false);check(impact.events.includes('impact'),'Impact scene did not collide');scenes[14]=capture(impact);
   const pickup=createRun();const target=pickup.world.pickups[0];pickup.plane.x=target.x;pickup.plane.y=target.y;stepRun(pickup,false);check(pickup.events.includes('pickup'),'Pickup scene did not collect');scenes[15]=capture(pickup);
+  for(const [index,kind] of [[16,'pigeon'],[17,'platform']]){
+    const flight=createRun(),hazard=flight.world.hazards.find(h=>h.kind===kind),box=hazardBox(hazard,1/60);
+    flight.plane.x=box.x+box.w/2;flight.plane.y=box.y+box.h/2;stepRun(flight,false);
+    check(flight.events.includes('impact')&&flight.crashLog.at(-1).where===hazard.id,`${kind} impact scene did not collide`);scenes[index]=capture(flight);
+  }
+  const district=createRun();district.plane.x=district.world.districts[1].start-.1;district.plane.y=300;stepRun(district,false);check(district.events.includes('district'),'District scene did not transition');scenes[18]=capture(district);
   prepareEffects();
   return r;
 }

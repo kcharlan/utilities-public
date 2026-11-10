@@ -7,14 +7,14 @@ import {airAt} from './world.js';
 import {flightGuidance,noticeMessages} from './guidance.js';
 import {Renderer} from './render.js';
 import {Sound,dispatchRunEvents} from './audio.js';
-import {createEffects,spawnEffects,stepEffects} from './effects.js';
+import {createEffects,spawnEffects,stepEffects,advanceFinishedEffects} from './effects.js';
 import {dialogTabTarget,shouldRetry,consumeTime,rebaseNoticeDeadline,formatTime,formatDistance,formatSpeed,formatFeet} from './session.js';
 import {loadRecords,finishResult,savePreferences,titleBestText} from './records.js';
 const $=id=>document.getElementById(id),canvas=$('flight'),renderer=new Renderer(canvas);
 const tracing=new URLSearchParams(location.search).has('trace');let trace=null;
 let storage;try{storage=window.localStorage;}catch{storage=null;}
 let records=loadRecords(storage),sound=new Sound(records.muted),run=null,paused=false,held=false,last=0,clock={accumulator:0},noticeEnd=0,lastDistrict=-1,lastVent=null,lastVentActive=false,resultShown=false,rewardEnd=0;
-let effects=createEffects();
+let effects=createEffects(),effectClock={accumulator:0};
 const reduced=matchMedia('(prefers-reduced-motion: reduce)');reduced.addEventListener('change',()=>{renderer.reduced=reduced.matches;if(reduced.matches){effects.particles.length=0;effects.bump=0;}});
 function titleBests(){
   for(const tier of Object.values(TIERS)){
@@ -36,7 +36,7 @@ function start(mode){
   modalOpen(false);
   clearTraceDownload();
   let world=worlds.get(records.tier);if(!world){world=buildWorld(undefined,TIERS[records.tier]);worlds.set(records.tier,world);}
-  run=createRun(mode,world);effects=createEffects();spawnEffects(effects,run,['launch'],{reduced:reduced.matches});trace=tracing?createTrace(run):null;paused=false;held=false;clock.accumulator=0;last=performance.now();lastDistrict=-1;lastVent=null;lastVentActive=false;resultShown=false;rewardEnd=0;sound.district=0;sound.setPaused(false);sound.unlock().then(()=>sound.event('launch'));
+  run=createRun(mode,world);effects=createEffects();effectClock.accumulator=0;spawnEffects(effects,run,['launch'],{reduced:reduced.matches});trace=tracing?createTrace(run):null;paused=false;held=false;clock.accumulator=0;last=performance.now();lastDistrict=-1;lastVent=null;lastVentActive=false;resultShown=false;rewardEnd=0;sound.district=0;sound.setPaused(false);sound.unlock().then(()=>sound.event('launch'));
   for(const id of ['title-screen','pause-screen','result-screen'])$(id).hidden=true;
   for(const id of ['hud','route-hud','flight-hud'])$(id).hidden=false;
   $('district-dots').replaceChildren(...Array.from({length:5},()=>document.createElement('i')));
@@ -93,7 +93,7 @@ function updateHUD(){
 }
 function frame(now){
   const delta=last?(now-last)/1000:0;last=now;
-  if(run){consumeTime(clock,delta,paused||run.status==='finished',tick);renderer.draw(run,held,clock.accumulator*60,effects);if(run.worldTicks%6===0||paused||run.status==='finished')updateHUD();}
+  if(run){if(run.status==='finished')advanceFinishedEffects(effectClock,delta,paused,run,effects);else consumeTime(clock,delta,paused,tick);renderer.draw(run,held,clock.accumulator*60,effects);if(run.worldTicks%6===0||paused||run.status==='finished')updateHUD();}
   requestAnimationFrame(frame);
 }
 $('start').onclick=()=>start('standard');$('nonstop').onclick=()=>start('nonstop');$('pause').onclick=pause;$('resume').onclick=resume;$('restart').onclick=()=>start(run.mode);$('home').onclick=home;$('result-home').onclick=home;$('replay').onclick=()=>start(run.mode);
