@@ -50,3 +50,4 @@ Judge a lane from paired checkpoint runs at the same hazard-clock offsets, inclu
 A delayed-input window measured from a checkpoint can miss height-judgment difficulty and can favor a layout that traps arriving pilots. Use those windows for fairness floors and compare them with complete-flight crash distributions. A lane can also change the hazard clock and pickup approach: verify the paired lane, actual-entry continuation, full pilot bands and pickup pricing together after each final course adjustment.
 
 - A notice deadline can outlive the control phase it describes and obscure the landing close-up. Exercise the actual presentation transition, including the DOM notice, at narrow landscape sizes and both motion settings.
+- Nearby air columns can place their labels at the same screen height on portrait displays. Lay out labels against the other labels in the frame and retain every cue; check the resulting bounds at narrow sizes.
