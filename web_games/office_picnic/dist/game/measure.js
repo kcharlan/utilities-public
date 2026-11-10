@@ -17,5 +17,13 @@ export function measureFlight(){
     while(p.y>0&&p.x<2000)advancePlane(p,false);
     envelopes.push({speed,drop,range:p.x});
   }
-  return {units:'meters, seconds',dt:PHYSICS.dt,glideRatio,steadySpeed:steady.speed,stallSpeed:PHYSICS.stallSpeed,maxPullUpClimb:maxClimb,pullUpRange:pullRange,envelopes};
+  // Compare controlled still-air flight across the same entry speeds as the dive envelopes.
+  const entryHeight=184,roofHeight=73;
+  const controlled=[18,22,26,32].map(speed=>{
+    const p=createPlane({y:entryHeight,speed,pitch:PHYSICS.divePitch});
+    while(p.y>roofHeight&&p.x<10000)advancePlane(p,p.y<entryHeight&&p.speed>11);
+    return {speed,range:p.x};
+  });
+  const bestStillAirRange={entryHeight,roofHeight,policy:'hold below entry height while speed exceeds 11 m/s',...controlled.reduce((a,b)=>a.range>b.range?a:b)};
+  return {bestStillAirRange,units:'meters, seconds',dt:PHYSICS.dt,glideRatio,steadySpeed:steady.speed,stallSpeed:PHYSICS.stallSpeed,maxPullUpClimb:maxClimb,pullUpRange:pullRange,envelopes};
 }

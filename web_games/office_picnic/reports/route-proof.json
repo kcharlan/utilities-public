@@ -7238,13 +7238,13 @@
     "runs": [
       {
         "mode": "standard",
-        "seconds": 399.78333333333336,
+        "seconds": 397.6666666666667,
         "distance": 7186,
         "crashes": 0
       },
       {
         "mode": "nonstop",
-        "seconds": 399.78333333333336,
+        "seconds": 397.6666666666667,
         "distance": 7186,
         "crashes": 0
       }
@@ -10171,17 +10171,17 @@
         "releaseOnlySamples": 0,
         "realGeometryMinSampledRoofClearance": null,
         "actualBotEntry": {
-          "height": 113.60123946746899,
-          "speed": 28.39575495731282,
-          "pitch": 0.06333333333333334
+          "height": 125.92509184238563,
+          "speed": 26.676737847080854,
+          "pitch": 0.09000000000000001
         },
         "actualBotReceiver": {
           "roof": 55,
-          "clearance": 57.873961778869685
+          "clearance": 69.44692985647048
         },
-        "actualEntryMeasuredRange": 95.88390227036041,
+        "actualEntryMeasuredRange": 115.35629836822953,
         "actualRequiredRange": 44.80000000000018,
-        "actualEntryUtilization": 0.4672317139709148
+        "actualEntryUtilization": 0.38836197618784396
       },
       {
         "id": "3.4",
@@ -10205,17 +10205,17 @@
         "releaseOnlySamples": 0,
         "realGeometryMinSampledRoofClearance": null,
         "actualBotEntry": {
-          "height": 129.52806166908988,
-          "speed": 20.54263697285669,
+          "height": 129.5284180012759,
+          "speed": 21.96281032566896,
           "pitch": 0.03666666666666667
         },
         "actualBotReceiver": {
           "roof": 55,
-          "clearance": 73.31157086098328
+          "clearance": 73.27686426876177
         },
-        "actualEntryMeasuredRange": 118.21333015438968,
+        "actualEntryMeasuredRange": 118.70323819997412,
         "actualRequiredRange": 44.80000000000018,
-        "actualEntryUtilization": 0.3789758730380932
+        "actualEntryUtilization": 0.3774117764548899
       },
       {
         "id": "3.5",
@@ -10239,17 +10239,17 @@
         "releaseOnlySamples": 0,
         "realGeometryMinSampledRoofClearance": null,
         "actualBotEntry": {
-          "height": 193.8447186536369,
-          "speed": 14.30494079066692,
-          "pitch": -0.3633333333333334
+          "height": 194.9597715498422,
+          "speed": 14.671002267275329,
+          "pitch": -0.55
         },
         "actualBotReceiver": {
           "roof": 65,
-          "clearance": 106.38306509556291
+          "clearance": 114.57796742657065
         },
-        "actualEntryMeasuredRange": 199.55093928780258,
+        "actualEntryMeasuredRange": 200.96700802934942,
         "actualRequiredRange": 44.80000000000018,
-        "actualEntryUtilization": 0.2245040798098541
+        "actualEntryUtilization": 0.22292216239522034
       },
       {
         "id": "4.T",
@@ -10273,17 +10273,17 @@
         "releaseOnlySamples": 9,
         "realGeometryMinSampledRoofClearance": 41.9716719048789,
         "actualBotEntry": {
-          "height": 157.0278834202619,
-          "speed": 25.84808412852454,
-          "pitch": 0.22333333333333336
+          "height": 166.00646091349435,
+          "speed": 23.809154082992283,
+          "pitch": 0.25
         },
         "actualBotReceiver": {
           "roof": 65,
-          "clearance": 105.90807854812444
+          "clearance": 110.3182904856363
         },
-        "actualEntryMeasuredRange": 150.40846909072945,
+        "actualEntryMeasuredRange": 164.37748197067015,
         "actualRequiredRange": 50.80000000000018,
-        "actualEntryUtilization": 0.33774693876683626
+        "actualEntryUtilization": 0.3090447632545218
       },
       {
         "id": "4.1",
@@ -10307,17 +10307,17 @@
         "releaseOnlySamples": 0,
         "realGeometryMinSampledRoofClearance": null,
         "actualBotEntry": {
-          "height": 176.757586715799,
-          "speed": 23.638618471825996,
+          "height": 170.92366704606965,
+          "speed": 24.222738372760308,
           "pitch": -0.55
         },
         "actualBotReceiver": {
           "roof": 65,
-          "clearance": 98.72577068607616
+          "clearance": 88.56059196991886
         },
-        "actualEntryMeasuredRange": 173.32160572440984,
+        "actualEntryMeasuredRange": 164.49156634725023,
         "actualRequiredRange": 50.80000000000018,
-        "actualEntryUtilization": 0.29309675379291583
+        "actualEntryUtilization": 0.3088304229090916
       },
       {
         "id": "4.2",
@@ -10341,17 +10341,17 @@
         "releaseOnlySamples": 0,
         "realGeometryMinSampledRoofClearance": null,
         "actualBotEntry": {
-          "height": 112.38627543138715,
-          "speed": 30.149511641032188,
-          "pitch": -0.016666666666666666
+          "height": 131.8420752308286,
+          "speed": 26.490509184706568,
+          "pitch": 0.010000000000000002
         },
         "actualBotReceiver": {
           "roof": 65,
-          "clearance": 13.396342787883686
+          "clearance": 29.830695289654745
         },
-        "actualEntryMeasuredRange": 77.519928300884,
+        "actualEntryMeasuredRange": 107.55497922099603,
         "actualRequiredRange": 50.80000000000018,
-        "actualEntryUtilization": 0.6553153635904598
+        "actualEntryUtilization": 0.4723165804868977
       },
       {
         "id": "4.3",
@@ -10368,24 +10368,24 @@
         "utilization": 0.7977764046379804,
         "sourceRoofEnd": 4804,
         "receiverRoofStart": 4846,
-        "receiverRoof": 65,
+        "receiverRoof": 60,
         "clearanceMeaning": "Synthetic 92m envelope target; actual roof and hazard clearances are separate.",
         "syntheticPerturbedClearance": 7.816838187458671,
         "releaseOnlySkipped": true,
         "releaseOnlySamples": 0,
         "realGeometryMinSampledRoofClearance": null,
         "actualBotEntry": {
-          "height": 120.92861517436506,
-          "speed": 20.150546701610995,
-          "pitch": 0.46
+          "height": 92.39916589739038,
+          "speed": 27.940193945015732,
+          "pitch": -0.12333333333333335
         },
         "actualBotReceiver": {
-          "roof": 65,
-          "clearance": 51.366125881531474
+          "roof": 60,
+          "clearance": 45.93230291276225
         },
-        "actualEntryMeasuredRange": 95.66781981183028,
+        "actualEntryMeasuredRange": 51.82841297452228,
         "actualRequiredRange": 50.80000000000018,
-        "actualEntryUtilization": 0.531004052354481
+        "actualEntryUtilization": 0.9801573516243369
       },
       {
         "id": "4.4",
@@ -10409,17 +10409,17 @@
         "releaseOnlySamples": 0,
         "realGeometryMinSampledRoofClearance": null,
         "actualBotEntry": {
-          "height": 151.50109031854274,
-          "speed": 18.154522592774264,
+          "height": 148.4297340572263,
+          "speed": 17.801532657409506,
           "pitch": 0.03666666666666667
         },
         "actualBotReceiver": {
           "roof": 65,
-          "clearance": 78.94314695762357
+          "clearance": 78.75196662227326
         },
-        "actualEntryMeasuredRange": 136.4326108381208,
+        "actualEntryMeasuredRange": 131.72881393268278,
         "actualRequiredRange": 50.80000000000018,
-        "actualEntryUtilization": 0.37234499646330954
+        "actualEntryUtilization": 0.3856407606156725
       },
       {
         "id": "4.5",
@@ -10443,17 +10443,17 @@
         "releaseOnlySamples": 0,
         "realGeometryMinSampledRoofClearance": null,
         "actualBotEntry": {
-          "height": 209.96787242475284,
-          "speed": 17.929995114717705,
-          "pitch": 0.009999999999999998
+          "height": 209.9585040917203,
+          "speed": 16.925295677193596,
+          "pitch": 0.03666666666666667
         },
         "actualBotReceiver": {
           "roof": 75,
-          "clearance": 94.60236458380528
+          "clearance": 101.75903636945337
         },
-        "actualEntryMeasuredRange": 212.3519142593766,
+        "actualEntryMeasuredRange": 212.21947183491363,
         "actualRequiredRange": 50.80000000000018,
-        "actualEntryUtilization": 0.23922553360150395
+        "actualEntryUtilization": 0.23937483003217397
       },
       {
         "id": "5.T",
@@ -10477,17 +10477,17 @@
         "releaseOnlySamples": 9,
         "realGeometryMinSampledRoofClearance": 24.76563972016007,
         "actualBotEntry": {
-          "height": 172.7654980503868,
-          "speed": 24.164316514814725,
-          "pitch": 0.43333333333333335
+          "height": 181.8581798705327,
+          "speed": 21.17469600339173,
+          "pitch": 0.05999999999999994
         },
         "actualBotReceiver": {
           "roof": 75,
-          "clearance": 93.60232592871735
+          "clearance": 110.50966455547255
         },
-        "actualEntryMeasuredRange": 162.89419719200458,
+        "actualEntryMeasuredRange": 169.7432970058096,
         "actualRequiredRange": 59.80000000000018,
-        "actualEntryUtilization": 0.36710945528350214
+        "actualEntryUtilization": 0.3522966800742269
       },
       {
         "id": "5.1",
@@ -10511,17 +10511,17 @@
         "releaseOnlySamples": 0,
         "realGeometryMinSampledRoofClearance": null,
         "actualBotEntry": {
-          "height": 183.9503165114196,
-          "speed": 23.134632350210172,
+          "height": 184.0353658887816,
+          "speed": 25.456060606565558,
           "pitch": 0.03666666666666667
         },
         "actualBotReceiver": {
           "roof": 75,
-          "clearance": 74.25393810876015
+          "clearance": 108.78925811991762
         },
-        "actualEntryMeasuredRange": 173.35138401968788,
+        "actualEntryMeasuredRange": 173.7602696701819,
         "actualRequiredRange": 59.80000000000018,
-        "actualEntryUtilization": 0.344964075932665
+        "actualEntryUtilization": 0.34415232039814303
       },
       {
         "id": "5.2",
@@ -10545,17 +10545,17 @@
         "releaseOnlySamples": 0,
         "realGeometryMinSampledRoofClearance": null,
         "actualBotEntry": {
-          "height": 170.0650250874308,
-          "speed": 21.660176060253413,
-          "pitch": 0.03666666666666667
+          "height": 186.96832557598265,
+          "speed": 21.950598561742268,
+          "pitch": -0.2566666666666667
         },
         "actualBotReceiver": {
           "roof": 75,
-          "clearance": 88.060700695763
+          "clearance": 88.86974819611616
         },
-        "actualEntryMeasuredRange": 151.13576066616486,
+        "actualEntryMeasuredRange": 174.824763471977,
         "actualRequiredRange": 59.80000000000018,
-        "actualEntryUtilization": 0.39567075149136266
+        "actualEntryUtilization": 0.3420568048392391
       },
       {
         "id": "5.3",
@@ -10579,17 +10579,17 @@
         "releaseOnlySamples": 0,
         "realGeometryMinSampledRoofClearance": null,
         "actualBotEntry": {
-          "height": 118.21157710791847,
-          "speed": 27.704442757842408,
-          "pitch": 0.38333333333333336
+          "height": 114.50223660473084,
+          "speed": 26.975409599777695,
+          "pitch": 0.010000000000000002
         },
         "actualBotReceiver": {
           "roof": 75,
-          "clearance": 49.945234462411605
+          "clearance": 36.600590076024076
         },
-        "actualEntryMeasuredRange": 78.30557686056964,
+        "actualEntryMeasuredRange": 64.72880634490879,
         "actualRequiredRange": 59.80000000000018,
-        "actualEntryUtilization": 0.7636748543016245
+        "actualEntryUtilization": 0.923854515118889
       },
       {
         "id": "5.4",
@@ -10613,17 +10613,17 @@
         "releaseOnlySamples": 0,
         "realGeometryMinSampledRoofClearance": null,
         "actualBotEntry": {
-          "height": 133.37912200473275,
-          "speed": 18.86612253993208,
-          "pitch": 0.03333333333333331
+          "height": 124.43230530283343,
+          "speed": 21.998730634081554,
+          "pitch": -0.04666666666666669
         },
         "actualBotReceiver": {
           "roof": 75,
-          "clearance": 45.859868482164984
+          "clearance": 53.22599725416141
         },
-        "actualEntryMeasuredRange": 92.71540216650533,
+        "actualEntryMeasuredRange": 78.38893745009928,
         "actualRequiredRange": 59.80000000000018,
-        "actualEntryUtilization": 0.6449845290279475
+        "actualEntryUtilization": 0.7628627449895923
       },
       {
         "id": "5.5",
@@ -10647,14 +10647,14 @@
         "releaseOnlySamples": 0,
         "realGeometryMinSampledRoofClearance": null,
         "actualBotEntry": {
-          "height": 193.7171528588884,
-          "speed": 13.688827043420572,
-          "pitch": -0.07000000000000005
+          "height": 193.35282054541173,
+          "speed": 14.185949976000277,
+          "pitch": -0.09666666666666668
         },
         "actualBotReceiver": null,
-        "actualEntryMeasuredRange": 299.62233234575257,
+        "actualEntryMeasuredRange": 298.8241288108458,
         "actualRequiredRange": 71,
-        "actualEntryUtilization": 0.23696498002715213
+        "actualEntryUtilization": 0.23759794860790054
       }
     ],
     "encounters": [
@@ -10740,176 +10740,176 @@
         "district": 2,
         "kind": "platform",
         "pass": "below",
-        "minClearance": 18.190306846975194,
+        "minClearance": 18.99101044218897,
         "warningSeconds": 169.01666666666668,
-        "arrivalSeconds": 178.41666666666666,
+        "arrivalSeconds": 178.58333333333334,
         "passed": true,
-        "warningLeadSeconds": 9.399999999999977
+        "warningLeadSeconds": 9.566666666666663
       },
       {
         "id": "h2-3-sq-under",
         "district": 2,
         "kind": "platform",
         "pass": "below",
-        "minClearance": 14.281513227176237,
-        "warningSeconds": 174.25,
-        "arrivalSeconds": 191.33333333333334,
+        "minClearance": 14.311824700725783,
+        "warningSeconds": 174.2,
+        "arrivalSeconds": 190.61666666666667,
         "passed": true,
-        "warningLeadSeconds": 17.083333333333343
+        "warningLeadSeconds": 16.416666666666686
       },
       {
         "id": "h2-3-sq-over",
         "district": 2,
         "kind": "pigeon",
         "pass": "above",
-        "minClearance": 13.27115857965315,
-        "warningSeconds": 174.25,
-        "arrivalSeconds": 191.86666666666667,
+        "minClearance": 13.243225334373694,
+        "warningSeconds": 174.2,
+        "arrivalSeconds": 191.11666666666667,
         "passed": true,
-        "warningLeadSeconds": 17.616666666666674
+        "warningLeadSeconds": 16.916666666666686
       },
       {
         "id": "h2-4-over",
         "district": 2,
         "kind": "pigeon",
         "pass": "above",
-        "minClearance": 14.082545367788544,
-        "warningSeconds": 190.36666666666667,
-        "arrivalSeconds": 215.23333333333332,
+        "minClearance": 11.70646216254612,
+        "warningSeconds": 189.81666666666666,
+        "arrivalSeconds": 214.05,
         "passed": true,
-        "warningLeadSeconds": 24.866666666666646
+        "warningLeadSeconds": 24.23333333333335
       },
       {
         "id": "h3-over",
         "district": 3,
         "kind": "pigeon",
         "pass": "above",
-        "minClearance": 6.784135706036596,
-        "warningSeconds": 215.43333333333334,
-        "arrivalSeconds": 236.46666666666667,
+        "minClearance": 7.838443714222367,
+        "warningSeconds": 213.83333333333334,
+        "arrivalSeconds": 235.36666666666667,
         "passed": true,
-        "warningLeadSeconds": 21.03333333333333
+        "warningLeadSeconds": 21.53333333333333
       },
       {
         "id": "h3-1-under",
         "district": 3,
         "kind": "platform",
         "pass": "below",
-        "minClearance": 40.70067522988485,
-        "warningSeconds": 236.61666666666667,
-        "arrivalSeconds": 246.85,
+        "minClearance": 37.38733440467264,
+        "warningSeconds": 235.61666666666667,
+        "arrivalSeconds": 245.9,
         "passed": true,
-        "warningLeadSeconds": 10.23333333333332
+        "warningLeadSeconds": 10.283333333333331
       },
       {
         "id": "h3-under",
         "district": 3,
         "kind": "platform",
         "pass": "below",
-        "minClearance": 12.869250074210346,
-        "warningSeconds": 248.31666666666666,
-        "arrivalSeconds": 262.96666666666664,
+        "minClearance": 28.403140424631975,
+        "warningSeconds": 247.36666666666667,
+        "arrivalSeconds": 256.25,
         "passed": true,
-        "warningLeadSeconds": 14.649999999999977
+        "warningLeadSeconds": 8.883333333333326
       },
       {
         "id": "h3-3-sq-under",
         "district": 3,
         "kind": "platform",
         "pass": "below",
-        "minClearance": 11.27857641784384,
-        "warningSeconds": 257.1,
-        "arrivalSeconds": 279.73333333333335,
+        "minClearance": 11.95349257953119,
+        "warningSeconds": 252.93333333333334,
+        "arrivalSeconds": 273.85,
         "passed": true,
-        "warningLeadSeconds": 22.633333333333326
+        "warningLeadSeconds": 20.916666666666686
       },
       {
         "id": "h3-3-sq-over",
         "district": 3,
         "kind": "pigeon",
         "pass": "above",
-        "minClearance": 10.335614499534731,
-        "warningSeconds": 257.1,
-        "arrivalSeconds": 280.55,
+        "minClearance": 3.9184677620078814,
+        "warningSeconds": 252.93333333333334,
+        "arrivalSeconds": 274.68333333333334,
         "passed": true,
-        "warningLeadSeconds": 23.44999999999999
+        "warningLeadSeconds": 21.75
       },
       {
         "id": "h3-4-over",
         "district": 3,
         "kind": "pigeon",
         "pass": "above",
-        "minClearance": 20.928011985143502,
-        "warningSeconds": 284.96666666666664,
-        "arrivalSeconds": 310.35,
+        "minClearance": 10.985725998635008,
+        "warningSeconds": 279.4,
+        "arrivalSeconds": 304.53333333333336,
         "passed": true,
-        "warningLeadSeconds": 25.383333333333383
+        "warningLeadSeconds": 25.133333333333383
       },
       {
         "id": "h4-over",
         "district": 4,
         "kind": "pigeon",
         "pass": "above",
-        "minClearance": 20.032600912242803,
-        "warningSeconds": 308.73333333333335,
-        "arrivalSeconds": 326.75,
+        "minClearance": 7.187270659479242,
+        "warningSeconds": 302.96666666666664,
+        "arrivalSeconds": 323.7,
         "passed": true,
-        "warningLeadSeconds": 18.01666666666665
+        "warningLeadSeconds": 20.73333333333335
       },
       {
         "id": "h4-1-over",
         "district": 4,
         "kind": "pigeon",
         "pass": "above",
-        "minClearance": 7.7426711064789115,
-        "warningSeconds": 323.15,
-        "arrivalSeconds": 340.81666666666666,
+        "minClearance": 13.763196768726647,
+        "warningSeconds": 320.15,
+        "arrivalSeconds": 338.55,
         "passed": true,
-        "warningLeadSeconds": 17.666666666666686
+        "warningLeadSeconds": 18.400000000000034
       },
       {
         "id": "h4-under",
         "district": 4,
         "kind": "platform",
         "pass": "below",
-        "minClearance": 11.172522076166832,
-        "warningSeconds": 344.3833333333333,
-        "arrivalSeconds": 354.3833333333333,
+        "minClearance": 15.82830299867226,
+        "warningSeconds": 341.23333333333335,
+        "arrivalSeconds": 350.25,
         "passed": true,
-        "warningLeadSeconds": 10
+        "warningLeadSeconds": 9.016666666666652
       },
       {
         "id": "h4-3-sq-under",
         "district": 4,
         "kind": "platform",
         "pass": "below",
-        "minClearance": 10.83376837596025,
-        "warningSeconds": 348.81666666666666,
-        "arrivalSeconds": 365.23333333333335,
+        "minClearance": 13.030561981278655,
+        "warningSeconds": 345.18333333333334,
+        "arrivalSeconds": 361.3,
         "passed": true,
-        "warningLeadSeconds": 16.416666666666686
+        "warningLeadSeconds": 16.116666666666674
       },
       {
         "id": "h4-3-sq-over",
         "district": 4,
         "kind": "pigeon",
         "pass": "above",
-        "minClearance": 14.530957277868229,
-        "warningSeconds": 348.81666666666666,
-        "arrivalSeconds": 365.81666666666666,
+        "minClearance": 7.943133654013908,
+        "warningSeconds": 345.18333333333334,
+        "arrivalSeconds": 361.81666666666666,
         "passed": true,
-        "warningLeadSeconds": 17
+        "warningLeadSeconds": 16.633333333333326
       },
       {
         "id": "h4-4-over",
         "district": 4,
         "kind": "pigeon",
         "pass": "above",
-        "minClearance": 3.874916823841306,
-        "warningSeconds": 364.76666666666665,
-        "arrivalSeconds": 390.1333333333333,
+        "minClearance": 10.0197340429654,
+        "warningSeconds": 361.71666666666664,
+        "arrivalSeconds": 386.75,
         "passed": true,
-        "warningLeadSeconds": 25.366666666666674
+        "warningLeadSeconds": 25.03333333333336
       }
     ],
     "engagement": [
@@ -10925,18 +10925,18 @@
       },
       {
         "district": "Sunward Roofs",
-        "heldTicks": 2208,
-        "totalTicks": 4593
+        "heldTicks": 2204,
+        "totalTicks": 4538
       },
       {
         "district": "Crosswind Court",
-        "heldTicks": 2566,
-        "totalTicks": 5689
+        "heldTicks": 2564,
+        "totalTicks": 5445
       },
       {
         "district": "Park Approach",
-        "heldTicks": 2267,
-        "totalTicks": 5256
+        "heldTicks": 2372,
+        "totalTicks": 5428
       }
     ],
     "summary": {
@@ -10944,12 +10944,12 @@
       "gaps": 30,
       "encounters": 23,
       "firstEncounterSeconds": 18.716666666666665,
-      "minHazardClearance": 3.874916823841306,
-      "minWarningLeadSeconds": 9.299999999999997,
+      "minHazardClearance": 3.9184677620078814,
+      "minWarningLeadSeconds": 8.883333333333326,
       "maxSyntheticEnvelopeUtilization": 0.9135826569241389,
       "minSyntheticPerturbedClearance": 2.0089018038222264,
-      "maxActualEntryUtilization": 0.7636748543016245,
-      "minActualBotReceiverClearance": 13.396342787883686,
+      "maxActualEntryUtilization": 0.9801573516243369,
+      "minActualBotReceiverClearance": 22.462913672389536,
       "minRealGeometrySampledRoofClearance": 24.76563972016007
     }
   }

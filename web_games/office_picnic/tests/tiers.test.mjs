@@ -122,6 +122,32 @@ test('Overtime has full checkpoints and the authored moving course',()=>{
     const proof=referenceProof(world).full[mode];
     assert.equal(proof.finished,true);
     assert.equal(proof.crashes,0);
-    assert.equal(proof.ticks,23987);
+    assert.equal(proof.ticks,23860);
+  }
+});
+test('tier washer overrides apply only to selected districts',()=>{
+  const base=buildWorld(undefined,TIERS.casual);
+  const edited=buildWorld(undefined,{...TIERS.casual,washerHeights:{2:155,3:155}});
+  for(const hazard of base.hazards.filter(h=>h.kind==='platform')){
+    const actual=edited.hazards.find(h=>h.id===hazard.id);
+    assert.equal(actual.y,hazard.district===2||hazard.district===3?155:hazard.y,hazard.id);
+  }
+});
+test('tier roof overrides change only authored receiving roofs',()=>{
+  const base=buildWorld(undefined,TIERS.casual),edited=buildWorld(undefined,{...TIERS.casual,roofHeights:{3:{4:60}}});
+  const roofs=world=>world.buildings.filter(b=>!b.perch).map(b=>b.y);
+  const expected=roofs(base);expected[22]=60;
+  assert.deepEqual(roofs(edited),expected);
+});
+test('Overtime retains authored geometry and wind zones',()=>{
+  const world=buildWorld(undefined,TIERS.overtime);
+  const winds=world.winds.map(({x0,x1,y0,y1,wind,lift,district,teaching})=>({x0,x1,y0,y1,wind,lift,district,teaching}));
+  assert.equal(createHash('sha256').update(JSON.stringify({geometry:projection(world),winds})).digest('hex'),'8b2a8970bc2cfc4f5073312a94b65ed7ea6cfe784fa485a20b182b3f8f078f6b');
+});
+test('tier flock overrides apply only to selected districts',()=>{
+  const base=buildWorld(undefined,TIERS.casual),edited=buildWorld(undefined,{...TIERS.casual,flockTops:{4:156}});
+  for(const hazard of base.hazards.filter(h=>h.kind==='pigeon'&&h.slot===0)){
+    const actual=edited.hazards.find(h=>h.id===hazard.id);
+    assert.equal(actual.y+actual.h,hazard.district===4?156:hazard.y+hazard.h,hazard.id);
   }
 });

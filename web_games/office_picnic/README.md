@@ -44,9 +44,10 @@ npm run measure
 npm run prove
 npm run playtest
 npm run ablation
+npm run difficulty
 ```
 
-The playtest runs seeded pilot studies, reference route and district proofs, and shortcut checks. Use `node scripts/playtest.mjs --tier casual --n 10` for a smaller diagnostic sample or add `--json` for machine-readable results. Diagnostic sample sizes cannot be combined with `--check`. Use `node scripts/playtest.mjs --tier casual --menu --n 100` to screen pickup placements in the current world.
+The playtest runs seeded pilot studies, timing-window gates, reference route and district proofs, and shortcut checks. `npm run difficulty -- --tier overtime --json` prints machine-readable timing windows. Use `node scripts/playtest.mjs --tier casual --n 10` for a smaller diagnostic sample or add `--json` for machine-readable results. Diagnostic sample sizes cannot be combined with `--check`. Use `node scripts/playtest.mjs --tier casual --menu --n 100` to screen pickup placements in the current world.
 
 Open the game with `?trace` to record inputs; after a finished flight, download its JSON trace from the result screen and run `node scripts/replay.mjs <trace.json>` to check it against the current tier and simulation version. Traces contain the full input history and crash locations; share them only when appropriate.
 
@@ -59,7 +60,16 @@ At `/checks.html`, browser verification runs the same collision-enabled simulati
 - `dist/game/physics.js` is browser-free, with a fixed 1/60-second step. `measure.js` measures it before `world.js` creates geometry. Physics and route proofs run unchanged in Node and browsers.
 - `simulation.js` owns collision, rooftop checkpoints, 0.4-second respawn, warnings and the continuous final landing. `bot.js` outputs only hold/release. `main.js` owns input, UI, audio and scheduling.
 - Canvas scenery is code-drawn from the generated key art's palette. Skyline layers are cached; device-pixel ratio is capped at 2. Portrait uses independent vertical framing to preserve horizontal warning distance. Reduced motion removes decorative parallax and animated air marks; essential flight/hazard motion remains.
-- Clean Casual bot time is 6:04.68, Rush reference time is 6:23.12 and Overtime reference time is 6:39.78 over 4.47 miles. There are 30 crossings with synthetic design-envelope utilization from 55.3% to 91.4%. The report distinguishes synthetic envelope targets, actual bot entry states, actual receiving roof bounds, and real collision-enabled sampled clearance. It also records each actual above/below encounter, their clearance and warning timestamps, and input time by district. These are different measurements.
+- `npm run difficulty` measures the first delayed reference input that causes an impact between checkpoints, using eight hazard-clock offsets in 50 ms steps. It reports the tightest window per district, capped at 1,500 ms:
+
+  | Tier | District 1 | District 2 | District 3 | District 4 | District 5 |
+  | --- | ---: | ---: | ---: | ---: | ---: |
+  | Casual | 1500 ms | 1500 ms | 1500 ms | 1500 ms | 850 ms |
+  | Rush | 1500 ms | 1500 ms | 750 ms | 800 ms | 550 ms |
+  | Overtime | 1500 ms | 1350 ms | 500 ms | 550 ms | 350 ms |
+
+  Every teaching crossing has at least 1,000 ms. The floor for any crossing is 400 ms in Casual, 300 ms in Rush and 200 ms in Overtime. Rush and Overtime also require District 5 to be within 50 ms of the tightest district and at most 60% of District 1's window. Casual's windows mostly sit at the cap, so its ramp is judged by pilot crash rates; all tiers require at least 1.5 times as many regular-pilot crashes in Districts 4–5 as in Districts 2–3. The no-input envelope utilization in route reports compares gap length with released-dive range; it is not a measure of difficulty. Controlled still-air range is reported separately by `npm run measure`.
+- Casual has two qualifying choice lanes and Overtime has one. Rush has only the teaching lane: a screen of 280 placements at 8 or 12 m/s found none meeting the paired choice-lane gates.
 - Each tier proof includes 135 perturbed district-entry/control-cadence trials and 240 rooftop checkpoint trials at eight hazard-clock offsets. Harder-tier occupied gaps use district trials and actual-entry checks; release-only trials cover unoccupied gaps, including headwinds. Engagement regressions reject passive release, one launch pull-up followed by coasting, and high cruising past the opening washer. A reaction test checks responding to the advertised washer warning after a short delay. Reachability and required control are both tested.
 - The tiered course uses `office-picnic-v6`. On first load it carries the selected tier and mute preference from v5, leaves old records untouched, and starts fresh best times for the changed course.
 - Runtime deployment is local, with no public game hosting, analytics or external runtime requests. The development server is optional once deployed.

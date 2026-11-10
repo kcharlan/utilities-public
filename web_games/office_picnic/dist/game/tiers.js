@@ -36,11 +36,13 @@ export const TIERS=freeze({
       {slot:3,kind:'squeeze',at:.6,window:30,center:130,only:[2],static:true},
       {slot:3,kind:'squeeze',at:.6,window:30,center:150,only:[3]},
       {slot:3,kind:'squeeze',at:.6,window:30,center:130,only:[4]}],
+    washerHeights:{2:155,3:155},roofHeights:{3:{4:60}},flockTops:{4:164},
+    tailwinds:[{district:3,fromSlot:2,toSlot:2,y0:70,y1:110,wind:8}],
     liftScale:[.9,.9,.9,.9,.9],
     winds:[...[0,1,2,3,4].map(j=>({district:3,fromSlot:j,toSlot:j,startAtGap:true,y0:0,y1:400,wind:-5})),
       {district:4,fromSlot:4,toSlot:4,startAtGap:true,y0:0,y1:400,wind:-3}],
     motion:{from:1,platformY:14,pigeonX:9,pigeonY:11,rate:1.25,phaseStep:1.3,squeezeSync:8},
-    pickups:[P(0,0,'overFlock',5,15),P(1,0,'overFlock',7,18),P(2,0,'overFlock',10,10),P(3,0,'overFlock',32,10),P(4,0,'overFlock',7,10)],
+    pickups:[P(0,0,'overFlock',5,15),P(1,0,'overFlock',7,18),P(2,0,'overFlock',10,10),P(3,0,'overFlock',32,10),P(4,0,'overFlock',32,10)],
     rules:{crashPenaltyTicks:600,respawnTicks:24},ratios:[.56,.64,.73,.81,.92]
   }
 });

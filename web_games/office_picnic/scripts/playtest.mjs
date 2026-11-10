@@ -55,6 +55,9 @@ if(menu){
 const out={},gates=[];
 const gate=(name,pass)=>gates.push({name,pass});
 if(check){
+  const difficulty=spawnSync(process.execPath,['--test',fileURLToPath(new URL('../tests/difficulty.test.mjs',import.meta.url))],{encoding:'utf8'});
+  gate('difficulty ramp, fairness, pilots and lanes',difficulty.status===0);
+  if(difficulty.status!==0)console.error(difficulty.stdout,difficulty.stderr);
   const course=spawnSync(process.execPath,['--test',fileURLToPath(new URL('../tests/course.test.mjs',import.meta.url))],{encoding:'utf8'});
   gate('course introduction and ablation',course.status===0);
   if(course.status!==0)console.error(course.stdout,course.stderr);

@@ -42,3 +42,7 @@
 ## 2026-11-09 — Measuring optional wind lanes
 
 Judge a lane from paired checkpoint runs at the same hazard-clock offsets, including time spent inside its band. A whole-flight time comparison can change with moving-hazard phase even when neither pilot enters the lane. Keep wind-zone reporting separate from the lift-column source: otherwise a lane over a vent suppresses lift-entry and vent feedback. With the 8 m/s Casual lanes, the two median savings were 7.12 s and 5.07 s, with blind occupancy 1.82 s and 0.20 s. A candidate Overtime lane passed the paired study but failed the unchanged route proof, so it was not retained.
+
+## 2026-11-09 — Timing and pilot studies
+
+A delayed-input window measured from a checkpoint can miss height-judgment difficulty and can favor a layout that traps arriving pilots. Use those windows for fairness floors and compare them with complete-flight crash distributions. A lane can also change the hazard clock and pickup approach: verify the paired lane, actual-entry continuation, full pilot bands and pickup pricing together after each final course adjustment.

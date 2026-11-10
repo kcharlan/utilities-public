@@ -42,3 +42,10 @@ test('releasing from nose-up flight produces downward motion within one second i
   for(let n=0;n<60;n++)physics.advancePlane(p,false,{lift:6.5,wind:0});
   assert.ok(p.pitch<-.45,`dive pitch ${p.pitch}`);assert.ok(p.vy< -2,`still rising ${p.vy}`);
 });
+test('flight measurement reports controlled still-air range alongside released dives',async()=>{
+  const {measureFlight}=await import('../dist/game/measure.js');
+  const result=measureFlight();
+  assert.ok(result.bestStillAirRange.range>1000);
+  assert.equal(result.bestStillAirRange.entryHeight,184);
+  assert.equal(result.bestStillAirRange.roofHeight,73);
+});

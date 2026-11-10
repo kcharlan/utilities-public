@@ -9,6 +9,7 @@
     "start": "node scripts/serve.mjs",
     "deploy": "node scripts/deploy.mjs",
     "playtest": "node scripts/playtest.mjs --check",
-    "ablation": "node scripts/ablation.mjs"
+    "ablation": "node scripts/ablation.mjs",
+    "difficulty": "node scripts/difficulty.mjs"
   }
 }

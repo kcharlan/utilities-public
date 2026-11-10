@@ -25,7 +25,7 @@ export function buildWorld(limits=measureFlight(),cfg=TIERS.casual){
     const start=x, gap=Math.floor(safeRange*cfg.ratios[d]);
     const district={...THEMES[d],index:d,start,checkpoint:{x:start+12,y:150,speed:26,pitch:PHYSICS.divePitch}};
     for(let j=-1;j<5;j++){
-      const row=COURSE[d],k=j+1,type=row.types[k],width=row.widths[k],roof=row.roofs[k],entryHeight=row.entries[k];
+      const row=COURSE[d],k=j+1,type=row.types[k],width=row.widths[k],roof=cfg.roofHeights?.[d]?.[k]??row.roofs[k],entryHeight=row.entries[k];
       const gapId=`${d+1}.${j<0?'T':j+1}`;
       const air={x,w:width,y:roof+4,top:230,type,phase:j*.7,district:d,targetExit:entryHeight,gapId,liftScale:cfg.liftScale[type]};
       world.airs.push(air);
@@ -39,14 +39,14 @@ export function buildWorld(limits=measureFlight(),cfg=TIERS.casual){
         if(e.slot!==j||(e.from??0)>d||(e.until??9)<d||(e.only&&!e.only.includes(d)))continue;
         const slot=slots[slots.length-1];
         if(e.kind==='pigeon'){
-          const top=e.top??row.flockTop;
+          const top=e.top??cfg.flockTops?.[d]??row.flockTop;
           const hazard={id:j===0?`h${d}-over`:`h${d}-${j}-over`,district:d,slot:j,kind:'pigeon',pass:'above',x:release+gap*e.at,y:top-16,w:24,h:16,phase:0,warningDistance:360,moving:false};
           world.hazards.push(hazard);slot.slotHazards.push(hazard);
           // A flock lifting from a raised roof makes the low route visibly solid.
           world.buildings.push({x:hazard.x-6,y:hazard.y-2,w:hazard.w+12,h:100,type:0,district:d,perch:true});
         }else if(e.kind==='platform'){
           const upperSuspension=230+limits.maxPullUpClimb+20;
-          const hazard={id:j===2?`h${d}-under`:`h${d}-${j}-under`,district:d,slot:j,kind:'platform',pass:'below',x:release+gap*e.at,y:e.y??row.washerY,w:45,h:30,suspensionTop:upperSuspension,phase:0,warningDistance:250,moving:false};
+          const hazard={id:j===2?`h${d}-under`:`h${d}-${j}-under`,district:d,slot:j,kind:'platform',pass:'below',x:release+gap*e.at,y:e.y??cfg.washerHeights?.[d]??row.washerY,w:45,h:30,suspensionTop:upperSuspension,phase:0,warningDistance:250,moving:false};
           world.hazards.push(hazard);slot.slotHazards.push(hazard);
         }else if(e.kind==='squeeze'){
           // A perched flock directly under a washer: the only route threads the window.

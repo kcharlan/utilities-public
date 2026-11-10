@@ -41,10 +41,10 @@ export const MEDALS = {
     }
   },
   "overtime": {
-    "gold": 365,
-    "silver": 433,
-    "bronze": 503,
-    "configHash": "d8dbf5f3",
+    "gold": 358,
+    "silver": 419,
+    "bronze": 490,
+    "configHash": "545e4566",
     "derived": {
       "n": 150,
       "seeds": {
@@ -57,7 +57,7 @@ export const MEDALS = {
         "silver": 0.5,
         "bronze": 0.94
       },
-      "idealNet": 340.96666666666664
+      "idealNet": 337.3
     }
   }
 };
