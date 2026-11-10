@@ -80,8 +80,13 @@ date,inputTokens,outputTokens,cacheCreationTokens,cacheReadTokens,totalTokens,to
 Codex reports (`cusage-MMYY.csv`) contain:
 
 ```text
-date,inputTokens,cachedInputTokens,outputTokens,reasoningOutputTokens,totalTokens,costUSD
+date,inputTokens,cacheReadTokens,outputTokens,reasoningOutputTokens,totalTokens,costUSD
 ```
+
+Column names are the field names `ccusage codex daily --json` emits. Codex's
+cached input tokens arrive as `cacheReadTokens`; before November 2026 this
+column was named `cachedInputTokens`, a field the command does not emit, so it
+was empty in every row.
 
 ## Validation
 

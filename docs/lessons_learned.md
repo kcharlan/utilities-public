@@ -12,6 +12,17 @@ In Zsh, returning a failure from an EXIT trap does not replace the original succ
 
 Zsh's `path` array is tied to `PATH`; using `local path` for a cleanup loop can make external commands unavailable. Use a non-special variable name and exercise the real command lookup in a synthetic regression, including both successful and failed primary operations.
 
+## 2026-11-10: Take report stub field names from the real command
+
+`usage-monthly-csv` exported Codex cached input under `cachedInputTokens`, but
+`ccusage codex daily --json` emits that value as `cacheReadTokens`. `jq` turns a
+missing field into an empty cell, so every row lost the value without an error.
+The stub tests passed because their fake output used the script's name, not the
+command's.
+
+Copy stub fields from real output, and in the test that runs the real command
+assert each column's value as well as dates and totals.
+
 ## 2026-10-31: Compare old and new in a browser when moving React code to Preact
 
 The offline port merged with every suite green; side-by-side browser comparison
