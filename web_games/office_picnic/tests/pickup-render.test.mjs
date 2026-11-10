@@ -5,6 +5,8 @@ import {createRun} from '../dist/game/simulation.js';
 import {buildWorld,pickupPos as pickupPosForTest} from '../dist/game/world.js';
 import {TIERS} from '../dist/game/tiers.js';
 import {cameraFor} from '../dist/game/session.js';
+import {readFileSync} from 'node:fs';
+import {readPng} from '../scripts/png.mjs';
 
 test('pickup tokens and attached tags stay inside viewport and reserve their footprint',()=>{
   for(const tier of Object.values(TIERS))for(const [w,h] of [[1440,900],[1280,720],[844,390],[390,844]]){
@@ -102,15 +104,16 @@ test('each assisted pickup paints its announced offscreen marker on portrait',as
 
 test('rendered pickup tokens clear hazard sprites and buildings throughout motion',()=>{
   const separation=(a,b)=>Math.hypot(Math.max(0,a.left-b.right,b.left-a.right),Math.max(0,a.top-b.bottom,b.top-a.bottom));
-  for(const tier of Object.values(TIERS))for(const [w,h] of [[1440,900],[390,844]]){
+  const decoded=readPng(readFileSync(new URL('../dist/assets/pickup-token.png',import.meta.url)));
+  for(const tier of Object.values(TIERS))for(const [w,h] of [[1440,900],[390,844]])for(const painted of [false,true]){
     const run=createRun('standard',buildWorld(undefined,tier));
     for(const pk of run.world.pickups){
       run.collected=new Set(run.world.pickups.filter(p=>p!==pk).map(p=>p.id));run.plane.x=pk.x-90;run.plane.y=pk.y;
       for(let frame=0;frame<=3770;frame++){
         run.worldTicks=frame*2;const obstacles=[],tokens=[];let arc,line;
-        const washer={complete:true,naturalWidth:1536},pigeon={};
-        const ctx=new Proxy({measureText:s=>({width:s.length*6}),drawImage(img,...a){if(img===washer){const [x,y,width,height]=a;obstacles.push({left:x,right:x+width,top:y,bottom:y+height});}},fillRect(x,y,width,height){if(this.fillStyle==='#41485e')obstacles.push({left:x,right:x+width,top:y,bottom:y+height});},moveTo(x,y){line={x,y};},lineTo(x,y){if(line&&['#9c9aaa','#37405c'].includes(this.strokeStyle)){const pad=this.lineWidth/2;obstacles.push({left:Math.min(x,line.x)-pad,right:Math.max(x,line.x)+pad,top:Math.min(y,line.y)-pad,bottom:Math.max(y,line.y)+pad});}},arc(x,y,r){arc={x,y,r};},fill(){if(this.fillStyle==='#ffe3a8'&&arc)tokens.push(arc);}},{get:(o,k)=>k in o?o[k]:()=>{}});
-        const renderer=Object.assign(Object.create(Renderer.prototype),{w,h,ctx,washer,pigeon,reduced:true,cache:[{},{}],sprite(img,frame,x,y,width,height){if(img===pigeon)obstacles.push({left:x-width/2,right:x+width/2,top:y-height/2,bottom:y+height/2});}});
+        const washer={complete:true,naturalWidth:1536},pigeon={},clock={complete:true,naturalWidth:decoded.width,naturalHeight:decoded.height};
+        const ctx=new Proxy({measureText:s=>({width:s.length*6}),drawImage(img,...a){if(img===clock){const [,,,,x,y,width,height]=a;tokens.push({x:x+width/2,y:y+height/2,r:width/2});}if(img===washer){const [x,y,width,height]=a;obstacles.push({left:x,right:x+width,top:y,bottom:y+height});}},fillRect(x,y,width,height){if(this.fillStyle==='#41485e')obstacles.push({left:x,right:x+width,top:y,bottom:y+height});},moveTo(x,y){line={x,y};},lineTo(x,y){if(line&&['#9c9aaa','#37405c'].includes(this.strokeStyle)){const pad=this.lineWidth/2;obstacles.push({left:Math.min(x,line.x)-pad,right:Math.max(x,line.x)+pad,top:Math.min(y,line.y)-pad,bottom:Math.max(y,line.y)+pad});}},arc(x,y,r){arc={x,y,r};},fill(){if(this.fillStyle==='#ffe3a8'&&arc)tokens.push(arc);}},{get:(o,k)=>k in o?o[k]:()=>{}});
+        const renderer=Object.assign(Object.create(Renderer.prototype),{w,h,ctx,washer,pigeon,art:painted?{token:{image:clock,meta:{cols:2,rows:1}}}:undefined,reduced:true,cache:[{},{}],sprite(img,frame,x,y,width,height){if(img===pigeon)obstacles.push({left:x-width/2,right:x+width/2,top:y-height/2,bottom:y+height/2});}});
         renderer.draw(run,false,1);
         const cam=cameraFor(w,h,run.plane),pos=pickupPosForTest(run.world,pk,run.worldTicks/60),x=(pos.x-cam.left)*cam.scale,y=h-(pos.y-cam.bottom)*cam.verticalScale;
         const token=tokens.find(t=>Math.abs(t.x-x)<.001&&Math.abs(t.y-y)<.001);assert.ok(token,`${tier.id} ${pk.id} ${w} token`);
@@ -119,5 +122,50 @@ test('rendered pickup tokens clear hazard sprites and buildings throughout motio
         for(const obstacle of obstacles)assert.ok(separation(rect,obstacle)>=6-1e-8,`${tier.id} ${pk.id} ${w} frame ${frame} art clearance`);
       }
     }
+  }
+});
+
+
+test("decoded clock frames occupy reserved token bounds while the true collection ellipse remains", () => {
+  const decoded = readPng(readFileSync(new URL('../dist/assets/pickup-token.png',import.meta.url)));
+  const draws = [],
+    ellipses = [],
+    ctx = new Proxy(
+      {
+        drawImage: (...a) => draws.push(a),
+        ellipse: (...a) => ellipses.push(a),
+        measureText: (s) => ({ width: s.length * 6 }),
+      },
+      { get: (o, k) => (k in o ? o[k] : () => {}) },
+    );
+  const image = { complete: true, naturalWidth: decoded.width, naturalHeight: decoded.height },
+    renderer = Object.assign(Object.create(Renderer.prototype), {
+      ctx,
+      w: 600,
+      h: 400,
+      reduced: false,
+      art: { token: { image, meta: { cols: 2, rows: 1 } } },
+    }),
+    pk = { x: 200, r: 5, rewardTicks: 60, hint: "above" },
+    layout = renderer.pickupLayout(
+      pk,
+      200,
+      120,
+      2,
+      { plane: { x: 0 }, world: { tier: { notice: { hint: true } } } },
+      3,
+    );
+  for (const [tick, sourceX] of [
+    [0, 0],
+    [50, decoded.width/2],
+  ]) {
+    draws.length = 0;
+    ellipses.length = 0;
+    renderer.drawPickup(pk, layout, { worldTicks: tick });
+    const draw = draws.find((a) => a[0] === image);
+    assert.ok(draw);
+    assert.equal(draw[1], sourceX);
+    assert.deepEqual(draw.slice(5), [187, 107, 26, 26]);
+    assert.ok(ellipses.some((a) => a[2] === 10 && a[3] === 15));
   }
 });

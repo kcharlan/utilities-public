@@ -98,3 +98,106 @@ test('reduced-motion overhead descent keeps actual aircraft and table in view',a
     stepRun(run,false);
   }
 });
+
+
+test("painted picnic cells layer correctly and switch people rows at three viewports", async () => {
+  const manifest = JSON.parse(
+    (await import("node:fs")).readFileSync(
+      new URL("../dist/assets/manifest.json", import.meta.url),
+    ),
+  );
+  const { readPng } = await import('../scripts/png.mjs');
+  const { measure } = await import('../scripts/asset-metrics.mjs');
+  const { readFileSync } = await import('node:fs');
+  const source = readPng(readFileSync(new URL('../dist/assets/picnic-people.png', import.meta.url)));
+  const personGeometry = measure(source, 4, 2);
+  const dimensions = Object.fromEntries(Object.entries(manifest).map(([name, meta]) => {
+    const decoded = readPng(readFileSync(new URL('../dist/assets/' + meta.file, import.meta.url)));
+    return [name, { width: decoded.width, height: decoded.height }];
+  }));
+  for (const [w, h] of [
+    [1440, 900],
+    [844, 390],
+    [390, 844],
+  ])
+    for (const reduced of [false, true])
+      for (const finished of [false, true]) {
+        const run = createRun();
+        run.plane.x = run.world.length;
+        run.plane.y = run.world.park.bowlY;
+        if (finished) run.status = "finished";
+        const draws = [],
+          ctx = new Proxy(
+            {
+              drawImage: (...v) => draws.push(v),
+              measureText: (s) => ({ width: s.length * 6 }),
+            },
+            { get: (o, k) => (k in o ? o[k] : () => {}) },
+          ),
+          art = {};
+        for (const [name, meta] of Object.entries(manifest))
+          art[name] = {
+            meta,
+            image: {
+              name,
+              complete: true,
+              naturalWidth: dimensions[name].width,
+              naturalHeight: dimensions[name].height,
+            },
+          };
+        const renderer = Object.assign(Object.create(Renderer.prototype), {
+          w,
+          h,
+          ctx,
+          art,
+          plane: {
+            name: "plane",
+            complete: true,
+            naturalWidth: 1254,
+            naturalHeight: 1254,
+          },
+          washer: { complete: false },
+          reduced,
+          cache: [{}, {}],
+          label: () => {},
+        });
+        const fx = createEffects();
+        if (finished) spawnEffects(fx, run, ["landing"], { reduced });
+        let planeBounds;
+        const sprite = renderer.sprite;
+        renderer.sprite = function(image, frame, x, y, width, height, ...rest) {
+          if (image === this.plane) {
+            planeBounds = { left: x-width/2, right: x+width/2, top: y-height/2, bottom: y+height/2 };
+          }
+          return sprite.call(this, image, frame, x, y, width, height, ...rest);
+        };
+        renderer.draw(run, false, 1, fx);
+        const people = draws.filter((a) => a[0] === art.people.image),
+          table = draws.find((a) => a[0] === art.table.image),
+          bowl = draws.find((a) => a[0] === art.bowl.image),
+          props = draws.find((a) => a[0] === art.props.image && a[1] === dimensions.props.width*2/manifest.props.cols),
+          plane = draws.find((a) => a[0] === renderer.plane);
+        assert.equal(people.length, 4);
+        for (const [i,a] of people.entries()) {
+          assert.equal(a[2], finished ? dimensions.people.height/manifest.people.rows : 0);
+          assert.ok(
+            a[5] >= 0 && a[6] >= 0 && a[5] + a[7] <= w && a[6] + a[8] <= h,
+          );
+          const geometry = personGeometry.cells[i+(finished ? 4 : 0)];
+          const head = a[6] + (geometry.bottom-geometry.height+1)/personGeometry.cellHeight*a[8];
+          const foot = a[6] + geometry.bottom/personGeometry.cellHeight*a[8];
+          const tabletop = table[6] + table[8]*.32;
+          assert.ok(head < tabletop && foot >= tabletop, 'painted figure straddles table top');
+        }
+        for (const a of [table, bowl, props])
+          assert.ok(
+            a && a[5] >= 0 && a[6] >= 0 && a[5] + a[7] <= w && a[6] + a[8] <= h,
+          );
+        assert.ok(draws.indexOf(bowl) > draws.indexOf(people[3]));
+        if (finished) {
+          assert.ok(plane, "plane is drawn");
+          assert.ok(planeBounds.left < bowl[5]+bowl[7] && planeBounds.right > bowl[5] &&
+            planeBounds.top < bowl[6]+bowl[8] && planeBounds.bottom > bowl[6], 'plane overlaps bowl');
+        }
+      }
+});

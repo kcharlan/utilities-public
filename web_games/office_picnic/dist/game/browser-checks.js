@@ -7,18 +7,46 @@ const output=document.getElementById('output'),canvas=document.getElementById('p
 // The harness checkbox explicitly selects either path, independent of system preference.
 renderer.reduced=document.getElementById('reduced').checked;
 for(const [value,text] of [['6','Vent · steam burst'],['7','Vent · lull'],['8','Window-washer approach'],['9','Rush · moving washer'],['10','Rush · squeeze'],['11','Rush · headwind'],['12','Pickup · moving washer'],['13','Tailwind lane'],['14','Roof impact'],['15','Pickup feedback'],['16','Flock impact'],['17','Washer impact'],['18','District transition'],['19','Squeeze warning feedback'],['20','Landing · on the glide line'],['21','Landing · from overhead'],['22','Landing · floor capture'],['23','Pickup · announced off screen'],['24','Pickup · beside a hazard label']]){const option=document.createElement('option');option.value=value;option.textContent=text;select.append(option);}
+for(const [value,text] of [['25','Landing · finished'],['26','Asset sheet']]){const option=document.createElement('option');option.value=value;option.textContent=text;select.append(option);}
 const check=(condition,message)=>{if(!condition)throw Error(message);};
 function capture(r){return {...r,plane:{...r.plane},previous:null};}
 const sceneEffects=[];
-function prepareEffects(){for(const i of [5,14,15,16,17,18,19]){if(!scenes[i])continue;sceneEffects[i]=createEffects();spawnEffects(sceneEffects[i],scenes[i],scenes[i].events,{reduced:renderer.reduced});for(let n=0;n<8;n++)stepEffects(sceneEffects[i]);}}
-function draw(){const i=Number(select.value);if(scenes[i])renderer.draw(scenes[i],false,1,sceneEffects[i]);}
+function prepareEffects(){for(const i of [5,14,15,16,17,18,19,25]){if(!scenes[i])continue;sceneEffects[i]=createEffects();spawnEffects(sceneEffects[i],scenes[i],scenes[i].events,{reduced:renderer.reduced});for(let n=0;n<8;n++)stepEffects(sceneEffects[i]);}}
+function draw(){
+ const i=Number(select.value);
+ if(i===26){drawAssetSheet();return;}
+ if(canvas.style.height){canvas.style.height='';renderer.resize();}
+ if(scenes[i])renderer.draw(scenes[i],false,1,sceneEffects[i]);
+}
+function drawAssetSheet(){
+ const w=canvas.clientWidth,scale=Math.min(3.2,w/210,(w<=600?600:560)/130),items=[];
+ for(const [name,item] of Object.entries(renderer.art))for(let frame=0;frame<item.meta.cols*item.meta.rows;frame++){
+  const meta=item.meta,width=Array.isArray(meta.width)?meta.width[frame%meta.cols]:meta.width,height=Array.isArray(meta.height)?meta.height[frame%meta.cols]:meta.height;
+  items.push({name,item,frame,width,height});
+ }
+ for(const [name,image,cols,rows,width,height] of [['plane',renderer.plane,2,2,21,16],['pigeon',renderer.pigeon,2,2,15,15],['washer',renderer.washer,1,1,60,40]])items.push({name,item:{image,meta:{cols,rows}},frame:0,width,height});
+ const placements=[];let x=8,y=8,rowHeight=0;
+ for(const item of items){const dw=Math.max(item.name==='token'?26:0,item.width*scale),dh=Math.max(item.name==='token'?26:0,item.height*scale),tileWidth=dw+16,tileHeight=dh+24;
+  if(x>8&&x+tileWidth>w){x=8;y+=rowHeight;rowHeight=0;}
+  placements.push({...item,x,y,dw,dh});x+=tileWidth;rowHeight=Math.max(rowHeight,tileHeight);
+ }
+ const bandHeight=Math.ceil(y+rowHeight+8),height=bandHeight*2;
+ if(canvas.clientHeight!==height){canvas.style.height=height+'px';renderer.resize();}
+ const ctx=renderer.ctx;for(let band=0;band<2;band++){
+  ctx.fillStyle=band?'#7d887d':'#9b8cbb';ctx.fillRect(0,band*bandHeight,w,bandHeight);
+  for(const {name,item,frame,x,y,dw,dh} of placements){const {image,meta}=item;if(!image.complete||!image.naturalWidth)continue;const sw=image.naturalWidth/meta.cols,sh=image.naturalHeight/meta.rows;
+   ctx.drawImage(image,(frame%meta.cols)*sw,Math.floor(frame/meta.cols)*sh,sw,sh,x,band*bandHeight+y,dw,dh);
+   ctx.fillStyle='#fff0d3';ctx.font='10px sans-serif';ctx.fillText(name+' '+(frame+1),x,band*bandHeight+y+dh+12);
+  }
+ }
+}
 function runRoute(){
   const r=createRun(),washer=r.world.hazards.find(h=>h.kind==='platform');for(let n=0;n<60*480&&r.status!=='finished';n++){
     stepRun(r,chooseInput(r));const d=r.world.districts[r.district];
     if(!scenes[r.district]&&r.plane.x>d.start+80)scenes[r.district]=capture(r);
     if(!scenes[8]&&r.plane.x>washer.x-120)scenes[8]=capture(r);
   }
-  check(r.status==='finished'&&r.crashes===0,'Standard route failed');scenes[5]=capture(r);
+  check(r.status==='finished'&&r.crashes===0,'Standard route failed');scenes[5]=capture(r);scenes[25]=capture(r);
   const vent=r.world.airs.find(a=>a.type===1);
   for(const [index,phase] of [[6,Math.PI*.5],[7,Math.PI*1.5]]){
     const preview=capture(r);preview.status='flying';preview.plane={...r.plane,x:vent.x+vent.w/2,y:155,pitch:-.2,speed:26};preview.worldTicks=(phase-vent.phase)/1.4*60;scenes[index]=preview;
@@ -82,9 +110,10 @@ document.getElementById('landing').onclick=()=>{
 document.getElementById('run').onclick=async()=>{
   try{
     output.textContent='Running…';const sound=new Sound(true);await sound.unlock();
-    const r=runRoute();draw();
+    const r=runRoute();await renderer.artReady;draw();
     check(renderer.plane.complete&&renderer.plane.naturalWidth>0,'Plane sprite did not decode');check(renderer.pigeon.complete&&renderer.pigeon.naturalWidth>0,'Pigeon sprite did not decode');
     check(renderer.washer.complete&&renderer.washer.naturalWidth>0,'Washer illustration did not decode');
+    check(Object.keys(renderer.art).length===7&&Object.values(renderer.art).every(({image})=>image.complete&&image.naturalWidth>0),'Picnic assets did not decode');
     const current=saveResult(null,'rush','standard',300);check(saveResult(null,'rush','standard',340,current).best.rush.standard===300,'Session records regressed');
     const prefix='office-picnic-browser-check-',store={getItem:k=>localStorage.getItem(prefix+k),setItem:(k,v)=>localStorage.setItem(prefix+k,v)};
     store.setItem('office-picnic-v6',JSON.stringify({best:{casual:{standard:320}},tier:'rush',muted:true}));
@@ -108,4 +137,4 @@ document.getElementById('run').onclick=async()=>{
     output.textContent=`PASS: Casual + Rush + Overtime, both modes, real collisions, ${formatTime(r.ticks/60)}, ${formatDistance(r.world.length)}.\nPASS: ${scenes.length} scenes including pickup, moving washer, squeeze and headwind, decoded sprites, session + browser records.\n${sound.ctx?'PASS: Web Audio unlock, event synthesis, pause, resume, mute.':'LIMIT: Web Audio unavailable.'}\n90-frame sample: draw p95 ${draws[Math.floor(draws.length*.95)].toFixed(2)} ms; frame interval median ${frameIntervals[Math.floor(frameIntervals.length*.5)].toFixed(2)} ms.\nThis browser sample does not verify physical phone performance or first-time usability.`;
   }catch(error){output.textContent='FAIL: '+error.message;console.error(error);}
 };
-runRoute();draw();
+runRoute();draw();renderer.artReady.then(draw);

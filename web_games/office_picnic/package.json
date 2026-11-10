@@ -10,6 +10,7 @@
     "deploy": "node scripts/deploy.mjs",
     "playtest": "node scripts/playtest.mjs --check",
     "ablation": "node scripts/ablation.mjs",
-    "difficulty": "node scripts/difficulty.mjs"
+    "difficulty": "node scripts/difficulty.mjs",
+    "assets": "node scripts/asset-metrics.mjs"
   }
 }
