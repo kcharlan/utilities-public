@@ -24,12 +24,13 @@ export class Renderer{
       if(i%5===0){c.strokeStyle=layer?'#5b607b':'#7e7d9b';c.lineWidth=2;c.beginPath();c.moveTo(x+w/2,y);c.lineTo(x+w/2,y-18);c.stroke();}
     }return tile;
   }
-  draw(run,held,alpha=0){
+  draw(run,held,alpha=0,effects=null){
     const ctx=this.ctx,w=this.w,h=this.h,p=run.plane;
     const display={...p};if(run.previous&&run.status==='flying'){display.x=run.previous.x+(p.x-run.previous.x)*alpha;display.y=run.previous.y+(p.y-run.previous.y)*alpha;}
     const cam=cameraFor(w,h,display),s=cam.scale;
     const X=x=>(x-cam.left)*s,Y=y=>h-(y-cam.bottom)*cam.verticalScale;
     ctx.fillStyle=this.gradient;ctx.fillRect(0,0,w,h);
+    ctx.save();if(effects?.bump&&!this.reduced)ctx.translate(Math.sin(effects.bump*2)*Math.min(4,effects.bump),0);
     // Cached city layers, painted once on resize.
     for(let layer=0;layer<2;layer++){
       const tw=1200*(h/850),th=h*(layer?.57:.43),offset=this.reduced?0:((p.x*(layer?.17:.075))%tw);
@@ -105,18 +106,46 @@ export class Renderer{
         const pair=run.world.hazards.filter(h=>h.squeeze&&hazardKey(h)===hazardKey(marker)).map(h=>hazardBox(h,run.worldTicks/60));
         b.x=Math.min(...pair.map(h=>h.x));b.y=(Math.max(...pair.map(h=>h.y))+Math.min(...pair.map(h=>h.y+h.h)))/2;
       }
-      const offscreen=X(b.x)>w-15;if(offscreen||Y(b.y)<155)this.label((run.world.tier.prompts==='full'?(offscreen?'→ ':''):'→ ')+(run.world.tier.prompts==='quiet'?'':hazardAdvice(marker)),Math.max(10,Math.min(w-218,w*.35)),182,'#ffe3a8',12);}
+      const offscreen=X(b.x)>w-15;if(offscreen||Y(b.y)<155){
+        const mx=Math.max(10,Math.min(w-218,w*.35));
+        this.label((run.world.tier.prompts==='full'?(offscreen?'→ ':''):'→ ')+(run.world.tier.prompts==='quiet'?'':hazardAdvice(marker)),mx,182,'#ffe3a8',12);
+        if(effects)for(const cue of effects.cues)if(cue.name==='warning'){ctx.strokeStyle='#ffe3a8';ctx.lineWidth=2;ctx.strokeRect(mx-9,163,Math.min(205,w-mx-5),25);break;}
+      }}
     if(p.x<70){
       const bx=X(-34),by=Y(138);ctx.fillStyle='#384459';ctx.fillRect(bx,by,30*s,h-by);ctx.fillStyle='#f4c68d';ctx.fillRect(bx+5*s,by+7*s,20*s,29*s);ctx.strokeStyle='#aeb2bd';ctx.strokeRect(bx+5*s,by+7*s,20*s,29*s);this.label('40th floor',Math.max(8,bx),by-10,'#fff0d3',11);
     }
     const finished=run.status==='finished';
     const planeX=X(display.x),planeY=Y(display.y);
     if(run.status!=='respawning'||run.respawnTicks%10<5){
-      const size=Math.max(58,21*s),frame=p.stalled?3:held?1:0;
-      this.sprite(this.plane,frame,planeX,planeY,size,size*.77,finished?-.12:-p.pitch);
+      let size=Math.max(58,21*s),rotation=finished?-.12:-p.pitch,stretch=1;
+      if(effects&&!this.reduced)for(const cue of effects.cues){
+        if(cue.name==='respawn')size*=Math.min(1,.45+cue.age/20);
+        if(cue.name==='pitch'||cue.name==='release')stretch=1+.16*(1-cue.age/cue.life);
+        if(cue.name==='stall')rotation+=Math.sin(cue.age*.7)*.13*(1-cue.age/cue.life);
+      }
+      const frame=p.stalled?3:held?1:0;
+      this.sprite(this.plane,frame,planeX,planeY,size*stretch,size*.77,rotation);
       if(p.stalled)this.label('Stall · release to recover',Math.max(12,Math.min(w-190,planeX-45)),planeY-32,'#ffe3a8',12);
     }
     if(p.y>cam.bottom+h/s-25)this.label('↑ Plane above view',20,190,C.paper,12);
+    if(effects)this.drawEffects(effects,X,Y);
+    ctx.restore();
+  }
+  drawEffects(effects,X,Y){
+    const ctx=this.ctx;
+    if(!this.reduced)for(const p of effects.particles){
+      const x=X(p.x),y=Y(p.y);ctx.globalAlpha=1-p.age/p.life;
+      ctx.fillStyle=p.kind==='drop'?'#a9d5e6':p.kind==='sparkle'?'#ffe3a8':p.kind==='steam'?'#e8e1df':'#fff0d3';
+      if(p.kind==='sheet'||p.kind==='feather')ctx.fillRect(x-3,y-2,6,4);
+      else{ctx.beginPath();ctx.arc(x,y,p.kind==='steam'?5:2.5,0,Math.PI*2);ctx.fill();}
+    }
+    ctx.globalAlpha=1;
+    for(const cue of effects.cues){
+      if(cue.name==='district'&&!cue.reduced&&!this.reduced){this.label(cue.district,Math.max(12,this.w*.38-(1-Math.min(1,cue.age/15))*100),145,'#fff0d3',16);continue;}
+      const fixed=cue.reduced||this.reduced,x=X(cue.x),y=Y(cue.y),radius=fixed?20:14+cue.age*.35;
+      ctx.globalAlpha=fixed?1:1-cue.age/cue.life;ctx.strokeStyle='#ffe3a8';ctx.lineWidth=2;ctx.beginPath();ctx.arc(x,y,radius,0,Math.PI*2);ctx.stroke();ctx.globalAlpha=1;
+      if(cue.name==='pickup')this.label('−'+cue.reward/60+'s',x+12,y-20-(fixed?0:cue.age*.4),'#fff0d3',12);
+    }
   }
   label(text,x,y,color,size){
     const ctx=this.ctx;ctx.font=`${size}px -apple-system, BlinkMacSystemFont, sans-serif`;

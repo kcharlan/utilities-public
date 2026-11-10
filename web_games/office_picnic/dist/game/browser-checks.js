@@ -2,11 +2,16 @@
 import {medalFor,MEDALS} from './medals.js';
 import {TIERS} from './tiers.js';import {buildWorld} from './world.js';
 import {createRun,stepRun} from './simulation.js';import {chooseInput,referenceInput} from './bot.js';import {Renderer} from './render.js';import {Sound} from './audio.js';import {saveResult,loadRecords} from './records.js';import {formatTime,formatDistance} from './session.js';
+import {createEffects,spawnEffects,stepEffects} from './effects.js';
 const output=document.getElementById('output'),canvas=document.getElementById('preview'),renderer=new Renderer(canvas),scenes=[],select=document.getElementById('scene');
-for(const [value,text] of [['6','Vent · steam burst'],['7','Vent · lull'],['8','Window-washer approach'],['9','Rush · moving washer'],['10','Rush · squeeze'],['11','Rush · headwind'],['12','Pickup · moving washer'],['13','Tailwind lane']]){const option=document.createElement('option');option.value=value;option.textContent=text;select.append(option);}
+// The harness checkbox explicitly selects either path, independent of system preference.
+renderer.reduced=document.getElementById('reduced').checked;
+for(const [value,text] of [['6','Vent · steam burst'],['7','Vent · lull'],['8','Window-washer approach'],['9','Rush · moving washer'],['10','Rush · squeeze'],['11','Rush · headwind'],['12','Pickup · moving washer'],['13','Tailwind lane'],['14','Impact feedback'],['15','Pickup feedback']]){const option=document.createElement('option');option.value=value;option.textContent=text;select.append(option);}
 const check=(condition,message)=>{if(!condition)throw Error(message);};
 function capture(r){return {...r,plane:{...r.plane},previous:null};}
-function draw(){if(scenes[Number(select.value)])renderer.draw(scenes[Number(select.value)],false,1);}
+const sceneEffects=[];
+function prepareEffects(){for(const i of [14,15]){if(!scenes[i])continue;sceneEffects[i]=createEffects();spawnEffects(sceneEffects[i],scenes[i],scenes[i].events,{reduced:renderer.reduced});for(let n=0;n<8;n++)stepEffects(sceneEffects[i]);}}
+function draw(){const i=Number(select.value);if(scenes[i])renderer.draw(scenes[i],false,1,sceneEffects[i]);}
 function runRoute(){
   const r=createRun(),washer=r.world.hazards.find(h=>h.kind==='platform');for(let n=0;n<60*480&&r.status!=='finished';n++){
     stepRun(r,chooseInput(r));const d=r.world.districts[r.district];
@@ -31,9 +36,12 @@ function runRoute(){
   }
   const pickupWorld=buildWorld(undefined,{...TIERS.rush,pickups:[{district:2,slot:2,place:'underWasher',dy:6,r:4,rewardTicks:540}]});
   const pickupScene=createRun('standard',pickupWorld),pk=pickupWorld.pickups[0];pickupScene.plane.x=pk.x-90;pickupScene.plane.y=pk.y;pickupScene.worldTicks=240;scenes[12]=capture(pickupScene);
+  const impact=createRun();impact.plane.x=impact.world.buildings[1].x+2;impact.plane.y=impact.world.buildings[1].y-2;stepRun(impact,false);check(impact.events.includes('impact'),'Impact scene did not collide');scenes[14]=capture(impact);
+  const pickup=createRun();const target=pickup.world.pickups[0];pickup.plane.x=target.x;pickup.plane.y=target.y;stepRun(pickup,false);check(pickup.events.includes('pickup'),'Pickup scene did not collect');scenes[15]=capture(pickup);
+  prepareEffects();
   return r;
 }
-select.onchange=draw;document.getElementById('reduced').onchange=e=>{renderer.reduced=e.target.checked;draw();};window.addEventListener('resize',()=>{renderer.resize();draw();});
+select.onchange=draw;document.getElementById('reduced').onchange=e=>{renderer.reduced=e.target.checked;prepareEffects();draw();};window.addEventListener('resize',()=>{renderer.resize();draw();});
 document.getElementById('landing').onclick=()=>{
   const r=createRun();for(let n=0;n<60*480&&r.status==='flying';n++)stepRun(r,chooseInput(r));check(r.status==='landing','Landing approach did not clear');
   output.textContent='Playing the actual two-second landing state…';
@@ -62,7 +70,7 @@ document.getElementById('run').onclick=async()=>{
     // Measure actual draw work; this is not a physical-phone FPS claim.
     const draws=[],frameIntervals=[];let last=0;
     for(let i=0;i<90;i++)await new Promise(resolve=>requestAnimationFrame(now=>{
-      if(last)frameIntervals.push(now-last);last=now;const start=performance.now();renderer.draw(scenes[i%scenes.length],false,1);draws.push(performance.now()-start);resolve();
+      if(last)frameIntervals.push(now-last);last=now;const index=i%scenes.length,start=performance.now();renderer.draw(scenes[index],false,1,sceneEffects[index]||sceneEffects[14]);draws.push(performance.now()-start);resolve();
     }));
     draws.sort((a,b)=>a-b);frameIntervals.sort((a,b)=>a-b);draw();sound.setPaused(true);if(sound.interval)clearInterval(sound.interval);if(sound.ctx)await sound.ctx.close();
     output.textContent=`PASS: Casual + Rush + Overtime, both modes, real collisions, ${formatTime(r.ticks/60)}, ${formatDistance(r.world.length)}.\nPASS: ${scenes.length} scenes including pickup, moving washer, squeeze and headwind, decoded sprites, session + browser records.\n${sound.ctx?'PASS: Web Audio unlock, event synthesis, pause, resume, mute.':'LIMIT: Web Audio unavailable.'}\n90-frame sample: draw p95 ${draws[Math.floor(draws.length*.95)].toFixed(2)} ms; frame interval median ${frameIntervals[Math.floor(frameIntervals.length*.5)].toFixed(2)} ms.\nThis browser sample does not verify physical phone performance or first-time usability.`;

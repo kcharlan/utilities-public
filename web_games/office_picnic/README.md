@@ -53,13 +53,13 @@ Open the game with `?trace` to record inputs; after a finished flight, download 
 
 The full Node suite includes physics, collision/run state, timing/camera, records, assets and HTTP serving. The measurement command writes `reports/flight-limits.json`. The proof command writes `reports/route-proof.json` and fails on an uncleared route, collision, over-limit crossing, or failed perturbed trial.
 
-At `/checks.html`, browser verification runs the same collision-enabled simulation in both modes for all three tiers, renders fourteen scenes (including vent burst/lull, moving washer, squeeze, headwind and tailwind), checks actual sprite decoding, records and Web Audio, and samples drawing cost. This harness is separate from the play flow; it does not substitute for human playtesting.
+At `/checks.html`, browser verification runs the same collision-enabled simulation in both modes for all three tiers, renders sixteen scenes (including actual impact and pickup feedback, vent burst/lull, moving washer, squeeze, headwind and tailwind), checks actual sprite decoding, records and Web Audio, and samples drawing cost with live effects. This harness is separate from the play flow; it does not substitute for human playtesting.
 
 ## Architecture and limits
 
 - `dist/game/physics.js` is browser-free, with a fixed 1/60-second step. `measure.js` measures it before `world.js` creates geometry. Physics and route proofs run unchanged in Node and browsers.
 - `simulation.js` owns collision, rooftop checkpoints, 0.4-second respawn, warnings and the continuous final landing. `bot.js` outputs only hold/release. `main.js` owns input, UI, audio and scheduling.
-- Canvas scenery is code-drawn from the generated key art's palette. Skyline layers are cached; device-pixel ratio is capped at 2. Portrait uses independent vertical framing to preserve horizontal warning distance. Reduced motion removes decorative parallax and animated air marks; essential flight/hazard motion remains.
+- Canvas scenery is code-drawn from the generated key art's palette. Skyline layers are cached; device-pixel ratio is capped at 2. Portrait uses independent vertical framing to preserve horizontal warning distance. Reduced motion removes decorative parallax, animated air marks, particles and camera bumps, replacing event effects with static cues; essential flight/hazard motion remains.
 - `npm run difficulty` measures the first delayed reference input that causes an impact between checkpoints, using eight hazard-clock offsets in 50 ms steps. It reports the tightest window per district, capped at 1,500 ms:
 
   | Tier | District 1 | District 2 | District 3 | District 4 | District 5 |
