@@ -65,4 +65,14 @@ awk -F, 'NR > 1 { if ($6 != 110) exit 1; total += $6 } END { if (total != 990) e
   print -u2 -- 'FAIL: compressed Codex usage token totals differ from synthetic inputs'
   exit 1
 }
+# Columns must name fields the real command emits; any other name exports empty.
+expected_header='"date","inputTokens","cacheReadTokens","outputTokens","reasoningOutputTokens","totalTokens","costUSD"'
+if [[ "$(head -n 1 "$csv")" != "$expected_header" ]]; then
+  print -u2 -- "FAIL: unexpected Codex CSV header: $(head -n 1 "$csv")"
+  exit 1
+fi
+awk -F, 'NR > 1 && $3 != 20 { exit 1 }' "$csv" || {
+  print -u2 -- 'FAIL: Codex cached input tokens missing from the cacheReadTokens column'
+  exit 1
+}
 print -- 'ok: compressed Codex usage survives monthly CSV export'

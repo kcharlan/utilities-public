@@ -57,7 +57,7 @@ EOF
     ;;
   codex:20260401:20260430)
     cat <<'EOF'
-{"daily":[{"date":"2026-04-01","inputTokens":10,"cachedInputTokens":20,"outputTokens":30,"reasoningOutputTokens":40,"totalTokens":50,"costUSD":60}],"totals":{}}
+{"daily":[{"date":"2026-04-01","inputTokens":10,"cacheReadTokens":20,"outputTokens":30,"reasoningOutputTokens":40,"totalTokens":50,"costUSD":60}],"totals":{}}
 EOF
     ;;
   claude:20260501:20260531)
@@ -75,7 +75,7 @@ EOF
     ;;
   codex:20251201:20251231)
     cat <<'EOF'
-[{"date":"2025-12-01","inputTokens":110,"cachedInputTokens":120,"outputTokens":130,"reasoningOutputTokens":140,"totalTokens":150,"costUSD":160}]
+[{"date":"2025-12-01","inputTokens":110,"cacheReadTokens":120,"outputTokens":130,"reasoningOutputTokens":140,"totalTokens":150,"costUSD":160}]
 EOF
     ;;
   claude:20260601:20260630)
@@ -85,7 +85,7 @@ EOF
     ;;
   codex:20260601:20260630)
     cat <<'EOF'
-{"daily":[{"date":"2026-06-01","inputTokens":210,"cachedInputTokens":220,"outputTokens":230,"reasoningOutputTokens":240,"totalTokens":250,"costUSD":260}],"totals":{}}
+{"daily":[{"date":"2026-06-01","inputTokens":210,"cacheReadTokens":220,"outputTokens":230,"reasoningOutputTokens":240,"totalTokens":250,"costUSD":260}],"totals":{}}
 EOF
     ;;
   *)
@@ -128,7 +128,7 @@ expect_file_missing() {
 zsh "$SCRIPT" --date 2026-04-10 --output-dir "$TMPDIR/out"
 expect_file_contains "$TMPDIR/out/ccusage-0426.csv" '"date","inputTokens","outputTokens","cacheCreationTokens","cacheReadTokens","totalTokens","totalCost"'
 expect_file_contains "$TMPDIR/out/ccusage-0426.csv" '"2026-04-01",1,2,3,4,5,6'
-expect_file_contains "$TMPDIR/out/cusage-0426.csv" '"date","inputTokens","cachedInputTokens","outputTokens","reasoningOutputTokens","totalTokens","costUSD"'
+expect_file_contains "$TMPDIR/out/cusage-0426.csv" '"date","inputTokens","cacheReadTokens","outputTokens","reasoningOutputTokens","totalTokens","costUSD"'
 expect_file_contains "$TMPDIR/out/cusage-0426.csv" '"2026-04-01",10,20,30,40,50,60'
 expect_file_missing "$TMPDIR/out/ccusage-0326.csv"
 expect_file_missing "$TMPDIR/out/cusage-0326.csv"
@@ -143,7 +143,7 @@ rm -f "$TMPDIR/out"/*.csv(N)
 
 zsh "$SCRIPT" --date 2026-05-02 --output-dir "$TMPDIR/out"
 expect_file_contains "$TMPDIR/out/ccusage-0526.csv" '"date","inputTokens","outputTokens","cacheCreationTokens","cacheReadTokens","totalTokens","totalCost"'
-expect_file_contains "$TMPDIR/out/cusage-0526.csv" '"date","inputTokens","cachedInputTokens","outputTokens","reasoningOutputTokens","totalTokens","costUSD"'
+expect_file_contains "$TMPDIR/out/cusage-0526.csv" '"date","inputTokens","cacheReadTokens","outputTokens","reasoningOutputTokens","totalTokens","costUSD"'
 expect_file_contains "$TMPDIR/out/ccusage-0426.csv" '"2026-04-01",1,2,3,4,5,6'
 expect_file_contains "$TMPDIR/out/cusage-0426.csv" '"2026-04-01",10,20,30,40,50,60'
 
@@ -174,7 +174,7 @@ EOF
     ;;
   codex)
     cat <<'EOF'
-{"daily":[{"date":"Apr 01, 2026","inputTokens":10,"cachedInputTokens":20,"outputTokens":30,"reasoningOutputTokens":40,"totalTokens":50,"costUSD":60}],"totals":{}}
+{"daily":[{"date":"Apr 01, 2026","inputTokens":10,"cacheReadTokens":20,"outputTokens":30,"reasoningOutputTokens":40,"totalTokens":50,"costUSD":60}],"totals":{}}
 EOF
     ;;
   *)

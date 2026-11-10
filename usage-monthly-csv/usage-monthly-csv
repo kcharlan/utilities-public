@@ -12,7 +12,7 @@ readonly SECONDARY_FALLBACK_COMMAND="cusage_csv"
 readonly PRIMARY_PREFIX="ccusage"
 readonly SECONDARY_PREFIX="cusage"
 readonly PRIMARY_COLUMNS='["date","inputTokens","outputTokens","cacheCreationTokens","cacheReadTokens","totalTokens","totalCost"]'
-readonly SECONDARY_COLUMNS='["date","inputTokens","cachedInputTokens","outputTokens","reasoningOutputTokens","totalTokens","costUSD"]'
+readonly SECONDARY_COLUMNS='["date","inputTokens","cacheReadTokens","outputTokens","reasoningOutputTokens","totalTokens","costUSD"]'
 
 usage() {
   cat <<EOF
