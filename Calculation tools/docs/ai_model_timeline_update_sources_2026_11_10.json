@@ -1,0 +1,346 @@
+{
+  "checked": "2026-11-10",
+  "latestRelease": "2026-11-10",
+  "baselineManifest": "ai_model_timeline_update_sources_2026_11_06.json",
+  "preservedHistoricalRows": 574,
+  "additions": [
+    {
+      "model": "Gemini 4 Carbon (general availability)",
+      "lab": "Google",
+      "date": "2026-11-10",
+      "tier": "flagship",
+      "note": "Broad release of the frontier engineering, research, and cybersecurity model after the October 28 Fairwind rollout. Available via the Gemini API for paying developers and in Gemini for business, with a rollout to eligible Gemini app subscribers.",
+      "source": "https://blog.google/innovation-and-ai/models-and-research/gemini-models/gemini-4-carbon-now-available/"
+    },
+    {
+      "model": "Gemini Robotics 2.5 (partner rollout)",
+      "lab": "Google",
+      "date": "2026-11-10",
+      "tier": "specialty",
+      "note": "Vision-language-action model for dexterous manipulation across robot platforms, with improved physical safety controls. Google DeepMind is rolling it out to robotics partners.",
+      "source": "https://deepmind.google/blog/gemini-robotics-2-5-accelerates-real-world-physical-intelligence/"
+    },
+    {
+      "model": "MiniMax H3-Image (open weights)",
+      "lab": "MiniMax",
+      "date": "2026-11-10",
+      "tier": "specialty",
+      "note": "Downloadable image generation and editing model with multi-reference input. MiniMax published the checkpoint under its H3-Image model license. The bundle includes a separate prompt enhancer.",
+      "source": "https://huggingface.co/MiniMaxAI/MiniMax-H3-Image"
+    },
+    {
+      "model": "Nex-N2.6 (hosted release)",
+      "lab": "Nex AGI",
+      "date": "2026-11-10",
+      "tier": "mid",
+      "note": "Hosted agent model based on GLM-5.3-Flash for computer use and coding. Accepts text and images, supports tool calling, and has a 262K context window.",
+      "source": "https://openrouter.ai/nex-agi/nex-n2.6"
+    },
+    {
+      "model": "Claude Fable 5.2 / Mythos 5.2",
+      "lab": "Anthropic",
+      "date": "2026-11-09",
+      "tier": "flagship",
+      "note": "Shared model with improvements in reasoning, coding, and vision. Fable is broadly available with stricter cybersecurity and biology safeguards. Mythos has restricted access for verified organizations.",
+      "source": "https://www.anthropic.com/claude-fable-and-mythos-5-2"
+    },
+    {
+      "model": "Muse Ember",
+      "lab": "Meta",
+      "date": "2026-11-09",
+      "tier": "small",
+      "note": "Small hosted model for high-volume agent work, including tool calls, routing, extraction, and coding subtasks. Available through the Meta Model API and Muse Code.",
+      "source": "https://research.meta.ai/blog/muse-ember"
+    },
+    {
+      "model": "Seedream 5.5",
+      "lab": "ByteDance",
+      "date": "2026-11-09",
+      "tier": "specialty",
+      "note": "Hosted image-generation and editing model with native RGBA output and improved preservation of unchanged regions across repeated edits.",
+      "source": "https://seed.bytedance.com/en/blog/more-realistic-images-more-stable-editing-across-100-rounds-introducing-seedream-5-5/"
+    },
+    {
+      "model": "K-EXAONE 2.5 (API release)",
+      "lab": "LG AI",
+      "date": "2026-11-09",
+      "tier": "flagship",
+      "note": "Technical validation model further trained from K-EXAONE 2.0 for coding and agent workflows. LG AI Research opened access through the EXAONE API Platform.",
+      "source": "https://www.lgresearch.ai/news/view?seq=755"
+    },
+    {
+      "model": "Shizuku-Duplex (research announcement)",
+      "lab": "Shizuku AI",
+      "date": "2026-11-08",
+      "tier": "specialty",
+      "note": "Japanese full-duplex speech model designed to handle interruptions and conversational backchannels. The research announcement describes evaluations and demos. API access and downloadable weights were not established.",
+      "source": "https://shizuku.ai/en/blog/1/"
+    },
+    {
+      "model": "Arete-27B",
+      "lab": "Nous Research",
+      "date": "2026-11-06",
+      "tier": "open-weights",
+      "note": "Apache-2.0 post-train of Qwen3.8-27B designed to reduce state-aligned framing in responses to political questions.",
+      "source": "https://huggingface.co/NousResearch/Arete-27B"
+    },
+    {
+      "model": "Kanana-2-v-decide-3b-2611",
+      "lab": "Kakao",
+      "date": "2026-11-06",
+      "tier": "specialty",
+      "note": "Open-weight Korean and English decision model for text and images. Returns probabilities over typed answer options. Weights use the Kanana Open License.",
+      "source": "https://huggingface.co/kakaocorp/kanana-2-v-decide-3b-2611"
+    },
+    {
+      "model": "Mistral Large 4 (general availability)",
+      "lab": "Mistral",
+      "date": "2026-11-05",
+      "tier": "flagship",
+      "note": "Mistral marks its hosted multimodal flagship generally available as mistral-large-4, after the October 6 API preview and October 29 weight release.",
+      "source": "https://docs.mistral.ai/models/mistral-large-4"
+    },
+    {
+      "model": "GLiDE 0.4B / 0.8B / 2B / 9B",
+      "lab": "Fastino",
+      "date": "2026-11-05",
+      "tier": "specialty",
+      "note": "Four smaller open-weight decision models extend the earlier 27B GLiDE. The models return probabilities over typed answer options through the same System One interface. Dated by the public family announcement.",
+      "source": "https://fastino.ai/blog/glide-decision-model-family"
+    },
+    {
+      "model": "P-Video-2-Pro-Replace",
+      "lab": "Pruna AI",
+      "date": "2026-11-05",
+      "tier": "specialty",
+      "note": "Hosted MiniMax H3 derivative that replaces up to two people using reference photos while retaining the original scene, timing, and audio.",
+      "source": "https://www.pruna.ai/p-video-2-pro-replace"
+    },
+    {
+      "model": "Lion-ER family (public release announcement)",
+      "lab": "Lion Rock AI Lab",
+      "date": "2026-11-04",
+      "tier": "open-weights",
+      "note": "Embodied visual reasoning family led by Lion-ER-35B-A3B, a mixture-of-experts model with about 3B active parameters. The release includes smaller 4B and 9B models. November 4 records the public announcement following October repository uploads.",
+      "source": "https://pandaily.com/china-merchants-lionrock-ai-lab-lion-er-35b-a3b-embodied-reasoning-model-open-source/"
+    },
+    {
+      "model": "Soniox STT v6",
+      "lab": "Soniox",
+      "date": "2026-11-03",
+      "tier": "specialty",
+      "note": "Real-time and asynchronous speech recognition models. The API can use the voice agent’s outgoing text as context and filter its speech from the user’s transcript.",
+      "source": "https://soniox.com/blog/soniox-stt-v6"
+    },
+    {
+      "model": "Apollo World (public unveiling)",
+      "lab": "Baidu",
+      "date": "2026-11-03",
+      "tier": "specialty",
+      "note": "Multimodal driving world model for closed-loop simulation with interactive traffic agents and simulated camera and lidar observations. Baidu unveiled it at its Apollo AI Day while using it internally for autonomous driving tests.",
+      "source": "https://www3.xinhuanet.com/tech/20261104/38e7bae3b4094da796b3f51e2252cefe/c.html"
+    },
+    {
+      "model": "LongCat-2.5 (general availability)",
+      "lab": "Meituan",
+      "date": "2026-11-02",
+      "tier": "flagship",
+      "note": "Production hosted release of the natively multimodal model for long-running agents and visual coding, following the September 25 preview. The platform changelog dates API availability to November 2.",
+      "source": "https://longcat.chat/platform/docs/ChangeLog.html"
+    },
+    {
+      "model": "Hume Audio Decisions",
+      "lab": "Hume AI",
+      "date": "2026-11-02",
+      "tier": "specialty",
+      "note": "Hosted audio decision model that returns probabilities over supplied answer choices about an audio clip, including non-speech cues.",
+      "source": "https://dev.hume.ai/audio-decisions/changelog/2026/11/2"
+    },
+    {
+      "model": "Eleven SFX v3 (general availability)",
+      "lab": "ElevenLabs",
+      "date": "2026-11-02",
+      "tier": "specialty",
+      "note": "Text-to-sound model with seamless looping and improved handling of compound prompts. Available to every workspace and through the API as eleven_text_to_sound_v3. This milestone follows the October 29 introduction.",
+      "source": "https://elevenlabs.io/docs/changelog/2026/11/2"
+    },
+    {
+      "model": "SenseNova 6.8 Flash (general availability)",
+      "lab": "SenseNova",
+      "date": "2026-11-02",
+      "tier": "mid",
+      "note": "SenseTime’s hosted multimodal model for office automation, sustained agent workflows, and design generation. Available in SenseNova Studio and via SenseNova Token Plan.",
+      "source": "https://www.sensetime.com/cn/news/sensenova-6-8-flash-release-20261103-1421"
+    },
+    {
+      "model": "Maya Transcribe",
+      "lab": "Maya Research",
+      "date": "2026-11-02",
+      "tier": "specialty",
+      "note": "Open-weight speech recognition checkpoint for Hindi and Hindi-English speech. Maya Research released the BF16 weights under Apache-2.0.",
+      "source": "https://huggingface.co/maya-research/maya-transcribe"
+    },
+    {
+      "model": "Eleven Realtime v1 Mini / Max (general availability)",
+      "lab": "ElevenLabs",
+      "date": "2026-11-02",
+      "tier": "specialty",
+      "note": "Hosted real-time voice models for conversational agents. ElevenLabs completed the rollout to every workspace after introducing the models on October 19.",
+      "source": "https://elevenlabs.io/docs/changelog/2026/11/2"
+    },
+    {
+      "model": "Drex Max v1 (open weights)",
+      "lab": "Nace AI",
+      "date": "2026-11-01",
+      "tier": "specialty",
+      "note": "Downloadable 27B decision model that accepts text, JSON, and images and returns probabilities over supplied choices. Weights use the Nace.AI Open RAIL-M license. The public weights followed an October 19 hosted launch.",
+      "source": "https://huggingface.co/nace-ai/drex-max-v1"
+    },
+    {
+      "model": "&Tutor v0.1",
+      "lab": "Humans&",
+      "date": "2026-10-30",
+      "tier": "specialty",
+      "note": "Hosted tutoring model designed to guide learners with questions and hints. Available through the humans& Agents API as ampersand-tutor-v0.1.",
+      "source": "https://tutor.humansand.ai/blog/model-card"
+    },
+    {
+      "model": "Maya 2 Native (checkpoint 1.0)",
+      "lab": "Maya Research",
+      "date": "2026-10-25",
+      "tier": "specialty",
+      "note": "Apache-2.0 streaming speech synthesis checkpoint for 11 Indian languages and English, with 20 built-in voices and zero-shot voice cloning.",
+      "source": "https://huggingface.co/maya-research/maya2-native"
+    },
+    {
+      "model": "Ampersand v0.1",
+      "lab": "Humans&",
+      "date": "2026-10-20",
+      "tier": "specialty",
+      "note": "Hosted GLM 5.3 post-train for group collaboration. The model can contribute a message, request a tool, or wait. It launched through the humans& Agents API.",
+      "source": "https://ampersand.humansand.ai/blog/model-card.html"
+    }
+  ],
+  "corrections": [
+    {
+      "before": {
+        "model": "Gemini 4 Carbon (limited preview)",
+        "lab": "Google",
+        "date": "2026-10-28",
+        "tier": "flagship",
+        "note": "Frontier model for long-horizon engineering, coding and cybersecurity. Google is initially rolling it out to selected cyber defenders and trusted Fairwind partners; broader product and developer access is forthcoming.",
+        "source": "https://blog.google/innovation-and-ai/models-and-research/gemini-models/introducing-gemini-4-carbon/"
+      },
+      "reason": "Google documented wider access on November 10 as a separate rollout milestone.",
+      "after": {
+        "model": "Gemini 4 Carbon (limited preview)",
+        "lab": "Google",
+        "date": "2026-10-28",
+        "tier": "flagship",
+        "note": "Frontier model for long-horizon engineering, coding, and cybersecurity. Initially rolled out to selected cyber defenders and trusted partners through Fairwind. Google opened wider developer and product access on November 10.",
+        "source": "https://blog.google/innovation-and-ai/models-and-research/gemini-models/introducing-gemini-4-carbon/"
+      }
+    }
+  ],
+  "exclusions": [
+    {
+      "candidate": "Claude Fable 5.2 on OpenRouter",
+      "reason": "Later distribution of the November 9 launch. Fable and Mythos are grouped under the shared model with separate access details.",
+      "sources": [
+        "https://www.anthropic.com/claude-fable-and-mythos-5-2",
+        "https://openrouter.ai/anthropic/claude-fable-5.2"
+      ]
+    },
+    {
+      "candidate": "LFM3 on OpenRouter and Cohere Embed 5 / Rerank 5 on OpenRouter",
+      "reason": "Additional hosting for models already represented in the timeline.",
+      "sources": [
+        "https://openrouter.ai/liquid/lfm3-1.7b",
+        "https://docs.cohere.com/v1/changelog/embed-rerank-v5-openrouter"
+      ]
+    },
+    {
+      "candidate": "Timestral in November coverage",
+      "reason": "Mistral dated the family launch October 15 and the timeline already records it.",
+      "sources": [
+        "https://mistral.ai/news/timestral/"
+      ]
+    },
+    {
+      "candidate": "Qoduck and Crouton Alpha",
+      "reason": "Stealth listings with no verified lab attribution.",
+      "sources": [
+        "https://evalmap.ai/releases/"
+      ]
+    },
+    {
+      "candidate": "GPT-6.2, Qwen4, Inkling 2 Small weights, and post-trained ERNIE 5.5 Flash",
+      "reason": "Rumors, planned releases, or unconfirmed access in the sources checked. Existing hosted Inkling and ERNIE base-weight milestones remain recorded.",
+      "sources": [
+        "https://evalmap.ai/releases/",
+        "https://developers.openai.com/api/docs/changelog",
+        "https://thinkingmachines.ai/news/inkling-2-small/",
+        "https://huggingface.co/baidu/ERNIE-5.5-Flash-Base"
+      ]
+    },
+    {
+      "candidate": "Agnes 2.5 Pro Theta and Micius-Flash-Preview",
+      "reason": "Model or benchmark pages were available, but the sources checked did not establish a dated launch or first public checkpoint for these candidates.",
+      "sources": [
+        "https://artificialanalysis.ai/models/agnes-2-5-pro-theta/",
+        "https://zhiman.cn/models/micius",
+        "https://arxiv.org/abs/2611.10015"
+      ]
+    },
+    {
+      "candidate": "Doubao Seed Evolving November snapshot",
+      "reason": "Benchmark coverage identifies a November configuration. The vendor update retained the existing model ID and the date of public access to a distinct checkpoint was not established.",
+      "sources": [
+        "https://epoch.ai/models/doubao-seed-evolving-nov-2026",
+        "https://evalmap.ai/releases/"
+      ]
+    },
+    {
+      "candidate": "Ampersand v0.1 on Vercel AI Gateway",
+      "reason": "Vercel added hosting November 6. The original model launched October 20 through the humans& Agents API.",
+      "sources": [
+        "https://ampersand.humansand.ai/blog/model-card.html",
+        "https://vercel.com/changelog/humans-and-ampersand-now-available-on-ai-gateway"
+      ]
+    }
+  ],
+  "sourceSweep": [
+    {
+      "lab": "November 6–10 release cross-check",
+      "sourceURLs": [
+        "https://theagenticweekly.com/models/releases/2026-11",
+        "https://www.llm-releases.com/",
+        "https://blog.jiufeng.ai/releases",
+        "https://outyet.ai/",
+        "https://evalmap.ai/releases/",
+        "https://huggingface.co/MiniMaxAI/MiniMax-H3-Image/blob/main/LICENSE",
+        "https://blogs.nvidia.com/blog/korea-secure-agentic-ai/",
+        "https://www.kakaocorp.com/page/detail/12193"
+      ],
+      "result": "Compared current release trackers, then checked publisher announcements, model cards, and hosting changelogs. Used original launch dates when tracker or distributor dates differed."
+    },
+    {
+      "lab": "November 1–5 and earlier gap check",
+      "sourceURLs": [
+        "https://csuite.so/blog/ai-models-roundup-november-2026",
+        "https://noometry.com/model-releases",
+        "https://huggingface.co/blog",
+        "https://vercel.com/changelog",
+        "https://developers.openai.com/api/docs/changelog",
+        "https://ai.google.dev/gemini-api/docs/changelog",
+        "https://elevenlabs.io/blog/sound-effects-v3",
+        "https://www.startrise.io/models/lionrock/",
+        "https://pandaily.com/china-merchants-lionrock-ai-lab-lion-er-35b-a3b-embodied-reasoning-model-open-source/",
+        "https://huggingface.co/maya-research/maya-transcribe/commits/main",
+        "https://huggingface.co/cmriat/lion-ER-35B-A3B",
+        "https://www.nace.ai/blog/introducing-drex-max"
+      ],
+      "result": "Compared candidates with existing rows and added sourced milestones missing from the prior sweep. Kept distinct preview, public weights, and general availability events when documented."
+    }
+  ]
+}

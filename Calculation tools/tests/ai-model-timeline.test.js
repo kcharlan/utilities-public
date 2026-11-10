@@ -284,8 +284,8 @@ test('static header metadata and initial chart domain cover the dataset', () => 
   assert.match(html, new RegExp(`<span data-lab-count>${labs.size}<\\/span>`));
   const latestLabel = new Date(`${latest}T00:00:00Z`).toLocaleDateString('en-US', {timeZone:'UTC', month:'long', day:'numeric', year:'numeric'});
   assert.ok(html.includes(`<span data-latest-date>${latestLabel}</span>`));
-  assert.equal((html.match(/· checked November 6, 2026 ·/g) || []).length, 1);
-  assert.equal((html.match(/Verification checked November 6, 2026/g) || []).length, 1);
+  assert.equal((html.match(/· checked November 10, 2026 ·/g) || []).length, 1);
+  assert.equal((html.match(/Verification checked November 10, 2026/g) || []).length, 1);
   // Proportional range padding replaces the former fixed ±15-day x0 domain,
   // so assert the core-driven domain instead of its retired literal expression.
   const script = extractInlineScript();
@@ -434,16 +434,16 @@ const {analyze, render} = require('../scripts/timeline-analysis.cjs');
 
 test('narrative statistics match the expanded dataset', () => {
   const stats = analyze(data);
-  assert.equal(stats.total, 574);
-  assert.equal(new Set(data.map(row => row.lab)).size, 119);
-  assert.equal(stats.sameDay, 633);
-  assert.equal(stats.withinTwo, 2587);
-  assert.deepEqual(stats.years, {'2024': 88, '2025': 134, '2026': 352});
-  assert.deepEqual(stats.weekdays, {'0':14, '1':91, '2':115, '3':117, '4':150, '5':74, '6':13});
-  assert.equal(stats.months['2026-10'], 127);
-  assert.equal(stats.months['2026-11'], 18);
+  assert.equal(stats.total, 601);
+  assert.equal(new Set(data.map(row => row.lab)).size, 128);
+  assert.equal(stats.sameDay, 713);
+  assert.equal(stats.withinTwo, 2952);
+  assert.deepEqual(stats.years, {'2024': 88, '2025': 134, '2026': 379});
+  assert.deepEqual(stats.weekdays, {'0':17, '1':101, '2':122, '3':118, '4':153, '5':77, '6':13});
+  assert.equal(stats.months['2026-10'], 130);
+  assert.equal(stats.months['2026-11'], 42);
   assert.equal(stats.cadence.OpenAI.major, 52);
-  assert.equal(stats.cadence.Google.major, 48);
+  assert.equal(stats.cadence.Google.major, 38.5);
   assert.deepEqual(stats.moonshotLags, [14,90,50,31,38,64,4,16,10,25,25]);
   assert.ok(html.includes(render(stats)), 'published findings equal reproducible current analysis');
 });
@@ -467,9 +467,11 @@ test('analysis handles same-day pairs, medians, and missing prior releases', () 
 
 test('recent-release summary follows the latest dated rows', () => {
   const summary = render(analyze(data));
-  assert.match(summary, /Gemini Omni 1\.2 Flash \(November 5\)/);
-  assert.match(summary, /Kimi K3\.1 Pro \(open weights\) \(November 4\)/);
-  assert.match(summary, /Hy4 \(hosted release\) \(November 3\)/);
+  assert.match(summary, /Gemini 4 Carbon \(general availability\) \(November 10\)/);
+  assert.match(summary, /Claude Fable 5\.2 \/ Mythos 5\.2 \(November 9\)/);
+  assert.match(summary, /Shizuku-Duplex \(research announcement\) \(November 8\)/);
+  assert.doesNotMatch(summary, /Arete-27B \(November 6\)/);
+  assert.doesNotMatch(summary, /Gemini Omni 1\.2 Flash \(November 5\)/);
   assert.doesNotMatch(summary, /Hydrogen-1\.0 \(November 2\)/);
   assert.doesNotMatch(summary, /Mistral Large 4 \(open weights\) \(October 29\)/);
   assert.doesNotMatch(summary, /Kimi K3\.1 Pro \(October 23\)/);
@@ -559,8 +561,13 @@ test('latest additions retain preview, weight-release, and announcement date dis
   assert.equal(get('Hy-Nomas')?.date, '2026-10-23');
   assert.equal(get('Phonon 31m / 40m family (open weights)')?.date, '2026-10-20');
   assert.match(get('Phonon 31m / 40m family (open weights)')?.note || '', /40m variants use CC BY-NC/);
-  assert.ok(!data.some(row => /Fable 5\.2/.test(row.model)));
+  const fable = get('Claude Fable 5.2 / Mythos 5.2');
+  assert.equal(fable?.date, '2026-11-09');
+  assert.match(fable.note, /Fable is broadly available.*Mythos has restricted access/);
   assert.match(get('Gemini 4 Carbon (limited preview)')?.note || '', /trusted/);
+  const carbonGA = get('Gemini 4 Carbon (general availability)');
+  assert.equal(carbonGA?.date, '2026-11-10');
+  assert.match(carbonGA.note, /after the October 28 Fairwind rollout/);
 });
 
 test('GPT-6.1 Terra appears on its launch date with its official source', () => {
