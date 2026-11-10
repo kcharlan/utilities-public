@@ -53,6 +53,8 @@ export function sensible(run,prof={}){
     if(f>floor){floor=f;floorDist=d;}
   }
   let preferred=column?(column.targetExit+(prof.columnOffset?.(column)??0)):-Infinity;
+  const lane=prof.rideLanes===false?null:w.winds.find(z=>z.wind>0&&p.x>=z.x0-60&&p.x<=z.x1);
+  if(lane)preferred=(lane.y0+lane.y1)/2;
   // Going for a pickup overrides the safety margins near it: that is the risk being bought.
   if(prof.pickups){
     const found=w.pickups.find(k=>!run.collected.has(k.id)&&k.x+k.r>p.x&&k.x-p.x<(prof.pickupLook??140)&&prof.pickups(k));

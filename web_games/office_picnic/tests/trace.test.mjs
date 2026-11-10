@@ -43,3 +43,13 @@ test('trace verifies net time separately from raw finish ticks',()=>{
   assert.throws(()=>replayTrace({...trace,finishNetTicks:trace.finishNetTicks+1}),/does not match/);
   assert.throws(()=>replayTrace({...trace,finishNetTicks:trace.finishTicks}),/does not match/);
 });
+test('Standard trace replays a rooftop respawn',()=>{
+  const run=createRun('standard'),trace=createTrace(run);let forced=false,respawnCheckpoint=0;
+  for(let n=0;n<50000&&run.status!=='finished';n++){
+    const held=run.checkpoint.x>0&&!forced?false:sensible(run,{...REFERENCE,pickups:()=>true});
+    recordInput(trace,held);stepRun(run,held);
+    if(run.crashes>0&&!forced){forced=true;respawnCheckpoint=run.checkpoint.x;}
+  }
+  assert.ok(run.crashes>0);assert.ok(respawnCheckpoint>0);assert.equal(run.status,'finished');
+  finishTrace(trace,run);assert.deepEqual(replayTrace(trace).crashLog,run.crashLog);
+});

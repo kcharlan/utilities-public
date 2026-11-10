@@ -26,8 +26,29 @@
 - A squeeze is one encounter with two collision bodies. Key its warning by the pair, but retain each moving body's own arrival and clearance in proof; the visible label also belongs to the shared window rather than both sprites.
 - Validate stored tier IDs as strings before property lookup: JavaScript coerces an array such as `["rush"]` into a valid property key.
 - Carry an encounter's identity through every consumer of an emitted warning. Test both members' actual trigger thresholds and a respawn, and use the same live moving geometry for the warning and its marker.
+- A warning effect must keep the emitted encounter key even when a different hazard is the nearest marker. Effects also need a bounded presentation clock after the simulation finishes; otherwise landing and best cues never expire.
+- A squeeze key identifies a pair, not one collision body. Derive its warning cue and marker from the live shared passage, and exercise an actual emitted warning so a lookup cannot silently highlight just the first body.
 - A storage migration needs a best-effort write as well as a readable in-memory result. Keep the old key intact and exercise a denied write separately from successful persistence.
 - Transient HUD feedback keyed to a simulation clock must reset with that clock: a Nonstop restart resets world ticks, so clear the previous throw's reward message on respawn.
 - Validate authored pickup coverage before pricing the generated world: placements that lack a matching hazard are skipped during world construction and otherwise disappear from every pricing gate.
 - Before an explicit CLI exit, wait for queued stdout writes: a delayed pipe reader can otherwise receive truncated JSON even when the process exits successfully.
 - A quiet Nonstop restart must rebase a visible impact notice's remaining lifetime when world ticks reset. Keeping the old deadline prolongs it into the new throw; hiding it immediately loses the intended feedback. Exercise the real respawn and expiry boundary.
+- Checkpoint placement must account for the entire moving hazard footprint before saving a respawn position. Prove the next crossing at multiple hazard phases and test both held and released inputs immediately after respawn.
+- Simulated pilots cache observation error for a hazard. With rooftop retries that context may never change, producing hundreds of identical failed attempts; resample the observation after an impact while preserving learned margins so a new attempt can adapt.
+- A rooftop just before a district boundary can remain the active checkpoint after entering the next district. Restore the checkpoint's district with the plane so re-entry emits district guidance again, while the hazard clock continues.
+- When a new air feature must follow a safe introduction, test the whole pilot family after removing the entire column, including its wind. An initial raised-roof layout admitted slower pilots without the feature; a later flock after the familiar washer made the dependency measurable while leaving the first encounters familiar.
+- Course calibration must cover tier timing and adjacent encounters as well as a single clean route. Later-flock widths and heights that worked in Casual collided with moving hazards or squeezes in Overtime; varying both the flock geometry and squeeze center recovered all perturbed district trials.
+- A warning can arrive before the district containing its hazard. Keep the early warning actionable and introduce the new tier element when the player enters its district; a respawn should not repeat the introduction. Attribute teaching-crossing crashes by logged position, including impacts whose gap label is unknown.
+- A first-sighting notice must have one trigger. Introducing a squeeze at district entry and again at its later warning duplicated the same banner on clean flights; test complete routes and retries as well as individual event handlers.
+
+## 2026-11-09 — Measuring optional wind lanes
+
+Judge a lane from paired checkpoint runs at the same hazard-clock offsets, including time spent inside its band. A whole-flight time comparison can change with moving-hazard phase even when neither pilot enters the lane. Keep wind-zone reporting separate from the lift-column source: otherwise a lane over a vent suppresses lift-entry and vent feedback. With the 8 m/s Casual lanes, the two median savings were 7.12 s and 5.07 s, with blind occupancy 1.82 s and 0.20 s. A candidate Overtime lane passed the paired study but failed the unchanged route proof, so it was not retained.
+
+## 2026-11-09 — Timing and pilot studies
+
+A delayed-input window measured from a checkpoint can miss height-judgment difficulty and can favor a layout that traps arriving pilots. Use those windows for fairness floors and compare them with complete-flight crash distributions. A lane can also change the hazard clock and pickup approach: verify the paired lane, actual-entry continuation, full pilot bands and pickup pricing together after each final course adjustment.
+
+- A notice deadline can outlive the control phase it describes and obscure the landing close-up. Exercise the actual presentation transition, including the DOM notice, at narrow landscape sizes and both motion settings.
+- Nearby air columns can place their labels at the same screen height on portrait displays. Lay out labels against the other labels in the frame and retain every cue; check the resulting bounds at narrow sizes.
+- Air guidance must combine the forces at the plane with directions to nearby lanes; an authored headwind can overlap the horizontal span of an out-of-reach tailwind. Fingerprints must include shared course geometry as well as tier and physics configuration. Trigger landing feedback while its canvas remains visible, and exercise the real transition in both motion settings.

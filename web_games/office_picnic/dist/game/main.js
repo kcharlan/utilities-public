@@ -7,13 +7,15 @@ import {airAt} from './world.js';
 import {flightGuidance,noticeMessages} from './guidance.js';
 import {Renderer} from './render.js';
 import {Sound,dispatchRunEvents} from './audio.js';
-import {consumeTime,rebaseNoticeDeadline,formatTime,formatDistance,formatSpeed,formatFeet} from './session.js';
+import {createEffects,spawnEffects,stepEffects,advanceFinishedEffects} from './effects.js';
+import {dialogTabTarget,shouldRetry,consumeTime,rebaseNoticeDeadline,formatTime,formatDistance,formatSpeed,formatFeet} from './session.js';
 import {loadRecords,finishResult,savePreferences,titleBestText} from './records.js';
 const $=id=>document.getElementById(id),canvas=$('flight'),renderer=new Renderer(canvas);
 const tracing=new URLSearchParams(location.search).has('trace');let trace=null;
 let storage;try{storage=window.localStorage;}catch{storage=null;}
 let records=loadRecords(storage),sound=new Sound(records.muted),run=null,paused=false,held=false,last=0,clock={accumulator:0},noticeEnd=0,lastDistrict=-1,lastVent=null,lastVentActive=false,resultShown=false,rewardEnd=0;
-const reduced=matchMedia('(prefers-reduced-motion: reduce)');reduced.addEventListener('change',()=>renderer.reduced=reduced.matches);
+let effects=createEffects(),effectClock={accumulator:0};
+const reduced=matchMedia('(prefers-reduced-motion: reduce)');reduced.addEventListener('change',()=>{renderer.reduced=reduced.matches;if(reduced.matches){effects.particles.length=0;effects.bump=0;}});
 function titleBests(){
   for(const tier of Object.values(TIERS)){
     $(`best-${tier.id}`).textContent=titleBestText(records,tier.id);
@@ -21,26 +23,29 @@ function titleBests(){
 }
 function muteUI(){$('mute').textContent=records.muted?'Sound off':'Sound on';$('mute').setAttribute('aria-pressed',String(records.muted));$('mute').setAttribute('aria-label',records.muted?'Unmute sound':'Mute sound');}
 function notice(text,seconds=6){$('notice').textContent=text;$('notice').hidden=false;noticeEnd=(run?.worldTicks||0)+seconds*60;}
-function setHeld(value){if(held!==value&&run&&!paused&&run.status==='flying')sound.event(value?'pitch':'release');held=value;}
+function feedback(name){sound.event(name);if(run)spawnEffects(effects,run,[name],{reduced:reduced.matches});}
+function setHeld(value){if(held!==value&&run&&!paused&&run.status==='flying')feedback(value?'pitch':'release');held=value;}
 function clearTraceDownload(){
   const link=$('trace-download');
   if(link){URL.revokeObjectURL(link.href);link.remove();}
 }
 const worlds=new Map();
 function modeText(world,mode){return `${world.tier.name} · ${mode==='standard'?`Standard · impacts +${world.rules.crashPenaltyTicks/60}s`:'Nonstop · restart from the office'}`;}
+function modalOpen(open){for(const id of ['flight','hud','route-hud','flight-hud'])$(id).inert=open;}
 function start(mode){
+  modalOpen(false);
   clearTraceDownload();
   let world=worlds.get(records.tier);if(!world){world=buildWorld(undefined,TIERS[records.tier]);worlds.set(records.tier,world);}
-  run=createRun(mode,world);trace=tracing?createTrace(run):null;paused=false;held=false;clock.accumulator=0;last=performance.now();lastDistrict=-1;lastVent=null;lastVentActive=false;resultShown=false;rewardEnd=0;sound.district=0;sound.setPaused(false);sound.unlock().then(()=>sound.event('launch'));
+  run=createRun(mode,world);effects=createEffects();effectClock.accumulator=0;spawnEffects(effects,run,['launch'],{reduced:reduced.matches});trace=tracing?createTrace(run):null;paused=false;held=false;clock.accumulator=0;last=performance.now();lastDistrict=-1;lastVent=null;lastVentActive=false;resultShown=false;rewardEnd=0;sound.district=0;sound.setPaused(false);sound.unlock().then(()=>sound.event('launch'));
   for(const id of ['title-screen','pause-screen','result-screen'])$(id).hidden=true;
   for(const id of ['hud','route-hud','flight-hud'])$(id).hidden=false;
   $('district-dots').replaceChildren(...Array.from({length:5},()=>document.createElement('i')));
   $('run-mode').textContent=modeText(world,mode);$('pause-mode').textContent=modeText(world,mode);
   $('notice').hidden=true;canvas.focus({preventScroll:true});if(world.tier.prompts!=='quiet')notice('Hold to climb over the first flock. Release to dive and regain speed.',8);updateHUD();
 }
-function pause(){if(!run||run.status==='finished'||paused)return;setHeld(false);paused=true;clock.accumulator=0;sound.event('pause');sound.setPaused(true);$('pause-screen').hidden=false;$('resume').focus();}
-function resume(){if(!run)return;paused=false;held=false;clock.accumulator=0;last=performance.now();sound.setPaused(false);sound.unlock().then(()=>sound.event('resume'));$('pause-screen').hidden=true;canvas.focus({preventScroll:true});}
-function home(){clearTraceDownload();held=false;paused=true;run=null;sound.setPaused(true);for(const id of ['pause-screen','result-screen','hud','route-hud','flight-hud','notice'])$(id).hidden=true;$('title-screen').hidden=false;titleBests();$('start').focus();}
+function pause(){if(!run||run.status==='finished'||paused)return;setHeld(false);paused=true;clock.accumulator=0;sound.event('pause');sound.setPaused(true);$('pause-screen').hidden=false;modalOpen(true);$('resume').focus();}
+function resume(){if(!run)return;paused=false;held=false;clock.accumulator=0;last=performance.now();sound.setPaused(false);sound.unlock().then(()=>sound.event('resume'));$('pause-screen').hidden=true;modalOpen(false);canvas.focus({preventScroll:true});}
+function home(){modalOpen(false);clearTraceDownload();held=false;paused=true;run=null;sound.setPaused(true);for(const id of ['pause-screen','result-screen','hud','route-hud','flight-hud','notice'])$(id).hidden=true;$('title-screen').hidden=false;titleBests();$('start').focus();}
 function finish(){
   if(resultShown)return;
   resultShown=true;held=false;
@@ -59,20 +64,24 @@ function finish(){
   $('result-best').textContent=`${run.mode==='standard'?'Standard':'Nonstop'} · ${!previous||seconds<previous?'Your best flight.':`Best ${formatTime(previous)}`}`;
   $('notice').hidden=true;
   if(trace){finishTrace(trace,run);const link=document.createElement('a');link.textContent='Download flight trace';link.download='office-picnic-trace.json';link.href=URL.createObjectURL(new Blob([JSON.stringify(trace)],{type:'application/json'}));link.id='trace-download';clearTraceDownload();$('result-screen').querySelector('.modal').append(link);}
+  if(!previous||seconds<previous)feedback('best');
   // Let the visible landing settle before revealing the invitation card.
-  setTimeout(()=>{if(run?.status==='finished'&&resultShown){$('result-screen').hidden=false;$('replay').focus();if(!previous||seconds<previous)sound.event('best');}},reduced.matches?300:1400);
+  setTimeout(()=>{if(run?.status==='finished'&&resultShown){$('result-screen').hidden=false;modalOpen(true);$('replay').focus();}},reduced.matches?300:1400);
 }
 function tick(){
   run.previous={x:run.plane.x,y:run.plane.y};if(trace)recordInput(trace,held);const before=run.worldTicks;stepRun(run,held);noticeEnd=rebaseNoticeDeadline(noticeEnd,before,run.worldTicks);sound.district=run.district;
   dispatchRunEvents(sound,run);
+  stepEffects(effects);if(run.events.length)spawnEffects(effects,run,run.events,{reduced:reduced.matches});
   if(run.events.includes('impact'))held=false;
   if(run.mode==='nonstop'&&run.events.includes('respawn')){rewardEnd=0;$('pickup-reward').hidden=true;$('pickup-reward').textContent='';}
   if(run.events.includes('pickup')){rewardEnd=run.worldTicks+150;$('pickup-reward').textContent=`−${run.pickupReward/60}s pickup`;}
   const messages=noticeMessages(run);
+  if(run.previous.x<=run.world.finishStart&&run.plane.x>run.world.finishStart)messages.push('The park. Release to descend home.');
   if(messages.length)notice(messages.join(' · '),8);
+  if(run.status==='landing')$('notice').hidden=true;
   const air=airAt(run.world,run.plane,run.worldTicks/60),source=air.source;
   const ventActive=source?.type===1&&air.activity>.35;
-  if(ventActive&&(lastVent!==source||!lastVentActive))sound.event('vent');lastVent=source;lastVentActive=ventActive;
+  if(ventActive&&(lastVent!==source||!lastVentActive))feedback('vent');lastVent=source;lastVentActive=ventActive;
   if(run.status==='finished')finish();
 }
 function updateHUD(){
@@ -87,7 +96,7 @@ function updateHUD(){
 }
 function frame(now){
   const delta=last?(now-last)/1000:0;last=now;
-  if(run){consumeTime(clock,delta,paused||run.status==='finished',tick);renderer.draw(run,held,clock.accumulator*60);if(run.worldTicks%6===0||paused||run.status==='finished')updateHUD();}
+  if(run){if(run.status==='finished')advanceFinishedEffects(effectClock,delta,paused,run,effects);else consumeTime(clock,delta,paused,tick);renderer.draw(run,held,clock.accumulator*60,effects);if(run.worldTicks%6===0||paused||run.status==='finished')updateHUD();}
   requestAnimationFrame(frame);
 }
 $('start').onclick=()=>start('standard');$('nonstop').onclick=()=>start('nonstop');$('pause').onclick=pause;$('resume').onclick=resume;$('restart').onclick=()=>start(run.mode);$('home').onclick=home;$('result-home').onclick=home;$('replay').onclick=()=>start(run.mode);
@@ -95,6 +104,11 @@ $('mute').onclick=()=>{records=savePreferences(storage,records,{muted:!records.m
 canvas.addEventListener('pointerdown',e=>{if(e.button!==0||!run||paused||run.status!=='flying')return;e.preventDefault();canvas.setPointerCapture(e.pointerId);setHeld(true);sound.unlock();});
 canvas.addEventListener('pointerup',()=>setHeld(false));canvas.addEventListener('pointercancel',pause);canvas.addEventListener('lostpointercapture',()=>setHeld(false));
 document.addEventListener('keydown',e=>{
+  if(e.code==='Tab'){
+    const dialog=['pause-screen','result-screen'].map(id=>document.getElementById(id)).find(el=>!el.hidden);
+    if(dialog){const items=[...dialog.querySelectorAll('button:not([disabled]),a[href]')],target=dialogTabTarget(items.indexOf(document.activeElement),items.length,e.shiftKey);if(target!==null){e.preventDefault();items[target].focus();}return;}
+  }
+  if(e.code==='KeyR'&&!e.repeat&&run&&shouldRetry({mode:run.mode,paused,finished:!$('result-screen').hidden})){e.preventDefault();start(run.mode);return;}
   if(e.code==='Space'&&run&&!paused&&run.status==='flying'&&e.target.tagName!=='BUTTON'){e.preventDefault();if(!e.repeat)setHeld(true);}
   if(e.code==='Escape'||e.code==='KeyP'){e.preventDefault();if(paused&&run)resume();else pause();}
   if(e.code==='KeyM'&&!e.repeat)$('mute').click();
@@ -113,4 +127,4 @@ for(const tier of Object.values(TIERS)){
   copy.append(name,detail,thresholds,best);label.append(radio,copy);$('tier-picker').append(label);
   radio.addEventListener('change',()=>{if(radio.checked){records=savePreferences(storage,records,{tier:tier.id});titleBests();}});
 }
-titleBests();muteUI();requestAnimationFrame(frame);
+titleBests();muteUI();$('start').focus();requestAnimationFrame(frame);

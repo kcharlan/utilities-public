@@ -90,9 +90,10 @@ test('playtest check fails when an authored pickup cannot be built',async()=>{
   try{
     await cp(new URL('../dist/',import.meta.url),join(root,'dist'),{recursive:true});
     await cp(new URL('../scripts/',import.meta.url),join(root,'scripts'),{recursive:true});
+    await cp(new URL('../tests/',import.meta.url),join(root,'tests'),{recursive:true});
     await cp(new URL('../package.json',import.meta.url),join(root,'package.json'));
     const path=join(root,'dist/game/tiers.js'),source=await readFile(path,'utf8');
-    const changed=source.replace("P(2,2,'underWasher',6,9)","P(2,1,'underWasher',6,9)");assert.notEqual(changed,source);await writeFile(path,changed);
+    const changed=source.replace("P(2,2,'underWasher',6,3)","P(2,1,'underWasher',6,3)");assert.notEqual(changed,source);await writeFile(path,changed);
     await assert.rejects(promisify(execFile)(process.execPath,['scripts/playtest.mjs','--tier','casual','--check'],{cwd:root}),error=>error.code===1&&error.stdout.includes('FAIL casual pickup coverage'));
   }finally{await rm(root,{recursive:true,force:true});}
 });

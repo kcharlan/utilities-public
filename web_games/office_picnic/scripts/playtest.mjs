@@ -1,4 +1,6 @@
 import {pricePickup,pickupMenu,pickupCoverage,menuSampleSize} from './pickup-study.mjs';
+import {spawnSync} from 'node:child_process';
+import {fileURLToPath} from 'node:url';
 import {MEDALS} from '../dist/game/medals.js';
 import {deriveMedals,evaluate,medalGates} from './medals.mjs';
 import {TIERS} from '../dist/game/tiers.js';
@@ -52,6 +54,14 @@ if(menu){
 }
 const out={},gates=[];
 const gate=(name,pass)=>gates.push({name,pass});
+if(check){
+  const difficulty=spawnSync(process.execPath,['--test',fileURLToPath(new URL('../tests/difficulty.test.mjs',import.meta.url))],{encoding:'utf8'});
+  gate('difficulty ramp, fairness, pilots and lanes',difficulty.status===0);
+  if(difficulty.status!==0)console.error(difficulty.stdout,difficulty.stderr);
+  const course=spawnSync(process.execPath,['--test',fileURLToPath(new URL('../tests/course.test.mjs',import.meta.url))],{encoding:'utf8'});
+  gate('course introduction and ablation',course.status===0);
+  if(course.status!==0)console.error(course.stdout,course.stderr);
+}
 for(const [id,tier] of Object.entries(TIERS)){
   if(selected&&selected!==id)continue;
   const world=buildWorld(undefined,tier),row={};

@@ -1,4 +1,4 @@
-import {airAt,hazardBox,hazardAdvice} from './world.js';
+import {airAt,hazardBox,hazardAdvice,upcomingHazard} from './world.js';
 import {formatVerticalMotion} from './session.js';
 export function flightGuidance(run,held){
   const p=run.plane,time=run.worldTicks/60,air=airAt(run.world,p,time);
@@ -22,23 +22,36 @@ export function flightGuidance(run,held){
   }
   if(p.speed<16)instruction='Build speed · release';
   if(p.stalled)instruction='Release to recover';
-  const names=['AC · upward push',air.activity>.35?'Steam burst · upward push':'Vent lull · little push', 'Roof heat · gentle upward push','Tailwind · forward + upward push',air.activity<.45?'Thermal · upward push fading':'Thermal · upward push','Headwind · slows you'];
+  const names=['AC · upward push',air.activity>.35?'Steam burst · upward push':'Vent lull · little push', 'Roof heat · gentle upward push','Wind column · upward push',air.activity<.45?'Thermal · upward push fading':'Thermal · upward push','Headwind · slows you'];
   let motionLabel=formatVerticalMotion(p.vy);
   if(run.status==='landing'){instruction='Landing · no input needed';motionLabel='Final approach';}
   if(run.status==='finished'){instruction='Landed';motionLabel='At the picnic';}
-  return {instruction,airLabel:air.source?names[air.source.type]:'Still air',motionLabel,air,hazard};
+  const lane=run.world.winds.find(z=>z.wind>0&&p.x>=z.x0-60&&p.x<=z.x1&&(p.y<z.y0||p.y>z.y1));
+  const lift=air.source&&air.source.type!==5?names[air.source.type]:null;
+  const compactLift=['AC ↑',air.activity>.35?'Steam burst ↑':'Vent lull','Roof heat ↑','Wind column ↑',air.activity<.45?'Thermal fading':'Thermal ↑'];
+  const wind=air.wind>0?'Tailwind':air.wind<0?'Headwind':null;
+  const current=wind&&lift?`${wind} · ${compactLift[air.source.type]}`:wind?(air.wind>0?'Tailwind · forward push':'Headwind · slows you'):lift;
+  const airLabel=lane?[current,`Tailwind lane ${p.y<lane.y0?'above':'below'}`].filter(Boolean).join(' · '):current??'Still air';
+  return {instruction,airLabel,motionLabel,air,hazard};
 }
 
 export function noticeMessages(run){
   const messages=[],prompts=run.world.tier.prompts;
+  const introduced=run.introducedElements??=new Set();
   if(run.events.includes('impact'))messages.push(run.cause);
-  if(run.events.includes('respawn')&&prompts!=='quiet')messages.push(run.mode==='standard'?'Back at the last rooftop. Build height for the flock.':'A fresh throw. Climb over the first flock.');
-  if(run.events.includes('checkpoint')){
+  if(run.events.includes('respawn')&&prompts!=='quiet'){const hazard=upcomingHazard(run.world,run.plane.x);messages.push(run.mode==='standard'?`Back at the last rooftop.${hazard&&!hazard.firstSqueeze?' '+hazardAdvice(hazard):''}`:'A fresh throw. Climb over the first flock.');}
+  if(run.events.includes('district')){
     const district=run.world.districts[run.district];
-    let message=prompts==='full'?`${district.name}. ${run.mode==='standard'?'Rooftop checkpoint saved. ':''}${district.tip}`:district.name;
-    if(run.world.winds.some(z=>z.district===run.district&&z.wind<0))message+=' · Headwinds ahead';
+    let message=prompts==='full'?`${district.name}. ${district.tip}`:district.name;
+    if(run.world.winds.some(z=>z.district===run.district&&z.wind<0)&&!introduced.has('headwind')){message+=' · Headwinds ahead';introduced.add('headwind');}
     messages.push(message);
+    const moving=run.world.hazards.find(h=>h.firstMoving&&h.district===run.district);
+    if(moving&&!introduced.has('moving')){messages.push(`Moving ${moving.kind==='pigeon'?'flock':'washer'} · watch its rhythm`);introduced.add('moving');}
   }
-  if(prompts!=='quiet')for(const hazard of run.warningHazards||[])messages.push(hazardAdvice(hazard));
+  for(const hazard of run.warningHazards||[]){
+    if(hazard.firstSqueeze){
+      if(!introduced.has('squeeze')){messages.push(hazardAdvice(hazard));introduced.add('squeeze');}
+    }else if(prompts!=='quiet')messages.push(hazardAdvice(hazard));
+  }
   return messages;
 }

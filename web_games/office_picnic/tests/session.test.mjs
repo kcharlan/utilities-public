@@ -45,8 +45,26 @@ test('quiet Nonstop impact notice expires on the rebased clock after a real rest
     deadline=helpers.rebaseNoticeDeadline(deadline,before,run.worldTicks);
   }
   assert.equal(run.worldTicks,0);assert.deepEqual(noticeMessages(run),[]);
-  assert.equal(deadline,444);
-  for(let i=0;i<444;i++)stepRun(run,true);
-  assert.equal(run.worldTicks,444);assert.ok(run.worldTicks<=deadline);
+  assert.equal(deadline,456);
+  for(let i=0;i<456;i++)stepRun(run,true);
+  assert.equal(run.worldTicks,456);assert.ok(run.worldTicks<=deadline);
   stepRun(run,true);assert.ok(run.worldTicks>deadline);
+});
+test('retry is available only in safe states or Nonstop',()=>{
+  for(const mode of ['standard','nonstop'])for(const paused of [false,true])for(const finished of [false,true])for(const flying of [false,true])
+    assert.equal(helpers.shouldRetry({mode,paused,finished,flying}),mode==='nonstop'||paused||finished);
+});
+test('dialog tab navigation wraps at either end and includes optional links',()=>{
+  assert.equal(helpers.dialogTabTarget(0,3,true),2);
+  assert.equal(helpers.dialogTabTarget(2,3,false),0);
+  assert.equal(helpers.dialogTabTarget(1,3,false),null);
+  assert.equal(helpers.dialogTabTarget(2,4,false),null);
+  assert.equal(helpers.dialogTabTarget(3,4,false),0);
+});
+test('landing camera eases toward a centered bowl and preserves the default camera',()=>{
+  const p={x:100,y:100},base=helpers.cameraFor(390,844,p),focus={x:120,y:25};
+  assert.deepEqual(helpers.cameraFor(390,844,p,{focus,zoom:2,progress:0}),base);
+  const end=helpers.cameraFor(390,844,p,{focus,zoom:2,progress:1});
+  assert.equal((focus.x-end.left)*end.scale,195);
+  assert.ok(844-(focus.y-end.bottom)*end.verticalScale>300);
 });

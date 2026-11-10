@@ -1,7 +1,7 @@
 import {TIERS} from './tiers.js';
 import {medalFor} from './medals.js';
 import {formatTime} from './session.js';
-const KEY='office-picnic-v5',OLD_KEY='office-picnic-v4';
+const KEY='office-picnic-v6',OLD_KEY='office-picnic-v5';
 const modes=['standard','nonstop'];
 function validTier(id){return typeof id==='string'&&Object.hasOwn(TIERS,id);}
 function clean(raw){
@@ -19,7 +19,7 @@ export function loadRecords(storage){
     if(saved!==null&&saved!==undefined)return clean(JSON.parse(saved));
     const previous=storage?.getItem(OLD_KEY);
     if(previous===null||previous===undefined)return clean({});
-    const old=JSON.parse(previous),migrated=clean({best:{casual:old?.best},muted:old?.muted});
+    const old=JSON.parse(previous),migrated=clean({tier:old?.tier,muted:old?.muted});
     write(storage,migrated);
     return migrated;
   }catch{return clean({});}

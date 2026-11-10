@@ -1,4 +1,11 @@
 {
+  "bestStillAirRange": {
+    "entryHeight": 184,
+    "roofHeight": 73,
+    "policy": "hold below entry height while speed exceeds 11 m/s",
+    "speed": 32,
+    "range": 1389.7186665710517
+  },
   "units": "meters, seconds",
   "dt": 0.016666666666666666,
   "glideRatio": 1.570027527892878,

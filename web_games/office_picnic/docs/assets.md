@@ -28,6 +28,8 @@ Actual output is also **1254×1254**, **2×2 cells of 627×627**. Inspected silh
 
 Image dimensions/alpha are checked by the Node suite, and browser verification checks actual decoding. Air effects, skyline, park, picnic table and potato salad are code-drawn.
 
+The scenery uses the key art's dusk palette: warm horizon bands, hazy gradient skyline washes and lit windows lead into painted foreground buildings and park foliage. The solid roof edge stays crisp. Sky, building and tree washes, windows, and seeded paper grain are rendered to offscreen canvases on resize; the grain is composited beneath world labels. The caches are reused during flight and the display pixel ratio is capped at two.
+
 ## Window washer — `dist/assets/washer-v1.png`
 
 Generated as a compact gouache illustration, then edited with ImageGen to remove the remaining background/glow while preserving the worker, squeegee, bucket, harness, silver guard rails and ochre deck. The brief requested a recognizable adult with articulated limbs, a visible face, yellow hardhat and blue overalls; no giant enclosing cage, net, building, text or long suspension cables. Dusk peach lighting and blue-violet shadows match the key art.
