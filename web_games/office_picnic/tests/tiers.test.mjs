@@ -151,3 +151,8 @@ test('tier flock overrides apply only to selected districts',()=>{
     assert.equal(actual.y+actual.h,hazard.district===4?156:hazard.y+hazard.h,hazard.id);
   }
 });
+test('Rush retains authored geometry and wind zones',()=>{
+  const world=buildWorld(undefined,TIERS.rush);
+  const winds=world.winds.map(({x0,x1,y0,y1,wind,lift,district,teaching})=>({x0,x1,y0,y1,wind,lift,district,teaching}));
+  assert.equal(createHash('sha256').update(JSON.stringify({geometry:projection(world),winds})).digest('hex'),'e171184fc78ce8b17e1203ca83cd2e6da0eb4947391c5516a902f7703a3fd548');
+});

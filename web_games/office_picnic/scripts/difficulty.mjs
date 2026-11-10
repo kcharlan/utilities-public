@@ -25,7 +25,7 @@ export function crossingWindow(world,from,to,{offsets=CLOCK_OFFSETS,step=3,cap=9
   return Math.min(cap,worst)/60*1000;
 }
 export function difficulty(world){
-  const crossings=world.checkpoints.map((from,i)=>({id:from.id,district:from.district,window:crossingWindow(world,from,world.checkpoints[i+1]??{x:world.finishStart})}));
+  const crossings=world.checkpoints.map((from,i)=>({id:from.id,district:from.district,window:crossingWindow(world,from,world.checkpoints[i+1]??{x:world.length})}));
   return world.districts.map(d=>{
     const items=crossings.filter(c=>c.district===d.index),tightest=items.reduce((a,b)=>a.window<=b.window?a:b);
     return {district:d.index+1,feature:d.feature,tightest:tightest.id,window:tightest.window,belowCap:items.filter(c=>c.window<1500).length,crossings:items};

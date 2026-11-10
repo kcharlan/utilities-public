@@ -21,16 +21,19 @@ import {TIERS} from '../dist/game/tiers.js';
 import {playOnce,laneValue} from '../scripts/flight-study.mjs';
 
 for(const [id,tier] of Object.entries(TIERS)){
-  test(`${id}: windows form a fair district ramp`,()=>{
-    const rows=difficulty(buildWorld(undefined,tier));
-    const windows=rows.map(row=>row.window);
+  test(`${id}: crossing windows meet ramp and fairness gates`,()=>{
+    const rows=difficulty(buildWorld(undefined,tier)),windows=rows.map(row=>row.window);
+    assert.equal(rows.length,5);
+    for(const [i,row] of rows.entries()){
+      assert.equal(row.district,i+1);
+      assert.equal(row.crossings.length,6);
+      assert.ok(row.crossings.some(c=>c.id===row.tightest&&c.window===row.window));
+      assert.equal(row.belowCap,row.crossings.filter(c=>c.window<1500).length);
+    }
     if(id!=='casual'){
       assert.ok(windows.every(w=>w>=windows[4]-50),`${id} windows ${windows}`);
       assert.ok(windows[4]<=windows[0]*.6,`${id} windows ${windows}`);
     }
-  });
-  test(`${id}: crossing and teaching windows meet fairness floors`,()=>{
-    const rows=difficulty(buildWorld(undefined,tier));
     const floor={casual:400,rush:300,overtime:200}[id];
     for(const row of rows)for(const crossing of row.crossings){
       assert.ok(crossing.window>=floor,`${id} ${crossing.id}: ${crossing.window} ms`);
@@ -49,7 +52,7 @@ for(const [id,tier] of Object.entries(TIERS)){
     assert.ok(world.winds.filter(w=>w.wind>0).every(w=>w.wind<=12));
     const values=lanes.map(lane=>laneValue(world,lane));
     assert.ok(values.every(value=>value.qualifies),JSON.stringify(values));
-    assert.ok(values.length>=({casual:2,rush:0,overtime:1}[id]),`${id}: ${values.length} choice lanes`);
+    assert.ok(values.length>=({casual:2,rush:1,overtime:1}[id]),`${id}: ${values.length} choice lanes`);
   });
 }
 test('casual: no crossing is a novice wall',()=>{
@@ -59,4 +62,10 @@ test('casual: no crossing is a novice wall',()=>{
     counts[Math.max(0,index)]++;
   }
   assert.ok(Math.max(...counts)<=150,`crossing crashes per 150 runs: ${counts}`);
+});
+test('last crossing measures impacts beyond the final district',()=>{
+  const base=buildWorld(undefined,TIERS.casual);
+  const world={...base,buildings:[...base.buildings,{x:base.finishStart+30,y:400,w:20,h:100}]};
+  const row=difficulty(world).at(-1),last=row.crossings.find(c=>c.id==='5.5');
+  assert.equal(last.window,0,'the pilot cannot reach the finish without hitting the added roof');
 });
