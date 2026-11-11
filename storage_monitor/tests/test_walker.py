@@ -56,6 +56,23 @@ def test_rollup_is_bottom_up(monkeypatch, tmp_path):
     }
 
 
+def test_file_and_mtime_rollups(monkeypatch, tmp_path):
+    module = load(monkeypatch, tmp_path)
+    values = {"/r": 1, "/r/a": 2, "/r/a/b": 3}
+    assert module.rollup_subtree_totals(values, "/r")["/r"] == 6
+    assert module.rollup_subtree_newest(values, "/r") == {"/r": 3, "/r/a": 3, "/r/a/b": 3}
+
+
+def test_unreadable_protocol_record(monkeypatch, tmp_path):
+    module = load(monkeypatch, tmp_path)
+    payload = b"D\0/synthetic\0" + b"0\0" + b"2\0" + b"123\0E\0/synthetic/denied\0" + b"13\0S\0" + b"0\0" * 4
+    synthetic_helper(monkeypatch, tmp_path, payload)
+    result = module.walk_tree(tmp_path, workers=1)
+    assert result.dir_files == {"/synthetic": 2}
+    assert result.dir_mtime == {"/synthetic": 123}
+    assert result.unreadable == [("/synthetic/denied", 13)]
+
+
 def test_sparse_large_file_uses_apparent_size(monkeypatch, tmp_path):
     module = load(monkeypatch, tmp_path)
     root = tmp_path / "tree"
@@ -78,7 +95,7 @@ def synthetic_helper(monkeypatch, tmp_path, payload, tail=""):
 
 def test_startup_rejects_missing_or_mismatched_walker(monkeypatch, tmp_path):
     module = load(monkeypatch, tmp_path)
-    for walker in (tmp_path / "absent", synthetic_helper(monkeypatch, tmp_path, b"storage_monitor_walk 9.9.9 protocol 99\n")):
+    for walker in (tmp_path / "absent", synthetic_helper(monkeypatch, tmp_path, b"storage_monitor_walk 1.0.1 protocol 1\n")):
         monkeypatch.setenv("STORAGE_MONITOR_WALKER", str(walker))
         with pytest.raises(module.WalkerUnavailable, match="deploy_storage_monitor.mjs"):
             module.check_walker()
@@ -141,7 +158,7 @@ def test_progress_callback_receives_counts(monkeypatch, tmp_path):
 def test_invalid_utf8_protocol_paths_roundtrip(monkeypatch, tmp_path):
     module = load(monkeypatch, tmp_path)
     parent, name = b"/synthetic/\xff", b"name\xfe\n\t"
-    payload = b"\0".join([b"D", parent, b"4", b"H", b"1", b"2", b"2", b"8", parent, name,
+    payload = b"\0".join([b"D", parent, b"4", b"1", b"123", b"H", b"1", b"2", b"2", b"8", parent, name,
                            b"L", b"100", b"8", parent, name, b"S", b"1", b"1", b"0", b"0", b""])
     synthetic_helper(monkeypatch, tmp_path, payload)
     result = module.walk_tree(tmp_path, workers=1)
@@ -153,7 +170,7 @@ def test_invalid_utf8_protocol_paths_roundtrip(monkeypatch, tmp_path):
 @pytest.mark.parametrize("payload,tail", [
     (b"X\0", "time.sleep(30)"),
     (b"P\0" + b"2000\0", "time.sleep(30)"),
-    (b"D\0/synthetic\0bad\0", "time.sleep(30)"),
+    (b"D\0/synthetic\0bad\0" + b"0\0" * 2, "time.sleep(30)"),
     (b"S\0" + b"0\0" * 4 + b"D\0/synthetic\0" + b"0\0", ""),
     (b"S\0" + b"0\0" * 4, "sys.stderr.write('synthetic failure'); sys.exit(7)"),
 ])
@@ -180,7 +197,7 @@ def test_record_parser_handles_chunk_boundaries(monkeypatch, tmp_path):
     class TinyReads(io.BytesIO):
         def read(self, size):
             return super().read(1)
-    assert list(module._iter_walker_records(TinyReads(b"D\0/synthetic\0" + b"4\0"))) == [(b"D", [b"/synthetic", b"4"])]
+    assert list(module._iter_walker_records(TinyReads(b"D\0/synthetic\0" + b"4\0" + b"1\0" + b"123\0"))) == [(b"D", [b"/synthetic", b"4", b"1", b"123"])]
     with pytest.raises(RuntimeError, match="truncated"):
         list(module._iter_walker_records(io.BytesIO(b"D\0/synthetic\0")))
 

@@ -234,6 +234,68 @@ def route_dashboard_api(page, snapshots=None, growth=SYNTHETIC_GROWTH):
     )
 
 
+def test_findings_groups_age_filter_and_scan_details(monkeypatch, tmp_path):
+    monkeypatch.setenv("STORAGE_MONITOR_HOME", str(tmp_path / "runtime"))
+    module = load_launcher(PROJECT_ROOT / "storage_monitor")
+    rows = [
+        {"path": "/synthetic/old", "label": "Old cache", "category": "cache", "risk": "low", "allocated_bytes": 1024, "actionable": True, "estimated_reclaim_bytes": 1024, "age_days": 412, "stale": True, "actions": []},
+        {"path": "/synthetic/fresh", "label": "Fresh cache", "category": "cache", "risk": "medium", "allocated_bytes": 2048, "age_days": 0, "stale": False, "actions": []},
+        {"path": None, "label": "Synthetic group", "category": "dev_artifact", "risk": "medium", "allocated_bytes": 512, "group": True, "items": [{"path": "/synthetic/child", "label": "Synthetic child", "allocated_bytes": 512}], "actions": []},
+        *[{"path": f"/synthetic/{category}", "label": f"Synthetic {category}", "category": category, "risk": "high", "allocated_bytes": 256, "actions": []} for category in ("temp", "agent_residue", "trash", "user_data")],
+    ]
+    report = {**SYNTHETIC_REPORT_ROWS, "findings": {"items": rows, "truncated": {"cache": {"count": 2, "bytes": 3072}}}, "unreadable": {"count": 1, "items": [{"path": "/synthetic/denied", "reason": "Permission denied"}]}, "checks": []}
+    with live_server(module.app) as url, sync_playwright() as playwright:
+        browser = playwright.chromium.launch(headless=True)
+        page = browser.new_page()
+        route_dashboard_api(page)
+        page.route("**/api/state", lambda route: route.fulfill(json={"scan_status": {"running": False}, "report": report, "config_warning": "Invalid Storage Monitor config: synthetic error"}))
+        with guard_browser_errors(page):
+            page.goto(url, wait_until="networkidle")
+            assert page.get_by_text("Invalid Storage Monitor config: synthetic error").is_visible()
+            assert page.get_by_text("Caches", exact=False).count() > 0
+            for heading in ("Caches · 3.0 KB", "Developer · 512 B", "Temp · 256 B", "Agent leftovers · 256 B", "Trash · 256 B", "Review-only user data · 256 B"):
+                assert page.get_by_text(heading, exact=True).is_visible()
+            assert page.get_by_text("2 more not shown (3.0 KB)").is_visible()
+            assert page.get_by_text("412 d").is_visible()
+            assert page.get_by_text("today", exact=True).is_visible()
+            assert page.get_by_text("—", exact=True).count() > 0
+            page.get_by_role("button", name="Age", exact=True).click()
+            assert page.get_by_text("Old cache").bounding_box()["y"] < page.get_by_text("Fresh cache").bounding_box()["y"]
+            page.get_by_text("Synthetic group").click()
+            assert page.get_by_text("Synthetic child").is_visible()
+            page.get_by_label("Stale only").check()
+            assert not page.get_by_text("Fresh cache").is_visible()
+            page.get_by_label("Scan details").click()
+            assert page.get_by_text("/synthetic/denied: Permission denied").is_visible()
+            assert page.get_by_text("Trashable now").is_visible()
+            assert page.get_by_text("In Trash").is_visible()
+            assert page.get_by_text("Review:", exact=False).is_visible()
+            assert page.get_by_text("Trashable now: 1.0 KB").is_visible()
+            assert page.get_by_text("In Trash: 256 B").is_visible()
+            assert page.get_by_text("Review: 3.3 KB").is_visible()
+        browser.close()
+
+
+def test_equal_label_groups_expand_independently(monkeypatch, tmp_path):
+    monkeypatch.setenv("STORAGE_MONITOR_HOME", str(tmp_path / "runtime"))
+    module = load_launcher(PROJECT_ROOT / "storage_monitor")
+    groups = [{"path": f"/synthetic/root-{name}", "label": "Equal group", "category": "temp", "risk": "low", "group": True, "allocated_bytes": 1, "items": [{"path": f"/synthetic/root-{name}/child", "label": f"Child {name}", "allocated_bytes": 1}], "actions": []} for name in ("a", "b")]
+    report = {**SYNTHETIC_REPORT_ROWS, "findings": {"items": groups}}
+    with live_server(module.app) as url, sync_playwright() as playwright:
+        browser = playwright.chromium.launch(headless=True)
+        page = browser.new_page()
+        route_dashboard_api(page)
+        page.route("**/api/state", lambda route: route.fulfill(json={"scan_status": {"running": False}, "report": report}))
+        with guard_browser_errors(page):
+            page.goto(url, wait_until="networkidle")
+            page.get_by_role("button", name="Equal group").first.click()
+            assert page.get_by_text("Child a", exact=False).is_visible()
+            assert page.get_by_text("Child b", exact=False).count() == 0
+            page.get_by_role("button", name="Equal group").last.click()
+            assert page.get_by_text("Child b", exact=False).is_visible()
+        browser.close()
+
+
 def test_controls_update_the_view_immediately(monkeypatch, tmp_path):
     monkeypatch.setenv("STORAGE_MONITOR_HOME", str(tmp_path / "runtime"))
     module = load_launcher(PROJECT_ROOT / "storage_monitor")
@@ -332,6 +394,39 @@ def test_finding_trash_requires_confirmation(monkeypatch, tmp_path):
         browser.close()
 
 
+def test_temp_group_confirmation_shows_rule_and_only_sends_on_accept(monkeypatch, tmp_path):
+    monkeypatch.setenv("STORAGE_MONITOR_HOME", str(tmp_path / "runtime"))
+    monkeypatch.setitem(SYNTHETIC_REPORT_ROWS, "findings", {"items": [{
+        "path": "/synthetic/temp", "label": "2 old entries", "category": "temp", "risk": "low",
+        "count": 2, "cleanup_kind": "trash_group", "estimated_reclaim_bytes": 10,
+        "actions": [{"kind": "execute", "label": "Move to Trash", "action_token": "synthetic-group"}],
+    }]})
+    module = load_launcher(PROJECT_ROOT / "storage_monitor")
+    with live_server(module.app) as url, sync_playwright() as playwright:
+        browser = playwright.chromium.launch(headless=True)
+        page = browser.new_page()
+        route_dashboard_api(page)
+        requests, dialogs = [], []
+        def execute(route):
+            requests.append(route.request.post_data_json)
+            route.fulfill(json={"ok": True, "label": "Moved to Trash"})
+        def confirm(dialog):
+            dialogs.append(dialog.message)
+            dialog.dismiss() if len(dialogs) == 1 else dialog.accept()
+        page.route("**/api/actions/execute", execute)
+        page.on("dialog", confirm)
+        with guard_browser_errors(page):
+            page.goto(url, wait_until="networkidle")
+            button = page.get_by_role("button", name="Trash", exact=True)
+            button.click()
+            assert requests == []
+            button.click()
+            page.get_by_text("Moved to Trash", exact=False).first.wait_for()
+            assert all("/synthetic/temp" in message and "2 entries" in message and "3 days" in message for message in dialogs)
+            assert requests == [{"action_token": "synthetic-group", "elevate": False}]
+        browser.close()
+
+
 def test_dashboard_persists_theme_without_browser_errors(
     monkeypatch,
     tmp_path,
@@ -404,4 +499,25 @@ def test_growth_baseline_select_never_renders_blank(monkeypatch, tmp_path):
             select.locator("option").first.wait_for(state="attached")
             assert select.evaluate("element => element.selectedIndex") == 0
             assert select.input_value() == "3"
+        browser.close()
+
+
+def test_running_owner_confirmation_and_orphan_omissions(monkeypatch, tmp_path):
+    monkeypatch.setenv("STORAGE_MONITOR_HOME", str(tmp_path / "runtime"))
+    module = load_launcher(PROJECT_ROOT / "storage_monitor")
+    row = {"path": "/synthetic/support", "label": "Synthetic support", "category": "cache", "risk": "low", "allocated_bytes": 1024, "owner_running": True, "owner_name": "Synthetic App", "actions": [{"kind": "execute", "label": "Move to Trash", "action_token": "synthetic"}]}
+    report = {**SYNTHETIC_REPORT_ROWS, "findings": {"items": [row]}, "orphans": {"items": [], "truncated": {"count": 2, "bytes": 3072}}}
+    with live_server(module.app) as url, sync_playwright() as playwright:
+        browser = playwright.chromium.launch(headless=True)
+        page = browser.new_page()
+        route_dashboard_api(page)
+        page.route("**/api/state", lambda route: route.fulfill(json={"scan_status": {"running": False}, "report": report}))
+        dialogs = []
+        page.on("dialog", lambda dialog: (dialogs.append(dialog.message), dialog.dismiss()))
+        with guard_browser_errors(page):
+            page.goto(url, wait_until="networkidle")
+            page.get_by_role("button", name="Trash", exact=True).click()
+            assert "Quit Synthetic App first" in dialogs[0]
+            page.locator(".tab").filter(has_text="App Leftovers").click()
+            assert page.get_by_text("2 more not shown (3.0 KB)").is_visible()
         browser.close()

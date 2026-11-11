@@ -22,8 +22,11 @@ hardlink ownership, rollup, SQLite writes and provider probes so full scans and
 directory refreshes share their accounting rules. Provider probes overlap the
 walk; there is no second Python walker or runtime compilation fallback.
 
-Protocol 1 uses NUL-delimited fields, preserving filenames with tabs, newlines
-and undecodable bytes. `D` reports directory-local allocation; `H` reports
+Protocol 2 uses NUL-delimited fields, preserving filenames with tabs, newlines
+and undecodable bytes. `D` reports directory-local allocation, non-directory
+entry count, and newest modification time in whole epoch seconds, including the
+directory itself. `E` reports a directory path and errno when it cannot be read.
+`H` reports
 hardlink candidates; `L` reports large files; `P` reports progress; a final `S`
 reports counts and duration. Python rejects truncated streams, records after
 the summary, nonzero exits and missing summaries before accepting a walk.
@@ -112,12 +115,17 @@ Full-scan time depends on directory count, storage performance, permissions, and
 ### Cleanup intelligence
 
 - A fixed watchlist covers common caches, model stores, stale installers, runtime payloads, and large user-controlled data locations. Model stores, VS Code extensions, and user data are review-only.
-- The index also discovers cache-named directories of at least 100 MiB under the home directory.
-- Shared cache folders (`~/.cache`, `~/Library/Caches`) are never offered as one target. They and their entries of at least 100 MiB are listed for review. Inside them, only the watchlist's named caches and a cache-named directory within an entry can be moved to Trash.
+- The index also discovers known cache directory names under the home directory. Matches of at least 100 MiB are listed individually; smaller matches of at least 1 MiB are grouped for review. The findings limit applies per category, and the report records how many items and bytes were omitted.
+- Developer artifacts of at least 50 MiB can be moved to Trash when their newest indexed modification is at least 30 days old. These include `node_modules`, Python `.venv`/`venv`, Swift `.build`, Rust `target`, CocoaPods `Pods`, and Next.js `.next` only when the corresponding project or environment marker is present, plus Xcode DerivedData children and `~/.gradle/caches`. Fresh or undated artifacts are review-only. Python `__pycache__` folders are grouped for review without a cleanup action.
+- Running apps are checked once per report. Their cache entries are review-only; if the check fails, Library cache entries are review-only. Other matching app-owned findings warn and name the running app before a move. Quit the app first.
+- Shared cache folders (`~/.cache`, `~/Library/Caches`) are never offered as one target. Their entries of at least 100 MiB are listed individually. Unprotected Library cache entries can be moved to Trash when the running-app check succeeds and their owner is not running. Entries of `~/.cache` remain review-only, apart from the existing named-cache policies.
 - Discovered caches are review-only when they sit in a location macOS manages or syncs: any `com.apple.*` container or cache, `~/Library/Metadata`, `Messages`, `Mail`, `Safari`, `Mobile Documents`, `CloudStorage`, `~/Documents`, `~/Desktop`, and uv's own cache.
-- Potential leftovers in `~/Library/Containers` and `~/Library/Group Containers` are heuristic, report-only results with a Reveal in Finder action.
+- Potential leftovers in `~/Library/Containers` and `~/Library/Group Containers` are heuristic, report-only results with a Reveal in Finder action. The list shows at most 40 and reports the count and bytes omitted.
 - Homebrew and Docker integrations provide estimates and explicit cleanup actions when their command-line tools are installed and usable.
 - uv cache size is reported as an upper bound with a copyable `uv cache prune` command. Quit Storage Monitor before running it because the parent uv process holds the cache lock.
+- Temporary directory groups show current-user regular files and indexed directories at least three days old, excluding Apple and live system names. Before moving a directory, the bulk Trash action uses the native walker to recheck descendant modification times and refuses directories it cannot fully verify. It reports refusals and continues. The per-user cache directory is size-only.
+- Stale `.superpowers` workspaces can be moved to Trash after 14 days. Worktree children and home temporary-name residue are review-only; remove worktrees using their owning manager. Directories containing managed worktrees are protected too, with a live check before a move. Agent and tool runtime homes (`.claude`, `.codex`, `.config`, `.gemini`, `.t3`, `.lmstudio`, `.docker`, `.local`, `.venvs`, and Storage Monitor's runtime home) are size-only and protected from cleanup. Device backups are review-only.
+- The Trash row shows indexed size; empty it in Finder to free space. Storage Monitor does not empty it.
 
 ### Snapshots and actions
 
@@ -126,7 +134,7 @@ Full-scan time depends on directory count, storage performance, permissions, and
 - The move is a rename. If macOS refuses it, the action fails and nothing is changed; Storage Monitor never copies and deletes instead. The server also refuses the protected locations above regardless of what the page requests.
 - Snapshot deletion and thinning are permanent operations delegated to macOS.
 - Finder reveal actions are available for files, directories, and report-only candidates.
-- After cleanup actions, Storage Monitor refreshes affected index paths, APFS metadata, and the persisted report without requiring another full scan. If a refreshed directory loses the owner of a hard-linked file, a surviving link elsewhere remains uncounted until its own directory is refreshed or a full scan runs.
+- After cleanup actions, Storage Monitor refreshes affected index paths, APFS metadata, and the persisted report without requiring another full scan. If a refreshed directory loses the owner of a hard-linked file, a surviving link elsewhere remains uncounted until its own directory is refreshed or a full scan runs. An ancestor's newest modification time may remain too recent until the next full scan.
 
 Review every proposed action before running it. Estimates are approximate, APFS free-space changes can be delayed, and provider commands may reclaim less than their displayed upper bound.
 
@@ -136,10 +144,17 @@ Runtime files live under `~/.storage_monitor/` by default. Set `STORAGE_MONITOR_
 
 - `storage_monitor.db` — the active volume index, cached drill-down data, up to 30 scan-run records, and compact directory history for up to 60 scans. Obsolete index rows are pruned after a successful scan; SQLite is vacuumed when reclaimable database space exceeds 100 MiB.
 - `latest_scan.json` — the most recent completed or refreshed report.
-- `history/` — timestamped JSON reports. These files are not automatically pruned.
+- `history/` — timestamped JSON reports; only the newest 60 are retained.
 - `action_log.jsonl` — append-only records of cleanup actions and their results.
 - `last_port` — the port selected by the most recent launch.
 - `pid` — an instance lock file containing the process ID. A second instance using the same runtime home exits without signalling the first.
+- `config.json` — private settings, created with empty values and mode `0600`. `watchlist` adds entries with the fields shown in `config.example.json`; paths must be below the home directory. A requested cleanup action is allowed only for `trash_path` entries that pass the same protection checks as built-in findings. `ignore_paths` accepts absolute or `~/` paths, including outside the home directory, and hides findings at or below each path. Temporary bulk actions also leave ignored entries and any containing directory alone. `stale_days` maps discovery rule IDs to age thresholds from 1 through 3650 days. Invalid configuration produces a warning and defaults are used.
+
+Personal data locations are not added automatically. To monitor an export or
+other personal data folder, add a review-only `watchlist` entry to the private
+config, using `cleanup_kind: null` and `actionable: false`. For example, use
+this for an Apple Health export or sleep-therapy data folder if desired. The
+example file contains synthetic paths only and is not read automatically.
 
 ## Validation
 

@@ -26,13 +26,14 @@ import shutil
 import signal
 import socket
 import sqlite3
+import stat
 import subprocess
 import tempfile
 import threading
 import time
 import uuid
 import webbrowser
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Set, Tuple
@@ -172,6 +173,10 @@ def initialize_scan_db(paths: RuntimePaths) -> None:
 
             CREATE INDEX IF NOT EXISTS idx_dir_history_path
             ON scan_dir_history (path, scan_id);
+            CREATE TABLE IF NOT EXISTS scan_errors (
+                scan_id INTEGER NOT NULL, path TEXT NOT NULL, errno INTEGER NOT NULL,
+                PRIMARY KEY (scan_id, path)
+            );
             """
         )
         node_columns = {
@@ -182,10 +187,14 @@ def initialize_scan_db(paths: RuntimePaths) -> None:
             connection.execute(
                 "ALTER TABLE nodes ADD COLUMN children_indexed INTEGER NOT NULL DEFAULT 0"
             )
+        if "file_count" not in node_columns:
+            connection.execute("ALTER TABLE nodes ADD COLUMN file_count INTEGER NOT NULL DEFAULT 0")
+        if "newest_mtime" not in node_columns:
+            connection.execute("ALTER TABLE nodes ADD COLUMN newest_mtime INTEGER")
         connection.commit()
 
 RUNTIME_PATHS = build_runtime_paths()
-VERSION = "0.4.5"
+VERSION = "0.5.0"
 DATA_VOLUME = Path("/System/Volumes/Data")
 HOME_DIR = Path.home()
 APPLICATIONS_DIR = Path("/Applications")
@@ -201,9 +210,50 @@ SCAN_WORKER_COUNT = max(1, min(16, int(os.environ.get("STORAGE_MONITOR_SCAN_WORK
 LARGE_FILE_EXCLUDED_PREFIXES = [str(DATA_VOLUME / "private/var/vm")]
 LARGE_FILE_DESCRIPTION = "Large file found in the volume-wide storage scan."
 CACHE_DISCOVERY_MIN_BYTES = 100 * 1024 * 1024
+# Apple DTS describes the historical three-day temporary-file default:
+# https://developer.apple.com/forums/thread/71382 . Our newest-mtime rule is
+# not Apple's full atime/mtime/ctime predicate; /private/var/tmp is our scope.
+TEMP_STALE_DAYS = 3
 CACHE_DISCOVERY_BUNDLE_SUFFIXES = (
     ".app", ".photoslibrary", ".musiclibrary", ".tvlibrary", ".aplibrary",
 )
+DISCOVERY_RULES = [
+    {
+        "id": rule_id, "category": "dev_artifact", "scope": "home_root",
+        "min_bytes": 50 * 1024 * 1024, "action": "when_stale", "stale_days": 30,
+        "risk": "medium", "review_risk": "medium", "description": description,
+        **selector,
+    }
+    for rule_id, selector, description in [
+        ("node_modules", {"names": ["node_modules"], "marker": ("sibling", "package.json")}, "Rebuilt by npm install or the project's package manager."),
+        ("python_venv", {"names": [".venv", "venv"], "marker": ("child", "pyvenv.cfg")}, "Rebuilt by recreating the Python virtual environment and installing its dependencies."),
+        ("swift_build", {"names": [".build"], "marker": ("sibling", "Package.swift")}, "Rebuilt on the next swift build."),
+        ("rust_target", {"names": ["target"], "marker": ("sibling", "Cargo.toml")}, "Rebuilt on the next cargo build."),
+        ("xcode_derived_data", {"paths": ["~/Library/Developer/Xcode/DerivedData"]}, "Rebuilt by Xcode on the next build."),
+        ("gradle_caches", {"fixed_paths": ["~/.gradle/caches"]}, "Rebuilt by Gradle when dependencies are needed."),
+        ("cocoapods", {"names": ["Pods"], "marker": ("sibling", "Podfile")}, "Rebuilt by pod install."),
+        ("next_build", {"names": [".next"], "marker": ("sibling", "package.json")}, "Rebuilt on the next Next.js build."),
+    ]
+] + [{
+    "id": "superpowers_workspace", "category": "agent_residue", "names": [".superpowers"],
+    "scope": "home_root", "min_bytes": 0, "action": "when_stale", "stale_days": 14,
+    "risk": "low", "review_risk": "low", "description": "Agent workspace; review before moving it to Trash.",
+}, {
+    "id": "python_bytecode", "category": "python_bytecode", "names": ["__pycache__"],
+    "scope": "home_root", "min_bytes": 1024 * 1024, "action": "never",
+    "risk": "medium", "review_risk": "medium", "group_all": True,
+    "group_label": "Python bytecode caches", "description": "Rebuilt by Python as modules are loaded.",
+}, {
+    "id": "cache", "category": "discovered_cache", "label_prefix": "",
+    "names": ["Cache", "Caches", ".cache", "Code Cache", "GPUCache", "DawnCache",
+              "GrShaderCache", "ShaderCache", "CachedData", "CachedExtensionVSIXs",
+              "CacheStorage", "ScriptCache"],
+    "name_suffixes": [".cache"], "case_insensitive": True,
+    "scope": "home_root", "min_bytes": CACHE_DISCOVERY_MIN_BYTES,
+    "action": "always", "risk": "medium", "review_risk": "medium",
+    "description": "Cache-named directory discovered by index scan. Apps rebuild caches; verify the owner before trashing.",
+    "group_label": "cache folders",
+}]
 
 PROVIDER_SPECS = {
     "brew-cleanup": {
@@ -419,26 +469,6 @@ WATCHLIST_SPECS = [
         "description": "Review manually. Often high-value user-controlled cleanup target.",
         "actionable": False,
     },
-    {
-        "slug": "apple-health-export",
-        "label": "Apple Health Export",
-        "path": "~/apple-health-extract/apple_health_export",
-        "category": "export_data",
-        "risk": "high",
-        "cleanup_kind": None,
-        "description": "Large exported data bundle. Review manually.",
-        "actionable": False,
-    },
-    {
-        "slug": "oscar-data",
-        "label": "OSCAR Data",
-        "path": "~/Documents/OSCAR_Data",
-        "category": "user_data",
-        "risk": "high",
-        "cleanup_kind": None,
-        "description": "Likely active user data. Review manually.",
-        "actionable": False,
-    },
 ]
 
 
@@ -612,6 +642,7 @@ def finalize_scan_run(scan_id: int, report: Dict[str, Any]) -> None:
                 (GROWTH_HISTORY_MAX_SCANS,),
             )
             connection.execute("DELETE FROM nodes WHERE scan_id != ?", (scan_id,))
+            connection.execute("DELETE FROM scan_errors WHERE scan_id != ?", (scan_id,))
             connection.execute("DELETE FROM large_files WHERE scan_id != ?", (scan_id,))
             connection.execute("DELETE FROM hardlink_inodes WHERE scan_id != ?", (scan_id,))
             connection.execute(
@@ -758,6 +789,8 @@ def upsert_node_rows(scan_id: int, rows: List[Dict[str, Any]]) -> None:
             row["root_key"],
             row["depth"],
             row["allocated_bytes"],
+            row.get("file_count", 0),
+            row.get("newest_mtime"),
             int(bool(row.get("children_indexed", False))),
             row["updated_at"],
         )
@@ -768,14 +801,16 @@ def upsert_node_rows(scan_id: int, rows: List[Dict[str, Any]]) -> None:
             connection.executemany(
                 """
                 INSERT INTO nodes (
-                    scan_id, path, parent_path, name, root_key, depth, allocated_bytes, children_indexed, updated_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    scan_id, path, parent_path, name, root_key, depth, allocated_bytes, file_count, newest_mtime, children_indexed, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(scan_id, path) DO UPDATE SET
                     parent_path = excluded.parent_path,
                     name = excluded.name,
                     root_key = excluded.root_key,
                     depth = excluded.depth,
                     allocated_bytes = excluded.allocated_bytes,
+                    file_count = excluded.file_count,
+                    newest_mtime = excluded.newest_mtime,
                     children_indexed = excluded.children_indexed,
                     updated_at = excluded.updated_at
                 """,
@@ -845,7 +880,7 @@ def fetch_breakdown_from_db(scan_id: int, path_str: str, *, limit: Optional[int]
     with open_db_connection() as connection:
         path_row = connection.execute(
             """
-            SELECT path, allocated_bytes, updated_at
+            SELECT path, allocated_bytes, file_count, newest_mtime, updated_at
             FROM nodes
             WHERE scan_id = ? AND path = ?
             LIMIT 1
@@ -855,7 +890,7 @@ def fetch_breakdown_from_db(scan_id: int, path_str: str, *, limit: Optional[int]
         if not path_row:
             return None
         query = """
-            SELECT path, name, allocated_bytes
+            SELECT path, name, allocated_bytes, file_count, newest_mtime
                  , children_indexed
             FROM nodes
             WHERE scan_id = ? AND parent_path = ?
@@ -872,6 +907,7 @@ def fetch_breakdown_from_db(scan_id: int, path_str: str, *, limit: Optional[int]
             "path": row["path"],
             "label": row["name"],
             "allocated_bytes": row["allocated_bytes"],
+            "file_count": row["file_count"], "newest_mtime": row["newest_mtime"],
             "is_cached": bool(row["children_indexed"]),
         }
         try:
@@ -883,6 +919,7 @@ def fetch_breakdown_from_db(scan_id: int, path_str: str, *, limit: Optional[int]
     return {
         "path": path_str,
         "total_bytes": path_row["allocated_bytes"],
+        "file_count": path_row["file_count"], "newest_mtime": path_row["newest_mtime"],
         "items": items,
         "updated_at": path_row["updated_at"],
     }
@@ -954,6 +991,8 @@ def mark_alias_path_cached(scan_id: int, source_path: Path, target_path: Path, r
                 "root_key": root_key,
                 "depth": path_depth(DATA_VOLUME.resolve(), str(source_path.resolve())),
                 "allocated_bytes": int(target_breakdown["total_bytes"]),
+                "file_count": target_breakdown["file_count"],
+                "newest_mtime": target_breakdown["newest_mtime"],
                 "children_indexed": True,
                 "updated_at": iso_now(),
             }
@@ -1136,6 +1175,47 @@ def expand_path(path_str: str) -> Path:
     return Path(os.path.expanduser(path_str)).resolve()
 
 
+def load_config() -> Dict[str, Any]:
+    defaults: Dict[str, Any] = {"watchlist": [], "ignore_paths": [], "stale_days": {}}
+    try:
+        config = json.loads((RUNTIME_PATHS.home / "config.json").read_text(encoding="utf-8"))
+        if not isinstance(config, dict):
+            raise ValueError("expected an object")
+        watchlist, ignored, stale = config.get("watchlist", []), config.get("ignore_paths", []), config.get("stale_days", {})
+        if not isinstance(watchlist, list) or not isinstance(ignored, list) or not isinstance(stale, dict):
+            raise ValueError("invalid configuration fields")
+        def home_path(value: Any) -> Path:
+            if not isinstance(value, str):
+                raise ValueError("path must be a string")
+            path = expand_path(value)
+            if HOME_DIR.resolve() not in path.parents:
+                raise ValueError("path must be under the home directory")
+            return path
+        specs = []
+        slugs = {entry["slug"] for entry in WATCHLIST_SPECS}
+        for entry in watchlist:
+            if not isinstance(entry, dict) or any(not isinstance(entry.get(key), str) or not entry[key] for key in ("slug", "label", "path", "category", "risk", "description")) or entry.get("risk") not in ("low", "medium", "high") or entry.get("cleanup_kind") not in (None, "trash_path") or not isinstance(entry.get("actionable"), bool):
+                raise ValueError("invalid watchlist entry")
+            if entry["slug"] in slugs:
+                raise ValueError("duplicate watchlist slug")
+            slugs.add(entry["slug"])
+            path = home_path(entry["path"])
+            specs.append({**entry, "path": str(path), "cleanup_kind": entry.get("cleanup_kind"), "actionable": bool(entry["actionable"] and entry.get("cleanup_kind") == "trash_path" and not cleanup_protection_reason(path))})
+        paths = []
+        for value in ignored:
+            if not isinstance(value, str) or not Path(os.path.expanduser(value)).is_absolute():
+                raise ValueError("ignore path must be absolute or home-relative")
+            paths.append(str(expand_path(value)))
+        if any(not isinstance(key, str) or isinstance(value, bool) or not isinstance(value, int) or not 1 <= value <= 3650 for key, value in stale.items()):
+            raise ValueError("invalid stale_days override")
+        return {"watchlist": specs, "ignore_paths": paths, "stale_days": stale}
+    except FileNotFoundError:
+        return defaults
+    except (OSError, ValueError, TypeError, RuntimeError) as exc:
+        logger.warning("Invalid Storage Monitor config: %s", exc)
+        return {**defaults, "warning": f"Invalid Storage Monitor config: {exc}"}
+
+
 def safe_stat(path: Path) -> Optional[os.stat_result]:
     try:
         return path.stat()
@@ -1161,9 +1241,12 @@ class WalkResult:
     file_count: int
     error_count: int
     duration_ms: int
+    dir_files: Dict[str, int] = field(default_factory=dict)
+    dir_mtime: Dict[str, int] = field(default_factory=dict)
+    unreadable: List[Tuple[str, int]] = field(default_factory=list)
 
 
-WALKER_PROTOCOL = 1
+WALKER_PROTOCOL = 2
 
 
 class WalkerUnavailable(RuntimeError):
@@ -1202,7 +1285,7 @@ def check_walker() -> str:
     return version
 
 
-_FIELDS = {b"D": 2, b"H": 6, b"L": 4, b"P": 1, b"S": 4}
+_FIELDS = {b"D": 4, b"E": 2, b"H": 6, b"L": 4, b"P": 1, b"S": 4}
 WALKER_NO_PROGRESS_TIMEOUT = 120.0
 
 
@@ -1246,6 +1329,9 @@ def walk_tree(
     if registered_inodes:
         argv.append("--registered-inodes-stdin")
     dir_local: Dict[str, int] = {}
+    dir_files: Dict[str, int] = {}
+    dir_mtime: Dict[str, int] = {}
+    unreadable: List[Tuple[str, int]] = []
     hardlinks: List[Tuple[int, int, str, str, int, int]] = []
     large_files: List[Dict[str, Any]] = []
     summary = None
@@ -1275,7 +1361,12 @@ def walk_tree(
                 if summary is not None:
                     raise RuntimeError("storage_monitor_walk protocol error: record after S")
                 if kind == b"D":
-                    dir_local[os.fsdecode(fields[0])] = int(fields[1])
+                    path = os.fsdecode(fields[0])
+                    dir_local[path] = int(fields[1])
+                    dir_files[path] = int(fields[2])
+                    dir_mtime[path] = int(fields[3])
+                elif kind == b"E":
+                    unreadable.append((os.fsdecode(fields[0]), int(fields[1])))
                 elif kind == b"H":
                     dev, ino, nlink, alloc, parent, name = fields
                     parent, name = os.fsdecode(parent), os.fsdecode(name)
@@ -1325,6 +1416,7 @@ def walk_tree(
         dir_local=dir_local, hardlink_candidates=hardlinks, large_files=large_files,
         dir_count=summary[0], file_count=summary[1], error_count=summary[2],
         duration_ms=int((time.time() - started) * 1000),
+        dir_files=dir_files, dir_mtime=dir_mtime, unreadable=unreadable,
     )
 
 
@@ -1339,6 +1431,15 @@ def rollup_subtree_totals(dir_local: Dict[str, int], root: str) -> Dict[str, int
     return totals
 
 
+def rollup_subtree_newest(dir_mtime: Dict[str, int], root: str) -> Dict[str, int]:
+    totals = dict(dir_mtime)
+    for path in sorted(totals, key=lambda value: value.count(os.sep), reverse=True):
+        parent = os.path.dirname(path)
+        if path != root and parent in totals:
+            totals[parent] = max(totals[parent], totals[path])
+    return totals
+
+
 def walk_with_ownership(
     root: Path, *, scan_id: int, excluded_paths: List[Path], progress_callback=None,
 ) -> Tuple[WalkResult, Dict[str, int], List[Tuple[str, Tuple[Any, ...]]]]:
@@ -1348,6 +1449,8 @@ def walk_with_ownership(
     )
     for parent, allocated in attributions:
         result.dir_local[parent] = result.dir_local.get(parent, 0) + allocated
+    result.dir_files = rollup_subtree_totals(result.dir_files, str(root))
+    result.dir_mtime = rollup_subtree_newest(result.dir_mtime, str(root))
     return result, rollup_subtree_totals(result.dir_local, str(root)), changes
 
 
@@ -1616,16 +1719,21 @@ def parse_snapshot_token(snapshot_name: str) -> Optional[str]:
 
 def scan_watchlist_entry(spec: Dict[str, Any], scan_id: Optional[int] = None) -> Dict[str, Any]:
     path = expand_path(spec["path"])
-    exists = path.exists()
+    protected_home = any(path == root or root in path.parents for root in size_only_homes())
+    exists = not protected_home and path.exists()
     allocated = None
+    file_count = newest_mtime = None
     scan_id = scan_id or fetch_active_scan_id() or fetch_running_scan_id()
+    protection = indexed_cleanup_protection(scan_id, path) if exists and path.is_dir() else None
     if exists and path.is_dir() and scan_id is not None:
         with open_db_connection() as connection:
             row = connection.execute(
-                "SELECT allocated_bytes FROM nodes WHERE scan_id = ? AND path = ?",
+                "SELECT allocated_bytes, file_count, newest_mtime FROM nodes WHERE scan_id = ? AND path = ?",
                 (scan_id, str(path)),
             ).fetchone()
         allocated = int(row["allocated_bytes"]) if row else None
+        if row:
+            file_count, newest_mtime = row["file_count"], row["newest_mtime"]
     if exists and path.is_dir() and allocated is None:
         _, totals, _ = walk_with_ownership(path, scan_id=-1, excluded_paths=[])
         allocated = totals.get(str(path))
@@ -1640,7 +1748,7 @@ def scan_watchlist_entry(spec: Dict[str, Any], scan_id: Optional[int] = None) ->
             "path": str(path),
             "slug": spec["slug"],
         }
-    ) if exists and spec["actionable"] and spec["cleanup_kind"] else None
+    ) if exists and spec["actionable"] and spec["cleanup_kind"] and not protection else None
     return {
         "slug": spec["slug"],
         "label": spec["label"],
@@ -1648,13 +1756,14 @@ def scan_watchlist_entry(spec: Dict[str, Any], scan_id: Optional[int] = None) ->
         "exists": exists,
         "category": spec["category"],
         "risk": spec["risk"],
-        "description": spec["description"],
-        "actionable": bool(exists and spec["actionable"] and spec["cleanup_kind"]),
+        "description": protection or spec["description"],
+        "actionable": bool(exists and spec["actionable"] and spec["cleanup_kind"] and not protection),
         "cleanup_kind": spec["cleanup_kind"],
         "apparent_bytes": apparent,
         "allocated_bytes": allocated,
-        "estimated_reclaim_bytes": allocated if exists and spec["cleanup_kind"] else None,
+        "estimated_reclaim_bytes": allocated if exists and spec["cleanup_kind"] and not protection else None,
         "action_token": token,
+        "file_count": file_count, "newest_mtime": newest_mtime,
     }
 
 
@@ -1662,7 +1771,8 @@ def scan_watchlist(scan_id: Optional[int] = None) -> Dict[str, Any]:
     started = time.time()
     task_map = {
         spec["slug"]: (lambda spec=spec: scan_watchlist_entry(spec, scan_id))
-        for spec in WATCHLIST_SPECS
+        for spec in [*WATCHLIST_SPECS, *load_config()["watchlist"]]
+        if not any(expand_path(spec["path"]) == root or root in expand_path(spec["path"]).parents for root in size_only_homes())
     }
     results = list(run_parallel_call_map(task_map).values())
     results.sort(key=lambda item: bytes_or_zero(item["allocated_bytes"]), reverse=True)
@@ -1685,7 +1795,7 @@ def build_finding_actions(finding: Dict[str, Any]) -> List[Dict[str, Any]]:
     )
     if finding.get("actionable") and finding.get("action_token"):
         action_kind = finding.get("cleanup_kind") or "cleanup"
-        if action_kind == "trash_path":
+        if action_kind in ("trash_path", "trash_group"):
             actions.append(
                 {
                     "label": "Move to Trash",
@@ -1730,6 +1840,8 @@ def persist_full_walk(
             "root_key": root_key,
             "depth": path_depth(ROOT_PATHS[root_key], stored_path),
             "allocated_bytes": allocated,
+            "file_count": result.dir_files.get(walked_path, 0),
+            "newest_mtime": result.dir_mtime.get(walked_path),
             "children_indexed": True,
             "updated_at": updated_at,
         })
@@ -1748,6 +1860,8 @@ def persist_full_walk(
         })
     with DB_WRITE_LOCK:
         with open_db_connection() as connection:
+            connection.executemany("INSERT OR REPLACE INTO scan_errors (scan_id,path,errno) VALUES (?,?,?)",
+                [(scan_id, translate_walk_path(path, translation)[0], error) for path, error in result.unreadable])
             for operation, payload in registry_changes:
                 if operation == "upsert":
                     connection.execute(
@@ -1766,6 +1880,12 @@ def persist_full_walk(
     ]:
         if samefile_or_false(source, target):
             mark_alias_path_cached(scan_id, source, target, "data_root")
+
+
+def format_unreadable(unreadable: List[Tuple[str, int]], translation: List[Tuple[str, str, str]]) -> Dict[str, Any]:
+    return {"count": len(unreadable), "items": [
+        {"path": translate_walk_path(path, translation)[0], "errno": error, "reason": os.strerror(error)}
+        for path, error in unreadable[:200]], "updated_at": iso_now()}
 
 
 def collect_scan_report(scan_id: int) -> Dict[str, Any]:
@@ -1827,6 +1947,7 @@ def collect_scan_report(scan_id: int) -> Dict[str, Any]:
             "providers": lambda: probe_providers(scan_id, {slug: future.result() for slug, future in probe_futures.items()}),
             "caches": lambda: discover_cache_candidates(scan_id),
             "installed_ids": collect_installed_bundle_ids,
+            "running_apps": collect_running_apps,
         })
     providers = intelligence["providers"]
     discovered = intelligence["caches"]
@@ -1838,7 +1959,7 @@ def collect_scan_report(scan_id: int) -> Dict[str, Any]:
     progress("Cleanup intelligence", 1, "Cleanup analysis complete")
     watchlist = scan_watchlist(scan_id)["items"]
     breakdowns = build_breakdowns_from_db(scan_id)
-    findings = build_findings_section(watchlist, scan_id, discovered)
+    findings = build_findings_section(watchlist, scan_id, discovered, intelligence["running_apps"])
     large_files = fetch_large_files_from_db(scan_id)
     for key, breakdown in breakdowns.items():
         publish_event("breakdown_ready", {"root": key, **breakdown})
@@ -1848,8 +1969,7 @@ def collect_scan_report(scan_id: int) -> Dict[str, Any]:
         publish_event("large_file_found", item)
     visible = totals.get(str(DATA_VOLUME.resolve()))
     hidden = max(data_volume["volume_used_bytes"] - visible, 0) if data_volume["volume_used_bytes"] is not None and visible is not None else None
-    safe = sum(bytes_or_zero(item.get("estimated_reclaim_bytes")) for item in findings["items"] if item.get("risk") == "low" and item.get("actionable"))
-    medium = sum(bytes_or_zero(item.get("estimated_reclaim_bytes")) for item in findings["items"] if item.get("risk") == "medium" and item.get("actionable"))
+    reclaimable = finding_summary(findings)
     checks = []
     for label, command_result in [("APFS container", apfs_list), ("Data volume info", data_info), ("System volume info", root_info), ("Local snapshots", snapshot_info)]:
         checks.append({"label": label, "command": command_result["command"], "ok": command_result["ok"], "duration_ms": command_result["duration_ms"], "summary": "Metadata probe completed." if command_result["ok"] else command_result["stderr"]})
@@ -1859,10 +1979,11 @@ def collect_scan_report(scan_id: int) -> Dict[str, Any]:
     checks.append({"label": "Safe cleanup watchlist", "command": "fresh scan index lookup", "ok": True, "duration_ms": 0, "summary": f"Checked {len(watchlist)} known targets."})
     report = {
         "version": VERSION, "generated_at": iso_now(), "started_at": started_at, "warnings": [],
-        "summary": {**metadata, "visible_data_bytes": visible, "hidden_delta_bytes": hidden, "home_total_bytes": breakdowns["home_root"]["total_bytes"], "applications_total_bytes": breakdowns["applications_root"]["total_bytes"], "snapshot_count": len(snapshots["items"]), "safe_reclaimable_bytes": safe, "medium_reclaimable_bytes": medium},
+        "summary": {**metadata, "visible_data_bytes": visible, "hidden_delta_bytes": hidden, "home_total_bytes": breakdowns["home_root"]["total_bytes"], "applications_total_bytes": breakdowns["applications_root"]["total_bytes"], "snapshot_count": len(snapshots["items"]), **reclaimable},
         "breakdowns": breakdowns, "watchlist": watchlist, "large_files": large_files,
         "findings": findings, "snapshots": snapshots, "providers": providers,
         "orphans": orphans, "checks": checks,
+        "unreadable": format_unreadable(result.unreadable, translation),
     }
     progress("Report assembly", 1, "Report assembled")
     return report
@@ -1873,6 +1994,8 @@ def persist_report(report: Dict[str, Any]) -> None:
     timestamp = report["generated_at"].replace(":", "-")
     history_path = RUNTIME_PATHS.history_dir / f"scan-{timestamp}.json"
     atomic_write_json(history_path, report)
+    for old_path in sorted(RUNTIME_PATHS.history_dir.glob("scan-*.json"), reverse=True)[60:]:
+        old_path.unlink()
 
 
 def run_scan_thread(scan_id: int) -> None:
@@ -1969,12 +2092,155 @@ def unique_trash_destination(path: Path) -> Path:
         suffix += 1
 
 
+def darwin_user_directory(key: str) -> Optional[Path]:
+    try:
+        value = os.confstr(key)
+        return Path(value).resolve() if value else None
+    except (ValueError, OSError):
+        return None
+
+
+def temp_roots() -> List[Path]:
+    user_temp = darwin_user_directory("CS_DARWIN_USER_TEMP_DIR")
+    return list(dict.fromkeys(root for root in (user_temp, Path("/private/tmp"), Path("/private/var/tmp")) if root))
+
+
+def worktree_marker(path: Path) -> bool:
+    return path.name == ".worktrees" or (path.name == "worktrees" and path.parent.name == ".claude")
+
+
+def indexed_cleanup_protection(scan_id: Optional[int], path: Path) -> Optional[str]:
+    if scan_id is None:
+        return None
+    prefix = sql_like_prefix(str(path))
+    with open_db_connection() as connection:
+        marker_rows = connection.execute(
+            "SELECT path FROM nodes WHERE scan_id=? AND (path=? OR path LIKE ? ESCAPE '\\') AND name IN ('.worktrees', 'worktrees')",
+            (scan_id, str(path), prefix),
+        ).fetchall()
+        error = connection.execute(
+            "SELECT 1 FROM scan_errors WHERE scan_id=? AND (path=? OR path LIKE ? ESCAPE '\\') LIMIT 1",
+            (scan_id, str(path), prefix),
+        ).fetchone()
+    if any(worktree_marker(Path(row["path"])) for row in marker_rows):
+        return "Contains a managed worktree; remove it through its owning manager."
+    if error:
+        return "An indexed scan error prevents verifying this directory."
+    return None
+
+
+def inspect_cleanup_directory(path: Path) -> Tuple[Optional[WalkResult], Optional[str]]:
+    try:
+        result = walk_tree(path, excluded_paths=[])
+    except (OSError, RuntimeError, ValueError) as exc:
+        return None, f"Unable to verify directory: {exc}"
+    if result.error_count or result.unreadable or str(path) not in result.dir_mtime:
+        return None, "Unable to verify all directory contents."
+    if any(worktree_marker(Path(child)) for child in result.dir_mtime):
+        return None, "Contains a managed worktree; remove it through its owning manager."
+    return result, None
+
+
+def temp_entries(root: Path, scan_id: Optional[int]) -> List[Dict[str, Any]]:
+    entries = []
+    try:
+        with os.scandir(root) as iterator:
+            children = list(iterator)
+    except OSError:
+        return entries
+    for child in children:
+        path = Path(child.path)
+        try:
+            info = child.stat(follow_symlinks=False)
+        except OSError:
+            continue
+        size, newest = info.st_blocks * 512, int(info.st_mtime)
+        if stat.S_ISDIR(info.st_mode):
+            indexed_path = DATA_VOLUME / str(path).lstrip("/")
+            row = None
+            if scan_id is not None:
+                with open_db_connection() as connection:
+                    row = connection.execute("SELECT allocated_bytes, newest_mtime FROM nodes WHERE scan_id=? AND path=?", (scan_id, str(indexed_path))).fetchone()
+            size = int(row["allocated_bytes"]) if row else 0
+            newest = max(newest, row["newest_mtime"]) if row and row["newest_mtime"] is not None else None
+        old = (info.st_uid == os.getuid() and (stat.S_ISDIR(info.st_mode) or stat.S_ISREG(info.st_mode))
+               and not child.name.startswith("com.apple.") and child.name not in ("TemporaryItems", ".", "..")
+               and newest is not None and newest <= time.time() - TEMP_STALE_DAYS * 86400
+               and cleanup_protection_reason(path) is None and cleanup_protection_reason(path.resolve()) is None
+               and (not stat.S_ISDIR(info.st_mode) or indexed_cleanup_protection(scan_id, indexed_path) is None))
+        entries.append({"path": str(path), "label": child.name, "allocated_bytes": size, "newest_mtime": newest, "old": old})
+    return entries
+
+
+def temp_findings(scan_id: Optional[int]) -> List[Dict[str, Any]]:
+    findings = []
+    ignore_roots = [Path(path) for path in load_config()["ignore_paths"]]
+    for root in temp_roots():
+        if not root.is_dir():
+            continue
+        all_entries = temp_entries(root, scan_id)
+        entries = [item for item in all_entries if not path_is_ignored(Path(item["path"]), ignore_roots, protect_ancestors=True)]
+        old = sorted((item for item in entries if item["old"]), key=lambda item: item["allocated_bytes"], reverse=True)
+        other = [item for item in entries if not item["old"]]
+        total = sum(item["allocated_bytes"] for item in old)
+        action = {"kind": "trash_group", "rule": "temp_old", "root": str(root), "min_age_days": TEMP_STALE_DAYS}
+        other_bytes = sum(item["allocated_bytes"] for item in other)
+        finding = {"group": True, "path": str(root), "label": f"{len(old)} entries older than {TEMP_STALE_DAYS} days, {total / (1024 * 1024):.1f} MiB; {len(other)} other entries, {other_bytes / (1024 * 1024):.1f} MiB",
+                   "category": "temp", "risk": "low", "description": "Old temporary entries; review before moving to Trash.",
+                   "count": len(old), "items": old[:20], "other_count": len(other), "other_bytes": other_bytes, "stale": bool(old), "ignored_count": len(all_entries) - len(entries),
+                   "allocated_bytes": total, "estimated_reclaim_bytes": total, "actionable": bool(old),
+                   "cleanup_kind": "trash_group", "action_token": encode_action_token(action) if old else None}
+        finding["actions"] = build_finding_actions(finding)
+        findings.append(finding)
+    return findings
+
+
+def execute_trash_group(action: Dict[str, Any]) -> Dict[str, Any]:
+    root = Path(action.get("root", ""))
+    if (action.get("rule") != "temp_old" or action.get("min_age_days") != TEMP_STALE_DAYS
+            or root not in temp_roots() or root.is_symlink() or root.resolve() != root):
+        raise HTTPException(status_code=400, detail="Invalid temporary root or rule.")
+    ignore_roots = [Path(path) for path in load_config()["ignore_paths"]]
+    entries = [item for item in temp_entries(root, fetch_active_scan_id()) if not path_is_ignored(Path(item["path"]), ignore_roots, protect_ancestors=True)]
+    destination = unique_trash_destination(Path("temp"))
+    destination.mkdir()
+    moved_count = moved_bytes = failure_count = 0
+    failures = []
+    for entry in entries:
+        if not entry["old"]:
+            continue
+        path = Path(entry["path"])
+        if path.is_dir():
+            current, protection = inspect_cleanup_directory(path)
+            if protection:
+                failure_count += 1
+                if len(failures) < 20:
+                    failures.append({"path": str(path), "error": protection})
+                continue
+            if max(current.dir_mtime.values()) > time.time() - TEMP_STALE_DAYS * 86400:
+                continue
+        try:
+            os.rename(entry["path"], destination / entry["label"])
+            moved_count += 1
+            moved_bytes += entry["allocated_bytes"]
+        except OSError as exc:
+            failure_count += 1
+            if len(failures) < 20:
+                failures.append({"path": entry["path"], "error": str(exc)})
+    if not moved_count:
+        destination.rmdir()
+    return {"ok": True, "label": f"Moved {moved_count} temporary entries to Trash; {failure_count} refused", "trash_path": str(destination) if moved_count else None,
+            "moved_count": moved_count, "moved_bytes": moved_bytes, "failure_count": failure_count, "failures": failures}
+
+
 def execute_trash_path(path: Path) -> Dict[str, Any]:
     if not path.exists():
         raise HTTPException(status_code=404, detail=f"Path does not exist: {path}")
     if path.is_symlink() or path.stat().st_dev != DATA_VOLUME.stat().st_dev:
         raise HTTPException(status_code=400, detail="Target is not on the Data volume.")
     protection = cleanup_protection_reason(path) or cleanup_protection_reason(path.resolve())
+    if protection is None and path.is_dir():
+        _, protection = inspect_cleanup_directory(path)
     if protection is not None:
         raise HTTPException(status_code=400, detail=f"Storage Monitor will not move {path} to Trash. {protection}")
     destination = unique_trash_destination(path)
@@ -2090,6 +2356,8 @@ def execute_provider(slug: str) -> Dict[str, Any]:
 
 
 def record_action(payload: Dict[str, Any], result: Dict[str, Any]) -> None:
+    if payload.get("kind") == "trash_group":
+        result = {"moved_count": result["moved_count"], "moved_bytes": result["moved_bytes"], "failure_count": result["failure_count"]}
     append_jsonl(
         RUNTIME_PATHS.action_log,
         {
@@ -2209,37 +2477,65 @@ def measure_free_space_delta(operation: Callable[[], Any]) -> Tuple[Any, Optiona
     return result, observed
 
 
-def discover_cache_candidates(scan_id: int) -> List[Dict[str, Any]]:
-    with open_db_connection() as connection:
-        rows = connection.execute(
-            """
-            SELECT path, name, allocated_bytes FROM nodes
-            WHERE scan_id=? AND root_key='home_root' AND allocated_bytes>=?
-              AND (name IN ('Cache', 'Caches', '.cache') OR name LIKE '%.cache')
-            ORDER BY depth ASC, path ASC
-            """,
-            (scan_id, CACHE_DISCOVERY_MIN_BYTES),
-        ).fetchall()
-    actionable_roots = [expand_path(spec["path"]) for spec in WATCHLIST_SPECS if spec["actionable"]]
-    review_roots = [expand_path(spec["path"]) for spec in WATCHLIST_SPECS if not spec["actionable"]]
+def discover_candidates(scan_id: int) -> List[Dict[str, Any]]:
+    config = load_config()
+    specs = [*WATCHLIST_SPECS, *config["watchlist"]]
+    actionable_roots = [expand_path(spec["path"]) for spec in specs if spec["actionable"]]
+    review_roots = [expand_path(spec["path"]) for spec in specs if not spec["actionable"]]
     buckets = shared_cache_buckets()
     trash = TRASH_DIR.resolve()
-    survivors: List[sqlite3.Row] = []
-    for row in rows:
+    candidates = []
+    with open_db_connection() as connection:
+        for order, rule in enumerate(DISCOVERY_RULES):
+            clauses, params = [], [scan_id, 0 if rule.get("group_all") or rule.get("min_bytes") == 0 else 1024 * 1024]
+            name_expr = "LOWER(name)" if rule.get("case_insensitive") else "name"
+            for name in rule.get("names", []):
+                clauses.append(f"{name_expr} = ?")
+                params.append(name.lower() if rule.get("case_insensitive") else name)
+            for suffix in rule.get("name_suffixes", []):
+                clauses.append(f"substr({name_expr}, -length(?)) = ?")
+                value = suffix.lower() if rule.get("case_insensitive") else suffix
+                params.extend((value, value))
+            for fixed in rule.get("paths", []):
+                clauses.append("parent_path = ?")
+                params.append(str(expand_path(fixed)))
+            for fixed in rule.get("fixed_paths", []):
+                clauses.append("path = ?")
+                params.append(str(expand_path(fixed)))
+            if not clauses:
+                continue
+            scope = " AND root_key='home_root'" if rule.get("scope") == "home_root" else ""
+            rows = connection.execute(
+                "SELECT path, name, allocated_bytes, file_count, newest_mtime, depth FROM nodes "
+                f"WHERE scan_id=? AND allocated_bytes>=?{scope} AND ({' OR '.join(clauses)})",
+                params,
+            ).fetchall()
+            candidates.extend((row, rule, order) for row in rows)
+    survivors = []
+    for row, rule, order in sorted(candidates, key=lambda entry: (entry[0]["depth"], entry[2], entry[0]["path"])):
         path = Path(row["path"])
+        if any(path == root or root in path.parents for root in size_only_homes()):
+            continue
         if path in buckets:
             continue
         if any(path == root or root in path.parents for root in actionable_roots):
             continue
         if any(path == root for root in review_roots):
             continue
-        if any(part.lower().endswith(CACHE_DISCOVERY_BUNDLE_SUFFIXES) for part in path.parts):
+        container_roots = (HOME_DIR / "Library/Containers", HOME_DIR / "Library/Group Containers")
+        if any(part.name.lower().endswith(CACHE_DISCOVERY_BUNDLE_SUFFIXES) and part.parent not in container_roots
+               for part in (path, *path.parents)):
             continue
         if path == trash or trash in path.parents:
             continue
-        if any(Path(existing["path"]) in path.parents for existing in survivors):
+        marker = rule.get("marker")
+        if marker:
+            marker_root = path.parent if marker[0] == "sibling" else path
+            if not os.path.exists(marker_root / marker[1]):
+                continue
+        if any(Path(existing[0]["path"]) == path or Path(existing[0]["path"]) in path.parents for existing in survivors):
             continue
-        survivors.append(row)
+        survivors.append((row, rule))
 
     def review_only(row: sqlite3.Row, category: str, risk: str, description: str) -> Dict[str, Any]:
         finding = {
@@ -2247,7 +2543,10 @@ def discover_cache_candidates(scan_id: int) -> List[Dict[str, Any]]:
             "risk": risk, "description": description,
             "apparent_bytes": None, "allocated_bytes": int(row["allocated_bytes"]),
             "estimated_reclaim_bytes": None, "actionable": False,
-            "cleanup_kind": None, "action_token": None,
+            "cleanup_kind": None, "action_token": None, "rule_id": None,
+            "file_count": row["file_count"], "newest_mtime": row["newest_mtime"],
+            "age_days": (int(time.time()) - row["newest_mtime"]) // 86400 if row["newest_mtime"] is not None else None,
+            "stale": None,
         }
         finding["actions"] = build_finding_actions(finding)
         return finding
@@ -2255,51 +2554,161 @@ def discover_cache_candidates(scan_id: int) -> List[Dict[str, Any]]:
     library_caches = (HOME_DIR / "Library/Caches").resolve()
     dot_cache = (HOME_DIR / ".cache").resolve()
     findings: List[Dict[str, Any]] = []
-    for row in survivors:
+    small: Dict[str, List[Tuple[Dict[str, Any], Dict[str, Any]]]] = {}
+    now = int(time.time())
+    for row, rule in survivors:
         path = Path(row["path"])
-        protection = cleanup_protection_reason(path)
-        if protection is not None:
-            findings.append(review_only(row, "discovered_cache", "high", protection))
-            continue
+        protection = cleanup_protection_reason(path) or indexed_cleanup_protection(scan_id, path)
+        age = (now - row["newest_mtime"]) // 86400 if row["newest_mtime"] is not None else None
+        stale = (age >= config["stale_days"].get(rule["id"], rule["stale_days"]) if age is not None else None) if rule["action"] == "when_stale" else None
+        actionable = (protection is None and row["allocated_bytes"] >= rule["min_bytes"]
+                      and (rule["action"] == "always" or (rule["action"] == "when_stale" and stale is True)))
         low_risk = library_caches in path.parents or dot_cache in path.parents
+        risk = ("low" if low_risk else "medium") if rule["id"] == "cache" else rule["risk"]
+        description = protection or rule.get("description", "Directory discovered by index scan. Review its contents before taking action.")
         finding = {
-            "label": path.name, "path": str(path), "category": "discovered_cache",
-            "risk": "low" if low_risk else "medium",
-            "description": "Cache-named directory discovered by index scan. Apps rebuild caches; verify the owner before trashing.",
+            "label": rule.get("label_prefix", "") + path.name, "path": str(path), "category": rule["category"],
+            "risk": "high" if protection else (risk if actionable else rule.get("review_risk", "medium")),
+            "description": description, "rule_id": rule["id"], "file_count": row["file_count"],
+            "newest_mtime": row["newest_mtime"], "age_days": age, "stale": stale,
             "apparent_bytes": None, "allocated_bytes": int(row["allocated_bytes"]),
-            "estimated_reclaim_bytes": int(row["allocated_bytes"]), "actionable": True,
-            "cleanup_kind": "trash_path",
-            "action_token": encode_action_token({"kind": "trash_path", "path": str(path)}),
+            "estimated_reclaim_bytes": int(row["allocated_bytes"]) if actionable else None, "actionable": actionable,
+            "cleanup_kind": "trash_path" if actionable else None,
+            "action_token": encode_action_token({"kind": "trash_path", "path": str(path)}) if actionable else None,
         }
         finding["actions"] = build_finding_actions(finding)
-        findings.append(finding)
+        if row["allocated_bytes"] < rule["min_bytes"] or rule.get("group_all"):
+            finding.update(actionable=False, cleanup_kind=None, action_token=None, estimated_reclaim_bytes=None)
+            finding["actions"] = build_finding_actions(finding)
+            small.setdefault(rule["category"], []).append((finding, rule))
+        else:
+            findings.append(finding)
 
-    # A shared cache folder is never one target: list it and its entries for review.
-    listed = [Path(row["path"]) for row in survivors] + actionable_roots + review_roots
+    for category, matches in small.items():
+        items = [finding for finding, _ in matches]
+        items.sort(key=lambda item: item["allocated_bytes"], reverse=True)
+        total = sum(item["allocated_bytes"] for item in items)
+        labels = {rule.get("group_label", "folders") for _, rule in matches}
+        group_label = labels.pop() if len(labels) == 1 else "folders"
+        findings.append({"group": True, "count": len(items), "allocated_bytes": total,
+                         "items": items, "group_label": group_label, "label": f"{len(items)} smaller {group_label}, {total / (1024 * 1024):.1f} MiB total",
+                         "category": category, "path": None, "risk": "medium", "description": "Smaller matches for review.",
+                         "actionable": False, "actions": [], "cleanup_kind": None, "action_token": None,
+                         "estimated_reclaim_bytes": None, "apparent_bytes": None, "rule_id": None,
+                         "file_count": None, "newest_mtime": None, "age_days": None, "stale": None})
+
+    # A shared cache folder is never one target: list its entries separately.
+    listed = [Path(row["path"]) for row, rule in survivors if row["allocated_bytes"] >= rule["min_bytes"]] + actionable_roots + review_roots
     with open_db_connection() as connection:
+        for root in size_only_homes():
+            row = connection.execute(
+                "SELECT path, allocated_bytes, file_count, newest_mtime FROM nodes WHERE scan_id=? AND path=?",
+                (scan_id, str(root)),
+            ).fetchone()
+            if row is not None:
+                finding = review_only(row, "agent_residue", "high", "Runtime home: size only; review with its owning tool.")
+                finding["always_include"] = True
+                findings.append(finding)
         for bucket in buckets:
             if bucket not in review_roots:
                 row = connection.execute(
-                    "SELECT path, allocated_bytes FROM nodes WHERE scan_id=? AND path=? AND allocated_bytes>=?",
+                    "SELECT path, allocated_bytes, file_count, newest_mtime FROM nodes WHERE scan_id=? AND path=? AND allocated_bytes>=?",
                     (scan_id, str(bucket), CACHE_DISCOVERY_MIN_BYTES),
                 ).fetchone()
                 if row is not None:
                     findings.append(review_only(row, "cache_bucket", "low", SHARED_CACHE_BUCKET_REASON))
             for row in connection.execute(
-                "SELECT path, allocated_bytes FROM nodes WHERE scan_id=? AND parent_path=? AND allocated_bytes>=? ORDER BY path ASC",
+                "SELECT path, allocated_bytes, file_count, newest_mtime FROM nodes WHERE scan_id=? AND parent_path=? AND allocated_bytes>=? ORDER BY path ASC",
                 (scan_id, str(bucket), CACHE_DISCOVERY_MIN_BYTES),
             ).fetchall():
                 child = Path(row["path"])
+                if any(child == root or root in child.parents for root in size_only_homes()):
+                    continue
                 if any(child == other or child in other.parents for other in listed):
                     continue
-                findings.append(review_only(
+                finding = review_only(
                     row, "discovered_cache", "medium",
                     "Entry in a shared cache folder. Review-only: some tools keep data here that is slow or costly to rebuild.",
-                ))
+                )
+                finding["library_cache_bucket_entry"] = bucket == library_caches
+                findings.append(finding)
+    return findings
+
+
+def discover_cache_candidates(scan_id: int) -> List[Dict[str, Any]]:
+    return discover_candidates(scan_id)
+
+
+def home_residue_name(name: str) -> bool:
+    # Keep aligned with tools/check_home_residue.zsh's two patterns.
+    dot = re.fullmatch(r"\..+\.([A-Za-z0-9]{6})", name)
+    dash = re.fullmatch(r"\..+-([A-Za-z0-9]{8})", name)
+    return bool((dot and dot.group(1) != "backup") or (dash and re.search(r"[A-Z0-9]", dash.group(1))))
+
+
+def additional_findings(scan_id: int) -> List[Dict[str, Any]]:
+    home = HOME_DIR.resolve()
+    backup_root = home / "Library/Application Support/MobileSync/Backup"
+    cache_root = darwin_user_directory("CS_DARWIN_USER_CACHE_DIR")
+    with open_db_connection() as connection:
+        rows = connection.execute(
+            "SELECT path, name, parent_path, allocated_bytes, file_count, newest_mtime FROM nodes "
+            "WHERE scan_id=? AND (path IN (?, ?, ?) OR parent_path IN (?, ?) "
+            "OR parent_path LIKE '%/.worktrees' OR parent_path LIKE '%/.claude/worktrees')",
+            (scan_id, str(home), str(TRASH_DIR.resolve()), str(DATA_VOLUME / str(cache_root).lstrip("/")) if cache_root else "", str(home), str(backup_root)),
+        ).fetchall()
+    findings = []
+    for row in rows:
+        path = Path(row["path"])
+        if any(path == root or root in path.parents for root in size_only_homes()):
+            continue
+        parent = path.parent
+        category = description = None
+        risk = "medium"
+        if path == TRASH_DIR.resolve():
+            category, description = "trash", "Empty the Trash in Finder to free this space."
+        elif cache_root and path == DATA_VOLUME / str(cache_root).lstrip("/"):
+            category, description = "temp", "Per-user cache directory, shown for size review only."
+        elif parent == backup_root:
+            category, description, risk = "ios_backups", "Device backup; manage it in Finder.", "high"
+        elif parent.name == ".worktrees" or (parent.name == "worktrees" and parent.parent.name == ".claude"):
+            category, description = "agent_residue", "Remove worktrees only through the manager that created them."
+        if category:
+            newest = row["newest_mtime"]
+            finding = {"path": str(cache_root if cache_root and category == "temp" else path), "label": path.name,
+                       "category": category, "risk": risk, "description": description, "allocated_bytes": row["allocated_bytes"],
+                       "file_count": row["file_count"], "newest_mtime": newest,
+                       "age_days": (int(time.time()) - newest) // 86400 if newest is not None else None,
+                       "actionable": False, "action_token": None, "estimated_reclaim_bytes": None}
+            finding["actions"] = build_finding_actions(finding)
+            findings.append(finding)
+    if any(row["path"] == str(home) for row in rows):
+        try:
+            with os.scandir(home) as entries:
+                for entry in entries:
+                    if not home_residue_name(entry.name):
+                        continue
+                    info = entry.stat(follow_symlinks=False)
+                    if time.time() - info.st_mtime <= 86400:
+                        continue
+                    path = Path(entry.path)
+                    if cleanup_protection_reason(path) or cleanup_protection_reason(path.resolve()):
+                        continue
+                    indexed = next((row for row in rows if row["path"] == str(path)), None)
+                    size = indexed["allocated_bytes"] if stat.S_ISDIR(info.st_mode) and indexed else info.st_blocks * 512
+                    finding = {"path": str(path), "label": entry.name, "category": "agent_residue", "risk": "medium",
+                               "description": "Possible temporary-name residue; review only.", "allocated_bytes": size,
+                               "newest_mtime": int(info.st_mtime), "age_days": int((time.time() - info.st_mtime) // 86400),
+                               "actionable": False, "action_token": None, "estimated_reclaim_bytes": None}
+                    finding["actions"] = build_finding_actions(finding)
+                    findings.append(finding)
+        except OSError:
+            logger.warning("Unable to inspect home temporary-name residue")
     return findings
 
 
 SHARED_CACHE_BUCKET_RELATIVE_PATHS = (".cache", "Library/Caches")
+SIZE_ONLY_HOME_RELATIVE_PATHS = (".claude", ".codex", ".config", ".gemini", ".t3", ".lmstudio", ".docker", ".local", ".venvs", ".storage_monitor")
 SHARED_CACHE_BUCKET_REASON = "Shared cache folder used by many tools. Review its entries instead of removing it whole."
 # System-managed or synced locations under the home directory. Moving anything
 # out of them can corrupt live system state or delete the copy on other devices.
@@ -2316,11 +2725,23 @@ def shared_cache_buckets() -> List[Path]:
     return [home / relative for relative in SHARED_CACHE_BUCKET_RELATIVE_PATHS]
 
 
+def size_only_homes() -> List[Path]:
+    roots = [HOME_DIR.resolve() / relative for relative in SIZE_ONLY_HOME_RELATIVE_PATHS]
+    runtime = RUNTIME_PATHS.home.resolve()
+    return list(dict.fromkeys([*roots, runtime]))
+
+
 def cleanup_protection_reason(path: Path) -> Optional[str]:
     """Return why Storage Monitor must not trash this path, or None when it may."""
     home = HOME_DIR.resolve()
     if path == home or path in home.parents:
         return "This is not a cleanup target."
+    if path == TRASH_DIR.resolve() or TRASH_DIR.resolve() in path.parents:
+        return "Empty the Trash in Finder to free this space."
+    if any(path == root or root in path.parents or path in root.parents for root in size_only_homes()):
+        return "Runtime home is size-only; manage it with its owning tool."
+    if any(part.name == ".worktrees" or (part.name == "worktrees" and part.parent.name == ".claude") for part in (path, *path.parents)):
+        return "Remove worktrees only through the manager that created them."
     if path in shared_cache_buckets():
         return SHARED_CACHE_BUCKET_REASON
     for relative in PROTECTED_HOME_RELATIVE_PATHS:
@@ -2333,6 +2754,21 @@ def cleanup_protection_reason(path: Path) -> Optional[str]:
     if path == uv_cache or uv_cache in path.parents:
         return "Part of uv's package cache, which Storage Monitor runs from. Use the uv Cache Prune provider instead."
     return None
+
+
+def collect_running_apps() -> Optional[Dict[str, str]]:
+    result = run_command(["lsappinfo", "list"], timeout=30)
+    if not result["ok"]:
+        return None
+    blocks = re.split(r'(?m)^\s*\d+\) ', result["stdout"])
+    apps: Dict[str, str] = {}
+    for block in blocks[1:]:
+        name = re.match(r'"([^"\n]+)"', block)
+        identifier = re.search(r'(?m)^\s*bundleID\s*=\s*(?:"([^"\n]+)"|(\[ NULL \]))', block)
+        if not name or not identifier:
+            return None
+        apps[identifier.group(1) or "@no-id:" + name.group(1)] = name.group(1)
+    return apps or None
 
 
 def collect_installed_bundle_ids() -> Set[str]:
@@ -2392,6 +2828,8 @@ def collect_orphan_candidates(scan_id: int, installed_ids: Set[str]) -> Dict[str
         except OSError:
             continue
         for path in candidates:
+            if any(path == root or root in path.parents for root in size_only_homes()):
+                continue
             if not path.is_dir() or UUID_NAME_RE.match(path.name):
                 continue
             candidate_id = normalize_group_container_id(path.name) if source == "group_containers" else path.name
@@ -2407,17 +2845,32 @@ def collect_orphan_candidates(scan_id: int, installed_ids: Set[str]) -> Dict[str
             item["actions"] = [{"label": "Reveal in Finder", "kind": "reveal", "target_path": str(path), "risk": "none", "estimated_reclaim_bytes": None}]
             items.append(item)
     items.sort(key=lambda item: bytes_or_zero(item["allocated_bytes"]), reverse=True)
-    return {"items": items[:40], "updated_at": iso_now()}
+    omitted = items[40:]
+    return {"items": items[:40], "truncated": {"count": len(omitted), "bytes": sum(bytes_or_zero(item["allocated_bytes"]) for item in omitted)}, "updated_at": iso_now()}
+
+
+def path_is_ignored(path: Path, roots: List[Path], *, protect_ancestors: bool = False) -> bool:
+    if not roots:
+        return False
+    try:
+        path = path.resolve()
+    except (OSError, RuntimeError, ValueError):
+        return True
+    return any(path == root or root in path.parents or (protect_ancestors and path in root.parents) for root in roots)
 
 
 def build_findings_section(
     watchlist: List[Dict[str, Any]],
     scan_id: Optional[int] = None,
     discovered: Optional[List[Dict[str, Any]]] = None,
+    running_apps: Optional[Dict[str, str]] = None,
 ) -> Dict[str, Any]:
     findings: List[Dict[str, Any]] = []
     for item in watchlist:
         if not item["exists"]:
+            continue
+        path = Path(item["path"])
+        if any(path == root or root in path.parents for root in size_only_homes()):
             continue
         finding = {
             "label": item["label"],
@@ -2431,19 +2884,97 @@ def build_findings_section(
             "actionable": item["actionable"],
             "cleanup_kind": item["cleanup_kind"],
             "action_token": item["action_token"],
+            "rule_id": None, "file_count": item.get("file_count"),
+            "newest_mtime": item.get("newest_mtime"),
+            "age_days": (int(time.time()) - item["newest_mtime"]) // 86400 if item.get("newest_mtime") is not None else None,
+            "stale": None,
         }
         finding["actions"] = build_finding_actions(finding)
         findings.append(finding)
     if discovered is None and scan_id is not None:
         discovered = discover_cache_candidates(scan_id)
     findings.extend(discovered or [])
+    if scan_id is not None:
+        findings.extend(temp_findings(scan_id))
+        findings.extend(additional_findings(scan_id))
+    for item in findings:
+        library_bucket_entry = item.pop("library_cache_bucket_entry", False)
+        if not item.get("path"):
+            continue
+        path = Path(item["path"])
+        owner = None
+        is_cache = False
+        for relative in ("Library/Caches", "Library/Containers", "Library/Application Support"):
+            try:
+                parts = path.relative_to(HOME_DIR / relative).parts
+            except ValueError:
+                continue
+            if not parts:
+                break
+            is_cache = relative == "Library/Caches"
+            if running_apps is not None:
+                for identifier, name in running_apps.items():
+                    if (relative == "Library/Application Support" and parts[0].casefold() == name.casefold()) or (relative != "Library/Application Support" and parts[0].casefold() == identifier.casefold()):
+                        owner = name
+                        break
+            break
+        if owner:
+            item["owner_running"] = True
+            item["owner_name"] = owner
+        if (library_bucket_entry and is_cache and running_apps is not None and not owner
+                and not cleanup_protection_reason(path) and not indexed_cleanup_protection(scan_id, path)):
+            item.update(actionable=True, risk="low", cleanup_kind="trash_path",
+                        estimated_reclaim_bytes=item["allocated_bytes"],
+                        action_token=encode_action_token({"kind": "trash_path", "path": str(path)}),
+                        description="Cache entry. Quit its owning app before moving it to Trash.")
+            item["actions"] = build_finding_actions(item)
+        if is_cache and (owner or running_apps is None):
+            item["actionable"] = False
+            item["action_token"] = None
+            item["estimated_reclaim_bytes"] = None
+            item["actions"] = [action for action in item.get("actions", []) if action.get("kind") != "execute"]
+    ignore_roots = [Path(path) for path in load_config()["ignore_paths"]]
+    def ignored(item: Dict[str, Any]) -> bool:
+        path = item.get("path")
+        return bool(path and path_is_ignored(Path(path), ignore_roots))
+    ignored_count = sum(1 for item in findings if ignored(item))
+    findings = [item for item in findings if not ignored(item)]
+    ignored_count += sum(item.get("ignored_count", 0) for item in findings)
+    for item in findings:
+        if item.get("group") and item.get("path") is None:
+            hidden = [child for child in item.get("items", []) if ignored(child)]
+            ignored_count += len(hidden)
+            if hidden:
+                item["items"] = [child for child in item["items"] if not ignored(child)]
+                item["count"] -= len(hidden)
+                item["allocated_bytes"] -= sum(bytes_or_zero(child.get("allocated_bytes")) for child in hidden)
+                item["label"] = f"{item['count']} smaller {item.get('group_label', 'folders')}, {item['allocated_bytes'] / (1024 * 1024):.1f} MiB total"
+            item["items"] = item.get("items", [])[:10]
+    findings = [item for item in findings if not item.get("group") or item.get("path") is not None or item.get("count")]
     findings.sort(
         key=lambda item: (
-            bytes_or_zero(item.get("estimated_reclaim_bytes")) or bytes_or_zero(item.get("allocated_bytes")),
+            bytes_or_zero(item.get("allocated_bytes")),
         ),
         reverse=True,
     )
-    return {"items": findings[:MAX_FINDINGS], "updated_at": iso_now()}
+    kept, counts, truncated = [], {}, {}
+    for item in findings:
+        category = item["category"]
+        if item.get("group") or item.get("always_include") or counts.get(category, 0) < MAX_FINDINGS:
+            kept.append(item)
+            if not item.get("group") and not item.get("always_include"):
+                counts[category] = counts.get(category, 0) + 1
+        else:
+            dropped = truncated.setdefault(category, {"count": 0, "bytes": 0})
+            dropped["count"] += 1
+            dropped["bytes"] += bytes_or_zero(item.get("allocated_bytes"))
+    return {"items": kept, "truncated": truncated, "ignored": ignored_count, "updated_at": iso_now()}
+
+
+def finding_summary(findings: Dict[str, Any]) -> Dict[str, int]:
+    result = {f"{label}_reclaimable_bytes": sum(bytes_or_zero(item.get("estimated_reclaim_bytes")) for item in findings["items"] if item.get("risk") == risk and item.get("actionable")) for label, risk in (("safe", "low"), ("medium", "medium"))}
+    result["trash_bytes"] = sum(bytes_or_zero(item.get("allocated_bytes")) for item in findings["items"] if item.get("category") == "trash")
+    return result
 
 
 def build_breakdowns_from_db(scan_id: int) -> Dict[str, Any]:
@@ -2468,21 +2999,12 @@ def build_updated_report(
 ) -> Dict[str, Any]:
     breakdowns = build_breakdowns_from_db(scan_id)
     large_files = fetch_large_files_from_db(scan_id)
-    findings = build_findings_section(watchlist, scan_id)
+    findings = build_findings_section(watchlist, scan_id, None, collect_running_apps())
     visible_data_bytes = breakdowns["data_root"]["total_bytes"]
     hidden_delta_bytes = None
     if metadata["data_volume_used_bytes"] is not None and visible_data_bytes is not None:
         hidden_delta_bytes = max(metadata["data_volume_used_bytes"] - visible_data_bytes, 0)
-    safe_reclaimable_bytes = sum(
-        bytes_or_zero(item.get("estimated_reclaim_bytes"))
-        for item in findings["items"]
-        if item.get("risk") == "low" and item.get("actionable")
-    )
-    medium_reclaimable_bytes = sum(
-        bytes_or_zero(item.get("estimated_reclaim_bytes"))
-        for item in findings["items"]
-        if item.get("risk") == "medium" and item.get("actionable")
-    )
+    reclaimable = finding_summary(findings)
     return {
         **base_report,
         "generated_at": iso_now(),
@@ -2497,8 +3019,7 @@ def build_updated_report(
             "home_total_bytes": breakdowns["home_root"]["total_bytes"],
             "applications_total_bytes": breakdowns["applications_root"]["total_bytes"],
             "snapshot_count": len(snapshots["items"]),
-            "safe_reclaimable_bytes": safe_reclaimable_bytes,
-            "medium_reclaimable_bytes": medium_reclaimable_bytes,
+            **reclaimable,
         },
         "breakdowns": breakdowns,
         "watchlist": watchlist,
@@ -2570,6 +3091,10 @@ def refresh_after_action(action: Dict[str, Any], result: Dict[str, Any]) -> Opti
         if destination_root_key is not None:
             refresh_directory_chain(scan_id, trash_path.parent)
         refresh_large_files_for_paths(scan_id, [trash_path])
+    elif action.get("kind") == "trash_group":
+        refresh_directory_chain(scan_id, DATA_VOLUME / action["root"].lstrip("/"))
+        if result.get("trash_path"):
+            refresh_directory_chain(scan_id, TRASH_DIR)
 
     provider_slug = action.get("slug") if action.get("kind") == "provider_execute" else None
     return rebuild_and_publish_report(scan_id, metadata, provider_slug)
@@ -2691,23 +3216,23 @@ def choose_scan_id_for_path(path_str: str) -> Optional[int]:
     return fetch_active_scan_id()
 
 
-def _apply_delta_chain(connection: sqlite3.Connection, scan_id: int, start_path: str, delta: int) -> None:
+def _apply_delta_chain(connection: sqlite3.Connection, scan_id: int, start_path: str, delta: int, file_delta: int = 0, newest: Optional[int] = None) -> None:
     current = start_path
     visited: Set[str] = set()
     while current and current not in visited:
         visited.add(current)
         connection.execute(
-            "UPDATE nodes SET allocated_bytes = allocated_bytes + ?, updated_at = ? WHERE scan_id = ? AND path = ?",
-            (delta, iso_now(), scan_id, current),
+            "UPDATE nodes SET allocated_bytes = allocated_bytes + ?, file_count = file_count + ?, newest_mtime = CASE WHEN ? IS NULL THEN newest_mtime WHEN newest_mtime IS NULL OR newest_mtime < ? THEN ? ELSE newest_mtime END, updated_at = ? WHERE scan_id = ? AND path = ?",
+            (delta, file_delta, newest, newest, newest, iso_now(), scan_id, current),
         )
         if current == str(HOME_DIR.resolve()):
             alias = str(DATA_VOLUME / "Users" / HOME_DIR.name)
-            connection.execute("UPDATE nodes SET allocated_bytes = allocated_bytes + ? WHERE scan_id=? AND path=?", (delta, scan_id, alias))
+            connection.execute("UPDATE nodes SET allocated_bytes = allocated_bytes + ?, file_count = file_count + ?, newest_mtime = CASE WHEN ? IS NULL THEN newest_mtime WHEN newest_mtime IS NULL OR newest_mtime < ? THEN ? ELSE newest_mtime END WHERE scan_id=? AND path=?", (delta, file_delta, newest, newest, newest, scan_id, alias))
             current = os.path.dirname(alias)
             continue
         if current == str(APPLICATIONS_DIR.resolve()):
             alias = str(DATA_VOLUME / "Applications")
-            connection.execute("UPDATE nodes SET allocated_bytes = allocated_bytes + ? WHERE scan_id=? AND path=?", (delta, scan_id, alias))
+            connection.execute("UPDATE nodes SET allocated_bytes = allocated_bytes + ?, file_count = file_count + ?, newest_mtime = CASE WHEN ? IS NULL THEN newest_mtime WHEN newest_mtime IS NULL OR newest_mtime < ? THEN ? ELSE newest_mtime END WHERE scan_id=? AND path=?", (delta, file_delta, newest, newest, newest, scan_id, alias))
             current = os.path.dirname(alias)
             continue
         row = connection.execute("SELECT parent_path FROM nodes WHERE scan_id=? AND path=?", (scan_id, current)).fetchone()
@@ -2737,23 +3262,28 @@ def walk_subtree_and_store(scan_id: int, path: Path) -> Dict[str, Any]:
                     if response is None:
                         raise HTTPException(status_code=409, detail="The active scan changed during refresh.")
                     return response
-                old_row = connection.execute("SELECT allocated_bytes FROM nodes WHERE scan_id=? AND path=?", (scan_id, stored_root)).fetchone()
+                old_row = connection.execute("SELECT allocated_bytes, file_count FROM nodes WHERE scan_id=? AND path=?", (scan_id, stored_root)).fetchone()
                 old_total = int(old_row["allocated_bytes"]) if old_row else 0
+                old_files = int(old_row["file_count"]) if old_row else 0
                 attributions, adjustments, changes = resolve_hardlink_ownership(scan_id, result.hardlink_candidates, translation, full_scan=False, connection=connection)
                 for parent, allocated in attributions:
                     result.dir_local[parent] = result.dir_local.get(parent, 0) + allocated
                 totals = rollup_subtree_totals(result.dir_local, str(canonical))
+                file_totals = rollup_subtree_totals(result.dir_files, str(canonical))
+                time_totals = rollup_subtree_newest(result.dir_mtime, str(canonical))
                 new_total = int(totals.get(str(canonical), 0))
                 for prefix in prefixes:
                     like = sql_like_prefix(prefix)
                     connection.execute("DELETE FROM nodes WHERE scan_id=? AND (path=? OR path LIKE ? ESCAPE '\\')", (scan_id, prefix, like))
                     connection.execute("DELETE FROM large_files WHERE scan_id=? AND (path=? OR path LIKE ? ESCAPE '\\')", (scan_id, prefix, like))
+                    connection.execute("DELETE FROM scan_errors WHERE scan_id=? AND (path=? OR path LIKE ? ESCAPE '\\')", (scan_id, prefix, like))
+                connection.executemany("INSERT OR REPLACE INTO scan_errors (scan_id,path,errno) VALUES (?,?,?)", [(scan_id, translate_walk_path(path, translation)[0], error) for path, error in result.unreadable])
                 updated_at = iso_now()
                 node_payload = []
                 for walked_path, allocated in totals.items():
                     stored_path, root_key = translate_walk_path(walked_path, translation)
-                    node_payload.append((scan_id, stored_path, os.path.dirname(stored_path), os.path.basename(stored_path) or stored_path, root_key, path_depth(ROOT_PATHS[root_key], stored_path), allocated, 1, updated_at))
-                connection.executemany("INSERT INTO nodes (scan_id,path,parent_path,name,root_key,depth,allocated_bytes,children_indexed,updated_at) VALUES (?,?,?,?,?,?,?,?,?)", node_payload)
+                    node_payload.append((scan_id, stored_path, os.path.dirname(stored_path), os.path.basename(stored_path) or stored_path, root_key, path_depth(ROOT_PATHS[root_key], stored_path), allocated, file_totals.get(walked_path, 0), time_totals.get(walked_path), 1, updated_at))
+                connection.executemany("INSERT INTO nodes (scan_id,path,parent_path,name,root_key,depth,allocated_bytes,file_count,newest_mtime,children_indexed,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?)", node_payload)
                 large_payload = []
                 for item in result.large_files:
                     stored_path, root_key = translate_walk_path(item["path"], translation)
@@ -2766,7 +3296,7 @@ def walk_subtree_and_store(scan_id: int, path: Path) -> Dict[str, Any]:
                         connection.execute("DELETE FROM hardlink_inodes WHERE scan_id=? AND ino=?", payload)
                     else:
                         connection.execute("INSERT INTO hardlink_inodes (scan_id,ino,dev,owner_path,allocated_bytes) VALUES (?,?,?,?,?) ON CONFLICT(scan_id,ino) DO UPDATE SET dev=excluded.dev, owner_path=excluded.owner_path, allocated_bytes=excluded.allocated_bytes", payload)
-                _apply_delta_chain(connection, scan_id, os.path.dirname(stored_root), new_total - old_total)
+                _apply_delta_chain(connection, scan_id, os.path.dirname(stored_root), new_total - old_total, file_totals.get(str(canonical), 0) - old_files, time_totals.get(str(canonical)))
                 for old_parent, delta in adjustments:
                     if not any(old_parent == prefix or old_parent.startswith(prefix + os.sep) for prefix in prefixes):
                         _apply_delta_chain(connection, scan_id, old_parent, delta)
@@ -2841,6 +3371,7 @@ def api_state() -> Dict[str, Any]:
         return {
             "scan_status": dict(STATE.scan_status),
             "report": STATE.report,
+            "config_warning": load_config().get("warning"),
         }
 
 
@@ -2918,6 +3449,8 @@ def api_execute_action(payload: Dict[str, Any]) -> Dict[str, Any]:
     kind = action.get("kind")
     if kind == "trash_path":
         result = execute_trash_path(Path(action["path"]))
+    elif kind == "trash_group":
+        result = execute_trash_group(action)
     elif kind == "delete_snapshot":
         elevate = payload.get("elevate", False)
         result = execute_delete_snapshot(action["snapshot_name"], action["token"], elevate=elevate)
@@ -3594,6 +4127,8 @@ const html = htm.bind(preact.h);
       user_media: '#7a4d75', user_files: '#3c5f89', export_data: '#7a4d75',
       user_data: '#7a4d75',
       discovered_cache: '#1f4952',
+      dev_artifact: '#7762ad', python_bytecode: '#7762ad', temp: '#8a6d3b',
+      agent_residue: '#3c5f89', trash: '#8d2f2f', ios_backups: '#7a4d75',
     };
 
     function toggleTheme() {
@@ -3620,6 +4155,7 @@ const html = htm.bind(preact.h);
       const [providers, setProviders] = useState({ items: [], updated_at: null });
       const [orphans, setOrphans] = useState({ items: [], updated_at: null });
       const [checks, setChecks] = useState([]);
+      const [unreadable, setUnreadable] = useState({ items: [] });
       const [summary, setSummary] = useState({});
       const [scanStatus, setScanStatus] = useState({ running: true, phase: 'Booting', progress: 0 });
       const [busyToken, setBusyToken] = useState(null);
@@ -3632,7 +4168,7 @@ const html = htm.bind(preact.h);
       const normalizeSection = (val) => {
         if (!val) return { items: [], updated_at: null };
         if (Array.isArray(val)) return { items: val, updated_at: null };
-        return { items: val.items || [], updated_at: val.updated_at || null };
+        return { ...val, items: val.items || [], updated_at: val.updated_at || null };
       };
 
       const applyReport = useCallback((report) => {
@@ -3659,6 +4195,7 @@ const html = htm.bind(preact.h);
         setProviders(providersSection);
         setOrphans(orphansSection);
         setChecks(report.checks || []);
+        setUnreadable(report.unreadable || { items: [] });
         if (report.summary) {
           setMetadata({
             container_size_bytes: report.summary.container_size_bytes,
@@ -3679,6 +4216,7 @@ const html = htm.bind(preact.h);
             if (cancelled) return;
             applyReport(data.report);
             setScanStatus(data.scan_status);
+            if (data.config_warning) { setMessage(data.config_warning); setMessageType('error'); }
             if (!data.report && !data.scan_status?.running) {
               fetch('/api/scan', { method: 'POST' }).catch(() => {});
             }
@@ -3830,12 +4368,12 @@ const html = htm.bind(preact.h);
 
       return {
         metadata, summary, breakdowns, findings, snapshots, largeFiles, providers, orphans,
-        checks, scanStatus, busyToken, message, messageType,
+        checks, unreadable, scanStatus, busyToken, message, messageType,
         triggerScan, executeAction, revealPath, rescanPath, dismissMessage,
       };
     }
 
-    function HeaderBar({ metadata, summary, scanStatus, onRescan, onToggleTheme, checks }) {
+    function HeaderBar({ metadata, summary, scanStatus, onRescan, onToggleTheme, checks, unreadable }) {
       const [showChecks, setShowChecks] = useState(false);
       const containerSize = metadata?.container_size_bytes || summary?.container_size_bytes || 0;
       const usedBytes = metadata?.container_used_bytes || summary?.container_used_bytes || 0;
@@ -3874,8 +4412,8 @@ const html = htm.bind(preact.h);
                 fontSize: 13, cursor: 'pointer', opacity: isScanning ? 0.5 : 1,
               }}>Rescan</button><button onClick=${() => setShowChecks(!showChecks)} aria-label=${"Scan details"} aria-expanded=${showChecks} style=${{ background: 'none', border: 'none', cursor: 'pointer', fontSize: 14, color: 'var(--text-secondary)', padding: 4 }}>ⓘ</button><button onClick=${onToggleTheme} aria-label=${"Toggle dark mode"} style=${{ background: 'none', border: 'none', cursor: 'pointer', fontSize: 16, color: 'var(--text-secondary)', padding: 4 }}>☾</button></div></div>${isScanning && (
             html`<div class=${"progress-bar"}><div class=${"progress-fill"} style=${{ width: `${Math.max(2, (scanStatus.progress || 0) * 100)}%` }} /></div>`
-          )}${showChecks && checks.length > 0 && (
-            html`<div style=${{ padding: '8px 16px', borderTop: '1px solid var(--border)', fontSize: 13, maxHeight: 200, overflow: 'auto' }}>${checks.map(c => (
+          )}${showChecks && (
+            html`<div style=${{ padding: '8px 16px', borderTop: '1px solid var(--border)', fontSize: 13, maxHeight: 200, overflow: 'auto' }}><div>Hidden space (${formatBytes(hiddenBytes)}) can contain local snapshots, unreadable directories, and space shared between cloned files.</div><strong>Unreadable</strong><div>Sizes under these paths are missing.</div>${(unreadable?.items || []).map(item => html`<div key=${item.path}>${item.path}: ${item.reason}</div>`)}${checks.map(c => (
                 html`<div key=${c.label} style=${{ display: 'flex', gap: 12, padding: '3px 0', borderBottom: '1px solid var(--border)' }}><span style=${{ flex: 1 }}>${c.label}</span><span class=${"mono"} style=${{ color: 'var(--text-secondary)' }}>${c.duration_ms != null ? `${c.duration_ms}ms` : ''}</span><span style=${{ color: c.ok ? 'var(--success)' : 'var(--danger)' }}>${c.ok ? 'ok' : 'warn'}</span></div>`
               ))}</div>`
           )}</header>`
@@ -4090,18 +4628,23 @@ const html = htm.bind(preact.h);
 
     function FindingsTab({ findings, busyToken, onExecute, onReveal, isScanning }) {
       const [riskFilter, setRiskFilter] = useState('all');
+      const [staleOnly, setStaleOnly] = useState(false);
+      const [expanded, setExpanded] = useState({});
       const [sortCol, setSortCol] = useState('size');
       const [sortAsc, setSortAsc] = useState(false);
 
       const items = useMemo(() => {
         let list = findings?.items || [];
         if (riskFilter !== 'all') list = list.filter(f => f.risk === riskFilter);
+        if (staleOnly) list = list.filter(f => f.stale === true);
         const sorted = [...list];
         sorted.sort((a, b) => {
           let va, vb;
           if (sortCol === 'size') {
             va = a.estimated_reclaim_bytes || a.allocated_bytes || 0;
             vb = b.estimated_reclaim_bytes || b.allocated_bytes || 0;
+          } else if (sortCol === 'age') {
+            va = a.age_days ?? -1; vb = b.age_days ?? -1;
           } else if (sortCol === 'risk') {
             const order = { low: 1, medium: 2, high: 3 };
             va = order[a.risk] || 0; vb = order[b.risk] || 0;
@@ -4113,7 +4656,21 @@ const html = htm.bind(preact.h);
           return 0;
         });
         return sorted;
-      }, [findings, riskFilter, sortCol, sortAsc]);
+      }, [findings, riskFilter, staleOnly, sortCol, sortAsc]);
+
+      const classOf = category => {
+        if (['cache', 'cache_bucket', 'app_cache', 'model_cache', 'discovered_cache'].includes(category)) return 'Caches';
+        if (['dev_artifact', 'python_bytecode'].includes(category)) return 'Developer';
+        if (category === 'temp') return 'Temp';
+        if (category === 'agent_residue') return 'Agent leftovers';
+        if (category === 'trash') return 'Trash';
+        return 'Review-only user data';
+      };
+      const groups = ['Caches', 'Developer', 'Temp', 'Agent leftovers', 'Trash', 'Review-only user data'];
+      const allItems = findings?.items || [];
+      const trashable = allItems.reduce((n, item) => n + (item.actionable && ['low', 'medium'].includes(item.risk) ? (item.estimated_reclaim_bytes || 0) : 0), 0);
+      const inTrash = allItems.reduce((n, item) => n + (item.category === 'trash' ? (item.allocated_bytes || 0) : 0), 0);
+      const review = allItems.reduce((n, item) => n + (item.category !== 'trash' && !(item.actionable && ['low', 'medium'].includes(item.risk)) ? (item.allocated_bytes || 0) : 0), 0);
 
       const handleSort = (col) => {
         if (sortCol === col) setSortAsc(!sortAsc);
@@ -4128,30 +4685,36 @@ const html = htm.bind(preact.h);
       }, [findings]);
 
       return (
-        html`<div style=${{ fontSize: 13 }}><div style=${{ display: 'flex', alignItems: 'center', gap: 6, padding: '8px 12px', borderBottom: '1px solid var(--border)' }}><span style=${{ fontSize: 11, color: 'var(--text-secondary)' }}>Filter:</span>${['all', 'low', 'medium', 'high'].map(r => (
+        html`<div style=${{ fontSize: 13 }}><div style=${{ display: 'flex', gap: 20, padding: '8px 12px' }}><span>Trashable now: ${formatBytes(trashable)}</span><span>In Trash: ${formatBytes(inTrash)}</span><span>Review: ${formatBytes(review)}</span></div><div style=${{ display: 'flex', alignItems: 'center', gap: 6, padding: '8px 12px', borderBottom: '1px solid var(--border)' }}><span style=${{ fontSize: 11, color: 'var(--text-secondary)' }}>Filter:</span>${['all', 'low', 'medium', 'high'].map(r => (
               html`<button key=${r} onClick=${() => setRiskFilter(r)} style=${{
                 padding: '2px 8px', borderRadius: 4, fontSize: 11, cursor: 'pointer', border: 'none',
                 background: riskFilter === r ? 'var(--accent)' : 'var(--surface-hover)',
                 color: riskFilter === r ? '#fff' : 'var(--text-secondary)',
               }}>${r}</button>`
-            ))}<div style=${{ flex: 1 }} /><span style=${{ fontSize: 11, color: 'var(--text-secondary)' }}>${items.length} items${findings?.updated_at && ` · ${formatRelativeTime(findings.updated_at)}`}</span></div><div style=${{ display: 'grid', gridTemplateColumns: '2fr 80px 55px 75px 100px', gap: 4, padding: '6px 12px', borderBottom: '1px solid var(--border)', fontSize: 11, textTransform: 'uppercase', color: 'var(--text-secondary)' }}><button onClick=${() => handleSort('name')} style=${{ cursor: 'pointer', background: 'none', border: 'none', padding: 0, font: 'inherit', color: 'inherit', textTransform: 'inherit' }}>Finding</button><span>Category</span><button onClick=${() => handleSort('risk')} style=${{ cursor: 'pointer', background: 'none', border: 'none', padding: 0, font: 'inherit', color: 'inherit', textTransform: 'inherit' }} title=${"Low = safe to delete (caches). Medium = review first. High = manual review."}>Risk ⓘ</button><button onClick=${() => handleSort('size')} style=${{ cursor: 'pointer', textAlign: 'right', background: 'none', border: 'none', padding: 0, font: 'inherit', color: 'inherit', textTransform: 'inherit' }}>Size</button><span style=${{ textAlign: 'right' }}>Actions</span></div><div style=${{ maxHeight: 400, overflowY: 'auto' }}>${isScanning && items.length === 0 && (
+            ))}<label><input type=${"checkbox"} checked=${staleOnly} onChange=${e => setStaleOnly(e.target.checked)} /> Stale only</label><div style=${{ flex: 1 }} /><span style=${{ fontSize: 11, color: 'var(--text-secondary)' }}>${items.length} items${findings?.updated_at && ` · ${formatRelativeTime(findings.updated_at)}`}</span></div><div style=${{ display: 'grid', gridTemplateColumns: '2fr 80px 55px 60px 75px 100px', gap: 4, padding: '6px 12px', borderBottom: '1px solid var(--border)', fontSize: 11, textTransform: 'uppercase', color: 'var(--text-secondary)' }}><button onClick=${() => handleSort('name')}>Finding</button><span>Category</span><button onClick=${() => handleSort('risk')} title=${"Low = safe to delete (caches). Medium = review first. High = manual review."}>Risk ⓘ</button><button onClick=${() => handleSort('age')}>Age</button><button onClick=${() => handleSort('size')}>Size</button><span style=${{ textAlign: 'right' }}>Actions</span></div><div style=${{ maxHeight: 400, overflowY: 'auto' }}>${isScanning && items.length === 0 && (
               html`<div style=${{ padding: 12 }}><div class=${"shimmer"} style=${{ height: 14, marginBottom: 8 }} /><div class=${"shimmer"} style=${{ height: 14, marginBottom: 8 }} /><div class=${"shimmer"} style=${{ height: 14 }} /></div>`
-            )}${items.map((item) => {
+            )}${groups.map(group => {
+              const rows = items.filter(item => classOf(item.category) === group);
+              const omitted = Object.entries(findings?.truncated || {}).filter(([category]) => classOf(category) === group);
+              if (!rows.length && !omitted.length) return null;
+              return html`<section key=${group}><strong style=${{ display: 'block', padding: '6px 12px' }}>${group} · ${formatBytes(rows.reduce((n, item) => n + (item.allocated_bytes || 0), 0))}</strong>${rows.map((item) => {
               const risk = RISK_STYLES[item.risk] || {};
               const isTopReclaim = topReclaimPaths.has(item.path);
+              const groupKey = `${item.category}::${item.path || item.group_label || 'group'}`;
               return (
                 html`<div key=${item.path + item.label} class=${"surface-hover"} style=${{
-                  display: 'grid', gridTemplateColumns: '2fr 80px 55px 75px 100px', gap: 4,
+                  display: 'grid', gridTemplateColumns: '2fr 80px 55px 60px 75px 100px', gap: 4,
                   padding: '5px 12px', borderBottom: '1px solid var(--border)', alignItems: 'center',
                   background: isTopReclaim ? `${ROOT_COLORS.data_root}08` : undefined,
-                }}><span style=${{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }} title=${item.path}>${item.label}</span><span style=${{
+                }}><span style=${{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }} title=${item.path}>${item.group ? html`<button onClick=${() => setExpanded({...expanded, [groupKey]: !expanded[groupKey]})} aria-expanded=${!!expanded[groupKey]}>${item.label}</button>` : item.label}</span><span style=${{
                     padding: '1px 6px', borderRadius: 4, fontSize: 11, textAlign: 'center',
                     background: `${CATEGORY_COLORS[item.category] || '#666'}22`,
                     color: CATEGORY_COLORS[item.category] || 'var(--text-secondary)',
-                  }}>${(item.category || '').replace(/_/g, ' ')}</span><span style=${{ padding: '1px 6px', borderRadius: 4, fontSize: 11, textAlign: 'center', background: risk.bg, color: risk.color }}>${risk.label}</span><span class=${"mono"} style=${{ textAlign: 'right' }}>${formatBytes(item.estimated_reclaim_bytes || item.allocated_bytes)}</span><span style=${{ display: 'flex', gap: 3, justifyContent: 'flex-end' }}>${item.actions?.filter(a => a.kind === 'execute').map(a => (
-                      html`<button key=${a.label} disabled=${busyToken === a.action_token} onClick=${() => window.confirm(`${a.label}?\n\n${item.path}\n${formatBytes(item.estimated_reclaim_bytes || item.allocated_bytes)}\n\nQuit the app that owns it first. Space is freed only when you empty the Trash.`) && onExecute(a.action_token)} style=${{ padding: '2px 7px', borderRadius: 4, fontSize: 11, border: 'none', cursor: 'pointer', background: 'var(--accent)', color: '#fff' }}>${busyToken === a.action_token ? '...' : (a.label === 'Move to Trash' ? 'Trash' : a.label)}</button>`
-                    ))}<button onClick=${() => onReveal(item.path)} style=${{ padding: '2px 7px', borderRadius: 4, fontSize: 11, border: '1px solid var(--border)', cursor: 'pointer', background: 'transparent', color: 'var(--text-secondary)' }}>Reveal</button></span></div>`
+                  }}>${(item.category || '').replace(/_/g, ' ')}</span><span style=${{ padding: '1px 6px', borderRadius: 4, fontSize: 11, textAlign: 'center', background: risk.bg, color: risk.color }}>${risk.label}</span><span>${item.age_days == null ? '—' : item.age_days <= 0 ? 'today' : `${item.age_days} d`}</span><span class=${"mono"} style=${{ textAlign: 'right' }}>${formatBytes(item.estimated_reclaim_bytes || item.allocated_bytes)}</span><span style=${{ display: 'flex', gap: 3, justifyContent: 'flex-end' }}>${item.actions?.filter(a => a.kind === 'execute').map(a => (
+                      html`<button key=${a.label} disabled=${busyToken === a.action_token} onClick=${() => window.confirm(item.cleanup_kind === 'trash_group' ? `Move ${item.count} entries older than 3 days to Trash?\n\n${item.path}\n\nEntries are checked again before moving. Space is freed only when you empty the Trash.` : `${a.label}?\n\n${item.path}\n${formatBytes(item.estimated_reclaim_bytes || item.allocated_bytes)}\n\n${item.owner_running ? `Quit ${item.owner_name} first. ` : 'Quit the app that owns it first. '}Space is freed only when you empty the Trash.`) && onExecute(a.action_token)} style=${{ padding: '2px 7px', borderRadius: 4, fontSize: 11, border: 'none', cursor: 'pointer', background: 'var(--accent)', color: '#fff' }}>${busyToken === a.action_token ? '...' : (a.label === 'Move to Trash' ? 'Trash' : a.label)}</button>`
+                    ))}${item.path && html`<button onClick=${() => onReveal(item.path)} style=${{ padding: '2px 7px', borderRadius: 4, fontSize: 11, border: '1px solid var(--border)', cursor: 'pointer', background: 'transparent', color: 'var(--text-secondary)' }}>Reveal</button>`}</span>${item.group && expanded[groupKey] && html`<div style=${{ gridColumn: '1 / -1', paddingLeft: 20 }}>${(item.items || []).map(child => html`<div key=${child.path}>${child.label} · ${formatBytes(child.allocated_bytes)} <button onClick=${() => onReveal(child.path)}>Reveal</button></div>`)}</div>`}</div>`
               );
+            })}${omitted.map(([category, value]) => html`<div key=${category} style=${{ padding: '4px 12px' }}>${value.count} more not shown (${formatBytes(value.bytes)})</div>`)}</section>`;
             })}</div></div>`
       );
     }
@@ -4275,7 +4838,7 @@ const html = htm.bind(preact.h);
     }
 
     function OrphansTab({ orphans, onReveal }) {
-      return html`<div style=${{ fontSize: 13 }}><div style=${{ padding: 10, background: 'var(--warning-bg)', color: 'var(--warning)' }}>Heuristic only: apps outside standard Applications folders or background-only tools may appear here. Verify before deleting manually.</div><div style=${{ maxHeight: 360, overflowY: 'auto' }}>${(orphans?.items || []).map(item =>
+      return html`<div style=${{ fontSize: 13 }}><div style=${{ padding: 10, background: 'var(--warning-bg)', color: 'var(--warning)' }}>Heuristic only: apps outside standard Applications folders or background-only tools may appear here. Verify before deleting manually.</div>${orphans?.truncated?.count > 0 && html`<div style=${{ padding: 10 }}>${orphans.truncated.count} more not shown (${formatBytes(orphans.truncated.bytes)})</div>`}<div style=${{ maxHeight: 360, overflowY: 'auto' }}>${(orphans?.items || []).map(item =>
           html`<div key=${item.path} class=${"surface-hover"} style=${{ display: 'grid', gridTemplateColumns: '2fr 100px 80px 70px', gap: 8, padding: '6px 12px', borderBottom: '1px solid var(--border)' }}><span title=${item.path} style=${{ overflow: 'hidden', textOverflow: 'ellipsis' }}>${item.name}</span><span>${item.source === 'group_containers' ? 'Group' : 'Container'}</span><span class=${"mono"} style=${{ textAlign: 'right' }}>${formatBytes(item.allocated_bytes)}</span><button onClick=${() => onReveal(item.path)} style=${{ border: '1px solid var(--border)', background: 'transparent', color: 'var(--text-secondary)', borderRadius: 4 }}>Reveal</button></div>`)}</div></div>`;
     }
 
@@ -4324,7 +4887,7 @@ const html = htm.bind(preact.h);
     function App() {
       const {
         metadata, summary, breakdowns, findings, snapshots, largeFiles, providers, orphans,
-        checks, scanStatus, busyToken, message, messageType,
+        checks, unreadable, scanStatus, busyToken, message, messageType,
         triggerScan, executeAction, revealPath, rescanPath, dismissMessage,
       } = useMonitorState();
 
@@ -4352,7 +4915,7 @@ const html = htm.bind(preact.h);
       }, [breakdowns, activeRoot]);
 
       return (
-        html`<div style=${{ minHeight: '100vh', display: 'flex', flexDirection: 'column' }}><${HeaderBar} metadata=${metadata} summary=${summary} scanStatus=${scanStatus} onRescan=${triggerScan} onToggleTheme=${toggleTheme} checks=${checks} />${message && (
+        html`<div style=${{ minHeight: '100vh', display: 'flex', flexDirection: 'column' }}><${HeaderBar} metadata=${metadata} summary=${summary} scanStatus=${scanStatus} onRescan=${triggerScan} onToggleTheme=${toggleTheme} checks=${checks} unreadable=${unreadable} />${message && (
             html`<div style=${{
               display: 'flex', alignItems: 'center', justifyContent: 'space-between',
               padding: '6px 16px', fontSize: 13,
@@ -4672,6 +5235,16 @@ def open_browser(port: int) -> None:
 
 def ensure_runtime_dirs() -> None:
     ensure_runtime_home(RUNTIME_PATHS)
+    config_path = RUNTIME_PATHS.home / "config.json"
+    try:
+        fd = os.open(config_path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    except FileExistsError:
+        pass
+    else:
+        os.fchmod(fd, 0o600)
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            json.dump({"watchlist": [], "ignore_paths": [], "stale_days": {}}, handle)
+            handle.write("\n")
     initialize_scan_db(RUNTIME_PATHS)
 
 

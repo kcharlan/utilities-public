@@ -1,0 +1,16 @@
+{
+  "watchlist": [
+    {
+      "slug": "synthetic-example",
+      "label": "Synthetic example",
+      "path": "~/synthetic-example",
+      "category": "user_data",
+      "risk": "high",
+      "cleanup_kind": null,
+      "description": "Synthetic review-only example.",
+      "actionable": false
+    }
+  ],
+  "ignore_paths": ["~/synthetic-ignored"],
+  "stale_days": {"superpowers_workspace": 30}
+}

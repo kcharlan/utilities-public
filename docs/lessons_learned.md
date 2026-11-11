@@ -1,5 +1,14 @@
 # Lessons learned
 
+## Grouped cleanup and ignored paths
+
+Apply path exclusions before a grouped result is counted or capped, and apply
+them again to the live candidates when a bulk action runs. Test an excluded
+entry beyond the visible cap and change the exclusions after presenting the
+group so the test catches both stale totals and unsafe execution.
+When resolving candidate paths for exclusions, handle unresolvable entries
+individually; supported Python versions can differ in symlink-loop behavior.
+
 ## Synthetic directory modes and umask
 
 When a test requires a specific directory mode, explicitly chmod the synthetic fixture and assert its precondition: mkdir’s requested mode is filtered by the caller’s umask. Preserve the post-operation mode assertion so rejection and non-mutation remain tested under restrictive umasks.
@@ -2454,3 +2463,21 @@ Model Ladder attached its `hashchange` listener in a Preact `useEffect`, which r
 ## 2026-11-11: A cleanup rule keyed on a directory name needs a deny list and a shared-folder rule
 
 Storage Monitor offered any directory named `Cache`, `Caches` or `.cache` as a one-click Trash target and collapsed nested matches into the outermost one. That made the whole of `~/.cache` a single "low risk" item, although it holds many tools' data including the uv cache the app runs from, and it offered live system state such as the CoreSpotlight index and Apple containers. Treat a folder shared by many owners as review-only and list its entries, refuse system-managed and synced locations on the server as well as in discovery, and confirm every move. Move with `os.rename` and fail closed: `shutil.move` falls back to copying the tree and deleting the source when the rename is refused.
+
+## 2026-11-11: Classify review risk after all action gates
+
+Storage Monitor initially chose a discovery rule's actionable risk before grouping small matches as review-only. Include size, staleness and protection in the action decision before choosing risk, and test rules whose actionable and review risks differ.
+
+## 2026-11-11: Isolate system-discovered roots before report tests
+
+A Storage Monitor report test enumerated host temporary directories when a new collector used OS-discovered roots without a suite-wide fixture. Pin those roots to synthetic directories and guard host enumeration before any report builder runs. Keep the fixture directories outside walker inputs: putting them inside each test's input tree changed native enumeration counts. No cleanup action was run against the host roots.
+
+## 2026-11-11: Recheck descendants and protected containers before moving a directory
+
+An indexed newest time cannot prove a directory stayed stale: an in-place file edit does not update its parent directory timestamp. Before a cleanup rename, enumerate the directory again with the native walker and refuse incomplete results. Protect both a managed worktree and any cleanup target enclosing it; check indexed markers for report-time eligibility and current markers again at execution.
+
+### Storage Monitor report boundaries
+
+A cleanup report can outlive the state it describes, and a missing running-app probe is not evidence that a cache owner has quit. Treat an unknown probe as review-only for Library cache entries, and keep reports bounded while exposing counts and bytes omitted from a truncated list.
+
+When eligibility depends on a later report-wide probe, carry that eligibility from discovery to the gate and test assembled reports using indexed entries. Tests that inject already-actionable findings cannot detect a missing activation. Apply path and indexed-content protections before enabling the action.

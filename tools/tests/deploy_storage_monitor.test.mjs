@@ -18,9 +18,9 @@ function fixture(t) {
     fs.writeFileSync(file, bytes); fs.chmodSync(file, mode);
   };
   const git = (...args) => execFileSync('git', ['-C', repo, ...args], {stdio: 'pipe'});
-  const launcher = (protocol = 1) => { write('storage_monitor', `#!/bin/sh\nWALKER_PROTOCOL = ${protocol}\n# synthetic launcher\n`, 0o755); git('add', '.'); };
+  const launcher = (protocol = 2) => { write('storage_monitor', `#!/bin/sh\nWALKER_PROTOCOL = ${protocol}\n# synthetic launcher\n`, 0o755); git('add', '.'); };
   function release(label = 'first', failInstalled = false, dirs = 3, hardlinks = 2) {
-    write('native/src/storage_monitor_walk.c', `#include <stdio.h>\n#include <string.h>\n#include <stdlib.h>\n#define SMW_PROTOCOL 1\nint main(int argc, char **argv) {\n const char *marker = getenv("SYNTHETIC_EXECUTION_MARKER"); if (marker) { FILE *f = fopen(marker, "w"); if (f) { fputs("executed", f); fclose(f); } }\n if (${Number(failInstalled)} && strstr(argv[0], "/Scripts/")) return 1;\n if (argc == 2 && !strcmp(argv[1], "--version")) { puts("storage_monitor_walk 1.0.0 protocol 1"); return 0; }\n if (argc > 2 && !strcmp(argv[1], "walk")) {\n const char *fields[] = {${Array.from({length:hardlinks}, () => '"H", "1", "2", "2", "4096", "synthetic", "link",').join('')} "S", "${dirs}", "3", "0", "1"};\n for (unsigned i=0; i<sizeof(fields)/sizeof(fields[0]); i++) printf("%s%c", fields[i], 0);\n return 0; }\n /* synthetic ${label} */ return 2; }\n`);
+    write('native/src/storage_monitor_walk.c', `#include <stdio.h>\n#include <string.h>\n#include <stdlib.h>\n#define SMW_PROTOCOL 2\nint main(int argc, char **argv) {\n const char *marker = getenv("SYNTHETIC_EXECUTION_MARKER"); if (marker) { FILE *f = fopen(marker, "w"); if (f) { fputs("executed", f); fclose(f); } }\n if (${Number(failInstalled)} && strstr(argv[0], "/Scripts/")) return 1;\n if (argc == 2 && !strcmp(argv[1], "--version")) { puts("storage_monitor_walk 1.0.0 protocol 2"); return 0; }\n if (argc > 2 && !strcmp(argv[1], "walk")) {\n const char *fields[] = {${Array.from({length:hardlinks}, () => '"H", "1", "2", "2", "4096", "synthetic", "link",').join('')} "D", "synthetic", "0", "3", "123", "E", "synthetic/denied", "13", "S", "${dirs}", "3", "0", "1"};\n for (unsigned i=0; i<sizeof(fields)/sizeof(fields[0]); i++) printf("%s%c", fields[i], 0);\n return 0; }\n /* synthetic ${label} */ return 2; }\n`);
     git('add', '.');
   }
   write('native/Makefile', 'all: $(BUILD_DIR)/storage_monitor_walk\n$(BUILD_DIR)/storage_monitor_walk: src/storage_monitor_walk.c\n\tmkdir -p $(BUILD_DIR)\n\t$(CC) $(CPPFLAGS) $(CFLAGS) src/storage_monitor_walk.c $(LDFLAGS) -o $@\n');
@@ -35,6 +35,15 @@ function fixture(t) {
   return {base, repo, home, project, scripts, files, write, git, launcher, release, run, runEnv, deployed, backups};
 }
 const succeeds = r => assert.equal(r.status, 0, r.stderr + r.stdout);
+test('deployment smoke accepts the real protocol 2 walker', t => {
+  const f = fixture(t);
+  const source = fileURLToPath(new URL('../../storage_monitor/native/', import.meta.url));
+  f.write('native/Makefile', fs.readFileSync(path.join(source, 'Makefile')));
+  f.write('native/src/storage_monitor_walk.c', fs.readFileSync(path.join(source, 'src/storage_monitor_walk.c')));
+  f.git('add', '.');
+  succeeds(f.run());
+  assert.equal(JSON.parse(f.deployed()[2][0]).protocol, 2);
+});
 test('dry-run reports rebuild on first deploy and writes nothing', t => {
   const f = fixture(t); const before = fs.readdirSync(f.home); const r = f.run('--dry-run'); succeeds(r);
   assert.match(r.stdout, /launcher: update\nwalker: rebuild \(no receipt\)\nDry run: no files changed/);
@@ -42,7 +51,7 @@ test('dry-run reports rebuild on first deploy and writes nothing', t => {
 });
 test('first deploy installs launcher, walker and receipt with modes 0755/0755/0600', t => {
   const f = fixture(t); succeeds(f.run()); assert.deepEqual(f.deployed().map(v=>v[1]), [0o755,0o755,0o600]);
-  const receipt = JSON.parse(f.deployed()[2][0]); assert.equal(receipt.protocol,1); assert.equal(receipt.walkerVersion,'1.0.0');
+  const receipt = JSON.parse(f.deployed()[2][0]); assert.equal(receipt.protocol,2); assert.equal(receipt.walkerVersion,'1.0.0');
 });
 test('second run with no changes reports already current and creates no backup', t => {
   const f = fixture(t); succeeds(f.run()); const before = f.backups(); const r = f.run(); succeeds(r);
@@ -66,7 +75,7 @@ test('--rebuild forces a build and clears inherited make flags', t => {
   const forced=f.runEnv(env,'--rebuild'); assert.equal(forced.status,1); assert.match(forced.stderr,/synthetic forced build failure/); assert.deepEqual(f.deployed(),before);
 });
 test('protocol mismatch is refused before backup', t => {
-  const f = fixture(t); f.launcher(2); const r = f.run(); assert.equal(r.status,1); assert.match(r.stderr,/launcher expects walker protocol 2 but native source declares 1/); assert.deepEqual(f.backups(),[]);
+  const f = fixture(t); f.launcher(1); const r = f.run(); assert.equal(r.status,1); assert.match(r.stderr,/launcher expects walker protocol 1 but native source declares 2/); assert.deepEqual(f.backups(),[]);
 });
 test('missing toolchain fails before backup', t => {
   const f = fixture(t); const bin = path.join(f.base,'synthetic bin'); fs.mkdirSync(bin); fs.writeFileSync(path.join(bin,'xcrun'),'#!/bin/sh\nexit 1\n',{mode:0o755});

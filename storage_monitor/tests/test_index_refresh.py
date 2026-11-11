@@ -63,6 +63,66 @@ def test_subtree_refresh_tracks_growth(indexed_tree):
     assert after == before
 
 
+def test_file_count_and_newest_time_refresh(indexed_tree):
+    module, root, scan_id = indexed_tree
+    paths = [root, *root.rglob("*")]
+    expected_files = sum(path.is_file() for path in paths)
+    expected_time = max(int(os.lstat(path).st_mtime) for path in paths)
+    before = module.fetch_breakdown_from_db(scan_id, str(root))
+    assert before["file_count"] == expected_files == 4
+    assert before["newest_mtime"] == expected_time
+    target = root / "a/b/f"
+    os.utime(target, (2000000000, 2000000000))
+    (root / "a/b/new").write_bytes(b"synthetic")
+    module.walk_subtree_and_store(scan_id, root / "a/b")
+    for directory in (root, root / "a", root / "a/b"):
+        row = module.fetch_breakdown_from_db(scan_id, str(directory))
+        assert row["newest_mtime"] >= 2000000000
+    assert module.fetch_breakdown_from_db(scan_id, str(root))["file_count"] == expected_files + 1
+
+
+def test_old_schema_migrates_with_unknown_time(monkeypatch, tmp_path):
+    monkeypatch.setenv("STORAGE_MONITOR_HOME", str(tmp_path / "runtime"))
+    module = load_launcher(SCRIPT)
+    module.ensure_runtime_dirs()
+    with module.open_db_connection() as connection:
+        connection.execute("DROP TABLE nodes")
+        connection.execute("CREATE TABLE nodes (scan_id INTEGER NOT NULL, path TEXT NOT NULL, parent_path TEXT, name TEXT NOT NULL, root_key TEXT NOT NULL, depth INTEGER NOT NULL, allocated_bytes INTEGER NOT NULL, children_indexed INTEGER NOT NULL DEFAULT 0, updated_at TEXT NOT NULL, PRIMARY KEY (scan_id,path))")
+        connection.execute("INSERT INTO nodes VALUES (1, '/synthetic', NULL, 'synthetic', 'data_root', 0, 1, 1, 'now')")
+    module.initialize_scan_db(module.RUNTIME_PATHS)
+    row = module.fetch_breakdown_from_db(1, "/synthetic")
+    assert row["file_count"] == 0 and row["newest_mtime"] is None
+
+
+def test_refresh_replaces_only_errors_in_subtree(indexed_tree, monkeypatch):
+    module, root, scan_id = indexed_tree
+    refreshed = root / "a"
+    with module.open_db_connection() as connection:
+        connection.executemany("INSERT INTO scan_errors VALUES (?,?,?)", [
+            (scan_id, str(refreshed / "old"), 13), (scan_id, str(root / "c/other"), 13)])
+    original = module.walk_tree
+    def walk(*args, **kwargs):
+        result = original(*args, **kwargs)
+        result.unreadable = [(str(refreshed / "new"), 13)]
+        return result
+    monkeypatch.setattr(module, "walk_tree", walk)
+    module.walk_subtree_and_store(scan_id, refreshed)
+    with module.open_db_connection() as connection:
+        errors = {tuple(row) for row in connection.execute("SELECT path, errno FROM scan_errors WHERE scan_id=?", (scan_id,))}
+    assert errors == {(str(refreshed / "new"), 13), (str(root / "c/other"), 13)}
+
+
+def test_alias_preserves_indexed_count_and_time(indexed_tree):
+    module, root, scan_id = indexed_tree
+    target = root / "a"
+    alias = root / "synthetic-alias"
+    module.mark_alias_path_cached(scan_id, alias, target, "data_root")
+    original = module.fetch_breakdown_from_db(scan_id, str(target))
+    copied = module.fetch_breakdown_from_db(scan_id, str(alias))
+    assert copied["file_count"] == original["file_count"]
+    assert copied["newest_mtime"] == original["newest_mtime"]
+
+
 def test_refresh_after_owner_removal_reassigns_twin(indexed_tree):
     module, root, scan_id = indexed_tree
     inode = (root / "a/owner/hl").stat().st_ino
@@ -97,6 +157,17 @@ def test_trash_action_refreshes_index(indexed_tree, monkeypatch, caplog):
     records = [json.loads(line) for line in module.RUNTIME_PATHS.action_log.read_text().splitlines()]
     assert len(records) == 1 and records[0]["payload"]["path"] == str(root / "d")
     assert "Immediate post-action refresh failed" not in caplog.text
+
+
+def test_temp_action_refreshes_indexed_data_volume_path(indexed_tree, monkeypatch):
+    module, data, scan_id = indexed_tree
+    monkeypatch.setattr(module, "collect_metadata", lambda: {})
+    monkeypatch.setattr(module, "rebuild_and_publish_report", lambda *args: None)
+    refreshed = []
+    monkeypatch.setattr(module, "refresh_directory_chain", lambda scan, path: refreshed.append(path))
+    monkeypatch.setattr(module, "TRASH_DIR", data / "synthetic-trash")
+    module.refresh_after_action({"kind": "trash_group", "root": "/synthetic/temp"}, {"trash_path": str(data / "synthetic-trash/group")})
+    assert refreshed == [data / "synthetic/temp", data / "synthetic-trash"]
 
 
 def test_walk_translation_maps_data_volume_aliases(monkeypatch, tmp_path):
