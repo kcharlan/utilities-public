@@ -130,6 +130,7 @@ typeset -a COPY_MAPPINGS=(
   'jtree/jtree|jtree'
   'launchmaster/launchmaster|launchmaster'
   'media-dater/media-dater|media-dater'
+  'model_ladder/model_ladder|model_ladder'
   'moneydance backup rotation/moneydance_rotate_backups.sh|moneydance_rotate_backups.sh'
   'router-log-analyzer/router_log_analyze.py|router_log_analyze.py'
   'routerview/routerview|routerview'

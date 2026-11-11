@@ -54,6 +54,13 @@
       "source": "media-dater/media-dater"
     },
     {
+      "name": "model_ladder",
+      "source": "model_ladder/model_ladder",
+      "smoke": [
+        "--help"
+      ]
+    },
+    {
       "name": "moneydance_rotate_backups.sh",
       "source": "moneydance backup rotation/moneydance_rotate_backups.sh"
     },
