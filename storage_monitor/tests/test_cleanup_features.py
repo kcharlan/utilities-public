@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import plistlib
+import json
 import os
 import socket
 import sys
@@ -17,6 +18,66 @@ from tools.testkit import load_launcher
 
 
 SCRIPT_PATH = Path(__file__).resolve().parents[1] / "storage_monitor"
+
+
+def test_config_adds_watchlist_and_ignores_descendants(monkeypatch, tmp_path):
+    module = load(monkeypatch, tmp_path)
+    home = _discovery_home(module, monkeypatch, tmp_path)
+    target = home / "synthetic-watch"
+    target.mkdir(parents=True)
+    config = {"watchlist": [{"slug": "synthetic", "label": "Synthetic", "path": "~/synthetic-watch", "category": "user_data", "risk": "high", "description": "Synthetic", "actionable": False, "cleanup_kind": None}], "ignore_paths": ["~/synthetic-watch"], "stale_days": {}}
+    (module.RUNTIME_PATHS.home / "config.json").write_text(json.dumps(config))
+    assert any(item["label"] == "Synthetic" for item in module.scan_watchlist()["items"])
+    result = module.build_findings_section(module.scan_watchlist()["items"], discovered=[])
+    assert all(item["path"] != str(target) for item in result["items"])
+    assert result["ignored"] >= 1
+
+
+def test_config_protects_runtime_and_recovers_from_malformed_json(monkeypatch, tmp_path, caplog):
+    module = load(monkeypatch, tmp_path)
+    home = _discovery_home(module, monkeypatch, tmp_path)
+    module.ensure_runtime_dirs()
+    config_path = module.RUNTIME_PATHS.home / "config.json"
+    assert config_path.stat().st_mode & 0o777 == 0o600
+    protected = home / ".claude/synthetic"
+    protected.mkdir(parents=True)
+    config_path.write_text(json.dumps({"watchlist": [{"slug": "synthetic", "label": "Synthetic", "path": str(protected), "category": "user_data", "risk": "low", "description": "Synthetic", "actionable": True, "cleanup_kind": "trash_path"}]}))
+    assert module.load_config()["watchlist"][0]["actionable"] is False
+    assert not any(item["path"] == str(protected) for item in module.scan_watchlist()["items"])
+    config_path.write_text(json.dumps({"watchlist": [{"slug": "synthetic", "label": "Synthetic", "path": str(home / "synthetic"), "category": "user_data", "risk": "low", "description": "Synthetic", "actionable": True}]}))
+    assert module.load_config()["watchlist"][0]["actionable"] is False
+    config_path.write_text("{")
+    assert module.load_config()["watchlist"] == []
+    assert "Invalid Storage Monitor config" in caplog.text
+    assert "Invalid Storage Monitor config" in module.api_state()["config_warning"]
+
+
+def test_config_stale_override_changes_discovery(monkeypatch, tmp_path):
+    module = load(monkeypatch, tmp_path)
+    home = _discovery_home(module, monkeypatch, tmp_path)
+    monkeypatch.setattr(module, "WATCHLIST_SPECS", [])
+    monkeypatch.setattr(module, "DISCOVERY_RULES", [{"id": "synthetic_rule", "category": "dev_artifact", "names": ["synthetic-artifact"], "scope": "home_root", "min_bytes": 1, "action": "when_stale", "stale_days": 30, "risk": "low"}])
+    scan_id = _insert_scan(module)
+    artifact = home / "synthetic-artifact"
+    _index_dirs(module, scan_id, [(artifact, 120)])
+    with module.open_db_connection() as connection:
+        connection.execute("UPDATE nodes SET newest_mtime=? WHERE scan_id=? AND path=?", (int(time.time()) - 10 * 86400, scan_id, str(artifact)))
+    (module.RUNTIME_PATHS.home / "config.json").write_text(json.dumps({"stale_days": {"synthetic_rule": 5}}))
+    assert module.discover_candidates(scan_id)[0]["stale"] is True
+
+
+def test_ignore_hides_group_children_beyond_display_limit(monkeypatch, tmp_path):
+    module = load(monkeypatch, tmp_path)
+    home = _discovery_home(module, monkeypatch, tmp_path)
+    (module.RUNTIME_PATHS.home / "config.json").write_text(json.dumps({"ignore_paths": ["~/synthetic-ignore"]}))
+    children = [{"path": str(home / f"synthetic-{index}"), "allocated_bytes": 10} for index in range(10)]
+    children.append({"path": str(home / "synthetic-ignore/child"), "allocated_bytes": 7})
+    group = {"group": True, "path": None, "category": "dev_artifact", "label": "Synthetic group", "count": 11, "allocated_bytes": 107, "items": children}
+    result = module.build_findings_section([], discovered=[group])
+    assert result["ignored"] == 1
+    assert result["items"][0]["count"] == 10
+    assert result["items"][0]["allocated_bytes"] == 100
+    assert len(result["items"][0]["items"]) == 10
 
 
 def load(monkeypatch, tmp_path):
@@ -349,6 +410,7 @@ def test_temp_groups_recheck_entries_and_continue_after_refusal(monkeypatch, tmp
     os.mkfifo(root / "synthetic-fifo")
     (root / "TemporaryItems").write_text("synthetic")
     os.utime(root / "TemporaryItems", (old, old))
+    assert module.temp_findings(None)[0]["stale"] is True
     sock = socket.socket(socket.AF_UNIX)
     monkeypatch.chdir(root)
     sock.bind("socket")

@@ -234,6 +234,48 @@ def route_dashboard_api(page, snapshots=None, growth=SYNTHETIC_GROWTH):
     )
 
 
+def test_findings_groups_age_filter_and_scan_details(monkeypatch, tmp_path):
+    monkeypatch.setenv("STORAGE_MONITOR_HOME", str(tmp_path / "runtime"))
+    module = load_launcher(PROJECT_ROOT / "storage_monitor")
+    rows = [
+        {"path": "/synthetic/old", "label": "Old cache", "category": "cache", "risk": "low", "allocated_bytes": 1024, "actionable": True, "estimated_reclaim_bytes": 1024, "age_days": 412, "stale": True, "actions": []},
+        {"path": "/synthetic/fresh", "label": "Fresh cache", "category": "cache", "risk": "medium", "allocated_bytes": 2048, "age_days": 0, "stale": False, "actions": []},
+        {"path": None, "label": "Synthetic group", "category": "dev_artifact", "risk": "medium", "allocated_bytes": 512, "group": True, "items": [{"path": "/synthetic/child", "label": "Synthetic child", "allocated_bytes": 512}], "actions": []},
+        *[{"path": f"/synthetic/{category}", "label": f"Synthetic {category}", "category": category, "risk": "high", "allocated_bytes": 256, "actions": []} for category in ("temp", "agent_residue", "trash", "user_data")],
+    ]
+    report = {**SYNTHETIC_REPORT_ROWS, "findings": {"items": rows, "truncated": {"cache": {"count": 2, "bytes": 3072}}}, "unreadable": {"count": 1, "items": [{"path": "/synthetic/denied", "reason": "Permission denied"}]}, "checks": []}
+    with live_server(module.app) as url, sync_playwright() as playwright:
+        browser = playwright.chromium.launch(headless=True)
+        page = browser.new_page()
+        route_dashboard_api(page)
+        page.route("**/api/state", lambda route: route.fulfill(json={"scan_status": {"running": False}, "report": report, "config_warning": "Invalid Storage Monitor config: synthetic error"}))
+        with guard_browser_errors(page):
+            page.goto(url, wait_until="networkidle")
+            assert page.get_by_text("Invalid Storage Monitor config: synthetic error").is_visible()
+            assert page.get_by_text("Caches", exact=False).count() > 0
+            for heading in ("Caches · 3.0 KB", "Developer · 512 B", "Temp · 256 B", "Agent leftovers · 256 B", "Trash · 256 B", "Review-only user data · 256 B"):
+                assert page.get_by_text(heading, exact=True).is_visible()
+            assert page.get_by_text("2 more not shown (3.0 KB)").is_visible()
+            assert page.get_by_text("412 d").is_visible()
+            assert page.get_by_text("today", exact=True).is_visible()
+            assert page.get_by_text("—", exact=True).count() > 0
+            page.get_by_role("button", name="Age", exact=True).click()
+            assert page.get_by_text("Old cache").bounding_box()["y"] < page.get_by_text("Fresh cache").bounding_box()["y"]
+            page.get_by_text("Synthetic group").click()
+            assert page.get_by_text("Synthetic child").is_visible()
+            page.get_by_label("Stale only").check()
+            assert not page.get_by_text("Fresh cache").is_visible()
+            page.get_by_label("Scan details").click()
+            assert page.get_by_text("/synthetic/denied: Permission denied").is_visible()
+            assert page.get_by_text("Trashable now").is_visible()
+            assert page.get_by_text("In Trash").is_visible()
+            assert page.get_by_text("Review:", exact=False).is_visible()
+            assert page.get_by_text("Trashable now: 1.0 KB").is_visible()
+            assert page.get_by_text("In Trash: 256 B").is_visible()
+            assert page.get_by_text("Review: 3.3 KB").is_visible()
+        browser.close()
+
+
 def test_controls_update_the_view_immediately(monkeypatch, tmp_path):
     monkeypatch.setenv("STORAGE_MONITOR_HOME", str(tmp_path / "runtime"))
     module = load_launcher(PROJECT_ROOT / "storage_monitor")

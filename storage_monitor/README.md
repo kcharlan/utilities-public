@@ -147,6 +147,13 @@ Runtime files live under `~/.storage_monitor/` by default. Set `STORAGE_MONITOR_
 - `action_log.jsonl` — append-only records of cleanup actions and their results.
 - `last_port` — the port selected by the most recent launch.
 - `pid` — an instance lock file containing the process ID. A second instance using the same runtime home exits without signalling the first.
+- `config.json` — private settings, created with empty values and mode `0600`. `watchlist` adds entries with the fields shown in `config.example.json`; paths must be below the home directory. A requested cleanup action is allowed only for `trash_path` entries that pass the same protection checks as built-in findings. `ignore_paths` hides findings at or below each path. `stale_days` maps discovery rule IDs to age thresholds from 1 through 3650 days. Invalid configuration produces a warning and defaults are used.
+
+Personal data locations are not added automatically. To monitor an export or
+other personal data folder, add a review-only `watchlist` entry to the private
+config, using `cleanup_kind: null` and `actionable: false`. For example, use
+this for an Apple Health export or sleep-therapy data folder if desired. The
+example file contains synthetic paths only and is not read automatically.
 
 ## Validation
 

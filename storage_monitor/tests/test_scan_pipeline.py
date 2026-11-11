@@ -26,6 +26,21 @@ def reference(root, path_str):
         return 0
 
 
+def test_unreadable_report_caps_items_and_rebuild_preserves_it(monkeypatch, tmp_path):
+    module = load(monkeypatch, tmp_path)
+    unreadable = [(f"/synthetic/denied-{i}", 13) for i in range(205)]
+    section = module.format_unreadable(unreadable, {})
+    assert section["count"] == 205
+    assert len(section["items"]) == 200
+    assert section["items"][0] == {"path": "/synthetic/denied-0", "errno": 13, "reason": "Permission denied"}
+    monkeypatch.setattr(module, "build_breakdowns_from_db", lambda scan_id: {key: {"total_bytes": 0} for key in ("data_root", "home_root", "applications_root")})
+    monkeypatch.setattr(module, "fetch_large_files_from_db", lambda scan_id: {"items": []})
+    monkeypatch.setattr(module, "build_findings_section", lambda *args: {"items": []})
+    metadata = dict.fromkeys(("container_size_bytes", "container_used_bytes", "container_free_bytes", "data_volume_used_bytes", "system_volume_used_bytes"))
+    rebuilt = module.build_updated_report(1, {"unreadable": section}, metadata, [], {"items": []})
+    assert rebuilt["unreadable"] == section
+
+
 def test_path_depth_matches_pathlib(monkeypatch, tmp_path):
     module = load(monkeypatch, tmp_path)
     cases = [

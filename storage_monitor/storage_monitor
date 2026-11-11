@@ -469,26 +469,6 @@ WATCHLIST_SPECS = [
         "description": "Review manually. Often high-value user-controlled cleanup target.",
         "actionable": False,
     },
-    {
-        "slug": "apple-health-export",
-        "label": "Apple Health Export",
-        "path": "~/apple-health-extract/apple_health_export",
-        "category": "export_data",
-        "risk": "high",
-        "cleanup_kind": None,
-        "description": "Large exported data bundle. Review manually.",
-        "actionable": False,
-    },
-    {
-        "slug": "oscar-data",
-        "label": "OSCAR Data",
-        "path": "~/Documents/OSCAR_Data",
-        "category": "user_data",
-        "risk": "high",
-        "cleanup_kind": None,
-        "description": "Likely active user data. Review manually.",
-        "actionable": False,
-    },
 ]
 
 
@@ -1195,6 +1175,43 @@ def expand_path(path_str: str) -> Path:
     return Path(os.path.expanduser(path_str)).resolve()
 
 
+def load_config() -> Dict[str, Any]:
+    defaults: Dict[str, Any] = {"watchlist": [], "ignore_paths": [], "stale_days": {}}
+    try:
+        config = json.loads((RUNTIME_PATHS.home / "config.json").read_text(encoding="utf-8"))
+        if not isinstance(config, dict):
+            raise ValueError("expected an object")
+        watchlist, ignored, stale = config.get("watchlist", []), config.get("ignore_paths", []), config.get("stale_days", {})
+        if not isinstance(watchlist, list) or not isinstance(ignored, list) or not isinstance(stale, dict):
+            raise ValueError("invalid configuration fields")
+        def home_path(value: Any) -> Path:
+            if not isinstance(value, str):
+                raise ValueError("path must be a string")
+            path = expand_path(value)
+            if HOME_DIR.resolve() not in path.parents:
+                raise ValueError("path must be under the home directory")
+            return path
+        specs = []
+        slugs = {entry["slug"] for entry in WATCHLIST_SPECS}
+        for entry in watchlist:
+            if not isinstance(entry, dict) or any(not isinstance(entry.get(key), str) or not entry[key] for key in ("slug", "label", "path", "category", "risk", "description")) or entry.get("risk") not in ("low", "medium", "high") or entry.get("cleanup_kind") not in (None, "trash_path") or not isinstance(entry.get("actionable"), bool):
+                raise ValueError("invalid watchlist entry")
+            if entry["slug"] in slugs:
+                raise ValueError("duplicate watchlist slug")
+            slugs.add(entry["slug"])
+            path = home_path(entry["path"])
+            specs.append({**entry, "path": str(path), "cleanup_kind": entry.get("cleanup_kind"), "actionable": bool(entry["actionable"] and entry.get("cleanup_kind") == "trash_path" and not cleanup_protection_reason(path))})
+        paths = [str(home_path(path)) for path in ignored]
+        if any(not isinstance(key, str) or isinstance(value, bool) or not isinstance(value, int) or not 1 <= value <= 3650 for key, value in stale.items()):
+            raise ValueError("invalid stale_days override")
+        return {"watchlist": specs, "ignore_paths": paths, "stale_days": stale}
+    except FileNotFoundError:
+        return defaults
+    except (OSError, ValueError, TypeError, RuntimeError) as exc:
+        logger.warning("Invalid Storage Monitor config: %s", exc)
+        return {**defaults, "warning": f"Invalid Storage Monitor config: {exc}"}
+
+
 def safe_stat(path: Path) -> Optional[os.stat_result]:
     try:
         return path.stat()
@@ -1750,7 +1767,7 @@ def scan_watchlist(scan_id: Optional[int] = None) -> Dict[str, Any]:
     started = time.time()
     task_map = {
         spec["slug"]: (lambda spec=spec: scan_watchlist_entry(spec, scan_id))
-        for spec in WATCHLIST_SPECS
+        for spec in [*WATCHLIST_SPECS, *load_config()["watchlist"]]
         if not any(expand_path(spec["path"]) == root or root in expand_path(spec["path"]).parents for root in size_only_homes())
     }
     results = list(run_parallel_call_map(task_map).values())
@@ -1861,6 +1878,12 @@ def persist_full_walk(
             mark_alias_path_cached(scan_id, source, target, "data_root")
 
 
+def format_unreadable(unreadable: List[Tuple[str, int]], translation: List[Tuple[str, str, str]]) -> Dict[str, Any]:
+    return {"count": len(unreadable), "items": [
+        {"path": translate_walk_path(path, translation)[0], "errno": error, "reason": os.strerror(error)}
+        for path, error in unreadable[:200]], "updated_at": iso_now()}
+
+
 def collect_scan_report(scan_id: int) -> Dict[str, Any]:
     started_at = iso_now()
     phases = [("Metadata probes", 0.05), ("Volume walk", 0.65), ("Index persistence", 0.13), ("Cleanup intelligence", 0.10), ("Report assembly", 0.07)]
@@ -1955,9 +1978,7 @@ def collect_scan_report(scan_id: int) -> Dict[str, Any]:
         "breakdowns": breakdowns, "watchlist": watchlist, "large_files": large_files,
         "findings": findings, "snapshots": snapshots, "providers": providers,
         "orphans": orphans, "checks": checks,
-        "unreadable": {"count": len(result.unreadable), "items": [
-            {"path": translate_walk_path(path, translation)[0], "errno": error, "reason": os.strerror(error)}
-            for path, error in result.unreadable[:200]], "updated_at": iso_now()},
+        "unreadable": format_unreadable(result.unreadable, translation),
     }
     progress("Report assembly", 1, "Report assembled")
     return report
@@ -2157,7 +2178,7 @@ def temp_findings(scan_id: Optional[int]) -> List[Dict[str, Any]]:
         other_bytes = sum(item["allocated_bytes"] for item in other)
         finding = {"group": True, "path": str(root), "label": f"{len(old)} entries older than {TEMP_STALE_DAYS} days, {total / (1024 * 1024):.1f} MiB; {len(other)} other entries, {other_bytes / (1024 * 1024):.1f} MiB",
                    "category": "temp", "risk": "low", "description": "Old temporary entries; review before moving to Trash.",
-                   "count": len(old), "items": old[:20], "other_count": len(other), "other_bytes": other_bytes,
+                   "count": len(old), "items": old[:20], "other_count": len(other), "other_bytes": other_bytes, "stale": bool(old),
                    "allocated_bytes": total, "estimated_reclaim_bytes": total, "actionable": bool(old),
                    "cleanup_kind": "trash_group", "action_token": encode_action_token(action) if old else None}
         finding["actions"] = build_finding_actions(finding)
@@ -2447,8 +2468,10 @@ def measure_free_space_delta(operation: Callable[[], Any]) -> Tuple[Any, Optiona
 
 
 def discover_candidates(scan_id: int) -> List[Dict[str, Any]]:
-    actionable_roots = [expand_path(spec["path"]) for spec in WATCHLIST_SPECS if spec["actionable"]]
-    review_roots = [expand_path(spec["path"]) for spec in WATCHLIST_SPECS if not spec["actionable"]]
+    config = load_config()
+    specs = [*WATCHLIST_SPECS, *config["watchlist"]]
+    actionable_roots = [expand_path(spec["path"]) for spec in specs if spec["actionable"]]
+    review_roots = [expand_path(spec["path"]) for spec in specs if not spec["actionable"]]
     buckets = shared_cache_buckets()
     trash = TRASH_DIR.resolve()
     candidates = []
@@ -2527,7 +2550,7 @@ def discover_candidates(scan_id: int) -> List[Dict[str, Any]]:
         path = Path(row["path"])
         protection = cleanup_protection_reason(path) or indexed_cleanup_protection(scan_id, path)
         age = (now - row["newest_mtime"]) // 86400 if row["newest_mtime"] is not None else None
-        stale = (age >= rule["stale_days"] if age is not None else None) if rule["action"] == "when_stale" else None
+        stale = (age >= config["stale_days"].get(rule["id"], rule["stale_days"]) if age is not None else None) if rule["action"] == "when_stale" else None
         actionable = (protection is None and row["allocated_bytes"] >= rule["min_bytes"]
                       and (rule["action"] == "always" or (rule["action"] == "when_stale" and stale is True)))
         low_risk = library_caches in path.parents or dot_cache in path.parents
@@ -2558,7 +2581,7 @@ def discover_candidates(scan_id: int) -> List[Dict[str, Any]]:
         labels = {rule.get("group_label", "folders") for _, rule in matches}
         group_label = labels.pop() if len(labels) == 1 else "folders"
         findings.append({"group": True, "count": len(items), "allocated_bytes": total,
-                         "items": items[:10], "label": f"{len(items)} smaller {group_label}, {total / (1024 * 1024):.1f} MiB total",
+                         "items": items, "group_label": group_label, "label": f"{len(items)} smaller {group_label}, {total / (1024 * 1024):.1f} MiB total",
                          "category": category, "path": None, "risk": "medium", "description": "Smaller matches for review.",
                          "actionable": False, "actions": [], "cleanup_kind": None, "action_token": None,
                          "estimated_reclaim_bytes": None, "apparent_bytes": None, "rule_id": None,
@@ -2835,6 +2858,23 @@ def build_findings_section(
     if scan_id is not None:
         findings.extend(temp_findings(scan_id))
         findings.extend(additional_findings(scan_id))
+    ignore_roots = [Path(path) for path in load_config()["ignore_paths"]]
+    def ignored(item: Dict[str, Any]) -> bool:
+        path = item.get("path")
+        return bool(path and any(Path(path) == root or root in Path(path).parents for root in ignore_roots))
+    ignored_count = sum(1 for item in findings if ignored(item))
+    findings = [item for item in findings if not ignored(item)]
+    for item in findings:
+        if item.get("group") and item.get("path") is None:
+            hidden = [child for child in item.get("items", []) if ignored(child)]
+            ignored_count += len(hidden)
+            if hidden:
+                item["items"] = [child for child in item["items"] if not ignored(child)]
+                item["count"] -= len(hidden)
+                item["allocated_bytes"] -= sum(bytes_or_zero(child.get("allocated_bytes")) for child in hidden)
+                item["label"] = f"{item['count']} smaller {item.get('group_label', 'folders')}, {item['allocated_bytes'] / (1024 * 1024):.1f} MiB total"
+            item["items"] = item.get("items", [])[:10]
+    findings = [item for item in findings if not item.get("group") or item.get("path") is not None or item.get("count")]
     findings.sort(
         key=lambda item: (
             bytes_or_zero(item.get("allocated_bytes")),
@@ -2852,7 +2892,7 @@ def build_findings_section(
             dropped = truncated.setdefault(category, {"count": 0, "bytes": 0})
             dropped["count"] += 1
             dropped["bytes"] += bytes_or_zero(item.get("allocated_bytes"))
-    return {"items": kept, "truncated": truncated, "updated_at": iso_now()}
+    return {"items": kept, "truncated": truncated, "ignored": ignored_count, "updated_at": iso_now()}
 
 
 def finding_summary(findings: Dict[str, Any]) -> Dict[str, int]:
@@ -3255,6 +3295,7 @@ def api_state() -> Dict[str, Any]:
         return {
             "scan_status": dict(STATE.scan_status),
             "report": STATE.report,
+            "config_warning": load_config().get("warning"),
         }
 
 
@@ -4010,6 +4051,8 @@ const html = htm.bind(preact.h);
       user_media: '#7a4d75', user_files: '#3c5f89', export_data: '#7a4d75',
       user_data: '#7a4d75',
       discovered_cache: '#1f4952',
+      dev_artifact: '#7762ad', python_bytecode: '#7762ad', temp: '#8a6d3b',
+      agent_residue: '#3c5f89', trash: '#8d2f2f', ios_backups: '#7a4d75',
     };
 
     function toggleTheme() {
@@ -4036,6 +4079,7 @@ const html = htm.bind(preact.h);
       const [providers, setProviders] = useState({ items: [], updated_at: null });
       const [orphans, setOrphans] = useState({ items: [], updated_at: null });
       const [checks, setChecks] = useState([]);
+      const [unreadable, setUnreadable] = useState({ items: [] });
       const [summary, setSummary] = useState({});
       const [scanStatus, setScanStatus] = useState({ running: true, phase: 'Booting', progress: 0 });
       const [busyToken, setBusyToken] = useState(null);
@@ -4048,7 +4092,7 @@ const html = htm.bind(preact.h);
       const normalizeSection = (val) => {
         if (!val) return { items: [], updated_at: null };
         if (Array.isArray(val)) return { items: val, updated_at: null };
-        return { items: val.items || [], updated_at: val.updated_at || null };
+        return { ...val, items: val.items || [], updated_at: val.updated_at || null };
       };
 
       const applyReport = useCallback((report) => {
@@ -4075,6 +4119,7 @@ const html = htm.bind(preact.h);
         setProviders(providersSection);
         setOrphans(orphansSection);
         setChecks(report.checks || []);
+        setUnreadable(report.unreadable || { items: [] });
         if (report.summary) {
           setMetadata({
             container_size_bytes: report.summary.container_size_bytes,
@@ -4095,6 +4140,7 @@ const html = htm.bind(preact.h);
             if (cancelled) return;
             applyReport(data.report);
             setScanStatus(data.scan_status);
+            if (data.config_warning) { setMessage(data.config_warning); setMessageType('error'); }
             if (!data.report && !data.scan_status?.running) {
               fetch('/api/scan', { method: 'POST' }).catch(() => {});
             }
@@ -4246,12 +4292,12 @@ const html = htm.bind(preact.h);
 
       return {
         metadata, summary, breakdowns, findings, snapshots, largeFiles, providers, orphans,
-        checks, scanStatus, busyToken, message, messageType,
+        checks, unreadable, scanStatus, busyToken, message, messageType,
         triggerScan, executeAction, revealPath, rescanPath, dismissMessage,
       };
     }
 
-    function HeaderBar({ metadata, summary, scanStatus, onRescan, onToggleTheme, checks }) {
+    function HeaderBar({ metadata, summary, scanStatus, onRescan, onToggleTheme, checks, unreadable }) {
       const [showChecks, setShowChecks] = useState(false);
       const containerSize = metadata?.container_size_bytes || summary?.container_size_bytes || 0;
       const usedBytes = metadata?.container_used_bytes || summary?.container_used_bytes || 0;
@@ -4290,8 +4336,8 @@ const html = htm.bind(preact.h);
                 fontSize: 13, cursor: 'pointer', opacity: isScanning ? 0.5 : 1,
               }}>Rescan</button><button onClick=${() => setShowChecks(!showChecks)} aria-label=${"Scan details"} aria-expanded=${showChecks} style=${{ background: 'none', border: 'none', cursor: 'pointer', fontSize: 14, color: 'var(--text-secondary)', padding: 4 }}>ⓘ</button><button onClick=${onToggleTheme} aria-label=${"Toggle dark mode"} style=${{ background: 'none', border: 'none', cursor: 'pointer', fontSize: 16, color: 'var(--text-secondary)', padding: 4 }}>☾</button></div></div>${isScanning && (
             html`<div class=${"progress-bar"}><div class=${"progress-fill"} style=${{ width: `${Math.max(2, (scanStatus.progress || 0) * 100)}%` }} /></div>`
-          )}${showChecks && checks.length > 0 && (
-            html`<div style=${{ padding: '8px 16px', borderTop: '1px solid var(--border)', fontSize: 13, maxHeight: 200, overflow: 'auto' }}>${checks.map(c => (
+          )}${showChecks && (
+            html`<div style=${{ padding: '8px 16px', borderTop: '1px solid var(--border)', fontSize: 13, maxHeight: 200, overflow: 'auto' }}><div>Hidden space (${formatBytes(hiddenBytes)}) can contain local snapshots, unreadable directories, and space shared between cloned files.</div><strong>Unreadable</strong><div>Sizes under these paths are missing.</div>${(unreadable?.items || []).map(item => html`<div key=${item.path}>${item.path}: ${item.reason}</div>`)}${checks.map(c => (
                 html`<div key=${c.label} style=${{ display: 'flex', gap: 12, padding: '3px 0', borderBottom: '1px solid var(--border)' }}><span style=${{ flex: 1 }}>${c.label}</span><span class=${"mono"} style=${{ color: 'var(--text-secondary)' }}>${c.duration_ms != null ? `${c.duration_ms}ms` : ''}</span><span style=${{ color: c.ok ? 'var(--success)' : 'var(--danger)' }}>${c.ok ? 'ok' : 'warn'}</span></div>`
               ))}</div>`
           )}</header>`
@@ -4506,18 +4552,23 @@ const html = htm.bind(preact.h);
 
     function FindingsTab({ findings, busyToken, onExecute, onReveal, isScanning }) {
       const [riskFilter, setRiskFilter] = useState('all');
+      const [staleOnly, setStaleOnly] = useState(false);
+      const [expanded, setExpanded] = useState({});
       const [sortCol, setSortCol] = useState('size');
       const [sortAsc, setSortAsc] = useState(false);
 
       const items = useMemo(() => {
         let list = findings?.items || [];
         if (riskFilter !== 'all') list = list.filter(f => f.risk === riskFilter);
+        if (staleOnly) list = list.filter(f => f.stale === true);
         const sorted = [...list];
         sorted.sort((a, b) => {
           let va, vb;
           if (sortCol === 'size') {
             va = a.estimated_reclaim_bytes || a.allocated_bytes || 0;
             vb = b.estimated_reclaim_bytes || b.allocated_bytes || 0;
+          } else if (sortCol === 'age') {
+            va = a.age_days ?? -1; vb = b.age_days ?? -1;
           } else if (sortCol === 'risk') {
             const order = { low: 1, medium: 2, high: 3 };
             va = order[a.risk] || 0; vb = order[b.risk] || 0;
@@ -4529,7 +4580,21 @@ const html = htm.bind(preact.h);
           return 0;
         });
         return sorted;
-      }, [findings, riskFilter, sortCol, sortAsc]);
+      }, [findings, riskFilter, staleOnly, sortCol, sortAsc]);
+
+      const classOf = category => {
+        if (['cache', 'cache_bucket', 'app_cache', 'model_cache', 'discovered_cache'].includes(category)) return 'Caches';
+        if (['dev_artifact', 'python_bytecode'].includes(category)) return 'Developer';
+        if (category === 'temp') return 'Temp';
+        if (category === 'agent_residue') return 'Agent leftovers';
+        if (category === 'trash') return 'Trash';
+        return 'Review-only user data';
+      };
+      const groups = ['Caches', 'Developer', 'Temp', 'Agent leftovers', 'Trash', 'Review-only user data'];
+      const allItems = findings?.items || [];
+      const trashable = allItems.reduce((n, item) => n + (item.actionable && ['low', 'medium'].includes(item.risk) ? (item.estimated_reclaim_bytes || 0) : 0), 0);
+      const inTrash = allItems.reduce((n, item) => n + (item.category === 'trash' ? (item.allocated_bytes || 0) : 0), 0);
+      const review = allItems.reduce((n, item) => n + (item.category !== 'trash' && !(item.actionable && ['low', 'medium'].includes(item.risk)) ? (item.allocated_bytes || 0) : 0), 0);
 
       const handleSort = (col) => {
         if (sortCol === col) setSortAsc(!sortAsc);
@@ -4544,30 +4609,35 @@ const html = htm.bind(preact.h);
       }, [findings]);
 
       return (
-        html`<div style=${{ fontSize: 13 }}><div style=${{ display: 'flex', alignItems: 'center', gap: 6, padding: '8px 12px', borderBottom: '1px solid var(--border)' }}><span style=${{ fontSize: 11, color: 'var(--text-secondary)' }}>Filter:</span>${['all', 'low', 'medium', 'high'].map(r => (
+        html`<div style=${{ fontSize: 13 }}><div style=${{ display: 'flex', gap: 20, padding: '8px 12px' }}><span>Trashable now: ${formatBytes(trashable)}</span><span>In Trash: ${formatBytes(inTrash)}</span><span>Review: ${formatBytes(review)}</span></div><div style=${{ display: 'flex', alignItems: 'center', gap: 6, padding: '8px 12px', borderBottom: '1px solid var(--border)' }}><span style=${{ fontSize: 11, color: 'var(--text-secondary)' }}>Filter:</span>${['all', 'low', 'medium', 'high'].map(r => (
               html`<button key=${r} onClick=${() => setRiskFilter(r)} style=${{
                 padding: '2px 8px', borderRadius: 4, fontSize: 11, cursor: 'pointer', border: 'none',
                 background: riskFilter === r ? 'var(--accent)' : 'var(--surface-hover)',
                 color: riskFilter === r ? '#fff' : 'var(--text-secondary)',
               }}>${r}</button>`
-            ))}<div style=${{ flex: 1 }} /><span style=${{ fontSize: 11, color: 'var(--text-secondary)' }}>${items.length} items${findings?.updated_at && ` · ${formatRelativeTime(findings.updated_at)}`}</span></div><div style=${{ display: 'grid', gridTemplateColumns: '2fr 80px 55px 75px 100px', gap: 4, padding: '6px 12px', borderBottom: '1px solid var(--border)', fontSize: 11, textTransform: 'uppercase', color: 'var(--text-secondary)' }}><button onClick=${() => handleSort('name')} style=${{ cursor: 'pointer', background: 'none', border: 'none', padding: 0, font: 'inherit', color: 'inherit', textTransform: 'inherit' }}>Finding</button><span>Category</span><button onClick=${() => handleSort('risk')} style=${{ cursor: 'pointer', background: 'none', border: 'none', padding: 0, font: 'inherit', color: 'inherit', textTransform: 'inherit' }} title=${"Low = safe to delete (caches). Medium = review first. High = manual review."}>Risk ⓘ</button><button onClick=${() => handleSort('size')} style=${{ cursor: 'pointer', textAlign: 'right', background: 'none', border: 'none', padding: 0, font: 'inherit', color: 'inherit', textTransform: 'inherit' }}>Size</button><span style=${{ textAlign: 'right' }}>Actions</span></div><div style=${{ maxHeight: 400, overflowY: 'auto' }}>${isScanning && items.length === 0 && (
+            ))}<label><input type=${"checkbox"} checked=${staleOnly} onChange=${e => setStaleOnly(e.target.checked)} /> Stale only</label><div style=${{ flex: 1 }} /><span style=${{ fontSize: 11, color: 'var(--text-secondary)' }}>${items.length} items${findings?.updated_at && ` · ${formatRelativeTime(findings.updated_at)}`}</span></div><div style=${{ display: 'grid', gridTemplateColumns: '2fr 80px 55px 60px 75px 100px', gap: 4, padding: '6px 12px', borderBottom: '1px solid var(--border)', fontSize: 11, textTransform: 'uppercase', color: 'var(--text-secondary)' }}><button onClick=${() => handleSort('name')}>Finding</button><span>Category</span><button onClick=${() => handleSort('risk')} title=${"Low = safe to delete (caches). Medium = review first. High = manual review."}>Risk ⓘ</button><button onClick=${() => handleSort('age')}>Age</button><button onClick=${() => handleSort('size')}>Size</button><span style=${{ textAlign: 'right' }}>Actions</span></div><div style=${{ maxHeight: 400, overflowY: 'auto' }}>${isScanning && items.length === 0 && (
               html`<div style=${{ padding: 12 }}><div class=${"shimmer"} style=${{ height: 14, marginBottom: 8 }} /><div class=${"shimmer"} style=${{ height: 14, marginBottom: 8 }} /><div class=${"shimmer"} style=${{ height: 14 }} /></div>`
-            )}${items.map((item) => {
+            )}${groups.map(group => {
+              const rows = items.filter(item => classOf(item.category) === group);
+              const omitted = Object.entries(findings?.truncated || {}).filter(([category]) => classOf(category) === group);
+              if (!rows.length && !omitted.length) return null;
+              return html`<section key=${group}><strong style=${{ display: 'block', padding: '6px 12px' }}>${group} · ${formatBytes(rows.reduce((n, item) => n + (item.allocated_bytes || 0), 0))}</strong>${rows.map((item) => {
               const risk = RISK_STYLES[item.risk] || {};
               const isTopReclaim = topReclaimPaths.has(item.path);
               return (
                 html`<div key=${item.path + item.label} class=${"surface-hover"} style=${{
-                  display: 'grid', gridTemplateColumns: '2fr 80px 55px 75px 100px', gap: 4,
+                  display: 'grid', gridTemplateColumns: '2fr 80px 55px 60px 75px 100px', gap: 4,
                   padding: '5px 12px', borderBottom: '1px solid var(--border)', alignItems: 'center',
                   background: isTopReclaim ? `${ROOT_COLORS.data_root}08` : undefined,
-                }}><span style=${{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }} title=${item.path}>${item.label}</span><span style=${{
+                }}><span style=${{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }} title=${item.path}>${item.group ? html`<button onClick=${() => setExpanded({...expanded, [item.label]: !expanded[item.label]})} aria-expanded=${!!expanded[item.label]}>${item.label}</button>` : item.label}</span><span style=${{
                     padding: '1px 6px', borderRadius: 4, fontSize: 11, textAlign: 'center',
                     background: `${CATEGORY_COLORS[item.category] || '#666'}22`,
                     color: CATEGORY_COLORS[item.category] || 'var(--text-secondary)',
-                  }}>${(item.category || '').replace(/_/g, ' ')}</span><span style=${{ padding: '1px 6px', borderRadius: 4, fontSize: 11, textAlign: 'center', background: risk.bg, color: risk.color }}>${risk.label}</span><span class=${"mono"} style=${{ textAlign: 'right' }}>${formatBytes(item.estimated_reclaim_bytes || item.allocated_bytes)}</span><span style=${{ display: 'flex', gap: 3, justifyContent: 'flex-end' }}>${item.actions?.filter(a => a.kind === 'execute').map(a => (
+                  }}>${(item.category || '').replace(/_/g, ' ')}</span><span style=${{ padding: '1px 6px', borderRadius: 4, fontSize: 11, textAlign: 'center', background: risk.bg, color: risk.color }}>${risk.label}</span><span>${item.age_days == null ? '—' : item.age_days <= 0 ? 'today' : `${item.age_days} d`}</span><span class=${"mono"} style=${{ textAlign: 'right' }}>${formatBytes(item.estimated_reclaim_bytes || item.allocated_bytes)}</span><span style=${{ display: 'flex', gap: 3, justifyContent: 'flex-end' }}>${item.actions?.filter(a => a.kind === 'execute').map(a => (
                       html`<button key=${a.label} disabled=${busyToken === a.action_token} onClick=${() => window.confirm(item.cleanup_kind === 'trash_group' ? `Move ${item.count} entries older than 3 days to Trash?\n\n${item.path}\n\nEntries are checked again before moving. Space is freed only when you empty the Trash.` : `${a.label}?\n\n${item.path}\n${formatBytes(item.estimated_reclaim_bytes || item.allocated_bytes)}\n\nQuit the app that owns it first. Space is freed only when you empty the Trash.`) && onExecute(a.action_token)} style=${{ padding: '2px 7px', borderRadius: 4, fontSize: 11, border: 'none', cursor: 'pointer', background: 'var(--accent)', color: '#fff' }}>${busyToken === a.action_token ? '...' : (a.label === 'Move to Trash' ? 'Trash' : a.label)}</button>`
-                    ))}<button onClick=${() => onReveal(item.path)} style=${{ padding: '2px 7px', borderRadius: 4, fontSize: 11, border: '1px solid var(--border)', cursor: 'pointer', background: 'transparent', color: 'var(--text-secondary)' }}>Reveal</button></span></div>`
+                    ))}${item.path && html`<button onClick=${() => onReveal(item.path)} style=${{ padding: '2px 7px', borderRadius: 4, fontSize: 11, border: '1px solid var(--border)', cursor: 'pointer', background: 'transparent', color: 'var(--text-secondary)' }}>Reveal</button>`}</span>${item.group && expanded[item.label] && html`<div style=${{ gridColumn: '1 / -1', paddingLeft: 20 }}>${(item.items || []).map(child => html`<div key=${child.path}>${child.label} · ${formatBytes(child.allocated_bytes)} <button onClick=${() => onReveal(child.path)}>Reveal</button></div>`)}</div>`}</div>`
               );
+            })}${omitted.map(([category, value]) => html`<div key=${category} style=${{ padding: '4px 12px' }}>${value.count} more not shown (${formatBytes(value.bytes)})</div>`)}</section>`;
             })}</div></div>`
       );
     }
@@ -4740,7 +4810,7 @@ const html = htm.bind(preact.h);
     function App() {
       const {
         metadata, summary, breakdowns, findings, snapshots, largeFiles, providers, orphans,
-        checks, scanStatus, busyToken, message, messageType,
+        checks, unreadable, scanStatus, busyToken, message, messageType,
         triggerScan, executeAction, revealPath, rescanPath, dismissMessage,
       } = useMonitorState();
 
@@ -4768,7 +4838,7 @@ const html = htm.bind(preact.h);
       }, [breakdowns, activeRoot]);
 
       return (
-        html`<div style=${{ minHeight: '100vh', display: 'flex', flexDirection: 'column' }}><${HeaderBar} metadata=${metadata} summary=${summary} scanStatus=${scanStatus} onRescan=${triggerScan} onToggleTheme=${toggleTheme} checks=${checks} />${message && (
+        html`<div style=${{ minHeight: '100vh', display: 'flex', flexDirection: 'column' }}><${HeaderBar} metadata=${metadata} summary=${summary} scanStatus=${scanStatus} onRescan=${triggerScan} onToggleTheme=${toggleTheme} checks=${checks} unreadable=${unreadable} />${message && (
             html`<div style=${{
               display: 'flex', alignItems: 'center', justifyContent: 'space-between',
               padding: '6px 16px', fontSize: 13,
@@ -5088,6 +5158,16 @@ def open_browser(port: int) -> None:
 
 def ensure_runtime_dirs() -> None:
     ensure_runtime_home(RUNTIME_PATHS)
+    config_path = RUNTIME_PATHS.home / "config.json"
+    try:
+        fd = os.open(config_path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    except FileExistsError:
+        pass
+    else:
+        os.fchmod(fd, 0o600)
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            json.dump({"watchlist": [], "ignore_paths": [], "stale_days": {}}, handle)
+            handle.write("\n")
     initialize_scan_db(RUNTIME_PATHS)
 
 
