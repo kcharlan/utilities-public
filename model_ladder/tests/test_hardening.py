@@ -112,6 +112,13 @@ def test_non_finite_index_is_rejected(ml, value):
         ml.validate_models([bad])
 
 
+@pytest.mark.parametrize("value", ["bad", True, float("nan"), float("inf")])
+def test_invalid_domain_index_names_field(ml, value):
+    bad = model("Alpha Test 1", 50, scores={"finance": value})
+    with pytest.raises(ml.FetchError, match="artificial_analysis_finance_and_accounting_index"):
+        ml.validate_models([bad])
+
+
 @pytest.mark.parametrize("value", [float("nan"), float("inf"), float("-inf")])
 def test_non_finite_cost_is_rejected(ml, value):
     bad = model("Alpha Test 1", index=10, cost=1.0)

@@ -25,7 +25,7 @@ import zlib
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-VERSION = "1.0.1"
+VERSION = "1.1.0"
 
 # ---------------------------------------------------------------------------
 # Config and atomic writes
@@ -131,12 +131,28 @@ def _family_key(maker: str, family: str) -> str:
     return json.dumps([maker, family])
 
 
+INDEXES = (
+    ("intelligence", "artificial_analysis_intelligence_index", "Intelligence Index", "Intelligence"),
+    ("coding", "artificial_analysis_coding_index", "Coding", "Coding"),
+    ("agentic", "artificial_analysis_agentic_index", "Agentic", "Agentic"),
+    ("economics", "artificial_analysis_economics_index", "Economics", "Economics"),
+    ("engineering", "artificial_analysis_engineering_index", "Engineering", "Engineering"),
+    ("finance", "artificial_analysis_finance_and_accounting_index", "Finance and accounting", "Finance"),
+    ("healthcare", "artificial_analysis_healthcare_and_medical_index", "Healthcare and medical", "Healthcare"),
+    ("legal", "artificial_analysis_legal_index", "Legal", "Legal"),
+    ("strategy", "artificial_analysis_strategy_and_ops_index", "Strategy and ops", "Strategy"),
+)
+DEFAULT_INDEX = "intelligence"
+
+
 def classify(models: list[dict]) -> list[dict]:
     """One row per scored model, in input order, with its family and effort rung."""
     rows = []
     for item in models:
-        index = (item.get("evaluations") or {}).get("artificial_analysis_intelligence_index")
-        if isinstance(index, bool) or not isinstance(index, (int, float)):
+        evaluations = item.get("evaluations") or {}
+        scores = {key: value if not isinstance(value, bool) and isinstance(value, (int, float)) else None
+                  for key, field, _, _ in INDEXES for value in [evaluations.get(field)]}
+        if all(value is None for value in scores.values()):
             continue
         cost_block = item.get("artificial_analysis_intelligence_index_cost") or {}
         per_task = cost_block.get("cost_per_task") or {}
@@ -151,7 +167,7 @@ def classify(models: list[dict]) -> list[dict]:
             "family_key": _family_key(maker, parts["family"]),
             "rung": parts["rung"],
             "tags": parts["tags"],
-            "index": index,
+            "scores": scores,
             "cost": cost,
             "total_cost": cost_block.get("total_cost"),
             "release_date": item.get("release_date"),
@@ -179,7 +195,6 @@ API_URL = "https://artificialanalysis.ai/api/v2/language/models/free"
 OP_PATHS = ("/opt/homebrew/bin/op", "/usr/local/bin/op")
 MAX_PAGES = 20
 KEY_ENV = "MODEL_LADDER_AA_KEY"
-INDEX_FIELD = "artificial_analysis_intelligence_index"
 COST_FIELD = "artificial_analysis_intelligence_index_cost"
 
 
@@ -331,9 +346,10 @@ def validate_models(models: list) -> None:
         evaluations = item.get("evaluations")
         if evaluations is not None and not isinstance(evaluations, dict):
             raise FetchError(f"{label}: field evaluations must be an object")
-        index = (evaluations or {}).get(INDEX_FIELD)
-        if index is not None and not _is_finite_number(index):
-            raise FetchError(f"{label}: field {INDEX_FIELD} must be a finite number")
+        for _, field, _, _ in INDEXES:
+            index = (evaluations or {}).get(field)
+            if index is not None and not _is_finite_number(index):
+                raise FetchError(f"{label}: field {field} must be a finite number")
         cost_block = item.get(COST_FIELD)
         if cost_block is not None and not isinstance(cost_block, dict):
             raise FetchError(f"{label}: field {COST_FIELD} must be an object")
@@ -434,9 +450,9 @@ def diff_rows(old: dict | None, new: dict) -> dict | None:
     changed = []
     for slug, row in after.items():
         prior = before.get(slug)
-        if prior and (prior["index"] != row["index"] or prior["cost"] != row["cost"]):
+        if prior and (prior["scores"] != row["scores"] or prior["cost"] != row["cost"]):
             changed.append({"slug": slug, "name": row["name"],
-                            "index": [prior["index"], row["index"]],
+                            "scores": {key: [prior["scores"][key], row["scores"][key]] for key, *_ in INDEXES},
                             "cost": [prior["cost"], row["cost"]]})
     return {
         "from": old["fetched_at"],
@@ -453,11 +469,15 @@ def diff_rows(old: dict | None, new: dict) -> dict | None:
 # Page build
 # ---------------------------------------------------------------------------
 
-PAGE_SCHEMA = 1
+PAGE_SCHEMA = 2
 
 
 def build_payload(snapshot: dict, previous: dict | None, config: dict) -> dict:
     """Everything the page shows; all analysis happens in the page's JavaScript."""
+    rows = classify(snapshot["models"])
+    indexes = [{"key": key, "label": label, "short": short,
+                "count": sum(row["scores"][key] is not None for row in rows)}
+               for key, _, label, short in INDEXES]
     return {
         "schema": PAGE_SCHEMA,
         "app": {"name": "Model Ladder", "version": VERSION},
@@ -467,7 +487,8 @@ def build_payload(snapshot: dict, previous: dict | None, config: dict) -> dict:
         "index_version": snapshot["index_version"],
         "rate_limit": snapshot.get("rate_limit") or {"limit": None, "remaining": None, "reset": None},
         "rung_order": list(RUNG_ORDER),
-        "rows": classify(snapshot["models"]),
+        "rows": rows,
+        "indexes": [index for index in indexes if index["count"] or index["key"] == DEFAULT_INDEX],
         "changes": diff_rows(previous, snapshot),
     }
 
@@ -592,6 +613,15 @@ function presentRungs(rows, rungOrder) {
   var seen = {};
   rows.forEach(function (row) { if (row.rung) seen[row.rung] = true; });
   return rungOrder.filter(function (rung) { return seen[rung]; });
+}
+
+function rowsForIndex(rows, key) {
+  return rows.filter(function (row) { return typeof row.scores[key] === "number"; })
+    .map(function (row) { return Object.assign({}, row, { index: row.scores[key] }); });
+}
+
+function unscoredRows(rows, key, opts) {
+  return selectRows(rows.filter(function (row) { return typeof row.scores[key] !== "number"; }), opts);
 }
 
 function selectRows(rows, opts) {
@@ -818,11 +848,11 @@ function dataAge(lastCheckedIso, nowMs, maxAgeHours) {
   return { text: text, stale: hours > maxAgeHours };
 }
 
-function changesToShow(changes, mode) {
+function changesToShow(changes, mode, key) {
   if (!changes || !changes.changed) return [];
-  function shownScore(raw) { return mode === "decimal" ? raw : wholePoints(raw); }
+  function shownScore(raw) { return raw === null ? null : mode === "decimal" ? raw : wholePoints(raw); }
   return changes.changed.filter(function (item) {
-    var scoreMoved = shownScore(item.index[0]) !== shownScore(item.index[1]);
+    var scoreMoved = shownScore(item.scores[key][0]) !== shownScore(item.scores[key][1]);
     var costMoved = money(item.cost[0]) !== money(item.cost[1]);
     return scoreMoved || costMoved;
   });
@@ -830,7 +860,7 @@ function changesToShow(changes, mode) {
 
 var api = {
   wholePoints: wholePoints, families: families, searchFamilies: searchFamilies, searchRows: searchRows,
-  presentRungs: presentRungs, selectRows: selectRows, frontier: frontier,
+  presentRungs: presentRungs, selectRows: selectRows, rowsForIndex: rowsForIndex, unscoredRows: unscoredRows, frontier: frontier,
   paretoRows: paretoRows, familySteps: familySteps, sortRows: sortRows,
   findings: findings, money: money, dataAge: dataAge, changesToShow: changesToShow,
   dominatedReason: dominatedReason, rungLabel: rungLabel, showPoints: showPoints
@@ -887,8 +917,9 @@ button:focus-visible, select:focus-visible, input:focus-visible, th:focus-visibl
 .chip .mk { color: var(--muted); font-weight: 400; font-size: 13px; }
 .chip button.x { border: 0; background: none; color: var(--muted); padding: 0 6px; border-radius: 999px; line-height: 1.2; }
 .chip button.x:hover { color: var(--ink); background: var(--dom-bg); }
-.chip.gone { border-style: dashed; border-color: var(--muted); color: var(--muted); font-weight: 400; }
+.chip.gone, .chip.unscored { border-style: dashed; border-color: var(--muted); color: var(--muted); font-weight: 400; }
 .chip.gone .gone-text { text-decoration: line-through; }
+td.none { color: var(--muted); }
 .picker { position: relative; }
 .pop { position: absolute; z-index: 5; top: calc(100% + 6px); left: 0; width: min(430px, calc(100vw - 48px)); background: var(--panel); border: 1px solid var(--ink); border-radius: 8px; padding: 8px; display: flex; flex-direction: column; gap: 6px; }
 .pop input { width: 100%; }
@@ -938,6 +969,11 @@ svg { display: block; width: 100%; height: auto; }
 svg text { fill: var(--muted); font-family: var(--font); font-size: 12px; }
 svg .grid { stroke: var(--line); stroke-width: 1; }
 svg .stair { fill: none; stroke: var(--front); stroke-width: 2.5; }
+svg .stair.borrowed { stroke-dasharray: 6 4; }
+.borrowed { color: var(--muted); }
+.index-bar { display: flex; align-items: center; gap: 8px; margin: 16px 0; }
+.index-bar select { max-width: 100%; min-width: 0; }
+.cost-notice { max-width: 80ch; margin-bottom: 16px; }
 ul.find { margin: 0; padding: 12px 14px 12px 32px; display: flex; flex-direction: column; gap: 5px; max-width: 80ch; }
 .empty { padding: 18px 14px; color: var(--muted); margin: 0; }
 .filters { display: flex; flex-wrap: wrap; gap: 8px 12px; align-items: center; }
@@ -962,15 +998,21 @@ APP_JS = r"""
   const html = window.htm.bind(h);
 
   const DATA = JSON.parse(document.getElementById("payload").textContent);
-  const ROWS = DATA.rows;
+  const ALL_ROWS = DATA.rows;
   const ORDER = DATA.rung_order;
-  const RUNGS = M.presentRungs(ROWS, ORDER);
-  const FAMILIES = M.families(ROWS);
-  const FAMILY_BY_KEY = {};
-  FAMILIES.forEach((f) => { FAMILY_BY_KEY[f.key] = f; });
-  const ALL_KEYS = FAMILIES.map((f) => f.key);
-  const MAKERS = Array.from(new Set(ROWS.map((r) => r.maker))).sort();
-  const ATTENTION = ROWS.filter((r) => r.problem);
+  const RUNGS = M.presentRungs(ALL_ROWS, ORDER);
+  const KNOWN_FAMILIES = {};
+  ALL_ROWS.forEach((r) => { KNOWN_FAMILIES[r.family_key] = { family: r.family, maker: r.maker }; });
+  const views = {};
+  function viewFor(key) {
+    if (!views[key]) {
+      const rows = M.rowsForIndex(ALL_ROWS, key), families = M.families(rows), familyByKey = {};
+      families.forEach((f) => { familyByKey[f.key] = f; });
+      views[key] = { rows, families, familyByKey, allKeys: families.map((f) => f.key),
+        makers: Array.from(new Set(rows.map((r) => r.maker))).sort(), attention: rows.filter((r) => r.problem) };
+    }
+    return views[key];
+  }
   const LIMIT = 8;
   const STORAGE_KEY = "model_ladder.state";
   const COMMAND = "model_ladder refresh";
@@ -991,11 +1033,12 @@ APP_JS = r"""
 
   // ---- state: hash first, then storage, then defaults ----
   function defaults() {
-    return { view: "all", keys: [], hi: RUNGS[0] || null, lo: RUNGS[RUNGS.length - 1] || null, mode: "whole", sorts: {} };
+    return { view: "all", index: "intelligence", keys: [], hi: RUNGS[0] || null, lo: RUNGS[RUNGS.length - 1] || null, mode: "whole", sorts: {} };
   }
   function clean(raw) {
     if (!raw || typeof raw !== "object" || Array.isArray(raw)) return null;
     const s = defaults();
+    if (DATA.indexes.some((i) => i.key === raw.index)) s.index = raw.index;
     if (raw.view === "all" || raw.view === "compare") s.view = raw.view;
     if (Array.isArray(raw.keys)) {
       s.keys = raw.keys.filter((k, i) => typeof k === "string" && raw.keys.indexOf(k) === i).slice(0, LIMIT);
@@ -1072,6 +1115,9 @@ APP_JS = r"""
     return html`<td data-c="score" data-v=${row.score}><span class="num">${scoreText(row.index, mode)}</span>${
       mode === "whole" ? html`<span class="raw">${row.index.toFixed(1)}</span>` : null}</td>`;
   }
+  function CostCell({ row, borrowed }) {
+    return html`<td data-c="cost" class=${borrowed ? "borrowed" : ""}>${M.money(row.cost)}</td>`;
+  }
 
   function Th({ table, k, label, sorts, onSort, cls }) {
     const cur = sorts[table] || DEFAULT_SORTS[table];
@@ -1084,16 +1130,16 @@ APP_JS = r"""
       onClick=${() => onSort(table, k)} onKeyDown=${onKey}>${label}${active ? (cur.dir === "desc" ? " ▼" : " ▲") : ""}</th>`;
   }
 
-  function StepCells({ step, mode, kind }) {
+  function StepCells({ step, mode, kind, borrowed }) {
     const base = kind + ".";
     if (!step) {
-      return ["points", "cost", "perPoint"].map((f, i) => html`<td class=${"step" + (i === 0 ? " b" : "")} data-c=${base + f}></td>`);
+      return ["points", "cost", "perPoint"].map((f, i) => html`<td class=${"step" + (i === 0 ? " b" : borrowed ? " borrowed" : "")} data-c=${base + f}></td>`);
     }
     const per = step.perPoint !== null ? M.money(step.perPoint) : (step.note || "");
     return [
       html`<td class="step b" data-c=${base + "points"}>${signedPoints(step.points, mode)}</td>`,
-      html`<td class="step" data-c=${base + "cost"}>${signedMoney(step.cost)}</td>`,
-      html`<td class=${"step" + (step.note ? " note" : "")} data-c=${base + "perPoint"}>${per}</td>`,
+      html`<td class=${"step" + (borrowed ? " borrowed" : "")} data-c=${base + "cost"}>${signedMoney(step.cost)}</td>`,
+      html`<td class=${"step" + (step.note ? " note" : "") + (borrowed ? " borrowed" : "")} data-c=${base + "perPoint"}>${per}</td>`,
     ];
   }
 
@@ -1139,7 +1185,7 @@ APP_JS = r"""
       <text x=${PAD.l - 6} y=${y(v) + 4} text-anchor="end">${v}</text></g>`);
   }
 
-  function Scatter({ rows, front, color, title }) {
+  function Scatter({ rows, front, color, title, borrowed }) {
     const costs = rows.map((r) => r.cost);
     let lo = Math.min.apply(null, costs), hi = Math.max.apply(null, costs);
     if (lo === hi) { lo /= 2; hi *= 2; } else { lo /= 1.3; hi *= 1.3; }
@@ -1156,19 +1202,19 @@ APP_JS = r"""
       ${logTicks(lo, hi).map((v) => html`<g key=${"x" + v}>
         <line class="grid" x1=${x(v)} x2=${x(v)} y1=${PAD.t} y2=${H - PAD.b} />
         <text x=${x(v)} y=${H - PAD.b + 16} text-anchor="middle">${"$" + v}</text></g>`)}
-      <text x=${(PAD.l + W - PAD.r) / 2} y=${H - 6} text-anchor="middle">Cost per task, log scale</text>
-      ${d ? html`<path class="stair" d=${d} />` : null}
+      <text x=${(PAD.l + W - PAD.r) / 2} y=${H - 6} text-anchor="middle">${borrowed ? "Overall cost per task, log scale" : "Cost per task, log scale"}</text>
+      ${d ? html`<path class=${borrowed ? "stair borrowed" : "stair"} d=${d} />` : null}
       ${rows.map((r) => {
         const c = color(r);
         const filled = onFront.has(r.slug);
         return html`<circle key=${r.slug} cx=${x(r.cost)} cy=${y(r.score)} r="4.5"
           fill=${filled ? c : "var(--panel)"} stroke=${c} stroke-width="1.8">
-          <title>${r.label + ": " + scoreText(r.index, "decimal") + ", " + M.money(r.cost)}</title></circle>`;
+          <title>${r.label + ": " + scoreText(r.index, "decimal") + ", " + M.money(r.cost) + (borrowed ? " overall" : "")}</title></circle>`;
       })}
     </svg>`;
   }
 
-  function LadderChart({ rungs, fams, cell, keys, mode }) {
+  function LadderChart({ rungs, fams, cell, keys, mode, indexLabel }) {
     const asc = rungs.slice().reverse();
     const scores = [];
     fams.forEach((k) => asc.forEach((r) => { const c = cell(k, r); if (c) scores.push(c.score); }));
@@ -1176,7 +1222,7 @@ APP_JS = r"""
     const y = yScale(ylo, yhi);
     const span = W - PAD.l - PAD.r - 30;
     const x = (i) => PAD.l + 15 + (asc.length === 1 ? span / 2 : i * span / (asc.length - 1));
-    return html`<svg viewBox=${"0 0 " + W + " " + H} role="img" aria-label="Intelligence Index by effort level">
+    return html`<svg viewBox=${"0 0 " + W + " " + H} role="img" aria-label=${indexLabel + " by effort level"}>
       <${YAxis} lo=${ylo} hi=${yhi} y=${y} />
       ${asc.map((r, i) => html`<text key=${r} x=${x(i)} y=${H - PAD.b + 16} text-anchor="middle">${M.rungLabel(r)}</text>`)}
       ${fams.map((k) => {
@@ -1193,7 +1239,7 @@ APP_JS = r"""
   }
 
   // ---- header pieces ----
-  function Status() {
+  function Status({ view }) {
     const [now, setNow] = useState(Date.now());
     const [copied, setCopied] = useState(null);
     useEffect(() => {
@@ -1215,8 +1261,8 @@ APP_JS = r"""
       <span id="status-age" class=${age.stale ? "age stale" : "age"}>${age.text}</span>
       <span>Fetched <b>${when(DATA.fetched_at, true)}</b></span>
       <span>Intelligence Index <b>${"v" + DATA.index_version}</b></span>
-      <span><b>${ROWS.length}</b> scored models</span>
-      <span id="status-attention"><b>${ATTENTION.length}</b>${ATTENTION.length === 1 ? " needs" : " need"} attention</span>
+      <span><b>${view.rows.length}</b>${view.rows.length !== ALL_ROWS.length ? html` of <b>${ALL_ROWS.length}</b>` : null} scored models</span>
+      <span id="status-attention"><b>${view.attention.length}</b>${view.attention.length === 1 ? " needs" : " need"} attention</span>
       <span id="status-quota">${rl.remaining !== null && rl.remaining !== undefined && rl.limit !== null && rl.limit !== undefined
         ? html`<b>${rl.remaining}</b> of ${rl.limit} requests left at the last fetch${reset && !isNaN(reset.getTime()) ? ", resets " + when(reset.toISOString(), true) : ""}`
         : "Request quota unknown"}</span>
@@ -1225,23 +1271,24 @@ APP_JS = r"""
     </div>`;
   }
 
-  function Attention() {
-    if (!ATTENTION.length) return null;
+  function Attention({ view }) {
+    if (!view.attention.length) return null;
     return html`<section id="needs-attention" class="box attention">
       <h2>Needs attention</h2>
       <p class="note">These names do not fit the name rule. They are listed in the all-models table under their full name and left out of effort ladders.</p>
-      <ul>${ATTENTION.map((r) => html`<li key=${r.slug}><b>${r.name}</b> ${PROBLEM_TEXT[r.problem] || r.problem}</li>`)}</ul>
+      <ul>${view.attention.map((r) => html`<li key=${r.slug}><b>${r.name}</b> ${PROBLEM_TEXT[r.problem] || r.problem}</li>`)}</ul>
     </section>`;
   }
 
-  function Changes({ mode }) {
+  function Changes({ mode, index }) {
     const c = DATA.changes;
     if (!c) return null;
-    const shown = M.changesToShow(c, mode);
+    const shown = M.changesToShow(c, mode, index);
     const empty = !c.version && !c.added.length && !c.removed.length && !shown.length;
     const describe = (item) => {
       const parts = [];
-      const a = scoreText(item.index[0], mode), b = scoreText(item.index[1], mode);
+      const a = item.scores[index][0] === null ? "no score" : scoreText(item.scores[index][0], mode);
+      const b = item.scores[index][1] === null ? "no score" : scoreText(item.scores[index][1], mode);
       parts.push(a === b ? "score " + a : "score " + a + " to " + b);
       const ca = M.money(item.cost[0]) || "no cost", cb = M.money(item.cost[1]) || "no cost";
       parts.push(ca === cb ? "cost " + ca : "cost " + ca + " to " + cb);
@@ -1260,17 +1307,18 @@ APP_JS = r"""
   }
 
   // ---- all models view ----
-  function AllView({ state, onSort, toggleKey }) {
+  function AllView({ state, onSort, toggleKey, view, borrowed, indexLabel }) {
     const [creator, setCreator] = useState("");
     const [query, setQuery] = useState("");
+    useEffect(() => { if (creator && !view.makers.includes(creator)) setCreator(""); }, [view, creator]);
     const rows = useMemo(() => {
-      const sel = M.selectRows(ROWS, { keys: ALL_KEYS, hi: null, lo: null, rungOrder: ORDER, mode: state.mode });
+      const sel = M.selectRows(view.rows, { keys: view.allKeys, hi: null, lo: null, rungOrder: ORDER, mode: state.mode });
       const status = {};
       M.paretoRows(sel).forEach((r) => { status[r.slug] = r.status; });
       return sel.map((r) => Object.assign(r, {
         effort: effortValue(r), tagText: r.tags.length ? r.tags.join(", ") : null, status: status[r.slug] || null,
       }));
-    }, [state.mode]);
+    }, [state.mode, state.index]);
     const front = useMemo(() => M.frontier(rows), [rows]);
     const visible = ordered(M.searchRows(rows, query).filter((r) => !creator || r.maker === creator), "all", state.sorts);
     const priced = rows.filter((r) => r.status);
@@ -1280,14 +1328,14 @@ APP_JS = r"""
       <section>
         <h2>Every scored model</h2>
         <p class="note">Each point is one model variant with a cost per task. The green staircase is the frontier: nothing scores at least as high for less.</p>
-        ${priced.length ? html`<div class="box chart solo"><${Scatter} rows=${priced} front=${front} title="Intelligence Index against cost per task"
+        ${priced.length ? html`<div class="box chart solo"><${Scatter} rows=${priced} front=${front} title=${indexLabel + " against cost per task"} borrowed=${borrowed}
           color=${(r) => (r.status === "frontier" ? "var(--front)" : "var(--muted)")} /></div>` : html`<p class="empty">No scored model has a cost per task.</p>`}
       </section>
       <section>
         <div class="filters">
           <select id="all-creator" aria-label="Creator" value=${creator} onChange=${(e) => setCreator(e.currentTarget.value)}>
             <option value="">All creators</option>
-            ${MAKERS.map((m) => html`<option key=${m} value=${m}>${m}</option>`)}
+            ${view.makers.map((m) => html`<option key=${m} value=${m}>${m}</option>`)}
           </select>
           <input id="all-filter" type="search" placeholder="Filter by name or creator" aria-label="Filter by name or creator"
             value=${query} onInput=${(e) => setQuery(e.currentTarget.value)} />
@@ -1301,7 +1349,7 @@ APP_JS = r"""
             <${Th} ...${p} k="effort" label="Effort" cls="l" />
             <${Th} ...${p} k="tagText" label="Tags" cls="l" />
             <${Th} ...${p} k="score" label="Index" />
-            <${Th} ...${p} k="cost" label="Cost per task" />
+            <${Th} ...${p} k="cost" label=${borrowed ? "Overall cost per task" : "Cost per task"} />
             <${Th} ...${p} k="release_date" label="Released" />
             <${Th} ...${p} k="status" label="Frontier" cls="l" />
           </tr></thead>
@@ -1315,7 +1363,7 @@ APP_JS = r"""
               <td class="l" data-c="effort">${r.problem ? "Unclassified" : (r.rung ? M.rungLabel(r.rung) : "")}</td>
               <td class="l" data-c="tags">${r.tagText || ""}</td>
               <${ScoreCell} row=${r} mode=${state.mode} />
-              <td data-c="cost">${M.money(r.cost)}</td>
+              <${CostCell} row=${r} borrowed=${borrowed} />
               <td data-c="release_date">${r.release_date || ""}</td>
               <td class="l" data-c="status">${r.status === "frontier" ? html`<span class="pill f">Frontier</span>`
                 : r.status === "dominated" ? html`<span class="pill d">Dominated</span>` : html`<span class="pill n">No cost</span>`}</td>
@@ -1327,13 +1375,13 @@ APP_JS = r"""
   }
 
   // ---- compare view ----
-  function Picker({ keys, onAdd }) {
+  function Picker({ keys, onAdd, view }) {
     const [open, setOpen] = useState(false);
     const [query, setQuery] = useState("");
     const [active, setActive] = useState(0);
     const wrap = useRef(null), button = useRef(null), input = useRef(null);
     const full = keys.length >= LIMIT;
-    const list = M.searchFamilies(FAMILIES, query);
+    const list = M.searchFamilies(view.families, query);
     const choosable = list.filter((f) => keys.indexOf(f.key) === -1);
     const current = choosable[Math.min(active, choosable.length - 1)];
     useEffect(() => { if (open && input.current) input.current.focus(); }, [open]);
@@ -1367,13 +1415,13 @@ APP_JS = r"""
             <small>${f.maker}</small><small class="r">${f.levels + (f.levels === 1 ? " effort level" : " effort levels")}</small>
           </button></li>`;
         })}</ul>
-        <p>${list.length ? list.length + " of " + FAMILIES.length + " models. " + keys.length + " of " + LIMIT + " selected."
+        <p>${list.length ? list.length + " of " + view.families.length + " models. " + keys.length + " of " + LIMIT + " selected."
           : "No model matches that search."}</p>
       </div>` : null}
     </div>`;
   }
 
-  function Controls({ state, update, toggleKey }) {
+  function Controls({ state, update, toggleKey, view, indexShort }) {
     const setHi = (hi) => update((s) => ({ hi, lo: RUNGS.indexOf(hi) > RUNGS.indexOf(s.lo) ? hi : s.lo }));
     const setLo = (lo) => update((s) => ({ lo, hi: RUNGS.indexOf(lo) < RUNGS.indexOf(s.hi) ? lo : s.hi }));
     const options = RUNGS.map((r) => html`<option key=${r} value=${r}>${M.rungLabel(r)}</option>`);
@@ -1381,8 +1429,11 @@ APP_JS = r"""
       <div class="row"><div class="group">
         <span class="lab">Models</span>
         <span class="group" id="chips">${state.keys.map((k) => {
-          const f = FAMILY_BY_KEY[k];
+          const f = view.familyByKey[k];
           if (!f) {
+            const known = KNOWN_FAMILIES[k];
+            if (known) return html`<span class="chip unscored" key=${k}><${Dot} color=${colorOf(state.keys, k)} /><span><span class="fam">${known.family}</span> has no ${indexShort} score</span>
+              <button type="button" class="x" aria-label=${"Remove " + known.family} onClick=${() => toggleKey(k)}>×</button></span>`;
             const name = missingName(k);
             return html`<span class="chip gone" key=${k}><span class="gone-text"><span class="fam">${name}</span> is no longer listed</span>
               <button type="button" class="x" aria-label=${"Remove " + name} onClick=${() => toggleKey(k)}>×</button></span>`;
@@ -1391,7 +1442,7 @@ APP_JS = r"""
             <span class="mk">${f.maker}</span>
             <button type="button" class="x" aria-label=${"Remove " + f.family} onClick=${() => toggleKey(k)}>×</button></span>`;
         })}</span>
-        <${Picker} keys=${state.keys} onAdd=${toggleKey} />
+        <${Picker} keys=${state.keys} onAdd=${toggleKey} view=${view} />
       </div></div>
       <div class="row">
         ${RUNGS.length ? html`<div class="group">
@@ -1411,25 +1462,36 @@ APP_JS = r"""
     </div>`;
   }
 
-  function CompareView({ state, update, onSort, toggleKey }) {
-    const present = state.keys.filter((k) => FAMILY_BY_KEY[k]);
-    const controls = html`<${Controls} state=${state} update=${update} toggleKey=${toggleKey} />`;
+  function CompareView({ state, update, onSort, toggleKey, view, borrowed, indexLabel, indexShort }) {
+    const present = state.keys.filter((k) => view.familyByKey[k]);
+    const controls = html`<${Controls} state=${state} update=${update} toggleKey=${toggleKey} view=${view} indexShort=${indexShort} />`;
+    const missing = M.unscoredRows(ALL_ROWS, state.index, { keys: state.keys, hi: state.hi, lo: state.lo, rungOrder: ORDER, mode: state.mode });
+    const labels = [];
+    state.keys.forEach((k) => {
+      const rows = missing.filter((r) => r.family_key === k);
+      if (!rows.length) return;
+      if (!view.familyByKey[k] && KNOWN_FAMILIES[k]) labels.push(KNOWN_FAMILIES[k].family + " (all levels)");
+      else rows.forEach((r) => labels.push(r.label));
+    });
+    const note = labels.length ? html`<p id="unscored-note" class="note">Not scored in ${indexLabel}: ${labels.join(", ")}.</p>` : null;
     if (!present.length) {
-      return html`<div class="view">${controls}<p class="empty box">Add a model to start comparing.</p></div>`;
+      const known = state.keys.some((k) => KNOWN_FAMILIES[k]);
+      return html`<div class="view">${controls}${note}<p class="empty box">${known ? "None of the selected models has a " + indexShort + " score." : "Add a model to start comparing."}</p></div>`;
     }
     const mode = state.mode;
-    const sel = M.selectRows(ROWS, { keys: present, hi: state.hi, lo: state.lo, rungOrder: ORDER, mode });
+    const sel = M.selectRows(view.rows, { keys: present, hi: state.hi, lo: state.lo, rungOrder: ORDER, mode });
     const steps = M.familySteps(sel);
     const pareto = M.paretoRows(sel);
     const notes = M.findings(pareto, steps, mode);
     [sel, steps, pareto].forEach((list) => list.forEach((r) => { r.effort = effortValue(r); }));
     const color = (r) => colorOf(state.keys, r.family_key);
 
-    const rungs = M.presentRungs(sel, ORDER);
-    const fams = present.filter((k) => sel.some((r) => r.family_key === k && r.rank !== null));
+    const rungs = M.presentRungs(sel.concat(missing.filter((r) => present.includes(r.family_key))), ORDER);
+    const fams = present.filter((k) => sel.concat(missing).some((r) => r.family_key === k && r.rank !== null));
     const cells = {};
     sel.forEach((r) => { if (r.rank !== null) cells[r.family_key + "\n" + r.rung] = r; });
     const cell = (k, rung) => cells[k + "\n" + rung] || null;
+    const missingCell = (k, rung) => missing.some((r) => r.family_key === k && r.rung === rung);
 
     const stepRows = state.sorts.steps ? ordered(steps, "steps", state.sorts)
       : present.reduce((acc, k) => acc.concat(steps.filter((r) => r.family_key === k)), []);
@@ -1442,21 +1504,22 @@ APP_JS = r"""
 
     return html`<div class="view">
       ${controls}
+      ${note}
       <section id="ladder">
         <h2>Effort ladder</h2>
         ${fams.length ? html`<div class="pair">
-          <div class="box chart"><${LadderChart} rungs=${rungs} fams=${fams} cell=${cell} keys=${state.keys} mode=${mode} /></div>
+          ${sel.some((r) => r.rank !== null) ? html`<div class="box chart"><${LadderChart} rungs=${rungs} fams=${fams} cell=${cell} keys=${state.keys} mode=${mode} indexLabel=${indexLabel} /></div>` : null}
           <div class="box scroll"><table id="ladder-table">
             <thead>
-              <tr class="grp"><th></th>${fams.map((k) => html`<th key=${k} colspan="2" class="b"><${Dot} color=${colorOf(state.keys, k)} />${FAMILY_BY_KEY[k].family}</th>`)}</tr>
-              <tr><th>Effort</th>${fams.map((k) => [html`<th class="b">Index</th>`, html`<th>Cost per task</th>`])}</tr>
+              <tr class="grp"><th></th>${fams.map((k) => html`<th key=${k} colspan="2" class="b"><${Dot} color=${colorOf(state.keys, k)} />${view.familyByKey[k].family}</th>`)}</tr>
+              <tr><th>Effort</th>${fams.map((k) => [html`<th class="b">Index</th>`, html`<th>${borrowed ? "Overall cost per task" : "Cost per task"}</th>`])}</tr>
             </thead>
             <tbody>${rungs.map((rung) => html`<tr key=${rung}><th>${M.rungLabel(rung)}</th>${fams.map((k) => {
               const r = cell(k, rung);
               return r ? [html`<td class="b" data-c="score" data-v=${r.score}><span class="num">${scoreText(r.index, mode)}</span>${
                 mode === "whole" ? html`<span class="raw">${r.index.toFixed(1)}</span>` : null}</td>`,
-                html`<td data-c="cost">${M.money(r.cost)}</td>`]
-                : [html`<td class="b"></td>`, html`<td></td>`];
+                html`<${CostCell} row=${r} borrowed=${borrowed} />`]
+                : [html`<td class=${missingCell(k, rung) ? "b none" : "b"}>${missingCell(k, rung) ? "No score" : ""}</td>`, html`<td></td>`];
             })}</tr>`)}</tbody>
           </table></div>
         </div>` : html`<p class="empty box">None of the selected models has effort levels in this range.</p>`}
@@ -1470,16 +1533,16 @@ APP_JS = r"""
             <${Th} ...${sp} k="family" label="Model" cls="l" />
             <${Th} ...${sp} k="effort" label="Effort" cls="l" />
             <${Th} ...${sp} k="score" label="Index" />
-            <${Th} ...${sp} k="cost" label="Cost per task" />
+            <${Th} ...${sp} k="cost" label=${borrowed ? "Overall cost per task" : "Cost per task"} />
             <${StepHeads} ...${sp} />
           </tr></thead>
           <tbody>${stepRows.map((r) => html`<tr key=${r.slug}>
             <td class="l" data-c="family"><${Dot} color=${color(r)} />${r.family}</td>
             <td class="l" data-c="effort">${M.rungLabel(r.rung)}</td>
             <${ScoreCell} row=${r} mode=${mode} />
-            <td data-c="cost">${M.money(r.cost)}</td>
-            <${StepCells} step=${r.up} mode=${mode} kind="up" />
-            <${StepCells} step=${r.down} mode=${mode} kind="down" />
+            <${CostCell} row=${r} borrowed=${borrowed} />
+            <${StepCells} step=${r.up} mode=${mode} kind="up" borrowed=${borrowed} />
+            <${StepCells} step=${r.down} mode=${mode} kind="down" borrowed=${borrowed} />
           </tr>`)}</tbody>
         </table></div>` : html`<p class="empty box">None of the selected models has effort levels in this range.</p>`}
       </section>
@@ -1490,22 +1553,22 @@ APP_JS = r"""
           unpriced && pareto.length ? " " + unpriced + (unpriced === 1 ? " selected row has" : " selected rows have") + " no cost and " + (unpriced === 1 ? "is" : "are") + " left out." : ""}</p>
         ${pareto.length ? html`<div class="stack">
           <div class="box chart solo"><${Scatter} rows=${pareto} front=${pareto.filter((r) => r.status === "frontier")} color=${color}
-            title="Selected rows: Intelligence Index against cost per task" /></div>
+            title=${"Selected rows: " + indexLabel + " against cost per task"} borrowed=${borrowed} /></div>
           <div class="box scroll"><table id="pareto-table">
             <thead>${groupRow(4)}<tr>
               <${Th} ...${pp} k="label" label="Model and effort" cls="l" />
               <${Th} ...${pp} k="score" label="Index" />
-              <${Th} ...${pp} k="cost" label="Cost per task" />
+              <${Th} ...${pp} k="cost" label=${borrowed ? "Overall cost per task" : "Cost per task"} />
               <${Th} ...${pp} k="status" label="Status" cls="l" />
               <${StepHeads} ...${pp} />
             </tr></thead>
             <tbody>${paretoRows.map((r) => html`<tr key=${r.slug} class=${r.status === "dominated" ? "dom" : ""}>
               <td class="l" data-c="label"><${Dot} color=${color(r)} />${r.label}</td>
               <${ScoreCell} row=${r} mode=${mode} />
-              <td data-c="cost">${M.money(r.cost)}</td>
+              <${CostCell} row=${r} borrowed=${borrowed} />
               <td class="l" data-c="status">${r.status === "frontier" ? html`<span class="pill f">Frontier</span>` : html`<span class="pill d">Dominated</span>`}</td>
               ${r.status === "frontier"
-                ? [html`<${StepCells} step=${r.up} mode=${mode} kind="up" />`, html`<${StepCells} step=${r.down} mode=${mode} kind="down" />`]
+                ? [html`<${StepCells} step=${r.up} mode=${mode} kind="up" borrowed=${borrowed} />`, html`<${StepCells} step=${r.down} mode=${mode} kind="down" borrowed=${borrowed} />`]
                 : html`<td colspan="6" class="reason b">${M.dominatedReason(r, mode)}</td>`}
             </tr>`)}</tbody>
           </table></div>
@@ -1514,6 +1577,7 @@ APP_JS = r"""
 
       <section id="say">
         <h2>What the numbers say</h2>
+        ${borrowed ? html`<p class="note">Costs in these sentences are Intelligence Index costs.</p>` : null}
         ${notes.length ? html`<ul id="findings" class="find box">${notes.map((n, i) => html`<li key=${i}>${n}</li>`)}</ul>`
           : html`<p id="findings" class="empty box">Nothing to report for this selection.</p>`}
       </section>
@@ -1545,14 +1609,21 @@ APP_JS = r"""
     });
     const tab = (view, label) => html`<button role="tab" type="button" id=${"tab-" + view} aria-selected=${String(state.view === view)}
       onClick=${() => update({ view })}>${label}</button>`;
-    const props = { state, update, onSort, toggleKey };
+    const view = viewFor(state.index), borrowed = state.index !== "intelligence";
+    const indexInfo = DATA.indexes.find((i) => i.key === state.index);
+    const indexLabel = indexInfo.label, indexShort = indexInfo.short;
+    const props = { state, update, onSort, toggleKey, view, borrowed, indexLabel, indexShort };
     return html`<div class="wrap">
       <header>
-        <div><h1>Model Ladder</h1><p class="sub">Effort levels compared by Intelligence Index and cost per task.</p></div>
-        <${Status} />
+        <div><h1>Model Ladder</h1><p class="sub">Effort levels compared by ${borrowed ? "the " + indexLabel + " index" : indexLabel} and cost per task.</p></div>
+        <${Status} view=${view} />
       </header>
-      <${Attention} />
-      <${Changes} mode=${state.mode} />
+      <${Attention} view=${view} />
+      <${Changes} mode=${state.mode} index=${state.index} />
+      <div class="index-bar"><label for="index-select">Scored by</label><select id="index-select" value=${state.index} onChange=${(e) => update({ index: e.currentTarget.value })}>
+        ${DATA.indexes.filter((i) => i.key === "intelligence" || i.count > 0).map((i) => html`<option key=${i.key} value=${i.key}>${i.label} (${i.count})</option>`)}
+      </select></div>
+      ${borrowed ? html`<p id="cost-notice" class="ver cost-notice">Costs here are from the Intelligence Index run. Artificial Analysis publishes no cost for the ${indexLabel} index, so every cost, frontier and cost per point on this page pairs these scores with that cost.</p>` : null}
       <div class="tabs" role="tablist">
         ${tab("all", "All models")}
         ${tab("compare", state.keys.length ? "Compare (" + state.keys.length + ")" : "Compare")}
@@ -1943,7 +2014,7 @@ def testing_mode_enabled() -> bool:
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="model_ladder",
-        description="Compare model effort levels by Intelligence Index and cost per task.",
+        description="Compare model effort levels by available Artificial Analysis indexes and cost per task.",
         epilog="Runtime home: ~/.model_ladder/ (override with MODEL_LADDER_HOME).",
     )
     parser.add_argument("command", nargs="?", choices=("refresh", "build"),

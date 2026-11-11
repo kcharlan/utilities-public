@@ -9,12 +9,13 @@ LAUNCHER = PROJECT / "model_ladder"
 
 
 def test_help_has_no_side_effects(tmp_path):
-    assert_launcher_help(LAUNCHER)
+    result = assert_launcher_help(LAUNCHER)
+    assert "available Artificial Analysis indexes" in " ".join(result.stdout.split())
     assert not (tmp_path / "ml-home").exists()
 
 
 def test_version_prints_and_creates_nothing(tmp_path):
     result = run_launcher(LAUNCHER, "--version")
     assert result.returncode == 0, result.stderr
-    assert result.stdout.strip() == "Model Ladder 1.0.1"
+    assert result.stdout.strip() == "Model Ladder 1.1.0"
     assert not (tmp_path / "ml-home").exists()

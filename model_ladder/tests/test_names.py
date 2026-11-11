@@ -41,15 +41,17 @@ def test_two_efforts_unclassified(ml):
 
 
 def test_classify_skips_unscored(ml):
-    rows = ml.classify([model("Alpha Test 1 (High)", index=50), model("Alpha Test 2", index=None)])
-    assert len(rows) == 1 and rows[0]["name"] == "Alpha Test 1 (High)"
+    rows = ml.classify([model("Alpha Test 2"), model("Finance Test", scores={"finance": 42})])
+    assert len(rows) == 1 and rows[0]["name"] == "Finance Test"
+    assert rows[0]["scores"]["intelligence"] is None and rows[0]["cost"] is None
 
 
 def test_classify_row_shape(ml):
     (row,) = ml.classify([model("Alpha Test 1 (High, Tag)", index=50, cost=2.5, total=9.0, release="2026-02-03", slug="s1")])
     assert row == {
         "slug": "s1", "name": "Alpha Test 1 (High, Tag)", "maker": "Example Lab", "family": "Alpha Test 1",
-        "family_key": '["Example Lab", "Alpha Test 1"]', "rung": "high", "tags": ["Tag"], "index": 50,
+        "family_key": '["Example Lab", "Alpha Test 1"]', "rung": "high", "tags": ["Tag"],
+        "scores": {key: 50 if key == "intelligence" else None for key, *_ in ml.INDEXES},
         "cost": 2.5, "total_cost": 9.0, "release_date": "2026-02-03", "problem": None,
     }
 

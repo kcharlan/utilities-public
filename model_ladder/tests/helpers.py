@@ -2,14 +2,19 @@
 import re
 
 
-def model(name, index=None, cost=None, maker="Example Lab", slug=None, release="2026-01-01", total=None) -> dict:
+def model(name, index=None, cost=None, maker="Example Lab", slug=None, release="2026-01-01", total=None, scores=None) -> dict:
     slug = slug or re.sub(r"[^a-z0-9]", "-", name.lower())
     return {
         "slug": slug,
         "name": name,
         "release_date": release,
         "model_creator": {"name": maker},
-        "evaluations": {"artificial_analysis_intelligence_index": index},
+        "evaluations": {"artificial_analysis_intelligence_index": index, **{
+            "artificial_analysis_" + field + "_index": (scores or {}).get(key)
+            for key, field in (("coding", "coding"), ("agentic", "agentic"), ("economics", "economics"),
+                               ("engineering", "engineering"), ("finance", "finance_and_accounting"),
+                               ("healthcare", "healthcare_and_medical"), ("legal", "legal"),
+                               ("strategy", "strategy_and_ops"))}},
         "artificial_analysis_intelligence_index_cost": None if index is None else {
             "total_cost": total,
             "cost_per_task": {"total_cost": cost} if cost is not None else None,
@@ -46,6 +51,13 @@ def ladder_models() -> list[dict]:
         model("Eta Test 1 (High)", 30.0, 0.80, maker=OTHER_MAKER, slug="eta-test-1-high"),
         model("Eta Test 1 (High, Preview)", 31.0, 0.90, maker=OTHER_MAKER, slug="eta-test-1-high-preview"),
     ]
+
+
+def indexed_ladder_models() -> list[dict]:
+    rows = ladder_models()
+    for row, score in zip(rows[:8], [30, 32, 33, 34, 45, 46, 47, 48]):
+        row["evaluations"]["artificial_analysis_finance_and_accounting_index"] = score
+    return rows
 
 
 def snapshot(models, *, when="2026-11-05T10:00:00+00:00", checked=None, version=5) -> dict:

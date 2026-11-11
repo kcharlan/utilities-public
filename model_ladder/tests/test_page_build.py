@@ -38,8 +38,9 @@ def test_payload_keys_and_types(ml):
     snap = snapshot(ladder_models())
     payload = ml.build_payload(snap, None, CONFIG)
     assert set(payload) == {"schema", "app", "fetched_at", "last_checked", "max_age_hours", "index_version",
-                            "rate_limit", "rung_order", "rows", "changes"}
-    assert payload["schema"] == 1
+                            "rate_limit", "rung_order", "rows", "changes", "indexes"}
+    assert payload["schema"] == 2
+    assert payload["indexes"] == [{"key": "intelligence", "label": "Intelligence Index", "short": "Intelligence", "count": len(ladder_models())}]
     assert payload["app"] == {"name": "Model Ladder", "version": ml.VERSION}
     assert payload["fetched_at"] == snap["fetched_at"] and payload["last_checked"] == snap["last_checked"]
     assert payload["max_age_hours"] == 12
@@ -49,6 +50,11 @@ def test_payload_keys_and_types(ml):
     assert payload["rows"] == ml.classify(snap["models"])
     assert payload["changes"] is None
     json.dumps(payload)
+
+
+def test_payload_includes_empty_default_and_scored_domain(ml):
+    payload = ml.build_payload(snapshot([model("Example", scores={"finance": 42})]), None, CONFIG)
+    assert [(i["key"], i["count"]) for i in payload["indexes"]] == [("intelligence", 0), ("finance", 1)]
 
 
 def test_payload_changes_with_previous(ml):
