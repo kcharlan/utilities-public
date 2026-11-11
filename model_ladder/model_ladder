@@ -450,6 +450,304 @@ def build_page(home: Path, output: Path) -> None:
 
 
 # ---------------------------------------------------------------------------
+# Page analysis code (embedded in the page; tested directly by Node)
+# ---------------------------------------------------------------------------
+
+LADDER_MATH_JS = r"""
+// ladder-math:begin
+var RUNG_LABELS = {
+  "max": "Max", "xhigh": "XHigh", "high": "High", "medium": "Medium",
+  "low": "Low", "minimal": "Minimal", "non-reasoning": "Non-reasoning"
+};
+var FLOAT_NOISE = 1e9;
+
+function wholePoints(raw) {
+  return Math.floor((Math.round(raw * 10) + 5) / 10);
+}
+
+function rungLabel(rung) {
+  if (RUNG_LABELS[rung]) return RUNG_LABELS[rung];
+  return rung ? rung.charAt(0).toUpperCase() + rung.slice(1) : "";
+}
+
+function rowLabel(row) {
+  if (row.rung) return row.family + " " + rungLabel(row.rung);
+  if (row.tags && row.tags.length) return row.family + " (" + row.tags.join(", ") + ")";
+  return row.family;
+}
+
+function families(rows) {
+  var byKey = {};
+  var order = [];
+  rows.forEach(function (row) {
+    var entry = byKey[row.family_key];
+    if (!entry) {
+      entry = { key: row.family_key, maker: row.maker, family: row.family, levels: 0, top: -Infinity };
+      byKey[row.family_key] = entry;
+      order.push(entry);
+    }
+    entry.levels += 1;
+    entry.top = Math.max(entry.top, wholePoints(row.index));
+  });
+  return order.sort(function (a, b) {
+    if (a.top !== b.top) return b.top - a.top;
+    return a.family < b.family ? -1 : a.family > b.family ? 1 : 0;
+  });
+}
+
+function searchFamilies(list, query) {
+  var needle = String(query || "").trim().toLowerCase();
+  if (!needle) return list.slice();
+  return list.filter(function (item) {
+    return (item.maker + " " + item.family).toLowerCase().indexOf(needle) !== -1;
+  });
+}
+
+function presentRungs(rows, rungOrder) {
+  var seen = {};
+  rows.forEach(function (row) { if (row.rung) seen[row.rung] = true; });
+  return rungOrder.filter(function (rung) { return seen[rung]; });
+}
+
+function selectRows(rows, opts) {
+  var keys = {};
+  (opts.keys || []).forEach(function (key) { keys[key] = true; });
+  var order = opts.rungOrder || [];
+  var hi = order.indexOf(opts.hi);
+  var lo = order.indexOf(opts.lo);
+  var out = [];
+  rows.forEach(function (row) {
+    if (!keys[row.family_key]) return;
+    var rank = null;
+    if (row.rung) {
+      var at = order.indexOf(row.rung);
+      rank = at === -1 ? null : at;
+      if (rank !== null) {
+        if (hi !== -1 && rank < hi) return;
+        if (lo !== -1 && rank > lo) return;
+      }
+    }
+    var copy = Object.assign({}, row);
+    copy.score = opts.mode === "decimal" ? row.index : wholePoints(row.index);
+    copy.rank = rank;
+    copy.label = rowLabel(row);
+    out.push(copy);
+  });
+  return out;
+}
+
+function priced(row) {
+  return row.cost !== null && row.cost !== undefined;
+}
+
+function dominates(b, a) {
+  return b.score >= a.score && b.cost <= a.cost && (b.score > a.score || b.cost < a.cost);
+}
+
+function compareText(a, b) {
+  return a < b ? -1 : a > b ? 1 : 0;
+}
+
+function frontier(rows) {
+  var candidates = rows.filter(priced);
+  return candidates.filter(function (row) {
+    return !candidates.some(function (other) { return dominates(other, row); });
+  }).sort(function (a, b) {
+    return (a.cost - b.cost) || (a.score - b.score) || compareText(a.label, b.label);
+  });
+}
+
+function makeStep(from, to, direction) {
+  var points = to.score - from.score;
+  var cost = priced(from) && priced(to)
+    ? Math.round((to.cost - from.cost) * FLOAT_NOISE) / FLOAT_NOISE : null;
+  var perPoint = null;
+  var note = null;
+  if (direction === "up") {
+    if (points > 0) {
+      if (cost !== null) {
+        if (cost > 0) perPoint = cost / points; else note = "costs no more";
+      }
+    } else if (points === 0) note = "no gain";
+    else note = "scores lower";
+  } else {
+    if (points < 0) {
+      if (cost !== null) {
+        if (cost < 0) perPoint = cost / points; else note = "saves nothing";
+      }
+    } else if (points === 0) note = "no loss";
+    else note = "scores higher";
+  }
+  return { to: to, points: points, cost: cost, perPoint: perPoint, note: note };
+}
+
+function paretoRows(rows) {
+  var list = rows.filter(priced).map(function (row) { return Object.assign({}, row); });
+  list.sort(function (a, b) {
+    return (a.cost - b.cost) || (b.score - a.score) || compareText(a.label, b.label);
+  });
+  var edge = frontier(list);
+  var onEdge = new Set(edge);
+  // frontier() returns the same objects it was given, so membership is by identity
+  list.forEach(function (row) {
+    row.up = null;
+    row.down = null;
+    if (onEdge.has(row)) {
+      row.status = "frontier";
+      row.by = null;
+      var at = edge.indexOf(row);
+      if (at < edge.length - 1) row.up = makeStep(row, edge[at + 1], "up");
+      if (at > 0) row.down = makeStep(row, edge[at - 1], "down");
+      return;
+    }
+    row.status = "dominated";
+    var beaters = edge.filter(function (other) {
+      return other.score >= row.score && other.cost <= row.cost;
+    }).sort(function (a, b) {
+      return (b.score - a.score) || (a.cost - b.cost) || compareText(a.label, b.label);
+    });
+    row.by = beaters[0] || null;
+  });
+  return list;
+}
+
+function familySteps(rows) {
+  var groups = {};
+  var order = [];
+  rows.forEach(function (row) {
+    if (!row.rung || row.rank === null || row.rank === undefined) return;
+    if (!groups[row.family_key]) { groups[row.family_key] = []; order.push(row.family_key); }
+    groups[row.family_key].push(Object.assign({}, row));
+  });
+  var out = [];
+  order.forEach(function (key) {
+    var rungs = groups[key].sort(function (a, b) { return a.rank - b.rank; });
+    rungs.forEach(function (row, at) {
+      row.up = at > 0 ? makeStep(row, rungs[at - 1], "up") : null;
+      row.down = at < rungs.length - 1 ? makeStep(row, rungs[at + 1], "down") : null;
+      out.push(row);
+    });
+  });
+  return out;
+}
+
+function pathValue(row, key) {
+  var value = row;
+  var parts = key.split(".");
+  for (var i = 0; i < parts.length; i += 1) {
+    if (value === null || value === undefined) return null;
+    value = value[parts[i]];
+  }
+  return value === undefined ? null : value;
+}
+
+function compareValues(a, b) {
+  return typeof a === "string" || typeof b === "string" ? compareText(String(a), String(b)) : a - b;
+}
+
+function sortRows(rows, key, dir) {
+  var sign = dir === "desc" ? -1 : 1;
+  return rows.slice().sort(function (a, b) {
+    var av = pathValue(a, key);
+    var bv = pathValue(b, key);
+    if (av === null || bv === null) {
+      if (av === bv) return 0;
+      return av === null ? 1 : -1;
+    }
+    var primary = compareValues(av, bv);
+    if (primary !== 0) return sign * primary;
+    var byScore = compareValues(b.score, a.score);
+    if (byScore !== 0) return byScore;
+    var ac = priced(a) ? a.cost : null;
+    var bc = priced(b) ? b.cost : null;
+    if (ac !== bc) {
+      if (ac === null) return 1;
+      if (bc === null) return -1;
+      return ac - bc;
+    }
+    return compareText(a.label, b.label);
+  });
+}
+
+function money(v) {
+  if (v === null || v === undefined || isNaN(v)) return "";
+  var size = Math.round(Math.abs(v) * FLOAT_NOISE) / FLOAT_NOISE;
+  return "$" + (size >= 0.1 ? size.toFixed(2) : size.toFixed(3));
+}
+
+function showPoints(value, mode) {
+  return mode === "decimal" ? Math.abs(value).toFixed(1) : String(Math.round(Math.abs(value)));
+}
+
+function findings(pareto, steps, mode) {
+  var out = [];
+  pareto.forEach(function (row) {
+    if (row.status !== "dominated" || !row.by) return;
+    var gap = row.by.score - row.score;
+    var saved = Math.round((row.cost - row.by.cost) * FLOAT_NOISE) / FLOAT_NOISE;
+    var head = row.label + " is dominated: " + row.by.label + " scores ";
+    if (gap === 0) out.push(head + "the same for " + money(saved) + " less per task.");
+    else if (saved > 0) out.push(head + showPoints(gap, mode) + " higher for " + money(saved) + " less per task.");
+    else out.push(head + showPoints(gap, mode) + " higher for the same cost per task.");
+  });
+  var cheapest = null;
+  var dearest = null;
+  pareto.filter(function (row) { return row.status === "frontier"; }).forEach(function (row) {
+    if (!row.up || row.up.perPoint === null) return;
+    if (cheapest === null || row.up.perPoint < cheapest.up.perPoint) cheapest = row;
+    if (dearest === null || row.up.perPoint > dearest.up.perPoint) dearest = row;
+  });
+  if (cheapest) {
+    out.push("Cheapest step on the frontier: " + cheapest.label + " to " + cheapest.up.to.label +
+      ", " + money(cheapest.up.perPoint) + " per point.");
+    if (dearest !== cheapest) {
+      out.push("Most expensive step on the frontier: " + dearest.label + " to " + dearest.up.to.label +
+        ", " + money(dearest.up.perPoint) + " per point.");
+    }
+  }
+  steps.forEach(function (row) {
+    var up = row.up;
+    if (!up || up.points > 0 || up.cost === null || up.cost <= 0) return;
+    var tail = up.points === 0 ? "no points." : "scores " + showPoints(up.points, mode) + " lower.";
+    out.push(row.label + " to " + rungLabel(up.to.rung) + " adds " + money(up.cost) + " per task and " + tail);
+  });
+  return out;
+}
+
+function dataAge(lastCheckedIso, nowMs, maxAgeHours) {
+  var then = Date.parse(lastCheckedIso);
+  if (isNaN(then)) return { text: "Data age is unknown", stale: true };
+  var hours = Math.max(0, (nowMs - then) / 3.6e6);
+  var text;
+  if (hours < 1) text = "Data is less than an hour old";
+  else if (hours < 2) text = "Data is 1 hour old";
+  else if (hours < 48) text = "Data is " + Math.floor(hours) + " hours old";
+  else text = "Data is " + Math.floor(hours / 24) + " days old";
+  return { text: text, stale: hours > maxAgeHours };
+}
+
+function changesToShow(changes, mode) {
+  if (!changes || !changes.changed) return [];
+  function shownScore(raw) { return mode === "decimal" ? raw : wholePoints(raw); }
+  return changes.changed.filter(function (item) {
+    var scoreMoved = shownScore(item.index[0]) !== shownScore(item.index[1]);
+    var costMoved = money(item.cost[0]) !== money(item.cost[1]);
+    return scoreMoved || costMoved;
+  });
+}
+
+var api = {
+  wholePoints: wholePoints, families: families, searchFamilies: searchFamilies,
+  presentRungs: presentRungs, selectRows: selectRows, frontier: frontier,
+  paretoRows: paretoRows, familySteps: familySteps, sortRows: sortRows,
+  findings: findings, money: money, dataAge: dataAge, changesToShow: changesToShow
+};
+if (typeof module !== "undefined") module.exports = api; else window.ladderMath = api;
+// ladder-math:end
+"""
+
+
+# ---------------------------------------------------------------------------
 # CLI
 # ---------------------------------------------------------------------------
 
