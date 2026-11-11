@@ -53,6 +53,13 @@ def ladder_models() -> list[dict]:
     ]
 
 
+def indexed_ladder_models() -> list[dict]:
+    rows = ladder_models()
+    for row, score in zip(rows[:8], [30, 32, 33, 34, 45, 46, 47, 48]):
+        row["evaluations"]["artificial_analysis_finance_and_accounting_index"] = score
+    return rows
+
+
 def snapshot(models, *, when="2026-11-05T10:00:00+00:00", checked=None, version=5) -> dict:
     """A snapshot dict shaped like read_snapshot's result."""
     return {"schema": 1, "fetched_at": when, "last_checked": checked or when,

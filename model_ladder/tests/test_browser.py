@@ -8,7 +8,7 @@ from urllib.parse import quote
 import pytest
 from playwright.sync_api import expect, sync_playwright
 
-from helpers import MAKER, ladder_models, model, snapshot
+from helpers import MAKER, indexed_ladder_models, ladder_models, model, snapshot
 
 PROJECT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(PROJECT.parent))
@@ -112,6 +112,33 @@ def alpha_and_beta(page):
     page.keyboard.press("Escape")
     page.select_option("#effort-hi", "max")
     page.select_option("#effort-lo", "medium")
+
+
+def test_index_selector_and_borrowed_costs(open_page, ml):
+    page = open_page(payload_for(ml, indexed_ladder_models()))
+    assert texts(page, "#index-select option") == ["Intelligence Index (12)", "Finance and accounting (8)"]
+    assert page.locator("#index-select").input_value() == "intelligence"
+    assert page.locator("#cost-notice, td.borrowed, path.stair.borrowed").count() == 0
+    page.select_option("#all-creator", "Sample Works")
+    page.select_option("#index-select", "finance")
+    assert page.locator("#all-creator").input_value() == ""
+    expect(page.locator("#cost-notice")).to_have_text("Costs here are from the Intelligence Index run. Artificial Analysis publishes no cost for the Finance and accounting index, so every cost, frontier and cost per point on this page pairs these scores with that cost.")
+    assert "the Finance and accounting index" in page.locator(".sub").inner_text()
+    assert page.locator("#all-table th[data-k=cost]").inner_text().startswith("Overall cost per task")
+    assert page.locator("#all-table td[data-c=cost]:not(.borrowed), td[data-c=score].borrowed").count() == 0
+    assert page.locator("path.stair.borrowed").count() == 1
+    expect(page.locator("#all-table tr:has(.pill.f)")).to_have_count(4)
+    assert texts(page, "#all-table tr:has(.pill.f) [data-c=family]") == ["Beta Test 1"] * 4
+    alpha_and_beta(page)
+    assert page.locator("#steps-table td[data-c='up.cost'].borrowed").count() > 0
+    assert page.locator("#say .note").inner_text() == "Costs in these sentences are Intelligence Index costs."
+    page.reload()
+    assert page.locator("#index-select").input_value() == "finance"
+    page.evaluate("history.replaceState(null, '', location.pathname)")
+    page.reload()
+    assert page.locator("#index-select").input_value() == "finance"
+    page.goto(page.url.split('#')[0] + '#' + quote(json.dumps({"index": "unknown"})))
+    assert page.locator("#index-select").input_value() == "intelligence"
 
 
 def test_opens_on_all_models(open_page, ml):

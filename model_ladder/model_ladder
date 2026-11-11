@@ -968,6 +968,11 @@ svg { display: block; width: 100%; height: auto; }
 svg text { fill: var(--muted); font-family: var(--font); font-size: 12px; }
 svg .grid { stroke: var(--line); stroke-width: 1; }
 svg .stair { fill: none; stroke: var(--front); stroke-width: 2.5; }
+svg .stair.borrowed { stroke-dasharray: 6 4; }
+.borrowed { color: var(--muted); }
+.index-bar { display: flex; align-items: center; gap: 8px; margin: 16px 0; }
+.index-bar select { max-width: 100%; min-width: 0; }
+.cost-notice { max-width: 80ch; margin-bottom: 16px; }
 ul.find { margin: 0; padding: 12px 14px 12px 32px; display: flex; flex-direction: column; gap: 5px; max-width: 80ch; }
 .empty { padding: 18px 14px; color: var(--muted); margin: 0; }
 .filters { display: flex; flex-wrap: wrap; gap: 8px 12px; align-items: center; }
@@ -992,15 +997,19 @@ APP_JS = r"""
   const html = window.htm.bind(h);
 
   const DATA = JSON.parse(document.getElementById("payload").textContent);
-  const ROWS = M.rowsForIndex(DATA.rows, "intelligence");
+  const ALL_ROWS = DATA.rows;
   const ORDER = DATA.rung_order;
-  const RUNGS = M.presentRungs(ROWS, ORDER);
-  const FAMILIES = M.families(ROWS);
-  const FAMILY_BY_KEY = {};
-  FAMILIES.forEach((f) => { FAMILY_BY_KEY[f.key] = f; });
-  const ALL_KEYS = FAMILIES.map((f) => f.key);
-  const MAKERS = Array.from(new Set(ROWS.map((r) => r.maker))).sort();
-  const ATTENTION = ROWS.filter((r) => r.problem);
+  const RUNGS = M.presentRungs(ALL_ROWS, ORDER);
+  const views = {};
+  function viewFor(key) {
+    if (!views[key]) {
+      const rows = M.rowsForIndex(ALL_ROWS, key), families = M.families(rows), familyByKey = {};
+      families.forEach((f) => { familyByKey[f.key] = f; });
+      views[key] = { rows, families, familyByKey, allKeys: families.map((f) => f.key),
+        makers: Array.from(new Set(rows.map((r) => r.maker))).sort(), attention: rows.filter((r) => r.problem) };
+    }
+    return views[key];
+  }
   const LIMIT = 8;
   const STORAGE_KEY = "model_ladder.state";
   const COMMAND = "model_ladder refresh";
@@ -1021,11 +1030,12 @@ APP_JS = r"""
 
   // ---- state: hash first, then storage, then defaults ----
   function defaults() {
-    return { view: "all", keys: [], hi: RUNGS[0] || null, lo: RUNGS[RUNGS.length - 1] || null, mode: "whole", sorts: {} };
+    return { view: "all", index: "intelligence", keys: [], hi: RUNGS[0] || null, lo: RUNGS[RUNGS.length - 1] || null, mode: "whole", sorts: {} };
   }
   function clean(raw) {
     if (!raw || typeof raw !== "object" || Array.isArray(raw)) return null;
     const s = defaults();
+    if (DATA.indexes.some((i) => i.key === raw.index)) s.index = raw.index;
     if (raw.view === "all" || raw.view === "compare") s.view = raw.view;
     if (Array.isArray(raw.keys)) {
       s.keys = raw.keys.filter((k, i) => typeof k === "string" && raw.keys.indexOf(k) === i).slice(0, LIMIT);
@@ -1102,6 +1112,9 @@ APP_JS = r"""
     return html`<td data-c="score" data-v=${row.score}><span class="num">${scoreText(row.index, mode)}</span>${
       mode === "whole" ? html`<span class="raw">${row.index.toFixed(1)}</span>` : null}</td>`;
   }
+  function CostCell({ row, borrowed }) {
+    return html`<td data-c="cost" class=${borrowed ? "borrowed" : ""}>${M.money(row.cost)}</td>`;
+  }
 
   function Th({ table, k, label, sorts, onSort, cls }) {
     const cur = sorts[table] || DEFAULT_SORTS[table];
@@ -1114,16 +1127,16 @@ APP_JS = r"""
       onClick=${() => onSort(table, k)} onKeyDown=${onKey}>${label}${active ? (cur.dir === "desc" ? " ▼" : " ▲") : ""}</th>`;
   }
 
-  function StepCells({ step, mode, kind }) {
+  function StepCells({ step, mode, kind, borrowed }) {
     const base = kind + ".";
     if (!step) {
-      return ["points", "cost", "perPoint"].map((f, i) => html`<td class=${"step" + (i === 0 ? " b" : "")} data-c=${base + f}></td>`);
+      return ["points", "cost", "perPoint"].map((f, i) => html`<td class=${"step" + (i === 0 ? " b" : borrowed ? " borrowed" : "")} data-c=${base + f}></td>`);
     }
     const per = step.perPoint !== null ? M.money(step.perPoint) : (step.note || "");
     return [
       html`<td class="step b" data-c=${base + "points"}>${signedPoints(step.points, mode)}</td>`,
-      html`<td class="step" data-c=${base + "cost"}>${signedMoney(step.cost)}</td>`,
-      html`<td class=${"step" + (step.note ? " note" : "")} data-c=${base + "perPoint"}>${per}</td>`,
+      html`<td class=${"step" + (borrowed ? " borrowed" : "")} data-c=${base + "cost"}>${signedMoney(step.cost)}</td>`,
+      html`<td class=${"step" + (step.note ? " note" : "") + (borrowed ? " borrowed" : "")} data-c=${base + "perPoint"}>${per}</td>`,
     ];
   }
 
@@ -1169,7 +1182,7 @@ APP_JS = r"""
       <text x=${PAD.l - 6} y=${y(v) + 4} text-anchor="end">${v}</text></g>`);
   }
 
-  function Scatter({ rows, front, color, title }) {
+  function Scatter({ rows, front, color, title, borrowed }) {
     const costs = rows.map((r) => r.cost);
     let lo = Math.min.apply(null, costs), hi = Math.max.apply(null, costs);
     if (lo === hi) { lo /= 2; hi *= 2; } else { lo /= 1.3; hi *= 1.3; }
@@ -1186,19 +1199,19 @@ APP_JS = r"""
       ${logTicks(lo, hi).map((v) => html`<g key=${"x" + v}>
         <line class="grid" x1=${x(v)} x2=${x(v)} y1=${PAD.t} y2=${H - PAD.b} />
         <text x=${x(v)} y=${H - PAD.b + 16} text-anchor="middle">${"$" + v}</text></g>`)}
-      <text x=${(PAD.l + W - PAD.r) / 2} y=${H - 6} text-anchor="middle">Cost per task, log scale</text>
-      ${d ? html`<path class="stair" d=${d} />` : null}
+      <text x=${(PAD.l + W - PAD.r) / 2} y=${H - 6} text-anchor="middle">${borrowed ? "Overall cost per task, log scale" : "Cost per task, log scale"}</text>
+      ${d ? html`<path class=${borrowed ? "stair borrowed" : "stair"} d=${d} />` : null}
       ${rows.map((r) => {
         const c = color(r);
         const filled = onFront.has(r.slug);
         return html`<circle key=${r.slug} cx=${x(r.cost)} cy=${y(r.score)} r="4.5"
           fill=${filled ? c : "var(--panel)"} stroke=${c} stroke-width="1.8">
-          <title>${r.label + ": " + scoreText(r.index, "decimal") + ", " + M.money(r.cost)}</title></circle>`;
+          <title>${r.label + ": " + scoreText(r.index, "decimal") + ", " + M.money(r.cost) + (borrowed ? " overall" : "")}</title></circle>`;
       })}
     </svg>`;
   }
 
-  function LadderChart({ rungs, fams, cell, keys, mode }) {
+  function LadderChart({ rungs, fams, cell, keys, mode, indexLabel }) {
     const asc = rungs.slice().reverse();
     const scores = [];
     fams.forEach((k) => asc.forEach((r) => { const c = cell(k, r); if (c) scores.push(c.score); }));
@@ -1206,7 +1219,7 @@ APP_JS = r"""
     const y = yScale(ylo, yhi);
     const span = W - PAD.l - PAD.r - 30;
     const x = (i) => PAD.l + 15 + (asc.length === 1 ? span / 2 : i * span / (asc.length - 1));
-    return html`<svg viewBox=${"0 0 " + W + " " + H} role="img" aria-label="Intelligence Index by effort level">
+    return html`<svg viewBox=${"0 0 " + W + " " + H} role="img" aria-label=${indexLabel + " by effort level"}>
       <${YAxis} lo=${ylo} hi=${yhi} y=${y} />
       ${asc.map((r, i) => html`<text key=${r} x=${x(i)} y=${H - PAD.b + 16} text-anchor="middle">${M.rungLabel(r)}</text>`)}
       ${fams.map((k) => {
@@ -1223,7 +1236,7 @@ APP_JS = r"""
   }
 
   // ---- header pieces ----
-  function Status() {
+  function Status({ view }) {
     const [now, setNow] = useState(Date.now());
     const [copied, setCopied] = useState(null);
     useEffect(() => {
@@ -1245,8 +1258,8 @@ APP_JS = r"""
       <span id="status-age" class=${age.stale ? "age stale" : "age"}>${age.text}</span>
       <span>Fetched <b>${when(DATA.fetched_at, true)}</b></span>
       <span>Intelligence Index <b>${"v" + DATA.index_version}</b></span>
-      <span><b>${ROWS.length}</b> scored models</span>
-      <span id="status-attention"><b>${ATTENTION.length}</b>${ATTENTION.length === 1 ? " needs" : " need"} attention</span>
+      <span><b>${view.rows.length}</b>${view.rows.length !== ALL_ROWS.length ? html` of <b>${ALL_ROWS.length}</b>` : null} scored models</span>
+      <span id="status-attention"><b>${view.attention.length}</b>${view.attention.length === 1 ? " needs" : " need"} attention</span>
       <span id="status-quota">${rl.remaining !== null && rl.remaining !== undefined && rl.limit !== null && rl.limit !== undefined
         ? html`<b>${rl.remaining}</b> of ${rl.limit} requests left at the last fetch${reset && !isNaN(reset.getTime()) ? ", resets " + when(reset.toISOString(), true) : ""}`
         : "Request quota unknown"}</span>
@@ -1255,24 +1268,24 @@ APP_JS = r"""
     </div>`;
   }
 
-  function Attention() {
-    if (!ATTENTION.length) return null;
+  function Attention({ view }) {
+    if (!view.attention.length) return null;
     return html`<section id="needs-attention" class="box attention">
       <h2>Needs attention</h2>
       <p class="note">These names do not fit the name rule. They are listed in the all-models table under their full name and left out of effort ladders.</p>
-      <ul>${ATTENTION.map((r) => html`<li key=${r.slug}><b>${r.name}</b> ${PROBLEM_TEXT[r.problem] || r.problem}</li>`)}</ul>
+      <ul>${view.attention.map((r) => html`<li key=${r.slug}><b>${r.name}</b> ${PROBLEM_TEXT[r.problem] || r.problem}</li>`)}</ul>
     </section>`;
   }
 
-  function Changes({ mode }) {
+  function Changes({ mode, index }) {
     const c = DATA.changes;
     if (!c) return null;
-    const shown = M.changesToShow(c, mode, "intelligence");
+    const shown = M.changesToShow(c, mode, index);
     const empty = !c.version && !c.added.length && !c.removed.length && !shown.length;
     const describe = (item) => {
       const parts = [];
-      const a = item.scores.intelligence[0] === null ? "no score" : scoreText(item.scores.intelligence[0], mode);
-      const b = item.scores.intelligence[1] === null ? "no score" : scoreText(item.scores.intelligence[1], mode);
+      const a = item.scores[index][0] === null ? "no score" : scoreText(item.scores[index][0], mode);
+      const b = item.scores[index][1] === null ? "no score" : scoreText(item.scores[index][1], mode);
       parts.push(a === b ? "score " + a : "score " + a + " to " + b);
       const ca = M.money(item.cost[0]) || "no cost", cb = M.money(item.cost[1]) || "no cost";
       parts.push(ca === cb ? "cost " + ca : "cost " + ca + " to " + cb);
@@ -1291,17 +1304,18 @@ APP_JS = r"""
   }
 
   // ---- all models view ----
-  function AllView({ state, onSort, toggleKey }) {
+  function AllView({ state, onSort, toggleKey, view, borrowed, indexLabel }) {
     const [creator, setCreator] = useState("");
     const [query, setQuery] = useState("");
+    useEffect(() => { if (creator && !view.makers.includes(creator)) setCreator(""); }, [view, creator]);
     const rows = useMemo(() => {
-      const sel = M.selectRows(ROWS, { keys: ALL_KEYS, hi: null, lo: null, rungOrder: ORDER, mode: state.mode });
+      const sel = M.selectRows(view.rows, { keys: view.allKeys, hi: null, lo: null, rungOrder: ORDER, mode: state.mode });
       const status = {};
       M.paretoRows(sel).forEach((r) => { status[r.slug] = r.status; });
       return sel.map((r) => Object.assign(r, {
         effort: effortValue(r), tagText: r.tags.length ? r.tags.join(", ") : null, status: status[r.slug] || null,
       }));
-    }, [state.mode]);
+    }, [state.mode, state.index]);
     const front = useMemo(() => M.frontier(rows), [rows]);
     const visible = ordered(M.searchRows(rows, query).filter((r) => !creator || r.maker === creator), "all", state.sorts);
     const priced = rows.filter((r) => r.status);
@@ -1311,14 +1325,14 @@ APP_JS = r"""
       <section>
         <h2>Every scored model</h2>
         <p class="note">Each point is one model variant with a cost per task. The green staircase is the frontier: nothing scores at least as high for less.</p>
-        ${priced.length ? html`<div class="box chart solo"><${Scatter} rows=${priced} front=${front} title="Intelligence Index against cost per task"
+        ${priced.length ? html`<div class="box chart solo"><${Scatter} rows=${priced} front=${front} title=${indexLabel + " against cost per task"} borrowed=${borrowed}
           color=${(r) => (r.status === "frontier" ? "var(--front)" : "var(--muted)")} /></div>` : html`<p class="empty">No scored model has a cost per task.</p>`}
       </section>
       <section>
         <div class="filters">
           <select id="all-creator" aria-label="Creator" value=${creator} onChange=${(e) => setCreator(e.currentTarget.value)}>
             <option value="">All creators</option>
-            ${MAKERS.map((m) => html`<option key=${m} value=${m}>${m}</option>`)}
+            ${view.makers.map((m) => html`<option key=${m} value=${m}>${m}</option>`)}
           </select>
           <input id="all-filter" type="search" placeholder="Filter by name or creator" aria-label="Filter by name or creator"
             value=${query} onInput=${(e) => setQuery(e.currentTarget.value)} />
@@ -1332,7 +1346,7 @@ APP_JS = r"""
             <${Th} ...${p} k="effort" label="Effort" cls="l" />
             <${Th} ...${p} k="tagText" label="Tags" cls="l" />
             <${Th} ...${p} k="score" label="Index" />
-            <${Th} ...${p} k="cost" label="Cost per task" />
+            <${Th} ...${p} k="cost" label=${borrowed ? "Overall cost per task" : "Cost per task"} />
             <${Th} ...${p} k="release_date" label="Released" />
             <${Th} ...${p} k="status" label="Frontier" cls="l" />
           </tr></thead>
@@ -1346,7 +1360,7 @@ APP_JS = r"""
               <td class="l" data-c="effort">${r.problem ? "Unclassified" : (r.rung ? M.rungLabel(r.rung) : "")}</td>
               <td class="l" data-c="tags">${r.tagText || ""}</td>
               <${ScoreCell} row=${r} mode=${state.mode} />
-              <td data-c="cost">${M.money(r.cost)}</td>
+              <${CostCell} row=${r} borrowed=${borrowed} />
               <td data-c="release_date">${r.release_date || ""}</td>
               <td class="l" data-c="status">${r.status === "frontier" ? html`<span class="pill f">Frontier</span>`
                 : r.status === "dominated" ? html`<span class="pill d">Dominated</span>` : html`<span class="pill n">No cost</span>`}</td>
@@ -1358,13 +1372,13 @@ APP_JS = r"""
   }
 
   // ---- compare view ----
-  function Picker({ keys, onAdd }) {
+  function Picker({ keys, onAdd, view }) {
     const [open, setOpen] = useState(false);
     const [query, setQuery] = useState("");
     const [active, setActive] = useState(0);
     const wrap = useRef(null), button = useRef(null), input = useRef(null);
     const full = keys.length >= LIMIT;
-    const list = M.searchFamilies(FAMILIES, query);
+    const list = M.searchFamilies(view.families, query);
     const choosable = list.filter((f) => keys.indexOf(f.key) === -1);
     const current = choosable[Math.min(active, choosable.length - 1)];
     useEffect(() => { if (open && input.current) input.current.focus(); }, [open]);
@@ -1398,13 +1412,13 @@ APP_JS = r"""
             <small>${f.maker}</small><small class="r">${f.levels + (f.levels === 1 ? " effort level" : " effort levels")}</small>
           </button></li>`;
         })}</ul>
-        <p>${list.length ? list.length + " of " + FAMILIES.length + " models. " + keys.length + " of " + LIMIT + " selected."
+        <p>${list.length ? list.length + " of " + view.families.length + " models. " + keys.length + " of " + LIMIT + " selected."
           : "No model matches that search."}</p>
       </div>` : null}
     </div>`;
   }
 
-  function Controls({ state, update, toggleKey }) {
+  function Controls({ state, update, toggleKey, view }) {
     const setHi = (hi) => update((s) => ({ hi, lo: RUNGS.indexOf(hi) > RUNGS.indexOf(s.lo) ? hi : s.lo }));
     const setLo = (lo) => update((s) => ({ lo, hi: RUNGS.indexOf(lo) < RUNGS.indexOf(s.hi) ? lo : s.hi }));
     const options = RUNGS.map((r) => html`<option key=${r} value=${r}>${M.rungLabel(r)}</option>`);
@@ -1412,7 +1426,7 @@ APP_JS = r"""
       <div class="row"><div class="group">
         <span class="lab">Models</span>
         <span class="group" id="chips">${state.keys.map((k) => {
-          const f = FAMILY_BY_KEY[k];
+          const f = view.familyByKey[k];
           if (!f) {
             const name = missingName(k);
             return html`<span class="chip gone" key=${k}><span class="gone-text"><span class="fam">${name}</span> is no longer listed</span>
@@ -1422,7 +1436,7 @@ APP_JS = r"""
             <span class="mk">${f.maker}</span>
             <button type="button" class="x" aria-label=${"Remove " + f.family} onClick=${() => toggleKey(k)}>×</button></span>`;
         })}</span>
-        <${Picker} keys=${state.keys} onAdd=${toggleKey} />
+        <${Picker} keys=${state.keys} onAdd=${toggleKey} view=${view} />
       </div></div>
       <div class="row">
         ${RUNGS.length ? html`<div class="group">
@@ -1442,14 +1456,14 @@ APP_JS = r"""
     </div>`;
   }
 
-  function CompareView({ state, update, onSort, toggleKey }) {
-    const present = state.keys.filter((k) => FAMILY_BY_KEY[k]);
-    const controls = html`<${Controls} state=${state} update=${update} toggleKey=${toggleKey} />`;
+  function CompareView({ state, update, onSort, toggleKey, view, borrowed, indexLabel }) {
+    const present = state.keys.filter((k) => view.familyByKey[k]);
+    const controls = html`<${Controls} state=${state} update=${update} toggleKey=${toggleKey} view=${view} />`;
     if (!present.length) {
       return html`<div class="view">${controls}<p class="empty box">Add a model to start comparing.</p></div>`;
     }
     const mode = state.mode;
-    const sel = M.selectRows(ROWS, { keys: present, hi: state.hi, lo: state.lo, rungOrder: ORDER, mode });
+    const sel = M.selectRows(view.rows, { keys: present, hi: state.hi, lo: state.lo, rungOrder: ORDER, mode });
     const steps = M.familySteps(sel);
     const pareto = M.paretoRows(sel);
     const notes = M.findings(pareto, steps, mode);
@@ -1476,17 +1490,17 @@ APP_JS = r"""
       <section id="ladder">
         <h2>Effort ladder</h2>
         ${fams.length ? html`<div class="pair">
-          <div class="box chart"><${LadderChart} rungs=${rungs} fams=${fams} cell=${cell} keys=${state.keys} mode=${mode} /></div>
+          <div class="box chart"><${LadderChart} rungs=${rungs} fams=${fams} cell=${cell} keys=${state.keys} mode=${mode} indexLabel=${indexLabel} /></div>
           <div class="box scroll"><table id="ladder-table">
             <thead>
-              <tr class="grp"><th></th>${fams.map((k) => html`<th key=${k} colspan="2" class="b"><${Dot} color=${colorOf(state.keys, k)} />${FAMILY_BY_KEY[k].family}</th>`)}</tr>
-              <tr><th>Effort</th>${fams.map((k) => [html`<th class="b">Index</th>`, html`<th>Cost per task</th>`])}</tr>
+              <tr class="grp"><th></th>${fams.map((k) => html`<th key=${k} colspan="2" class="b"><${Dot} color=${colorOf(state.keys, k)} />${view.familyByKey[k].family}</th>`)}</tr>
+              <tr><th>Effort</th>${fams.map((k) => [html`<th class="b">Index</th>`, html`<th>${borrowed ? "Overall cost per task" : "Cost per task"}</th>`])}</tr>
             </thead>
             <tbody>${rungs.map((rung) => html`<tr key=${rung}><th>${M.rungLabel(rung)}</th>${fams.map((k) => {
               const r = cell(k, rung);
               return r ? [html`<td class="b" data-c="score" data-v=${r.score}><span class="num">${scoreText(r.index, mode)}</span>${
                 mode === "whole" ? html`<span class="raw">${r.index.toFixed(1)}</span>` : null}</td>`,
-                html`<td data-c="cost">${M.money(r.cost)}</td>`]
+                html`<${CostCell} row=${r} borrowed=${borrowed} />`]
                 : [html`<td class="b"></td>`, html`<td></td>`];
             })}</tr>`)}</tbody>
           </table></div>
@@ -1501,16 +1515,16 @@ APP_JS = r"""
             <${Th} ...${sp} k="family" label="Model" cls="l" />
             <${Th} ...${sp} k="effort" label="Effort" cls="l" />
             <${Th} ...${sp} k="score" label="Index" />
-            <${Th} ...${sp} k="cost" label="Cost per task" />
+            <${Th} ...${sp} k="cost" label=${borrowed ? "Overall cost per task" : "Cost per task"} />
             <${StepHeads} ...${sp} />
           </tr></thead>
           <tbody>${stepRows.map((r) => html`<tr key=${r.slug}>
             <td class="l" data-c="family"><${Dot} color=${color(r)} />${r.family}</td>
             <td class="l" data-c="effort">${M.rungLabel(r.rung)}</td>
             <${ScoreCell} row=${r} mode=${mode} />
-            <td data-c="cost">${M.money(r.cost)}</td>
-            <${StepCells} step=${r.up} mode=${mode} kind="up" />
-            <${StepCells} step=${r.down} mode=${mode} kind="down" />
+            <${CostCell} row=${r} borrowed=${borrowed} />
+            <${StepCells} step=${r.up} mode=${mode} kind="up" borrowed=${borrowed} />
+            <${StepCells} step=${r.down} mode=${mode} kind="down" borrowed=${borrowed} />
           </tr>`)}</tbody>
         </table></div>` : html`<p class="empty box">None of the selected models has effort levels in this range.</p>`}
       </section>
@@ -1521,22 +1535,22 @@ APP_JS = r"""
           unpriced && pareto.length ? " " + unpriced + (unpriced === 1 ? " selected row has" : " selected rows have") + " no cost and " + (unpriced === 1 ? "is" : "are") + " left out." : ""}</p>
         ${pareto.length ? html`<div class="stack">
           <div class="box chart solo"><${Scatter} rows=${pareto} front=${pareto.filter((r) => r.status === "frontier")} color=${color}
-            title="Selected rows: Intelligence Index against cost per task" /></div>
+            title=${"Selected rows: " + indexLabel + " against cost per task"} borrowed=${borrowed} /></div>
           <div class="box scroll"><table id="pareto-table">
             <thead>${groupRow(4)}<tr>
               <${Th} ...${pp} k="label" label="Model and effort" cls="l" />
               <${Th} ...${pp} k="score" label="Index" />
-              <${Th} ...${pp} k="cost" label="Cost per task" />
+              <${Th} ...${pp} k="cost" label=${borrowed ? "Overall cost per task" : "Cost per task"} />
               <${Th} ...${pp} k="status" label="Status" cls="l" />
               <${StepHeads} ...${pp} />
             </tr></thead>
             <tbody>${paretoRows.map((r) => html`<tr key=${r.slug} class=${r.status === "dominated" ? "dom" : ""}>
               <td class="l" data-c="label"><${Dot} color=${color(r)} />${r.label}</td>
               <${ScoreCell} row=${r} mode=${mode} />
-              <td data-c="cost">${M.money(r.cost)}</td>
+              <${CostCell} row=${r} borrowed=${borrowed} />
               <td class="l" data-c="status">${r.status === "frontier" ? html`<span class="pill f">Frontier</span>` : html`<span class="pill d">Dominated</span>`}</td>
               ${r.status === "frontier"
-                ? [html`<${StepCells} step=${r.up} mode=${mode} kind="up" />`, html`<${StepCells} step=${r.down} mode=${mode} kind="down" />`]
+                ? [html`<${StepCells} step=${r.up} mode=${mode} kind="up" borrowed=${borrowed} />`, html`<${StepCells} step=${r.down} mode=${mode} kind="down" borrowed=${borrowed} />`]
                 : html`<td colspan="6" class="reason b">${M.dominatedReason(r, mode)}</td>`}
             </tr>`)}</tbody>
           </table></div>
@@ -1545,6 +1559,7 @@ APP_JS = r"""
 
       <section id="say">
         <h2>What the numbers say</h2>
+        ${borrowed ? html`<p class="note">Costs in these sentences are Intelligence Index costs.</p>` : null}
         ${notes.length ? html`<ul id="findings" class="find box">${notes.map((n, i) => html`<li key=${i}>${n}</li>`)}</ul>`
           : html`<p id="findings" class="empty box">Nothing to report for this selection.</p>`}
       </section>
@@ -1576,14 +1591,20 @@ APP_JS = r"""
     });
     const tab = (view, label) => html`<button role="tab" type="button" id=${"tab-" + view} aria-selected=${String(state.view === view)}
       onClick=${() => update({ view })}>${label}</button>`;
-    const props = { state, update, onSort, toggleKey };
+    const view = viewFor(state.index), borrowed = state.index !== "intelligence";
+    const indexLabel = DATA.indexes.find((i) => i.key === state.index).label;
+    const props = { state, update, onSort, toggleKey, view, borrowed, indexLabel };
     return html`<div class="wrap">
       <header>
-        <div><h1>Model Ladder</h1><p class="sub">Effort levels compared by Intelligence Index and cost per task.</p></div>
-        <${Status} />
+        <div><h1>Model Ladder</h1><p class="sub">Effort levels compared by ${borrowed ? "the " + indexLabel + " index" : indexLabel} and cost per task.</p></div>
+        <${Status} view=${view} />
       </header>
-      <${Attention} />
-      <${Changes} mode=${state.mode} />
+      <${Attention} view=${view} />
+      <${Changes} mode=${state.mode} index=${state.index} />
+      <div class="index-bar"><label for="index-select">Scored by</label><select id="index-select" value=${state.index} onChange=${(e) => update({ index: e.currentTarget.value })}>
+        ${DATA.indexes.filter((i) => i.count > 0).map((i) => html`<option key=${i.key} value=${i.key}>${i.label} (${i.count})</option>`)}
+      </select></div>
+      ${borrowed ? html`<p id="cost-notice" class="ver cost-notice">Costs here are from the Intelligence Index run. Artificial Analysis publishes no cost for the ${indexLabel} index, so every cost, frontier and cost per point on this page pairs these scores with that cost.</p>` : null}
       <div class="tabs" role="tablist">
         ${tab("all", "All models")}
         ${tab("compare", state.keys.length ? "Compare (" + state.keys.length + ")" : "Compare")}
