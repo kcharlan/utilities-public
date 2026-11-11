@@ -147,6 +147,12 @@ Project-specific validation commands, applied with the Testing Scope above. A co
   - After launcher header edits, run the fleet header guard above.
   - Deployment changes also require `node --test tools/tests/deploy_storage_monitor.test.mjs` and `zsh tools/tests/test_check_local_deployments.zsh` from the repository root; shared deployment helper changes require all native installer suites above.
   - Real-disk performance and parity runs require owner approval; keep their runtime homes, outputs, and diagnostics private, outside the repository, and never commit them.
+- `model_ladder`:
+  - `UV_PYTHON_DOWNLOADS=never tools/run_project_tests.py model_ladder` from the repository root (unit, launcher and Chromium browser tests; no network, no 1Password).
+  - `node --test "model_ladder/tests/js/*.test.mjs"` and `node tools/sync_frontend_vendor.mjs --check model_ladder/model_ladder`.
+  - `UV_PYTHON_DOWNLOADS=never ./model_ladder/model_ladder --help`. After launcher-header edits, also run the fleet header guard above.
+  - A real `refresh` contacts Artificial Analysis (4 of 100 daily requests) and reads the API key; agents need Kevin's approval for each run.
+  - Deployment: a direct copy listed in `tools/deployment_copies.json`. After changing that entry run `node --test tools/tests/deploy_copies.test.mjs` and `zsh tools/tests/test_check_local_deployments.zsh`. A real `node tools/deploy_copies.mjs --only model_ladder` needs separate authorization.
 - `tax2`:
   - `UV_PYTHON_DOWNLOADS=never tools/run_project_tests.py tax2` from the repository root.
   - Run `UV_PYTHON_DOWNLOADS=never ./tax2/tax2 --help`. The suite already builds through the real launcher (including a `UV_OFFLINE=1` rebuild), checks the `0700/0600` runtime-home, config and page modes, and drives offline Chromium through the calculator and all three downloads with external requests blocked, so there is no separate acceptance build.
