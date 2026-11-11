@@ -32,7 +32,7 @@ import threading
 import time
 import uuid
 import webbrowser
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Set, Tuple
@@ -172,6 +172,10 @@ def initialize_scan_db(paths: RuntimePaths) -> None:
 
             CREATE INDEX IF NOT EXISTS idx_dir_history_path
             ON scan_dir_history (path, scan_id);
+            CREATE TABLE IF NOT EXISTS scan_errors (
+                scan_id INTEGER NOT NULL, path TEXT NOT NULL, errno INTEGER NOT NULL,
+                PRIMARY KEY (scan_id, path)
+            );
             """
         )
         node_columns = {
@@ -182,10 +186,14 @@ def initialize_scan_db(paths: RuntimePaths) -> None:
             connection.execute(
                 "ALTER TABLE nodes ADD COLUMN children_indexed INTEGER NOT NULL DEFAULT 0"
             )
+        if "file_count" not in node_columns:
+            connection.execute("ALTER TABLE nodes ADD COLUMN file_count INTEGER NOT NULL DEFAULT 0")
+        if "newest_mtime" not in node_columns:
+            connection.execute("ALTER TABLE nodes ADD COLUMN newest_mtime INTEGER")
         connection.commit()
 
 RUNTIME_PATHS = build_runtime_paths()
-VERSION = "0.4.5"
+VERSION = "0.5.0"
 DATA_VOLUME = Path("/System/Volumes/Data")
 HOME_DIR = Path.home()
 APPLICATIONS_DIR = Path("/Applications")
@@ -612,6 +620,7 @@ def finalize_scan_run(scan_id: int, report: Dict[str, Any]) -> None:
                 (GROWTH_HISTORY_MAX_SCANS,),
             )
             connection.execute("DELETE FROM nodes WHERE scan_id != ?", (scan_id,))
+            connection.execute("DELETE FROM scan_errors WHERE scan_id != ?", (scan_id,))
             connection.execute("DELETE FROM large_files WHERE scan_id != ?", (scan_id,))
             connection.execute("DELETE FROM hardlink_inodes WHERE scan_id != ?", (scan_id,))
             connection.execute(
@@ -758,6 +767,8 @@ def upsert_node_rows(scan_id: int, rows: List[Dict[str, Any]]) -> None:
             row["root_key"],
             row["depth"],
             row["allocated_bytes"],
+            row.get("file_count", 0),
+            row.get("newest_mtime"),
             int(bool(row.get("children_indexed", False))),
             row["updated_at"],
         )
@@ -768,14 +779,16 @@ def upsert_node_rows(scan_id: int, rows: List[Dict[str, Any]]) -> None:
             connection.executemany(
                 """
                 INSERT INTO nodes (
-                    scan_id, path, parent_path, name, root_key, depth, allocated_bytes, children_indexed, updated_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    scan_id, path, parent_path, name, root_key, depth, allocated_bytes, file_count, newest_mtime, children_indexed, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(scan_id, path) DO UPDATE SET
                     parent_path = excluded.parent_path,
                     name = excluded.name,
                     root_key = excluded.root_key,
                     depth = excluded.depth,
                     allocated_bytes = excluded.allocated_bytes,
+                    file_count = excluded.file_count,
+                    newest_mtime = excluded.newest_mtime,
                     children_indexed = excluded.children_indexed,
                     updated_at = excluded.updated_at
                 """,
@@ -845,7 +858,7 @@ def fetch_breakdown_from_db(scan_id: int, path_str: str, *, limit: Optional[int]
     with open_db_connection() as connection:
         path_row = connection.execute(
             """
-            SELECT path, allocated_bytes, updated_at
+            SELECT path, allocated_bytes, file_count, newest_mtime, updated_at
             FROM nodes
             WHERE scan_id = ? AND path = ?
             LIMIT 1
@@ -855,7 +868,7 @@ def fetch_breakdown_from_db(scan_id: int, path_str: str, *, limit: Optional[int]
         if not path_row:
             return None
         query = """
-            SELECT path, name, allocated_bytes
+            SELECT path, name, allocated_bytes, file_count, newest_mtime
                  , children_indexed
             FROM nodes
             WHERE scan_id = ? AND parent_path = ?
@@ -872,6 +885,7 @@ def fetch_breakdown_from_db(scan_id: int, path_str: str, *, limit: Optional[int]
             "path": row["path"],
             "label": row["name"],
             "allocated_bytes": row["allocated_bytes"],
+            "file_count": row["file_count"], "newest_mtime": row["newest_mtime"],
             "is_cached": bool(row["children_indexed"]),
         }
         try:
@@ -883,6 +897,7 @@ def fetch_breakdown_from_db(scan_id: int, path_str: str, *, limit: Optional[int]
     return {
         "path": path_str,
         "total_bytes": path_row["allocated_bytes"],
+        "file_count": path_row["file_count"], "newest_mtime": path_row["newest_mtime"],
         "items": items,
         "updated_at": path_row["updated_at"],
     }
@@ -954,6 +969,8 @@ def mark_alias_path_cached(scan_id: int, source_path: Path, target_path: Path, r
                 "root_key": root_key,
                 "depth": path_depth(DATA_VOLUME.resolve(), str(source_path.resolve())),
                 "allocated_bytes": int(target_breakdown["total_bytes"]),
+                "file_count": target_breakdown["file_count"],
+                "newest_mtime": target_breakdown["newest_mtime"],
                 "children_indexed": True,
                 "updated_at": iso_now(),
             }
@@ -1161,9 +1178,12 @@ class WalkResult:
     file_count: int
     error_count: int
     duration_ms: int
+    dir_files: Dict[str, int] = field(default_factory=dict)
+    dir_mtime: Dict[str, int] = field(default_factory=dict)
+    unreadable: List[Tuple[str, int]] = field(default_factory=list)
 
 
-WALKER_PROTOCOL = 1
+WALKER_PROTOCOL = 2
 
 
 class WalkerUnavailable(RuntimeError):
@@ -1202,7 +1222,7 @@ def check_walker() -> str:
     return version
 
 
-_FIELDS = {b"D": 2, b"H": 6, b"L": 4, b"P": 1, b"S": 4}
+_FIELDS = {b"D": 4, b"E": 2, b"H": 6, b"L": 4, b"P": 1, b"S": 4}
 WALKER_NO_PROGRESS_TIMEOUT = 120.0
 
 
@@ -1246,6 +1266,9 @@ def walk_tree(
     if registered_inodes:
         argv.append("--registered-inodes-stdin")
     dir_local: Dict[str, int] = {}
+    dir_files: Dict[str, int] = {}
+    dir_mtime: Dict[str, int] = {}
+    unreadable: List[Tuple[str, int]] = []
     hardlinks: List[Tuple[int, int, str, str, int, int]] = []
     large_files: List[Dict[str, Any]] = []
     summary = None
@@ -1275,7 +1298,12 @@ def walk_tree(
                 if summary is not None:
                     raise RuntimeError("storage_monitor_walk protocol error: record after S")
                 if kind == b"D":
-                    dir_local[os.fsdecode(fields[0])] = int(fields[1])
+                    path = os.fsdecode(fields[0])
+                    dir_local[path] = int(fields[1])
+                    dir_files[path] = int(fields[2])
+                    dir_mtime[path] = int(fields[3])
+                elif kind == b"E":
+                    unreadable.append((os.fsdecode(fields[0]), int(fields[1])))
                 elif kind == b"H":
                     dev, ino, nlink, alloc, parent, name = fields
                     parent, name = os.fsdecode(parent), os.fsdecode(name)
@@ -1325,6 +1353,7 @@ def walk_tree(
         dir_local=dir_local, hardlink_candidates=hardlinks, large_files=large_files,
         dir_count=summary[0], file_count=summary[1], error_count=summary[2],
         duration_ms=int((time.time() - started) * 1000),
+        dir_files=dir_files, dir_mtime=dir_mtime, unreadable=unreadable,
     )
 
 
@@ -1339,6 +1368,15 @@ def rollup_subtree_totals(dir_local: Dict[str, int], root: str) -> Dict[str, int
     return totals
 
 
+def rollup_subtree_newest(dir_mtime: Dict[str, int], root: str) -> Dict[str, int]:
+    totals = dict(dir_mtime)
+    for path in sorted(totals, key=lambda value: value.count(os.sep), reverse=True):
+        parent = os.path.dirname(path)
+        if path != root and parent in totals:
+            totals[parent] = max(totals[parent], totals[path])
+    return totals
+
+
 def walk_with_ownership(
     root: Path, *, scan_id: int, excluded_paths: List[Path], progress_callback=None,
 ) -> Tuple[WalkResult, Dict[str, int], List[Tuple[str, Tuple[Any, ...]]]]:
@@ -1348,6 +1386,8 @@ def walk_with_ownership(
     )
     for parent, allocated in attributions:
         result.dir_local[parent] = result.dir_local.get(parent, 0) + allocated
+    result.dir_files = rollup_subtree_totals(result.dir_files, str(root))
+    result.dir_mtime = rollup_subtree_newest(result.dir_mtime, str(root))
     return result, rollup_subtree_totals(result.dir_local, str(root)), changes
 
 
@@ -1730,6 +1770,8 @@ def persist_full_walk(
             "root_key": root_key,
             "depth": path_depth(ROOT_PATHS[root_key], stored_path),
             "allocated_bytes": allocated,
+            "file_count": result.dir_files.get(walked_path, 0),
+            "newest_mtime": result.dir_mtime.get(walked_path),
             "children_indexed": True,
             "updated_at": updated_at,
         })
@@ -1748,6 +1790,8 @@ def persist_full_walk(
         })
     with DB_WRITE_LOCK:
         with open_db_connection() as connection:
+            connection.executemany("INSERT OR REPLACE INTO scan_errors (scan_id,path,errno) VALUES (?,?,?)",
+                [(scan_id, translate_walk_path(path, translation)[0], error) for path, error in result.unreadable])
             for operation, payload in registry_changes:
                 if operation == "upsert":
                     connection.execute(
@@ -1863,6 +1907,9 @@ def collect_scan_report(scan_id: int) -> Dict[str, Any]:
         "breakdowns": breakdowns, "watchlist": watchlist, "large_files": large_files,
         "findings": findings, "snapshots": snapshots, "providers": providers,
         "orphans": orphans, "checks": checks,
+        "unreadable": {"count": len(result.unreadable), "items": [
+            {"path": translate_walk_path(path, translation)[0], "errno": error, "reason": os.strerror(error)}
+            for path, error in result.unreadable[:200]], "updated_at": iso_now()},
     }
     progress("Report assembly", 1, "Report assembled")
     return report
@@ -2691,23 +2738,23 @@ def choose_scan_id_for_path(path_str: str) -> Optional[int]:
     return fetch_active_scan_id()
 
 
-def _apply_delta_chain(connection: sqlite3.Connection, scan_id: int, start_path: str, delta: int) -> None:
+def _apply_delta_chain(connection: sqlite3.Connection, scan_id: int, start_path: str, delta: int, file_delta: int = 0, newest: Optional[int] = None) -> None:
     current = start_path
     visited: Set[str] = set()
     while current and current not in visited:
         visited.add(current)
         connection.execute(
-            "UPDATE nodes SET allocated_bytes = allocated_bytes + ?, updated_at = ? WHERE scan_id = ? AND path = ?",
-            (delta, iso_now(), scan_id, current),
+            "UPDATE nodes SET allocated_bytes = allocated_bytes + ?, file_count = file_count + ?, newest_mtime = CASE WHEN ? IS NULL THEN newest_mtime WHEN newest_mtime IS NULL OR newest_mtime < ? THEN ? ELSE newest_mtime END, updated_at = ? WHERE scan_id = ? AND path = ?",
+            (delta, file_delta, newest, newest, newest, iso_now(), scan_id, current),
         )
         if current == str(HOME_DIR.resolve()):
             alias = str(DATA_VOLUME / "Users" / HOME_DIR.name)
-            connection.execute("UPDATE nodes SET allocated_bytes = allocated_bytes + ? WHERE scan_id=? AND path=?", (delta, scan_id, alias))
+            connection.execute("UPDATE nodes SET allocated_bytes = allocated_bytes + ?, file_count = file_count + ?, newest_mtime = CASE WHEN ? IS NULL THEN newest_mtime WHEN newest_mtime IS NULL OR newest_mtime < ? THEN ? ELSE newest_mtime END WHERE scan_id=? AND path=?", (delta, file_delta, newest, newest, newest, scan_id, alias))
             current = os.path.dirname(alias)
             continue
         if current == str(APPLICATIONS_DIR.resolve()):
             alias = str(DATA_VOLUME / "Applications")
-            connection.execute("UPDATE nodes SET allocated_bytes = allocated_bytes + ? WHERE scan_id=? AND path=?", (delta, scan_id, alias))
+            connection.execute("UPDATE nodes SET allocated_bytes = allocated_bytes + ?, file_count = file_count + ?, newest_mtime = CASE WHEN ? IS NULL THEN newest_mtime WHEN newest_mtime IS NULL OR newest_mtime < ? THEN ? ELSE newest_mtime END WHERE scan_id=? AND path=?", (delta, file_delta, newest, newest, newest, scan_id, alias))
             current = os.path.dirname(alias)
             continue
         row = connection.execute("SELECT parent_path FROM nodes WHERE scan_id=? AND path=?", (scan_id, current)).fetchone()
@@ -2737,23 +2784,28 @@ def walk_subtree_and_store(scan_id: int, path: Path) -> Dict[str, Any]:
                     if response is None:
                         raise HTTPException(status_code=409, detail="The active scan changed during refresh.")
                     return response
-                old_row = connection.execute("SELECT allocated_bytes FROM nodes WHERE scan_id=? AND path=?", (scan_id, stored_root)).fetchone()
+                old_row = connection.execute("SELECT allocated_bytes, file_count FROM nodes WHERE scan_id=? AND path=?", (scan_id, stored_root)).fetchone()
                 old_total = int(old_row["allocated_bytes"]) if old_row else 0
+                old_files = int(old_row["file_count"]) if old_row else 0
                 attributions, adjustments, changes = resolve_hardlink_ownership(scan_id, result.hardlink_candidates, translation, full_scan=False, connection=connection)
                 for parent, allocated in attributions:
                     result.dir_local[parent] = result.dir_local.get(parent, 0) + allocated
                 totals = rollup_subtree_totals(result.dir_local, str(canonical))
+                file_totals = rollup_subtree_totals(result.dir_files, str(canonical))
+                time_totals = rollup_subtree_newest(result.dir_mtime, str(canonical))
                 new_total = int(totals.get(str(canonical), 0))
                 for prefix in prefixes:
                     like = sql_like_prefix(prefix)
                     connection.execute("DELETE FROM nodes WHERE scan_id=? AND (path=? OR path LIKE ? ESCAPE '\\')", (scan_id, prefix, like))
                     connection.execute("DELETE FROM large_files WHERE scan_id=? AND (path=? OR path LIKE ? ESCAPE '\\')", (scan_id, prefix, like))
+                    connection.execute("DELETE FROM scan_errors WHERE scan_id=? AND (path=? OR path LIKE ? ESCAPE '\\')", (scan_id, prefix, like))
+                connection.executemany("INSERT OR REPLACE INTO scan_errors (scan_id,path,errno) VALUES (?,?,?)", [(scan_id, translate_walk_path(path, translation)[0], error) for path, error in result.unreadable])
                 updated_at = iso_now()
                 node_payload = []
                 for walked_path, allocated in totals.items():
                     stored_path, root_key = translate_walk_path(walked_path, translation)
-                    node_payload.append((scan_id, stored_path, os.path.dirname(stored_path), os.path.basename(stored_path) or stored_path, root_key, path_depth(ROOT_PATHS[root_key], stored_path), allocated, 1, updated_at))
-                connection.executemany("INSERT INTO nodes (scan_id,path,parent_path,name,root_key,depth,allocated_bytes,children_indexed,updated_at) VALUES (?,?,?,?,?,?,?,?,?)", node_payload)
+                    node_payload.append((scan_id, stored_path, os.path.dirname(stored_path), os.path.basename(stored_path) or stored_path, root_key, path_depth(ROOT_PATHS[root_key], stored_path), allocated, file_totals.get(walked_path, 0), time_totals.get(walked_path), 1, updated_at))
+                connection.executemany("INSERT INTO nodes (scan_id,path,parent_path,name,root_key,depth,allocated_bytes,file_count,newest_mtime,children_indexed,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?)", node_payload)
                 large_payload = []
                 for item in result.large_files:
                     stored_path, root_key = translate_walk_path(item["path"], translation)
@@ -2766,7 +2818,7 @@ def walk_subtree_and_store(scan_id: int, path: Path) -> Dict[str, Any]:
                         connection.execute("DELETE FROM hardlink_inodes WHERE scan_id=? AND ino=?", payload)
                     else:
                         connection.execute("INSERT INTO hardlink_inodes (scan_id,ino,dev,owner_path,allocated_bytes) VALUES (?,?,?,?,?) ON CONFLICT(scan_id,ino) DO UPDATE SET dev=excluded.dev, owner_path=excluded.owner_path, allocated_bytes=excluded.allocated_bytes", payload)
-                _apply_delta_chain(connection, scan_id, os.path.dirname(stored_root), new_total - old_total)
+                _apply_delta_chain(connection, scan_id, os.path.dirname(stored_root), new_total - old_total, file_totals.get(str(canonical), 0) - old_files, time_totals.get(str(canonical)))
                 for old_parent, delta in adjustments:
                     if not any(old_parent == prefix or old_parent.startswith(prefix + os.sep) for prefix in prefixes):
                         _apply_delta_chain(connection, scan_id, old_parent, delta)

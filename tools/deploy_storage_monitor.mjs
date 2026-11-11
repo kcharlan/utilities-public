@@ -102,7 +102,7 @@ function build(inputs, repo, expectedProtocol) {
     if (fields.pop() !== '') throw new Error('Walker smoke record framing failed');
     let hardlinks=0, summary;
     for (let i=0;i<fields.length;) {
-      const kind=fields[i], size={D:3,L:5,H:7,P:2,S:5}[kind];
+      const kind=fields[i], size={D:5,E:3,L:5,H:7,P:2,S:5}[kind];
       if (!size || i+size>fields.length || summary) throw new Error('Walker smoke records invalid');
       if (kind==='H') hardlinks++;
       if (kind==='S') summary=fields.slice(i,i+size);

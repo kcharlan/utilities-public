@@ -22,8 +22,11 @@ hardlink ownership, rollup, SQLite writes and provider probes so full scans and
 directory refreshes share their accounting rules. Provider probes overlap the
 walk; there is no second Python walker or runtime compilation fallback.
 
-Protocol 1 uses NUL-delimited fields, preserving filenames with tabs, newlines
-and undecodable bytes. `D` reports directory-local allocation; `H` reports
+Protocol 2 uses NUL-delimited fields, preserving filenames with tabs, newlines
+and undecodable bytes. `D` reports directory-local allocation, non-directory
+entry count, and newest modification time in whole epoch seconds, including the
+directory itself. `E` reports a directory path and errno when it cannot be read.
+`H` reports
 hardlink candidates; `L` reports large files; `P` reports progress; a final `S`
 reports counts and duration. Python rejects truncated streams, records after
 the summary, nonzero exits and missing summaries before accepting a walk.
@@ -126,7 +129,7 @@ Full-scan time depends on directory count, storage performance, permissions, and
 - The move is a rename. If macOS refuses it, the action fails and nothing is changed; Storage Monitor never copies and deletes instead. The server also refuses the protected locations above regardless of what the page requests.
 - Snapshot deletion and thinning are permanent operations delegated to macOS.
 - Finder reveal actions are available for files, directories, and report-only candidates.
-- After cleanup actions, Storage Monitor refreshes affected index paths, APFS metadata, and the persisted report without requiring another full scan. If a refreshed directory loses the owner of a hard-linked file, a surviving link elsewhere remains uncounted until its own directory is refreshed or a full scan runs.
+- After cleanup actions, Storage Monitor refreshes affected index paths, APFS metadata, and the persisted report without requiring another full scan. If a refreshed directory loses the owner of a hard-linked file, a surviving link elsewhere remains uncounted until its own directory is refreshed or a full scan runs. An ancestor's newest modification time may remain too recent until the next full scan.
 
 Review every proposed action before running it. Estimates are approximate, APFS free-space changes can be delayed, and provider commands may reclaim less than their displayed upper bound.
 

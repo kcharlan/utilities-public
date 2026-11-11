@@ -16,12 +16,12 @@
 #include <time.h>
 #include <unistd.h>
 
-#define SMW_VERSION "1.0.1"
-#define SMW_PROTOCOL 1
+#define SMW_VERSION "1.1.0"
+#define SMW_PROTOCOL 2
 #define BULK_SIZE (256 * 1024)
 #define FLUSH_SIZE (64 * 1024)
 
-struct job { char *path; uint64_t own; bool root; struct job *next; };
+struct job { char *path; uint64_t own; int64_t mtime; bool root; struct job *next; };
 struct buffer { char *data; size_t used, capacity; };
 struct worker { struct buffer output; char *bulk; };
 static struct {
@@ -108,9 +108,9 @@ static char *join_path(const char *parent, const char *name) {
     memcpy(result + p, name, n + 1);
     return result;
 }
-static void enqueue(char *path, uint64_t own, bool root) {
+static void enqueue(char *path, uint64_t own, int64_t mtime, bool root) {
     struct job *job = allocate(sizeof *job);
-    *job = (struct job){path, own, root, NULL};
+    *job = (struct job){path, own, mtime, root, NULL};
     pthread_mutex_lock(&state.queue_lock);
     job->next = state.jobs;
     state.jobs = job;
@@ -118,20 +118,25 @@ static void enqueue(char *path, uint64_t own, bool root) {
     pthread_cond_signal(&state.ready);
     pthread_mutex_unlock(&state.queue_lock);
 }
-struct totals { uint64_t local, files, errors; };
+struct totals { uint64_t local, files, errors; int64_t newest; };
+static void error_record(struct worker *w, const char *path, int error) {
+    char value[32]; number(value, (uint64_t)error);
+    record(&w->output, 3, "E", path, value);
+}
 static void entry(struct worker *w, const char *parent, const char *name,
                   dev_t device, uint64_t ino, uint64_t links, uint64_t allocated,
-                  uint64_t size, bool directory, struct totals *totals) {
+                  uint64_t size, int64_t mtime, bool directory, struct totals *totals) {
     if (device != state.device) return;
     if (directory) {
         char *path = join_path(parent, name);
         for (size_t i = 0; i < state.exclude_count; i++) {
             if (!strcmp(path, state.excluded[i])) { free(path); return; }
         }
-        enqueue(path, allocated, false);
+        enqueue(path, allocated, mtime, false);
         return;
     }
     totals->files++;
+    if (mtime > totals->newest) totals->newest = mtime;
     char dev[32], inode[32], nlink[32], alloc[32], apparent[32];
     number(alloc, allocated);
     if (links > 1 || registered(ino)) {
@@ -150,18 +155,18 @@ static void stat_entry(struct worker *w, int fd, const char *parent,
     struct stat st;
     if (fstatat(fd, name, &st, AT_SYMLINK_NOFOLLOW)) { totals->errors++; return; }
     entry(w, parent, name, st.st_dev, st.st_ino, st.st_nlink,
-          (uint64_t)st.st_blocks * 512, (uint64_t)st.st_size, S_ISDIR(st.st_mode), totals);
+          (uint64_t)st.st_blocks * 512, (uint64_t)st.st_size, st.st_mtimespec.tv_sec, S_ISDIR(st.st_mode), totals);
 }
 static void stat_directory(struct worker *w, int fd, const char *path, struct totals *totals) {
     /* dup shares the offset, including after a rejected first bulk call. */
     int copy = dup(fd);
-    if (copy < 0) { totals->errors++; return; }
+    if (copy < 0) { error_record(w, path, errno); totals->errors++; return; }
     DIR *dir = fdopendir(copy);
-    if (!dir) { close(copy); totals->errors++; return; }
+    if (!dir) { int error = errno; close(copy); error_record(w, path, error); totals->errors++; return; }
     for (;;) {
         errno = 0;
         struct dirent *item = readdir(dir);
-        if (!item) { if (errno) totals->errors++; break; }
+        if (!item) { if (errno) { error_record(w, path, errno); totals->errors++; } break; }
         if (!strcmp(item->d_name, ".") || !strcmp(item->d_name, "..")) continue;
         stat_entry(w, fd, path, item->d_name, totals);
     }
@@ -182,6 +187,7 @@ static bool bulk_entry(struct worker *w, int fd, const char *parent,
     const char *name = NULL;
     dev_t device = 0;
     fsobj_type_t type = 0;
+    struct timespec mtime = {0};
     uint64_t ino = 0;
     uint32_t links = 1;
     off_t allocated = 0, size = 0;
@@ -201,13 +207,14 @@ static bool bulk_entry(struct worker *w, int fd, const char *parent,
     }
     if ((ret.commonattr & ATTR_CMN_DEVID) && !take(&p, end, &device, sizeof device)) return false;
     if ((ret.commonattr & ATTR_CMN_OBJTYPE) && !take(&p, end, &type, sizeof type)) return false;
+    if ((ret.commonattr & ATTR_CMN_MODTIME) && !take(&p, end, &mtime, sizeof mtime)) return false;
     if ((ret.commonattr & ATTR_CMN_FILEID) && !take(&p, end, &ino, 8)) return false;
     if ((ret.fileattr & ATTR_FILE_LINKCOUNT) && !take(&p, end, &links, 4)) return false;
     if ((ret.fileattr & ATTR_FILE_ALLOCSIZE) && !take(&p, end, &allocated, 8)) return false;
     if ((ret.fileattr & ATTR_FILE_DATALENGTH) && !take(&p, end, &size, 8)) return false;
     if (!name) { totals->errors++; return true; }
     if (!strcmp(name, ".") || !strcmp(name, "..")) return true;
-    attrgroup_t common = ATTR_CMN_NAME | ATTR_CMN_DEVID | ATTR_CMN_OBJTYPE | ATTR_CMN_FILEID;
+    attrgroup_t common = ATTR_CMN_NAME | ATTR_CMN_DEVID | ATTR_CMN_OBJTYPE | ATTR_CMN_MODTIME | ATTR_CMN_FILEID;
     attrgroup_t file = ATTR_FILE_LINKCOUNT | ATTR_FILE_ALLOCSIZE | ATTR_FILE_DATALENGTH;
     /* Directories need st_blocks for the failed-open D record. Opened ones are
        measured again via fstat, which also rechecks the mount boundary. */
@@ -215,14 +222,14 @@ static bool bulk_entry(struct worker *w, int fd, const char *parent,
         stat_entry(w, fd, parent, name, totals);
     } else {
         entry(w, parent, name, device, ino, links, (uint64_t)allocated,
-              (uint64_t)size, false, totals);
+              (uint64_t)size, mtime.tv_sec, false, totals);
     }
     return true;
 }
 static void bulk_directory(struct worker *w, int fd, const char *path, struct totals *totals) {
     struct attrlist attributes = { .bitmapcount = ATTR_BIT_MAP_COUNT,
         .commonattr = ATTR_CMN_RETURNED_ATTRS | ATTR_CMN_NAME | ATTR_CMN_DEVID |
-                      ATTR_CMN_OBJTYPE | ATTR_CMN_FILEID | ATTR_CMN_ERROR,
+                      ATTR_CMN_OBJTYPE | ATTR_CMN_MODTIME | ATTR_CMN_FILEID | ATTR_CMN_ERROR,
         .fileattr = ATTR_FILE_LINKCOUNT | ATTR_FILE_ALLOCSIZE | ATTR_FILE_DATALENGTH };
     bool first = true;
     for (;;) {
@@ -230,9 +237,9 @@ static void bulk_directory(struct worker *w, int fd, const char *path, struct to
         if (count < 0) {
             if (first && (errno == ENOTSUP || errno == EINVAL)) {
                 /* An unsupported bulk operation must not consume entries. */
-                if (lseek(fd, 0, SEEK_SET) < 0) { totals->errors++; return; }
+                if (lseek(fd, 0, SEEK_SET) < 0) { error_record(w, path, errno); totals->errors++; return; }
                 stat_directory(w, fd, path, totals);
-            } else totals->errors++;
+            } else { error_record(w, path, errno); totals->errors++; }
             return;
         }
         if (!count) return;
@@ -240,11 +247,11 @@ static void bulk_directory(struct worker *w, int fd, const char *path, struct to
         size_t offset = 0;
         for (int i = 0; i < count; i++) {
             uint32_t length;
-            if (offset > BULK_SIZE - 4) { totals->errors++; return; }
+            if (offset > BULK_SIZE - 4) { error_record(w, path, EIO); totals->errors++; return; }
             memcpy(&length, w->bulk + offset, 4);
             if (length < 4 || length > BULK_SIZE - offset ||
                 !bulk_entry(w, fd, path, w->bulk + offset, length, totals)) {
-                totals->errors++; return;
+                error_record(w, path, EIO); totals->errors++; return;
             }
             offset += length;
         }
@@ -252,15 +259,17 @@ static void bulk_directory(struct worker *w, int fd, const char *path, struct to
 }
 static bool scan(struct worker *w, struct job *job, struct totals *totals) {
     totals->local = job->own;
+    totals->newest = job->mtime;
     int flags = O_RDONLY | O_DIRECTORY | O_CLOEXEC;
     if (!job->root) flags |= O_NOFOLLOW;
     int fd = open(job->path, flags);
-    if (fd < 0) { totals->errors++; return true; }
+    if (fd < 0) { error_record(w, job->path, errno); totals->errors++; return true; }
     if (!job->root) {
         struct stat st;
         if (fstat(fd, &st)) { close(fd); totals->errors++; return true; }
         if (st.st_dev != state.device) { close(fd); return false; }
         totals->local = (uint64_t)st.st_blocks * 512;
+        totals->newest = st.st_mtimespec.tv_sec;
     }
     if (state.stat_mode) stat_directory(w, fd, job->path, totals);
     else bulk_directory(w, fd, job->path, totals);
@@ -280,8 +289,9 @@ static void *worker_main(void *unused) {
         struct totals totals = {0};
         bool counted = scan(&worker, job, &totals);
         if (counted) {
-            char bytes[32]; number(bytes, totals.local);
-            record(&worker.output, 3, "D", job->path, bytes);
+            char bytes[32], files[32], newest[32]; number(bytes, totals.local); number(files, totals.files);
+            snprintf(newest, sizeof newest, "%" PRId64, totals.newest);
+            record(&worker.output, 5, "D", job->path, bytes, files, newest);
         }
         free(job->path); free(job);
         pthread_mutex_lock(&state.queue_lock);
@@ -370,7 +380,7 @@ int main(int argc, char **argv) {
     clock_gettime(CLOCK_MONOTONIC, &start);
     char *root_copy = strdup(root);
     if (!root_copy) fatal("allocation failed");
-    enqueue(root_copy, (uint64_t)st.st_blocks * 512, true);
+    enqueue(root_copy, (uint64_t)st.st_blocks * 512, st.st_mtimespec.tv_sec, true);
     pthread_t threads[16];
     for (size_t i = 0; i < workers; i++) if (pthread_create(&threads[i], NULL, worker_main, NULL)) fatal("thread creation failed");
     for (size_t i = 0; i < workers; i++) if (pthread_join(threads[i], NULL)) fatal("thread join failed");

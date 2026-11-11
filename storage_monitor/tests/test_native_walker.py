@@ -1,12 +1,13 @@
 """Acceptance tests using exclusively synthetic filesystem fixtures."""
 from collections import Counter
 import os
+import errno
 import re
 import subprocess
 import unicodedata
 
 
-FIELD_COUNTS = {b"D": 2, b"H": 6, b"L": 4, b"P": 1, b"S": 4}
+FIELD_COUNTS = {b"D": 4, b"E": 2, b"H": 6, b"L": 4, b"P": 1, b"S": 4}
 
 
 def run_walk(binary, root, *extra, stdin=None):
@@ -52,7 +53,25 @@ def allocated_total(records):
 def test_version_reports_protocol(walker_binary):
     result = subprocess.run([walker_binary, "--version"], capture_output=True)
     assert result.returncode == 0 and not result.stderr
-    assert re.fullmatch(rb"storage_monitor_walk \d+\.\d+\.\d+ protocol 1\n", result.stdout)
+    assert result.stdout == b"storage_monitor_walk 1.1.0 protocol 2\n"
+
+
+def test_directory_times_and_file_counts(walker_binary, tmp_path):
+    old = tmp_path / "old"
+    old.mkdir()
+    payload = old / "payload"
+    payload.write_bytes(b"synthetic")
+    os.link(payload, old / "link")
+    os.utime(payload, (1000000000, 1000000000))
+    os.utime(old, (1500000000, 1500000000))
+    future = tmp_path / "future"
+    future.mkdir()
+    (future / "payload").write_bytes(b"synthetic")
+    os.utime(future / "payload", (2000000000, 2000000000))
+    records = good_walk(walker_binary, tmp_path)
+    dirs = {r[1]: r for r in records if r[0] == b"D"}
+    assert dirs[os.fsencode(old)][3:] == (b"2", b"1500000000")
+    assert dirs[os.fsencode(future)][3:] == (b"1", b"2000000000")
 
 
 def test_matches_du_on_nested_tree_with_hardlinks_and_symlinks(walker_binary, tmp_path):
@@ -133,7 +152,8 @@ def test_unreadable_directory_counts_error_and_keeps_own_bytes(walker_binary, tm
     child.chmod(0)
     try:
         records = good_walk(walker_binary, tmp_path)
-        assert (b"D", os.fsencode(child), str(expected).encode()) in records
+        assert any(r[:3] == (b"D", os.fsencode(child), str(expected).encode()) for r in records)
+        assert [r for r in records if r[0] == b"E"] == [(b"E", os.fsencode(child), str(errno.EACCES).encode())]
         assert int(records[-1][3]) >= 1
     finally:
         child.chmod(0o700)
@@ -187,7 +207,7 @@ def test_root_symlink_is_followed_but_owns_link_bytes(walker_binary, tmp_path):
     root.symlink_to(target, target_is_directory=True)
     records = good_walk(walker_binary, root)
     expected = root.lstat().st_blocks * 512 + (target / "payload").stat().st_blocks * 512
-    assert (b"D", os.fsencode(root), str(expected).encode()) in records
+    assert any(r[:3] == (b"D", os.fsencode(root), str(expected).encode()) for r in records)
     assert int(records[-1][1]) == 1 and int(records[-1][2]) == 1
 
 
