@@ -63,7 +63,8 @@ import BrewVersionCore
             RunLoop.current.run(until: Date().addingTimeInterval(0.025))
         }
         let size = view.fittingSize
-        guard abs(size.width - width) < 0.5, size.height > 100, size.height <= (width == 460 ? 700 : 560) else { fatalError("Invalid maintained layout \(size), expected width \(width)") }
+        // The new checking controls and unavailable-brew caption render at 747 points.
+        guard abs(size.width - width) < 0.5, size.height > 100, size.height <= (width == 460 ? 800 : 560) else { fatalError("Invalid maintained layout \(size), expected width \(width)") }
         view.frame.size = size
         window.setContentSize(size)
         view.layoutSubtreeIfNeeded()
@@ -134,6 +135,12 @@ import BrewVersionCore
                     lastSeenRelease: ReleaseID(Listing(name: listing.name, kind: kind, version: "1.0.0")),
                     unseenRelease: index == 1, lastError: state == "error" && index == 2 ? "Couldn't reach Homebrew. Check your connection and try again." : nil)
             }
+        }
+        if state == "watching" {
+            let listing = Listing(name: PackageName("synthetic-d")!, kind: .formula, version: "1.0.1")
+            var entry = WatchEntry(name: listing.name, kind: .formula, lastListing: listing, installed: .init(version: "1.0.0", source: .cellar))
+            entry.pendingRelease = ReleaseID(listing)
+            saved.watched.append(entry)
         }
         if state == "tap-watching" {
             let name = PackageName("synthetic-owner/synthetic-tap/synthetic-tool")!

@@ -1027,3 +1027,75 @@ private struct IconPixel {
 }
 @MainActor private final class ChangeFlag { var changed = false }
 struct QuietNotifier: Notifier {}
+
+@MainActor extension NativeActionsTests {
+    @Test func revealLogSelectsFileOrDirectory() throws {
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent("brew-version-reveal-" + UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: dir) }
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        let file = dir.appendingPathComponent("events.jsonl")
+        var selected: [URL] = []
+        let action = LogRevealAction(fileURL: file, reveal: { selected.append($0) })
+        action.reveal()
+        try Data().write(to: file)
+        action.reveal()
+        #expect(selected.map(\.path) == [dir.path, file.path])
+    }
+}
+
+@MainActor extension NativeActionsTests {
+    @Test func terminationFlushesQueuedLog() async throws {
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent("brew-version-termination-" + UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let log = EventLog(directory: dir)
+        let notifier = UserNotifier(service: NotificationServiceStub())
+        let controller = WatchController(transport: URLSessionTransport.standard(), installed: nil, store: WatchStore(fileURL: dir.appendingPathComponent("state.json")), notifier: notifier)
+        let delegate = AppDelegate(controller: controller, notifier: notifier, log: log)
+        log.record("synthetic.termination", [:])
+        await delegate.flushLog()
+        let contents = try String(contentsOf: log.fileURL, encoding: .utf8)
+        #expect(contents.contains("synthetic.termination"))
+    }
+}
+
+private final class AppEventRecorder: EventLogging, @unchecked Sendable {
+    private let lock = NSLock()
+    private var values: [(String, [String: LogValue])] = []
+    func record(_ event: String, _ fields: [String: LogValue]) { lock.withLock { values.append((event, fields)) } }
+    var events: [(String, [String: LogValue])] { lock.withLock { values } }
+}
+@MainActor extension NativeActionsTests {
+    @Test func notificationResponseLogsTitleAndAction() {
+        let log = AppEventRecorder(), notifier = UserNotifier(service: NotificationServiceStub())
+        notifier.log = log
+        notifier.handleResponse(actionIdentifier: UNNotificationDismissActionIdentifier, requestIdentifier: "synthetic", title: "synthetic title")
+        #expect(log.events.first?.0 == "notify.response")
+        #expect(log.events.first?.1["title"] == .string("synthetic title"))
+        #expect(log.events.first?.1["action"] == .string("dismiss"))
+    }
+}
+
+@MainActor extension NativeActionsTests {
+    @Test func authorizationFailuresLogPendingTitleForPackageAndTestNotifications() async {
+        for thrown in [false, true] {
+            let service = NotificationServiceStub()
+            service.status = thrown ? .notDetermined : .denied
+            if thrown { service.authorizationFailure = "Synthetic authorization failure" }
+            let log = AppEventRecorder(), notifier = UserNotifier(service: service)
+            notifier.log = log
+            await notifier.post(Notice(name: PackageName("synthetic-log-auth")!, title: "Synthetic package title", body: "Synthetic body"))
+            await notifier.sendTestNotification()
+            let failures = log.events.filter { $0.0 == "notify.failed" }
+            #expect(failures.count == 2)
+            if failures.count == 2 {
+                #expect(failures[0].1["title"] == .string("Synthetic package title"))
+                #expect(failures[1].1["title"] == .string("Brew Version test notification"))
+                for failure in failures {
+                    guard case .string(let message) = failure.1["error"] else { Issue.record("Missing authorization error"); continue }
+                    #expect(message.contains(thrown ? "Synthetic authorization failure" : "Notifications are off"))
+                }
+            }
+            #expect(service.requests.isEmpty)
+        }
+    }
+}

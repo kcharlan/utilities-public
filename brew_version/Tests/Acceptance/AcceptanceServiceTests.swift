@@ -4,6 +4,23 @@ import BrewVersionCore
 @testable import Acceptance
 
 struct AcceptanceServiceTests {
+    @MainActor @Test func heldReleaseBecomesListed() async throws {
+        let service = SyntheticTransport(), gate = SyntheticBrewGate()
+        let home = FileManager.default.temporaryDirectory.appendingPathComponent("brew-version-synthetic-gate-" + UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: home) }
+        let clock = AcceptanceClock()
+        let controller = WatchController(transport: service, installed: InstalledReader(prefixes: [], applicationDirectories: []),
+            store: WatchStore(fileURL: home.appendingPathComponent("state.json")), notifier: AcceptanceQuietNotifier(), now: { clock.now }, brewGate: gate)
+        let name = PackageName("synthetic-formula")!
+        await controller.add(name, kind: .formula)
+        await gate.setHolding(true); await service.advance()
+        clock.now = clock.now.addingTimeInterval(601); await controller.checkNow()
+        #expect(controller.state.watched.first?.isAnnounced == true)
+        await gate.setHolding(false)
+        clock.now = clock.now.addingTimeInterval(601); await controller.checkNow()
+        #expect(controller.state.watched.first?.isAnnounced == false)
+        #expect(controller.state.watched.first?.isAmber == true)
+    }
     @Test func advanceStepsEachPackageIndependently() async throws {
         let service = SyntheticTransport(); let client = HomebrewClient(transport: service)
         let formula = PackageName("synthetic-formula")!, cask = PackageName("synthetic-cask")!

@@ -15,6 +15,8 @@ public struct CheckInterval: Codable, Hashable, Sendable {
     public static let standard = CheckInterval(minutes: 30)!
     /// Other updates downloads Homebrew's full catalog, so it offers longer choices.
     public static let catalogPresets = [30, 60, 120, 240, 720, 1440].map { CheckInterval(minutes: $0)! }
+    public static let announcedStandard = CheckInterval(minutes: 10)!
+    public static let announcedPresets = [10, 15, 30, 60].map { CheckInterval(minutes: $0)! }
     public static let catalogStandard = CheckInterval(minutes: 60)!
     /// A manual refresh skips the catalog when it is newer than Homebrew's own API cache lifetime.
     public static let manualCatalogFreshness: TimeInterval = 600

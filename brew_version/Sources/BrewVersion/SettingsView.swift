@@ -31,6 +31,17 @@ struct SettingsView: View {
                         }
                     }
                     if input.invalid { InlineWarning(message: CheckInterval.validationMessage()) }
+                    VStack(alignment: .leading, spacing: 3) {
+                        Toggle("Alert only when brew can install", isOn: Binding(get: { controller.state.confirmWithBrew }, set: { controller.setConfirmWithBrew($0) }))
+                            .disabled(!controller.canSave || !controller.brewGateAvailable)
+                        Text("Runs brew update when a watched package has a new version, and waits to alert until brew lists it.")
+                            .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                        if !controller.brewGateAvailable { Text("Homebrew was not found.").font(.caption).foregroundStyle(.secondary) }
+                    }
+                    Picker("While waiting, check every", selection: Binding(get: { controller.state.announcedInterval }, set: { controller.setAnnouncedInterval($0) })) {
+                        ForEach(IntervalSelection(current: controller.state.announcedInterval, presets: CheckInterval.announcedPresets).options, id: \.self) { interval in Text(interval.label).tag(interval) }
+                    }.pickerStyle(.menu).disabled(!controller.canSave || !controller.state.confirmWithBrew || !controller.brewGateAvailable)
+                        .help("How often to run brew update while a watched package has a new version that brew does not list yet. Never slower than the regular check.")
                 }
                 Section("Other updates") {
                     Toggle("Show other updates on this Mac", isOn: Binding(get: { controller.state.showOtherUpdates }, set: { controller.setShowOtherUpdates($0) })).disabled(!controller.canSave)
@@ -47,10 +58,11 @@ struct SettingsView: View {
                     CatalogStatusLine(controller: controller)
                 }
                 Section("General") {
-                    Toggle("Open at login", isOn: Binding(get: { login.enabled }, set: { login.setEnabled($0) }))
+                    Toggle("Open at login", isOn: Binding(get: { login.enabled }, set: { value in login.setEnabled(value); if login.error == nil { notifier.log.record("setting", ["key": "openAtLogin", "value": .bool(login.enabled)]) } }))
                     Text(login.description).font(.caption).foregroundStyle(.secondary)
                     if login.requiresApproval { Button("Open Login Items Settings") { login.openSettings() } }
                     if let error = login.error { InlineWarning(message: error) }
+                    Button("Show log in Finder") { LogRevealAction().reveal() }
                     Button("Send test notification") { Task { await notifier.sendTestNotification() } }
                         .disabled(notifier.isSendingTestNotification)
                         .help("Send a Brew Version test notification. Click it to open the popover.")

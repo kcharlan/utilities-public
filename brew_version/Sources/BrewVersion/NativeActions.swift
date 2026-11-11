@@ -93,3 +93,15 @@ struct IntervalSelection {
         return controller.state.interval == interval
     }
 }
+
+@MainActor struct LogRevealAction {
+    let fileURL: URL
+    private let revealURL: (URL) -> Void
+    init(fileURL: URL = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Library/Logs/Brew Version/events.jsonl"),
+         reveal: @escaping (URL) -> Void = { NSWorkspace.shared.activateFileViewerSelecting([$0]) }) {
+        self.fileURL = fileURL; self.revealURL = reveal
+    }
+    func reveal() {
+        revealURL(FileManager.default.fileExists(atPath: fileURL.path) ? fileURL : fileURL.deletingLastPathComponent())
+    }
+}

@@ -15,13 +15,14 @@ import UserNotifications
 }
 @MainActor final class AcceptanceDelegate: NSObject, NSApplicationDelegate {
     let service = SyntheticTransport()
+    let gate = SyntheticBrewGate()
     let notificationService = SyntheticNotificationService()
     let notifier: UserNotifier
     let controller: WatchController
     private var status: StatusItemController?
     override init() {
         notifier = UserNotifier(service: notificationService)
-        controller = SyntheticEnvironment.makeController(service: service, notifier: notifier)
+        controller = SyntheticEnvironment.makeController(service: service, notifier: notifier, gate: gate)
         super.init()
         notificationService.native.center.delegate = notifier
     }
@@ -32,6 +33,10 @@ import UserNotifications
                 Button("Advance release and check") { Task { await self.service.advance(); await self.controller.checkNow() } }
                 Button("Light") { self.status?.setAppearance(NSAppearance(named: .aqua)) }
                 Button("Dark") { self.status?.setAppearance(NSAppearance(named: .darkAqua)) }
+            }
+            HStack {
+                Button("Brew holds releases") { Task { await self.gate.setHolding(true) } }
+                Button("Brew lists releases") { Task { await self.gate.setHolding(false); SyntheticEnvironment.advanceRefreshClock(); await self.controller.checkNow() } }
             }
             HStack {
                 Button("Both in 5s") { Task {

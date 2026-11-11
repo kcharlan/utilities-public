@@ -1,6 +1,14 @@
 import Foundation
 import BrewVersionCore
 
+actor SyntheticBrewGate: BrewConfirming {
+    private var holding = false
+    func setHolding(_ value: Bool) { holding = value }
+    func confirm(_ candidates: [Listing]) async -> BrewConfirmation {
+        BrewConfirmation(listings: holding ? [:] : Dictionary(uniqueKeysWithValues: candidates.map { ($0.name, $0) }))
+    }
+}
+
 @MainActor enum SyntheticEnvironment {
     static var now = Date()
     static func advanceRefreshClock() { now = now.addingTimeInterval(601) }
@@ -33,7 +41,7 @@ import BrewVersionCore
         }
         return prefix
     }
-    static func makeController(service: SyntheticTransport, notifier: UserNotifier) -> WatchController {
+    static func makeController(service: SyntheticTransport, notifier: UserNotifier, gate: SyntheticBrewGate = SyntheticBrewGate()) -> WatchController {
         guard let path = Bundle.main.object(forInfoDictionaryKey: "SyntheticAcceptanceHome") as? String,
               path.hasPrefix("/"), FileManager.default.fileExists(atPath: path) else { fatalError("Explicit acceptance home missing") }
         let home = URL(fileURLWithPath: path)
@@ -50,6 +58,6 @@ import BrewVersionCore
             installed: InstalledReader(prefixes: HomebrewPrefix.detectAll(candidates: [prefix]), applicationDirectories: [], tappedTaps: { TapIndex.scan(prefixes: HomebrewPrefix.detectAll(candidates: [prefix])).taps }),
             store: WatchStore(fileURL: home.appendingPathComponent("state/state.json")), notifier: notifier, now: { now },
             catalogClient: CatalogClient(transport: service, cacheDirectory: home.appendingPathComponent("catalog")),
-            taps: { TapIndex.scan(prefixes: HomebrewPrefix.detectAll(candidates: [prefix])) })
+            taps: { TapIndex.scan(prefixes: HomebrewPrefix.detectAll(candidates: [prefix])) }, brewGate: gate)
     }
 }

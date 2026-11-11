@@ -62,3 +62,13 @@ struct FormulaVersion {
         return upstream == .orderedSame ? VersionOrder.compare(revision, other.revision) : upstream
     }
 }
+
+/// True when brew's local listing is the announced release or newer.
+func brewCovers(_ local: Listing, announced: Listing) -> Bool {
+    guard local.kind == announced.kind else { return false }
+    if local.kind == .cask { return VersionOrder.compare(local.version, announced.version) != .orderedAscending }
+    let localScheme = local.versionScheme ?? 0, announcedScheme = announced.versionScheme ?? 0
+    if localScheme != announcedScheme { return localScheme > announcedScheme }
+    return FormulaVersion(version: local.version, revision: local.revision)
+        .compare(FormulaVersion(version: announced.version, revision: announced.revision)) != .orderedAscending
+}

@@ -464,3 +464,238 @@ func watchResponse(_ version: String, etag: String? = nil, kind: PackageKind = .
         #expect(c.state.watched[0].installed?.version == "3.0" && c.amberCount == 0)
     }
 }
+
+private final class ControllerEventRecorder: EventLogging, @unchecked Sendable {
+    private let lock = NSLock()
+    private var entries: [String] = []
+    func record(_ event: String, _ fields: [String: LogValue]) { lock.withLock { entries.append(event) } }
+    var events: [String] { lock.withLock { entries } }
+}
+@MainActor extension WatchControllerTests {
+    @Test func changedListingLogsCheckAndAlertInOrder() async throws {
+        let f = WatchFixture(); defer { f.clean() }
+        let name = PackageName("synthetic-log")!
+        var state = AppState.initial; state.watched = [baseline(Listing(name: name, kind: .formula, version: "1"))]; try f.store.save(state)
+        let log = ControllerEventRecorder()
+        let controller = WatchController(transport: StubTransport([watchURL(name): [watchResponse("2")]]), installed: nil, store: f.store, notifier: RecordingNotifier(), log: log)
+        await controller.checkNow()
+        #expect(log.events == ["check.start", "release.seen", "alert.enqueue", "check.end"])
+    }
+    @Test func failedSaveLogsStateProblem() async throws {
+        let f = WatchFixture(); defer { f.clean() }; try f.store.save(.initial)
+        let failures = IOFailures(); failures.operation = "replace"; let log = ControllerEventRecorder()
+        let controller = WatchController(transport: StubTransport([:]), installed: nil, store: WatchStore(fileURL: f.file, io: failures.io), notifier: RecordingNotifier(), log: log)
+        controller.setInterval(CheckInterval(minutes: 47)!)
+        #expect(log.events.contains("state.problem"))
+    }
+}
+
+@MainActor extension WatchControllerTests {
+    @Test func firstSuccessfulListingLogsReleaseAndUndoLogsWatch() async throws {
+        let f = WatchFixture(); defer { f.clean() }
+        let name = PackageName("synthetic-first")!
+        var state = AppState.initial; state.watched = [WatchEntry(name: name, kind: .formula)]; try f.store.save(state)
+        let log = ControllerEventRecorder()
+        let controller = WatchController(transport: StubTransport([watchURL(name): [watchResponse("2")]]), installed: nil, store: f.store, notifier: RecordingNotifier(), log: log)
+        await controller.checkNow()
+        #expect(log.events.contains("release.seen"))
+        let removed = try #require(controller.remove(name))
+        #expect(controller.restore(removed.entry, at: removed.index))
+        #expect(log.events.last == "watch.add")
+    }
+}
+
+private final class GateDouble: BrewConfirming, @unchecked Sendable {
+    private let lock = NSLock()
+    private var currentVersion = "1"
+    private var available = true
+    private var count = 0
+    var isAvailable: Bool { lock.withLock { available } }
+    var calls: Int { lock.withLock { count } }
+    func setVersion(_ version: String) { lock.withLock { currentVersion = version } }
+    func disappear() { lock.withLock { available = false } }
+    func confirm(_ candidates: [Listing]) async -> BrewConfirmation {
+        lock.withLock {
+            count += 1
+            return BrewConfirmation(listings: Dictionary(uniqueKeysWithValues: candidates.map { ($0.name, Listing(name: $0.name, kind: $0.kind, version: currentVersion)) }), problem: "synthetic update problem")
+        }
+    }
+}
+@MainActor @Test func announcedReleaseDoesNotAlertUntilBrewListsIt() async throws {
+    let f = WatchFixture(); defer { f.clean() }
+    var state = AppState.initial; state.watched = [baseline()]; try f.store.save(state)
+    let gate = GateDouble(), notifier = RecordingNotifier(store: f.store), stamp = Date(timeIntervalSince1970: 1000)
+    let controller = WatchController(transport: StubTransport([watchURL(): [watchResponse("2"), watchResponse("2")]]), installed: nil, store: f.store, notifier: notifier, now: { stamp }, brewGate: gate)
+    #expect(controller.brewGateAvailable)
+    await controller.checkNow()
+    #expect(await notifier.notices.isEmpty && controller.amberCount == 0 && controller.state.watched[0].isAnnounced)
+    #expect(f.store.load().state.watched[0].isAnnounced && controller.brewCheckProblem != nil)
+    #expect(controller.nextAutomaticCheck == .scheduled(stamp.addingTimeInterval(600)))
+    controller.setAnnouncedInterval(CheckInterval(minutes: 15)!)
+    #expect(controller.nextAutomaticCheck == .scheduled(stamp.addingTimeInterval(900)))
+    controller.setAnnouncedInterval(CheckInterval(minutes: 60)!)
+    #expect(controller.nextAutomaticCheck == .scheduled(stamp.addingTimeInterval(1800)))
+    controller.popoverClosed(); gate.setVersion("2"); await controller.checkNow()
+    #expect(await notifier.notices.count == 1)
+    #expect(await notifier.deliveries == [.withSound])
+    #expect(controller.amberCount == 1 && controller.brewCheckProblem == nil)
+    #expect(await notifier.persisted.first?.watched[0].isAmber == true)
+}
+@MainActor @Test func skipAndUnavailableGateReleasePendingSafely() async throws {
+    for skip in [true, false] {
+        let f = WatchFixture(); defer { f.clean() }
+        var state = AppState.initial; state.watched = [baseline()]; try f.store.save(state)
+        let gate = GateDouble(), notifier = RecordingNotifier()
+        let c = WatchController(transport: StubTransport([watchURL(): [watchResponse("2"), watchResponse("2")]]), installed: nil, store: f.store, notifier: notifier, brewGate: gate)
+        await c.checkNow()
+        if skip { c.skip(watchName) } else { gate.disappear() }
+        #expect(c.brewGateAvailable == skip)
+        await c.checkNow()
+        #expect(await notifier.notices.count == (skip ? 0 : 1))
+        #expect(!c.state.watched[0].isAnnounced && c.state.watched[0].pendingRelease == nil)
+    }
+}
+@MainActor @Test func gateIsNotCalledForUnchangedOrDisabledWatches() async throws {
+    for enabled in [true, false] {
+        let f = WatchFixture(); defer { f.clean() }
+        var state = AppState.initial; state.watched = [baseline()]; state.confirmWithBrew = enabled; try f.store.save(state)
+        let gate = GateDouble(), notifier = RecordingNotifier()
+        let c = WatchController(transport: StubTransport([watchURL(): [watchResponse(enabled ? "1.0" : "2")]]), installed: nil, store: f.store, notifier: notifier, brewGate: gate)
+        await c.checkNow()
+        #expect(gate.calls == 0)
+        #expect(await notifier.notices.count == (enabled ? 0 : 1))
+    }
+}
+
+@MainActor @Test func installedAnnouncementEmitsConfirmedEventAfterBrewCatchesUp() async throws {
+    let f = WatchFixture(); defer { f.clean() }
+    var state = AppState.initial; state.watched = [baseline()]; try f.store.save(state)
+    let gate = GateDouble(), notifier = RecordingNotifier(), log = GateEventRecorder()
+    let c = WatchController(transport: StubTransport([watchURL(): [watchResponse("2"), watchResponse("2")]]), installed: RollingInstallation(), store: f.store, notifier: notifier, brewGate: gate, log: log)
+    await c.checkNow()
+    #expect(c.state.watched[0].isAnnounced && c.amberCount == 0)
+    #expect(await notifier.notices.isEmpty)
+    gate.setVersion("2"); await c.checkNow()
+    #expect(await notifier.notices.count == 1)
+    #expect(log.recorded.contains("release.confirmed"))
+}
+
+private actor FailedUpdateCoveredRunner: BrewRunning {
+    func run(_ arguments: [String], environment: [String: String], timeout: TimeInterval) async throws -> BrewOutput {
+        if arguments == ["update"] {
+            return BrewOutput(exitCode: 1, stdout: Data(), stderr: Data("synthetic update failure".utf8), seconds: 0)
+        }
+        return BrewOutput(exitCode: 0, stdout: Data("{\"formulae\":[{\"versions\":{\"stable\":\"2\"}}]}".utf8), stderr: Data(), seconds: 0)
+    }
+}
+@MainActor @Test func coveredInfoAfterFailedUpdateAlertsWithoutProblem() async throws {
+    let f = WatchFixture(); defer { f.clean() }
+    var state = AppState.initial; state.watched = [baseline()]; try f.store.save(state)
+    let notifier = RecordingNotifier()
+    let gate = BrewGate(runner: FailedUpdateCoveredRunner(), log: NoEventLog(), apiCacheDirectory: nil)
+    let c = WatchController(transport: StubTransport([watchURL(): [watchResponse("2")]]), installed: nil, store: f.store, notifier: notifier, brewGate: gate)
+    await c.checkNow()
+    #expect(await notifier.notices.count == 1)
+    #expect(c.amberCount == 1 && c.brewCheckProblem == nil)
+}
+
+private actor SuspendedGate: BrewConfirming {
+    private var continuation: CheckedContinuation<BrewConfirmation, Never>?
+    private var requested: [Listing] = []
+    private var released = false
+    var isWaiting: Bool { continuation != nil }
+    func confirm(_ candidates: [Listing]) async -> BrewConfirmation {
+        requested = candidates
+        if released { return BrewConfirmation() }
+        return await withCheckedContinuation { continuation = $0 }
+    }
+    func finish() {
+        released = true
+        let listings = Dictionary(uniqueKeysWithValues: requested.map { ($0.name, $0) })
+        continuation?.resume(returning: BrewConfirmation(listings: listings)); continuation = nil
+    }
+}
+@MainActor @Test func removingWatchAndChangingSettingsWhileGateWaitsDoesNotRestoreOrAlert() async throws {
+    let f = WatchFixture(); defer { f.clean() }
+    var state = AppState.initial; state.watched = [baseline()]; try f.store.save(state)
+    let gate = SuspendedGate(), notifier = RecordingNotifier()
+    let c = WatchController(transport: StubTransport([watchURL(): [watchResponse("2")]]), installed: nil, store: f.store, notifier: notifier, brewGate: gate)
+    let check = Task { await c.checkNow() }
+    let deadline = ContinuousClock.now.advanced(by: .seconds(3))
+    while !(await gate.isWaiting), ContinuousClock.now < deadline { await Task.yield() }
+    let waiting = await gate.isWaiting
+    if !waiting { await gate.finish(); await check.value; Issue.record("Gate did not suspend"); return }
+    _ = c.remove(watchName)
+    c.setInterval(CheckInterval(minutes: 60)!)
+    await gate.finish(); await check.value
+    #expect(c.state.watched.isEmpty && c.state.interval.minutes == 60)
+    #expect(f.store.load().state == c.state)
+    #expect(await notifier.notices.isEmpty)
+}
+
+@MainActor @Test func removingOrSkippingLastAnnouncementClearsProblemOnlyAfterSave() async throws {
+    for skip in [false, true] {
+        let f = WatchFixture(); defer { f.clean() }
+        var state = AppState.initial; state.watched = [baseline()]; try f.store.save(state)
+        let failures = IOFailures(), gate = GateDouble()
+        let c = WatchController(transport: StubTransport([watchURL(): [watchResponse("2")]]), installed: nil, store: WatchStore(fileURL: f.file, io: failures.io), notifier: RecordingNotifier(), brewGate: gate)
+        await c.checkNow(); #expect(c.brewCheckProblem != nil)
+        failures.operation = "replace"
+        if skip { c.skip(watchName) } else { _ = c.remove(watchName) }
+        #expect(c.brewCheckProblem != nil && c.state.watched[0].isAnnounced)
+        failures.operation = nil
+        if skip { c.skip(watchName) } else { _ = c.remove(watchName) }
+        #expect(c.brewCheckProblem == nil)
+    }
+}
+
+@MainActor @Test func failedSaveWithAnnouncementUsesWaitingDeadlineOnlineAndOnReconnect() async throws {
+    for reconnect in [false, true] {
+        let f = WatchFixture(); defer { f.clean() }
+        var state = AppState.initial; state.watched = [baseline()]; try f.store.save(state)
+        var time = Date(timeIntervalSince1970: 1000)
+        let failures = IOFailures(), gate = GateDouble()
+        let transport = StubTransport([watchURL(): [watchResponse("2"), watchResponse("2"), watchResponse("2")]])
+        let c = WatchController(transport: transport, installed: nil, store: WatchStore(fileURL: f.file, io: failures.io), notifier: RecordingNotifier(), now: { time }, brewGate: gate)
+        await c.checkNow(); await c.setNetworkAvailable(true)
+        failures.operation = "replace"; c.setInterval(CheckInterval(minutes: 31)!); failures.operation = nil
+        if reconnect { await c.setNetworkAvailable(false) }
+        time = time.addingTimeInterval(599)
+        #expect(c.nextAutomaticCheck == (reconnect ? .waitingForNetwork(notBefore: Date(timeIntervalSince1970: 1600)) : .scheduled(Date(timeIntervalSince1970: 1600))))
+        await c.checkIfDue(); #expect(await transport.requests.count == 1)
+        time = time.addingTimeInterval(1)
+        if reconnect { await c.setNetworkAvailable(true) } else { await c.checkIfDue() }
+        #expect(await transport.requests.count == 2)
+    }
+}
+
+@MainActor @Test func confirmedEventRecordsWaitSincePersistedAnnouncement() async throws {
+    let f = WatchFixture(); defer { f.clean() }
+    var state = AppState.initial; state.watched = [baseline()]; try f.store.save(state)
+    var time = Date(timeIntervalSince1970: 1000)
+    let gate = GateDouble(), log = FieldRecorder()
+    let c = WatchController(transport: StubTransport([watchURL(): [watchResponse("2"), watchResponse("2")]]), installed: nil, store: f.store, notifier: RecordingNotifier(), now: { time }, brewGate: gate, log: log)
+    await c.checkNow(); time = time.addingTimeInterval(123); gate.setVersion("2"); await c.checkNow()
+    #expect(log.fields("release.confirmed")["waitedSeconds"] == .int(123))
+}
+
+@MainActor @Test func failedConfirmationSaveDoesNotLogConfirmation() async throws {
+    let f = WatchFixture(); defer { f.clean() }
+    var state = AppState.initial; state.watched = [baseline()]; try f.store.save(state)
+    let failures = IOFailures(), gate = GateDouble(), log = FieldRecorder()
+    let c = WatchController(transport: StubTransport([watchURL(): [watchResponse("2"), watchResponse("2")]]), installed: nil, store: WatchStore(fileURL: f.file, io: failures.io), notifier: RecordingNotifier(), brewGate: gate, log: log)
+    await c.checkNow(); gate.setVersion("2"); failures.operation = "replace"; await c.checkNow()
+    #expect(c.state.watched[0].isAnnounced && log.fields("release.confirmed").isEmpty)
+}
+@MainActor @Test func removingOneOfTwoAnnouncementsRetainsProblem() async throws {
+    for skip in [false, true] {
+    let f = WatchFixture(); defer { f.clean() }
+    let other = PackageName("synthetic-other")!
+    var state = AppState.initial; state.watched = [baseline(), baseline(Listing(name: other, kind: .formula, version: "1"))]; try f.store.save(state)
+    let gate = GateDouble()
+    let c = WatchController(transport: StubTransport([watchURL(): [watchResponse("2")], watchURL(other): [watchResponse("2")]]), installed: nil, store: f.store, notifier: RecordingNotifier(), brewGate: gate)
+    await c.checkNow()
+    if skip { c.skip(watchName) } else { _ = c.remove(watchName) }
+    #expect(c.state.watched.contains(where: \.isAnnounced) && c.brewCheckProblem != nil)
+    }
+}

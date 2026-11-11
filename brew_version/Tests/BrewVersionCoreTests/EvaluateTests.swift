@@ -106,3 +106,34 @@ struct EvaluateTests {
         #expect(ReleaseID(watchListing("2,synthetic", kind: .cask)).displayVersion == "2,synthetic")
     }
 }
+
+@Test func persistedPendingReleaseIsNotAmber() throws {
+    let listing = watchListing()
+    let entry = WatchEntry(name: listing.name, kind: .formula, lastListing: listing,
+                           installed: InstalledVersion(version: "1.0", source: .cellar))
+    let data = try JSONEncoder().encode(entry)
+    var object = try #require(JSONSerialization.jsonObject(with: data) as? [String: Any])
+    object["pendingRelease"] = ["kind": "formula", "version": "2.0", "revision": 0]
+    let decoded = try JSONDecoder().decode(WatchEntry.self, from: JSONSerialization.data(withJSONObject: object))
+    #expect(!decoded.isAmber)
+}
+
+@Test func announcedReleasesWaitForConfirmationAndRetainFirstSeenTime() {
+    let start = Date(timeIntervalSince1970: 100), later = Date(timeIntervalSince1970: 200)
+    for installed: InstalledVersion? in [nil, InstalledVersion(version: "1.0", source: .cellar)] {
+        let first = evaluate(baseline(), listing: watchListing(), installed: installed, confirmed: false, now: start)
+        #expect(first.1 == nil && first.0.isAnnounced && !first.0.isAmber)
+        #expect(first.0.pendingRelease == ReleaseID(watchListing()) && first.0.announcedSince == start)
+        let repeatCheck = evaluate(first.0, listing: watchListing(), installed: installed, confirmed: false, now: later)
+        #expect(repeatCheck.0.announcedSince == start)
+        let newer = evaluate(repeatCheck.0, listing: watchListing("3.0"), installed: installed, confirmed: false, now: later)
+        #expect(newer.0.announcedSince == later)
+        let confirmed = evaluate(repeatCheck.0, listing: watchListing(), installed: installed, confirmed: true, now: later)
+        #expect(confirmed.1 != nil && confirmed.0.isAmber && !confirmed.0.isAnnounced)
+        #expect(confirmed.0.pendingRelease == nil && confirmed.0.announcedSince == nil)
+        var skipped = first.0; skipped.skippedRelease = ReleaseID(watchListing())
+        #expect(!evaluate(skipped, listing: watchListing(), installed: installed, confirmed: false).0.isAnnounced)
+        let upgraded = evaluate(first.0, listing: watchListing(), installed: InstalledVersion(version: "2.0", source: .cellar), confirmed: false)
+        #expect(upgraded.0.pendingRelease == nil && !upgraded.0.isAnnounced)
+    }
+}

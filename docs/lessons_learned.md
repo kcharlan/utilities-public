@@ -12,6 +12,15 @@ In Zsh, returning a failure from an EXIT trap does not replace the original succ
 
 Zsh's `path` array is tied to `PATH`; using `local path` for a cleanup loop can make external commands unavailable. Use a non-special variable name and exercise the real command lookup in a synthetic regression, including both successful and failed primary operations.
 
+## 2026-11-11: Listed on the website is not installable
+
+On 2026-11-10 a Homebrew formula PR merged at 17:23 EST, the website
+published the release at 17:44, and local `brew update` first obtained it at
+18:44. An alert based only on the website could precede an installable update
+by an hour. The reason for the lag was not established. Check the local tool's
+own listing before promising an installable release, and record bounded events
+so a future delay can be investigated.
+
 ## 2026-11-10: Take report stub field names from the real command
 
 `usage-monthly-csv` exported Codex cached input under `cachedInputTokens`, but
@@ -1530,6 +1539,14 @@ A declaration timestamp is not a scan timestamp. An inventory-only scan can have
 no declaration timestamps; label that absence explicitly instead of claiming the
 repository was not scanned. Never substitute a quick-scan time for dependency
 evaluation history.
+
+### 2026-11-11: Keep Brew Version retry evidence and deadlines aligned
+
+The watch footer and automatic eligibility must use the same deadline, including
+failed-save backoff while an announcement is pending; reconnect must respect it
+too. Keep the independent catalog cadence separate. Diagnostic regressions must
+assert recorded values and units, not merely event names, and confirmation events
+must follow a successful state save.
 
 ### Brew Version: validate tap cache identity before conditional requests
 
