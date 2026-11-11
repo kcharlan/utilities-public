@@ -2479,3 +2479,5 @@ An indexed newest time cannot prove a directory stayed stale: an in-place file e
 ### Storage Monitor report boundaries
 
 A cleanup report can outlive the state it describes, and a missing running-app probe is not evidence that a cache owner has quit. Treat an unknown probe as review-only for Library cache entries, and keep reports bounded while exposing counts and bytes omitted from a truncated list.
+
+When eligibility depends on a later report-wide probe, carry that eligibility from discovery to the gate and test assembled reports using indexed entries. Tests that inject already-actionable findings cannot detect a missing activation. Apply path and indexed-content protections before enabling the action.

@@ -2597,7 +2597,7 @@ def discover_candidates(scan_id: int) -> List[Dict[str, Any]]:
                          "estimated_reclaim_bytes": None, "apparent_bytes": None, "rule_id": None,
                          "file_count": None, "newest_mtime": None, "age_days": None, "stale": None})
 
-    # A shared cache folder is never one target: list it and its entries for review.
+    # A shared cache folder is never one target: list its entries separately.
     listed = [Path(row["path"]) for row, rule in survivors if row["allocated_bytes"] >= rule["min_bytes"]] + actionable_roots + review_roots
     with open_db_connection() as connection:
         for root in size_only_homes():
@@ -2626,10 +2626,12 @@ def discover_candidates(scan_id: int) -> List[Dict[str, Any]]:
                     continue
                 if any(child == other or child in other.parents for other in listed):
                     continue
-                findings.append(review_only(
+                finding = review_only(
                     row, "discovered_cache", "medium",
                     "Entry in a shared cache folder. Review-only: some tools keep data here that is slow or costly to rebuild.",
-                ))
+                )
+                finding["library_cache_bucket_entry"] = bucket == library_caches
+                findings.append(finding)
     return findings
 
 
@@ -2896,6 +2898,7 @@ def build_findings_section(
         findings.extend(temp_findings(scan_id))
         findings.extend(additional_findings(scan_id))
     for item in findings:
+        library_bucket_entry = item.pop("library_cache_bucket_entry", False)
         if not item.get("path"):
             continue
         path = Path(item["path"])
@@ -2918,6 +2921,13 @@ def build_findings_section(
         if owner:
             item["owner_running"] = True
             item["owner_name"] = owner
+        if (library_bucket_entry and is_cache and running_apps is not None and not owner
+                and not cleanup_protection_reason(path) and not indexed_cleanup_protection(scan_id, path)):
+            item.update(actionable=True, risk="low", cleanup_kind="trash_path",
+                        estimated_reclaim_bytes=item["allocated_bytes"],
+                        action_token=encode_action_token({"kind": "trash_path", "path": str(path)}),
+                        description="Cache entry. Quit its owning app before moving it to Trash.")
+            item["actions"] = build_finding_actions(item)
         if is_cache and (owner or running_apps is None):
             item["actionable"] = False
             item["action_token"] = None

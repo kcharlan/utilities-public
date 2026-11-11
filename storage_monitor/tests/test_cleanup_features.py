@@ -1119,6 +1119,31 @@ def test_running_owner_and_unknown_cache_are_safe(monkeypatch, tmp_path):
     assert not unknown["items"][0]["actionable"]
 
 
+def test_indexed_library_bucket_entries_require_stopped_owner_and_no_protection(monkeypatch, tmp_path):
+    module = load(monkeypatch, tmp_path)
+    home = _discovery_home(module, monkeypatch, tmp_path)
+    monkeypatch.setattr(module, "WATCHLIST_SPECS", [])
+    scan_id = _insert_scan(module)
+    library = home / "Library/Caches"
+    entries = [library / name for name in ("org.example.stopped", "org.example.running", "com.apple.synthetic", "org.example.protected")]
+    dot_entry = home / ".cache/org.example.synthetic"
+    _index_dirs(module, scan_id, [(path, 120) for path in [*entries, dot_entry, entries[3] / ".worktrees"]])
+    result = module.build_findings_section([], scan_id=scan_id, running_apps={"org.example.running": "Synthetic Running"})
+    items = {item["path"]: item for item in result["items"]}
+    stopped = items[str(entries[0])]
+    assert stopped["actionable"] is True
+    assert stopped["risk"] == "low"
+    assert stopped["estimated_reclaim_bytes"] == 120 * 1024 * 1024
+    assert module.decode_action_token(stopped["action_token"]) == {"kind": "trash_path", "path": str(entries[0])}
+    assert [action["kind"] for action in stopped["actions"]] == ["reveal", "execute"]
+    for path in [*entries[1:], dot_entry]:
+        assert items[str(path)]["actionable"] is False
+        assert items[str(path)]["action_token"] is None
+        assert [action["kind"] for action in items[str(path)]["actions"]] == ["reveal"]
+    unknown = module.build_findings_section([], scan_id=scan_id, running_apps=None)
+    assert not next(item for item in unknown["items"] if item["path"] == str(entries[0]))["actionable"]
+
+
 def test_running_app_probe_parses_and_fails_closed(monkeypatch, tmp_path):
     module = load(monkeypatch, tmp_path)
     monkeypatch.setattr(module, "run_command", lambda args, timeout=120: {"ok": True, "stdout": '1) "Synthetic App" ASN:0x0-0x1:\n    bundleID="org.example.app"\n'})
