@@ -410,6 +410,142 @@ def test_temp_directory_requires_indexed_age_and_current_owner(monkeypatch, tmp_
     assert not module.temp_entries(root, scan_id)[0]["old"]
 
 
+def test_temp_group_preserves_directory_when_existing_nested_file_was_edited(monkeypatch, tmp_path):
+    module = load(monkeypatch, tmp_path)
+    root = tmp_path / "synthetic-temp"
+    directory = root / "synthetic-entry"
+    directory.mkdir(parents=True)
+    payload = directory / "synthetic-file"
+    payload.write_text("old synthetic content")
+    old = int(time.time()) - 4 * 86400
+    os.utime(payload, (old, old))
+    os.utime(directory, (old, old))
+    monkeypatch.setattr(module, "temp_roots", lambda: [root])
+    monkeypatch.setattr(module, "DATA_VOLUME", tmp_path / "synthetic-data")
+    monkeypatch.setattr(module, "TRASH_DIR", tmp_path / "synthetic-trash")
+    scan_id = _insert_scan(module, active=True)
+    indexed = module.DATA_VOLUME / str(directory).lstrip("/")
+    _index_dirs(module, scan_id, [(indexed, 1)])
+    with module.open_db_connection() as connection:
+        connection.execute("UPDATE nodes SET newest_mtime=? WHERE scan_id=? AND path=?", (old, scan_id, str(indexed)))
+        connection.commit()
+    group = module.temp_findings(scan_id)[0]
+    assert group["count"] == 1
+    payload.write_text("fresh synthetic content")
+    result = module.execute_trash_group(module.decode_action_token(group["action_token"]))
+    assert result["moved_count"] == 0 and payload.read_text() == "fresh synthetic content"
+
+
+def test_enclosing_worktree_is_review_only_and_rechecked_before_moves(monkeypatch, tmp_path):
+    module = load(monkeypatch, tmp_path)
+    home = _discovery_home(module, monkeypatch, tmp_path)
+    monkeypatch.setattr(module, "WATCHLIST_SPECS", [])
+    monkeypatch.setattr(module, "DATA_VOLUME", tmp_path)
+    monkeypatch.setattr(module, "TRASH_DIR", tmp_path / "synthetic-trash")
+    workspace = home / "project/.superpowers"
+    marker = workspace / ".worktrees"
+    (marker / "synthetic-tree").mkdir(parents=True)
+    old = int(time.time()) - 20 * 86400
+    scan_id = _insert_scan(module, active=True)
+    _index_dirs(module, scan_id, [(workspace, 1), (marker, 1)])
+    with module.open_db_connection() as connection:
+        connection.execute("UPDATE nodes SET newest_mtime=? WHERE scan_id=?", (old, scan_id))
+        connection.commit()
+    finding = next(item for item in module.discover_candidates(scan_id) if item["path"] == str(workspace))
+    assert not finding["actionable"]
+    spec = {"path": "~/project/.superpowers", "slug": "synthetic-workspace", "label": "Synthetic", "category": "cache", "risk": "low", "cleanup_kind": "trash_path", "description": "Synthetic", "actionable": True}
+    assert not module.scan_watchlist_entry(spec, scan_id)["actionable"]
+    with module.open_db_connection() as connection:
+        connection.execute("DELETE FROM nodes WHERE scan_id=? AND path=?", (scan_id, str(marker)))
+        connection.commit()
+    with pytest.raises(HTTPException):
+        module.execute_trash_path(workspace)
+    assert marker.exists()
+
+
+def test_temp_group_refuses_new_worktree_inside_old_directory(monkeypatch, tmp_path):
+    module = load(monkeypatch, tmp_path)
+    root = tmp_path / "synthetic-temp"
+    directory = root / "synthetic-entry"
+    directory.mkdir(parents=True)
+    old = int(time.time()) - 4 * 86400
+    os.utime(directory, (old, old))
+    monkeypatch.setattr(module, "temp_roots", lambda: [root])
+    monkeypatch.setattr(module, "DATA_VOLUME", tmp_path / "synthetic-data")
+    monkeypatch.setattr(module, "TRASH_DIR", tmp_path / "synthetic-trash")
+    scan_id = _insert_scan(module, active=True)
+    indexed = module.DATA_VOLUME / str(directory).lstrip("/")
+    _index_dirs(module, scan_id, [(indexed, 1)])
+    with module.open_db_connection() as connection:
+        connection.execute("UPDATE nodes SET newest_mtime=? WHERE scan_id=? AND path=?", (old, scan_id, str(indexed)))
+        connection.commit()
+    group = module.temp_findings(scan_id)[0]
+    assert group["count"] == 1
+    marker = directory / ".worktrees/synthetic-tree"
+    marker.mkdir(parents=True)
+    os.utime(marker, (old, old))
+    os.utime(marker.parent, (old, old))
+    os.utime(directory, (old, old))
+    result = module.execute_trash_group(module.decode_action_token(group["action_token"]))
+    assert result["moved_count"] == 0 and marker.exists()
+
+
+def test_indexed_temp_worktree_makes_ancestor_review_only(monkeypatch, tmp_path):
+    module = load(monkeypatch, tmp_path)
+    root = tmp_path / "synthetic-temp"
+    directory = root / "synthetic-entry"
+    marker = directory / ".worktrees/synthetic-tree"
+    marker.mkdir(parents=True)
+    old = int(time.time()) - 4 * 86400
+    os.utime(directory, (old, old))
+    data = tmp_path / "synthetic-data"
+    monkeypatch.setattr(module, "DATA_VOLUME", data)
+    monkeypatch.setattr(module, "temp_roots", lambda: [root])
+    scan_id = _insert_scan(module)
+    indexed = data / str(directory).lstrip("/")
+    _index_dirs(module, scan_id, [(indexed, 1), (indexed / ".worktrees", 1)])
+    with module.open_db_connection() as connection:
+        connection.execute("UPDATE nodes SET newest_mtime=? WHERE scan_id=?", (old, scan_id))
+        connection.commit()
+    group = module.temp_findings(scan_id)[0]
+    assert group["count"] == 0 and not group["actionable"]
+
+
+def test_unverifiable_directory_is_not_moved(monkeypatch, tmp_path):
+    module = load(monkeypatch, tmp_path)
+    root = tmp_path / "synthetic-temp"
+    directory = root / "synthetic-entry"
+    directory.mkdir(parents=True)
+    old = int(time.time()) - 4 * 86400
+    os.utime(directory, (old, old))
+    monkeypatch.setattr(module, "DATA_VOLUME", tmp_path / "synthetic-data")
+    monkeypatch.setattr(module, "TRASH_DIR", tmp_path / "synthetic-trash")
+    monkeypatch.setattr(module, "temp_roots", lambda: [root])
+    scan_id = _insert_scan(module, active=True)
+    indexed = module.DATA_VOLUME / str(directory).lstrip("/")
+    _index_dirs(module, scan_id, [(indexed, 1)])
+    with module.open_db_connection() as connection:
+        connection.execute("UPDATE nodes SET newest_mtime=? WHERE scan_id=?", (old, scan_id))
+        connection.commit()
+    group = module.temp_findings(scan_id)[0]
+    def fail_walk(*args, **kwargs):
+        raise OSError("synthetic enumeration failure")
+    monkeypatch.setattr(module, "walk_tree", fail_walk)
+    result = module.execute_trash_group(module.decode_action_token(group["action_token"]))
+    assert result["moved_count"] == 0 and result["failure_count"] == 1 and directory.exists()
+    partial = module.WalkResult(dir_local={str(directory): 0}, hardlink_candidates=[], large_files=[], dir_count=1,
+                                file_count=0, error_count=1, duration_ms=0, dir_mtime={str(directory): old},
+                                unreadable=[(str(directory / "synthetic-unreadable"), 13)])
+    monkeypatch.setattr(module, "walk_tree", lambda *args, **kwargs: partial)
+    result = module.execute_trash_group(module.decode_action_token(group["action_token"]))
+    assert result["moved_count"] == 0 and result["failure_count"] == 1 and directory.exists()
+    with module.open_db_connection() as connection:
+        connection.execute("INSERT INTO scan_errors (scan_id, path, errno) VALUES (?, ?, ?)",
+                           (scan_id, str(indexed / "synthetic-unreadable"), 13))
+        connection.commit()
+    assert not module.temp_findings(scan_id)[0]["actionable"]
+
+
 @pytest.mark.parametrize(("name", "expected"), [
     (".synthetic-task.aB3dEf", True), (".synthetic-task.abcdef", True),
     (".synthetic-review-aB3dEf9h", True), (".synthetic task.aB3dEf", True),

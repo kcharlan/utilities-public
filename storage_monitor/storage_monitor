@@ -1703,6 +1703,7 @@ def scan_watchlist_entry(spec: Dict[str, Any], scan_id: Optional[int] = None) ->
     allocated = None
     file_count = newest_mtime = None
     scan_id = scan_id or fetch_active_scan_id() or fetch_running_scan_id()
+    protection = indexed_cleanup_protection(scan_id, path) if exists and path.is_dir() else None
     if exists and path.is_dir() and scan_id is not None:
         with open_db_connection() as connection:
             row = connection.execute(
@@ -1726,7 +1727,7 @@ def scan_watchlist_entry(spec: Dict[str, Any], scan_id: Optional[int] = None) ->
             "path": str(path),
             "slug": spec["slug"],
         }
-    ) if exists and spec["actionable"] and spec["cleanup_kind"] else None
+    ) if exists and spec["actionable"] and spec["cleanup_kind"] and not protection else None
     return {
         "slug": spec["slug"],
         "label": spec["label"],
@@ -1734,12 +1735,12 @@ def scan_watchlist_entry(spec: Dict[str, Any], scan_id: Optional[int] = None) ->
         "exists": exists,
         "category": spec["category"],
         "risk": spec["risk"],
-        "description": spec["description"],
-        "actionable": bool(exists and spec["actionable"] and spec["cleanup_kind"]),
+        "description": protection or spec["description"],
+        "actionable": bool(exists and spec["actionable"] and spec["cleanup_kind"] and not protection),
         "cleanup_kind": spec["cleanup_kind"],
         "apparent_bytes": apparent,
         "allocated_bytes": allocated,
-        "estimated_reclaim_bytes": allocated if exists and spec["cleanup_kind"] else None,
+        "estimated_reclaim_bytes": allocated if exists and spec["cleanup_kind"] and not protection else None,
         "action_token": token,
         "file_count": file_count, "newest_mtime": newest_mtime,
     }
@@ -2076,6 +2077,42 @@ def temp_roots() -> List[Path]:
     return list(dict.fromkeys(root for root in (user_temp, Path("/private/tmp"), Path("/private/var/tmp")) if root))
 
 
+def worktree_marker(path: Path) -> bool:
+    return path.name == ".worktrees" or (path.name == "worktrees" and path.parent.name == ".claude")
+
+
+def indexed_cleanup_protection(scan_id: Optional[int], path: Path) -> Optional[str]:
+    if scan_id is None:
+        return None
+    prefix = sql_like_prefix(str(path))
+    with open_db_connection() as connection:
+        marker_rows = connection.execute(
+            "SELECT path FROM nodes WHERE scan_id=? AND (path=? OR path LIKE ? ESCAPE '\\') AND name IN ('.worktrees', 'worktrees')",
+            (scan_id, str(path), prefix),
+        ).fetchall()
+        error = connection.execute(
+            "SELECT 1 FROM scan_errors WHERE scan_id=? AND (path=? OR path LIKE ? ESCAPE '\\') LIMIT 1",
+            (scan_id, str(path), prefix),
+        ).fetchone()
+    if any(worktree_marker(Path(row["path"])) for row in marker_rows):
+        return "Contains a managed worktree; remove it through its owning manager."
+    if error:
+        return "An indexed scan error prevents verifying this directory."
+    return None
+
+
+def inspect_cleanup_directory(path: Path) -> Tuple[Optional[WalkResult], Optional[str]]:
+    try:
+        result = walk_tree(path, excluded_paths=[])
+    except (OSError, RuntimeError, ValueError) as exc:
+        return None, f"Unable to verify directory: {exc}"
+    if result.error_count or result.unreadable or str(path) not in result.dir_mtime:
+        return None, "Unable to verify all directory contents."
+    if any(worktree_marker(Path(child)) for child in result.dir_mtime):
+        return None, "Contains a managed worktree; remove it through its owning manager."
+    return result, None
+
+
 def temp_entries(root: Path, scan_id: Optional[int]) -> List[Dict[str, Any]]:
     entries = []
     try:
@@ -2101,7 +2138,8 @@ def temp_entries(root: Path, scan_id: Optional[int]) -> List[Dict[str, Any]]:
         old = (info.st_uid == os.getuid() and (stat.S_ISDIR(info.st_mode) or stat.S_ISREG(info.st_mode))
                and not child.name.startswith("com.apple.") and child.name not in ("TemporaryItems", ".", "..")
                and newest is not None and newest <= time.time() - TEMP_STALE_DAYS * 86400
-               and cleanup_protection_reason(path) is None and cleanup_protection_reason(path.resolve()) is None)
+               and cleanup_protection_reason(path) is None and cleanup_protection_reason(path.resolve()) is None
+               and (not stat.S_ISDIR(info.st_mode) or indexed_cleanup_protection(scan_id, indexed_path) is None))
         entries.append({"path": str(path), "label": child.name, "allocated_bytes": size, "newest_mtime": newest, "old": old})
     return entries
 
@@ -2140,6 +2178,16 @@ def execute_trash_group(action: Dict[str, Any]) -> Dict[str, Any]:
     for entry in entries:
         if not entry["old"]:
             continue
+        path = Path(entry["path"])
+        if path.is_dir():
+            current, protection = inspect_cleanup_directory(path)
+            if protection:
+                failure_count += 1
+                if len(failures) < 20:
+                    failures.append({"path": str(path), "error": protection})
+                continue
+            if max(current.dir_mtime.values()) > time.time() - TEMP_STALE_DAYS * 86400:
+                continue
         try:
             os.rename(entry["path"], destination / entry["label"])
             moved_count += 1
@@ -2160,6 +2208,8 @@ def execute_trash_path(path: Path) -> Dict[str, Any]:
     if path.is_symlink() or path.stat().st_dev != DATA_VOLUME.stat().st_dev:
         raise HTTPException(status_code=400, detail="Target is not on the Data volume.")
     protection = cleanup_protection_reason(path) or cleanup_protection_reason(path.resolve())
+    if protection is None and path.is_dir():
+        _, protection = inspect_cleanup_directory(path)
     if protection is not None:
         raise HTTPException(status_code=400, detail=f"Storage Monitor will not move {path} to Trash. {protection}")
     destination = unique_trash_destination(path)
@@ -2475,7 +2525,7 @@ def discover_candidates(scan_id: int) -> List[Dict[str, Any]]:
     now = int(time.time())
     for row, rule in survivors:
         path = Path(row["path"])
-        protection = cleanup_protection_reason(path)
+        protection = cleanup_protection_reason(path) or indexed_cleanup_protection(scan_id, path)
         age = (now - row["newest_mtime"]) // 86400 if row["newest_mtime"] is not None else None
         stale = (age >= rule["stale_days"] if age is not None else None) if rule["action"] == "when_stale" else None
         actionable = (protection is None and row["allocated_bytes"] >= rule["min_bytes"]

@@ -2462,3 +2462,7 @@ Storage Monitor initially chose a discovery rule's actionable risk before groupi
 ## 2026-11-11: Isolate system-discovered roots before report tests
 
 A Storage Monitor report test enumerated host temporary directories when a new collector used OS-discovered roots without a suite-wide fixture. Pin those roots to synthetic directories and guard host enumeration before any report builder runs. Keep the fixture directories outside walker inputs: putting them inside each test's input tree changed native enumeration counts. No cleanup action was run against the host roots.
+
+## 2026-11-11: Recheck descendants and protected containers before moving a directory
+
+An indexed newest time cannot prove a directory stayed stale: an in-place file edit does not update its parent directory timestamp. Before a cleanup rename, enumerate the directory again with the native walker and refuse incomplete results. Protect both a managed worktree and any cleanup target enclosing it; check indexed markers for report-time eligibility and current markers again at execution.
