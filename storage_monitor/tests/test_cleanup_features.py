@@ -66,6 +66,19 @@ def test_config_stale_override_changes_discovery(monkeypatch, tmp_path):
     assert module.discover_candidates(scan_id)[0]["stale"] is True
 
 
+def test_ignore_outside_home_preserves_other_settings(monkeypatch, tmp_path):
+    module = load(monkeypatch, tmp_path)
+    home = _discovery_home(module, monkeypatch, tmp_path)
+    ignored = tmp_path / "synthetic-external" / "child"
+    config = {"ignore_paths": [str(ignored.parent)], "stale_days": {"synthetic": 5}, "watchlist": [{"slug": "synthetic", "label": "Synthetic", "path": str(home / "synthetic"), "category": "user_data", "risk": "high", "description": "Synthetic", "actionable": False, "cleanup_kind": None}]}
+    (module.RUNTIME_PATHS.home / "config.json").write_text(json.dumps(config))
+    loaded = module.load_config()
+    assert len(loaded["watchlist"]) == 1 and loaded["stale_days"] == {"synthetic": 5}
+    finding = {"path": str(ignored), "category": "temp", "allocated_bytes": 7}
+    result = module.build_findings_section([], discovered=[finding])
+    assert result["items"] == [] and result["ignored"] == 1
+
+
 def test_ignore_hides_group_children_beyond_display_limit(monkeypatch, tmp_path):
     module = load(monkeypatch, tmp_path)
     home = _discovery_home(module, monkeypatch, tmp_path)
@@ -434,6 +447,39 @@ def test_temp_groups_recheck_entries_and_continue_after_refusal(monkeypatch, tmp
         assert len(log.splitlines()) == 1 and str(root / "refused") not in log and str(root / "old") not in log
     finally:
         sock.close()
+
+
+def test_temp_group_ignores_hidden_child_and_bulk_action_rechecks_config(monkeypatch, tmp_path):
+    module = load(monkeypatch, tmp_path)
+    _discovery_home(module, monkeypatch, tmp_path)
+    root = tmp_path / "synthetic-temp"
+    root.mkdir()
+    monkeypatch.setattr(module, "temp_roots", lambda: [root])
+    monkeypatch.setattr(module, "TRASH_DIR", tmp_path / "synthetic-trash")
+    monkeypatch.setattr(module, "DATA_VOLUME", tmp_path / "synthetic-data")
+    old = int(time.time()) - 4 * 86400
+    for index in range(21):
+        path = root / f"synthetic-{index:02}"
+        path.write_bytes(b"x" * (8192 if index < 20 else 1))
+        os.utime(path, (old, old))
+    hidden = root / "synthetic-20"
+    unfiltered = module.temp_findings(None)[0]
+    assert unfiltered["count"] == 21 and len(unfiltered["items"]) == 20
+    assert all(item["path"] != str(hidden) for item in unfiltered["items"])
+    config_path = module.RUNTIME_PATHS.home / "config.json"
+    config_path.write_text(json.dumps({"ignore_paths": [str(hidden)]}))
+    scan_id = _insert_scan(module, active=True)
+    result = module.build_findings_section([], scan_id, discovered=[])
+    group = next(item for item in result["items"] if item["category"] == "temp")
+    expected_bytes = sum((root / f"synthetic-{index:02}").stat().st_blocks * 512 for index in range(20))
+    assert result["ignored"] == 1
+    assert group["count"] == 20 and group["allocated_bytes"] == expected_bytes
+    assert len(group["items"]) == 20 and all(item["path"] != str(hidden) for item in group["items"])
+    newly_ignored = root / "synthetic-00"
+    config_path.write_text(json.dumps({"ignore_paths": [str(hidden), str(newly_ignored)]}))
+    action_result = module.execute_trash_group(module.decode_action_token(group["action_token"]))
+    assert action_result["moved_count"] == 19
+    assert hidden.exists() and newly_ignored.exists()
 
 
 def test_temp_group_rejects_unknown_root_and_removes_empty_destination(monkeypatch, tmp_path):

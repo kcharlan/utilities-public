@@ -1201,7 +1201,11 @@ def load_config() -> Dict[str, Any]:
             slugs.add(entry["slug"])
             path = home_path(entry["path"])
             specs.append({**entry, "path": str(path), "cleanup_kind": entry.get("cleanup_kind"), "actionable": bool(entry["actionable"] and entry.get("cleanup_kind") == "trash_path" and not cleanup_protection_reason(path))})
-        paths = [str(home_path(path)) for path in ignored]
+        paths = []
+        for value in ignored:
+            if not isinstance(value, str) or not Path(os.path.expanduser(value)).is_absolute():
+                raise ValueError("ignore path must be absolute or home-relative")
+            paths.append(str(expand_path(value)))
         if any(not isinstance(key, str) or isinstance(value, bool) or not isinstance(value, int) or not 1 <= value <= 3650 for key, value in stale.items()):
             raise ValueError("invalid stale_days override")
         return {"watchlist": specs, "ignore_paths": paths, "stale_days": stale}
@@ -2167,10 +2171,12 @@ def temp_entries(root: Path, scan_id: Optional[int]) -> List[Dict[str, Any]]:
 
 def temp_findings(scan_id: Optional[int]) -> List[Dict[str, Any]]:
     findings = []
+    ignore_roots = [Path(path) for path in load_config()["ignore_paths"]]
     for root in temp_roots():
         if not root.is_dir():
             continue
-        entries = temp_entries(root, scan_id)
+        all_entries = temp_entries(root, scan_id)
+        entries = [item for item in all_entries if not path_is_ignored(Path(item["path"]), ignore_roots, protect_ancestors=True)]
         old = sorted((item for item in entries if item["old"]), key=lambda item: item["allocated_bytes"], reverse=True)
         other = [item for item in entries if not item["old"]]
         total = sum(item["allocated_bytes"] for item in old)
@@ -2178,7 +2184,7 @@ def temp_findings(scan_id: Optional[int]) -> List[Dict[str, Any]]:
         other_bytes = sum(item["allocated_bytes"] for item in other)
         finding = {"group": True, "path": str(root), "label": f"{len(old)} entries older than {TEMP_STALE_DAYS} days, {total / (1024 * 1024):.1f} MiB; {len(other)} other entries, {other_bytes / (1024 * 1024):.1f} MiB",
                    "category": "temp", "risk": "low", "description": "Old temporary entries; review before moving to Trash.",
-                   "count": len(old), "items": old[:20], "other_count": len(other), "other_bytes": other_bytes, "stale": bool(old),
+                   "count": len(old), "items": old[:20], "other_count": len(other), "other_bytes": other_bytes, "stale": bool(old), "ignored_count": len(all_entries) - len(entries),
                    "allocated_bytes": total, "estimated_reclaim_bytes": total, "actionable": bool(old),
                    "cleanup_kind": "trash_group", "action_token": encode_action_token(action) if old else None}
         finding["actions"] = build_finding_actions(finding)
@@ -2191,7 +2197,8 @@ def execute_trash_group(action: Dict[str, Any]) -> Dict[str, Any]:
     if (action.get("rule") != "temp_old" or action.get("min_age_days") != TEMP_STALE_DAYS
             or root not in temp_roots() or root.is_symlink() or root.resolve() != root):
         raise HTTPException(status_code=400, detail="Invalid temporary root or rule.")
-    entries = temp_entries(root, fetch_active_scan_id())
+    ignore_roots = [Path(path) for path in load_config()["ignore_paths"]]
+    entries = [item for item in temp_entries(root, fetch_active_scan_id()) if not path_is_ignored(Path(item["path"]), ignore_roots, protect_ancestors=True)]
     destination = unique_trash_destination(Path("temp"))
     destination.mkdir()
     moved_count = moved_bytes = failure_count = 0
@@ -2821,6 +2828,11 @@ def collect_orphan_candidates(scan_id: int, installed_ids: Set[str]) -> Dict[str
     return {"items": items[:40], "updated_at": iso_now()}
 
 
+def path_is_ignored(path: Path, roots: List[Path], *, protect_ancestors: bool = False) -> bool:
+    path = path.resolve()
+    return any(path == root or root in path.parents or (protect_ancestors and path in root.parents) for root in roots)
+
+
 def build_findings_section(
     watchlist: List[Dict[str, Any]],
     scan_id: Optional[int] = None,
@@ -2861,9 +2873,10 @@ def build_findings_section(
     ignore_roots = [Path(path) for path in load_config()["ignore_paths"]]
     def ignored(item: Dict[str, Any]) -> bool:
         path = item.get("path")
-        return bool(path and any(Path(path) == root or root in Path(path).parents for root in ignore_roots))
+        return bool(path and path_is_ignored(Path(path), ignore_roots))
     ignored_count = sum(1 for item in findings if ignored(item))
     findings = [item for item in findings if not ignored(item)]
+    ignored_count += sum(item.get("ignored_count", 0) for item in findings)
     for item in findings:
         if item.get("group") and item.get("path") is None:
             hidden = [child for child in item.get("items", []) if ignored(child)]
@@ -4624,18 +4637,19 @@ const html = htm.bind(preact.h);
               return html`<section key=${group}><strong style=${{ display: 'block', padding: '6px 12px' }}>${group} · ${formatBytes(rows.reduce((n, item) => n + (item.allocated_bytes || 0), 0))}</strong>${rows.map((item) => {
               const risk = RISK_STYLES[item.risk] || {};
               const isTopReclaim = topReclaimPaths.has(item.path);
+              const groupKey = `${item.category}::${item.path || item.group_label || 'group'}`;
               return (
                 html`<div key=${item.path + item.label} class=${"surface-hover"} style=${{
                   display: 'grid', gridTemplateColumns: '2fr 80px 55px 60px 75px 100px', gap: 4,
                   padding: '5px 12px', borderBottom: '1px solid var(--border)', alignItems: 'center',
                   background: isTopReclaim ? `${ROOT_COLORS.data_root}08` : undefined,
-                }}><span style=${{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }} title=${item.path}>${item.group ? html`<button onClick=${() => setExpanded({...expanded, [item.label]: !expanded[item.label]})} aria-expanded=${!!expanded[item.label]}>${item.label}</button>` : item.label}</span><span style=${{
+                }}><span style=${{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }} title=${item.path}>${item.group ? html`<button onClick=${() => setExpanded({...expanded, [groupKey]: !expanded[groupKey]})} aria-expanded=${!!expanded[groupKey]}>${item.label}</button>` : item.label}</span><span style=${{
                     padding: '1px 6px', borderRadius: 4, fontSize: 11, textAlign: 'center',
                     background: `${CATEGORY_COLORS[item.category] || '#666'}22`,
                     color: CATEGORY_COLORS[item.category] || 'var(--text-secondary)',
                   }}>${(item.category || '').replace(/_/g, ' ')}</span><span style=${{ padding: '1px 6px', borderRadius: 4, fontSize: 11, textAlign: 'center', background: risk.bg, color: risk.color }}>${risk.label}</span><span>${item.age_days == null ? '—' : item.age_days <= 0 ? 'today' : `${item.age_days} d`}</span><span class=${"mono"} style=${{ textAlign: 'right' }}>${formatBytes(item.estimated_reclaim_bytes || item.allocated_bytes)}</span><span style=${{ display: 'flex', gap: 3, justifyContent: 'flex-end' }}>${item.actions?.filter(a => a.kind === 'execute').map(a => (
                       html`<button key=${a.label} disabled=${busyToken === a.action_token} onClick=${() => window.confirm(item.cleanup_kind === 'trash_group' ? `Move ${item.count} entries older than 3 days to Trash?\n\n${item.path}\n\nEntries are checked again before moving. Space is freed only when you empty the Trash.` : `${a.label}?\n\n${item.path}\n${formatBytes(item.estimated_reclaim_bytes || item.allocated_bytes)}\n\nQuit the app that owns it first. Space is freed only when you empty the Trash.`) && onExecute(a.action_token)} style=${{ padding: '2px 7px', borderRadius: 4, fontSize: 11, border: 'none', cursor: 'pointer', background: 'var(--accent)', color: '#fff' }}>${busyToken === a.action_token ? '...' : (a.label === 'Move to Trash' ? 'Trash' : a.label)}</button>`
-                    ))}${item.path && html`<button onClick=${() => onReveal(item.path)} style=${{ padding: '2px 7px', borderRadius: 4, fontSize: 11, border: '1px solid var(--border)', cursor: 'pointer', background: 'transparent', color: 'var(--text-secondary)' }}>Reveal</button>`}</span>${item.group && expanded[item.label] && html`<div style=${{ gridColumn: '1 / -1', paddingLeft: 20 }}>${(item.items || []).map(child => html`<div key=${child.path}>${child.label} · ${formatBytes(child.allocated_bytes)} <button onClick=${() => onReveal(child.path)}>Reveal</button></div>`)}</div>`}</div>`
+                    ))}${item.path && html`<button onClick=${() => onReveal(item.path)} style=${{ padding: '2px 7px', borderRadius: 4, fontSize: 11, border: '1px solid var(--border)', cursor: 'pointer', background: 'transparent', color: 'var(--text-secondary)' }}>Reveal</button>`}</span>${item.group && expanded[groupKey] && html`<div style=${{ gridColumn: '1 / -1', paddingLeft: 20 }}>${(item.items || []).map(child => html`<div key=${child.path}>${child.label} · ${formatBytes(child.allocated_bytes)} <button onClick=${() => onReveal(child.path)}>Reveal</button></div>`)}</div>`}</div>`
               );
             })}${omitted.map(([category, value]) => html`<div key=${category} style=${{ padding: '4px 12px' }}>${value.count} more not shown (${formatBytes(value.bytes)})</div>`)}</section>`;
             })}</div></div>`

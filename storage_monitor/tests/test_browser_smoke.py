@@ -276,6 +276,26 @@ def test_findings_groups_age_filter_and_scan_details(monkeypatch, tmp_path):
         browser.close()
 
 
+def test_equal_label_groups_expand_independently(monkeypatch, tmp_path):
+    monkeypatch.setenv("STORAGE_MONITOR_HOME", str(tmp_path / "runtime"))
+    module = load_launcher(PROJECT_ROOT / "storage_monitor")
+    groups = [{"path": f"/synthetic/root-{name}", "label": "Equal group", "category": "temp", "risk": "low", "group": True, "allocated_bytes": 1, "items": [{"path": f"/synthetic/root-{name}/child", "label": f"Child {name}", "allocated_bytes": 1}], "actions": []} for name in ("a", "b")]
+    report = {**SYNTHETIC_REPORT_ROWS, "findings": {"items": groups}}
+    with live_server(module.app) as url, sync_playwright() as playwright:
+        browser = playwright.chromium.launch(headless=True)
+        page = browser.new_page()
+        route_dashboard_api(page)
+        page.route("**/api/state", lambda route: route.fulfill(json={"scan_status": {"running": False}, "report": report}))
+        with guard_browser_errors(page):
+            page.goto(url, wait_until="networkidle")
+            page.get_by_role("button", name="Equal group").first.click()
+            assert page.get_by_text("Child a", exact=False).is_visible()
+            assert page.get_by_text("Child b", exact=False).count() == 0
+            page.get_by_role("button", name="Equal group").last.click()
+            assert page.get_by_text("Child b", exact=False).is_visible()
+        browser.close()
+
+
 def test_controls_update_the_view_immediately(monkeypatch, tmp_path):
     monkeypatch.setenv("STORAGE_MONITOR_HOME", str(tmp_path / "runtime"))
     module = load_launcher(PROJECT_ROOT / "storage_monitor")

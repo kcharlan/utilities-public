@@ -1,5 +1,12 @@
 # Lessons learned
 
+## Grouped cleanup and ignored paths
+
+Apply path exclusions before a grouped result is counted or capped, and apply
+them again to the live candidates when a bulk action runs. Test an excluded
+entry beyond the visible cap and change the exclusions after presenting the
+group so the test catches both stale totals and unsafe execution.
+
 ## Synthetic directory modes and umask
 
 When a test requires a specific directory mode, explicitly chmod the synthetic fixture and assert its precondition: mkdir’s requested mode is filtered by the caller’s umask. Preserve the post-operation mode assertion so rejection and non-mutation remain tested under restrictive umasks.
