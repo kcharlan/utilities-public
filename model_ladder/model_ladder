@@ -1,0 +1,178 @@
+#!/usr/bin/env -S uv run --script
+# /// script
+# requires-python = ">=3.12,<3.16"
+# dependencies = []
+# ///
+"""Model Ladder: compare model effort levels by Intelligence Index and cost per task.
+
+Runtime home: ~/.model_ladder/ (override with MODEL_LADDER_HOME), holding
+config.json. Later releases add snapshots and the offline page there.
+"""
+import argparse
+import contextlib
+import json
+import os
+import sys
+import tempfile
+from pathlib import Path
+
+VERSION = "1.0.0"
+
+# ---------------------------------------------------------------------------
+# Config and atomic writes
+# ---------------------------------------------------------------------------
+
+CONFIG_FILENAME = "config.json"
+DEFAULT_CONFIG = {"op_item": "", "op_vault": "", "op_field": "credential", "max_age_hours": 12}
+
+
+def runtime_home() -> Path:
+    override = os.environ.get("MODEL_LADDER_HOME")
+    return Path(override).expanduser() if override else Path.home() / ".model_ladder"
+
+
+def ensure_runtime_home(path: Path) -> Path:
+    path.mkdir(parents=True, exist_ok=True, mode=0o700)
+    path.chmod(0o700)
+    return path
+
+
+def atomic_write_bytes(path: Path, data: bytes, mode: int = 0o600) -> None:
+    """Publish a complete same-directory private file, preserving the old file on failure."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fd, temporary = tempfile.mkstemp(prefix=f".{path.name}.", suffix=".tmp", dir=path.parent)
+    try:
+        os.fchmod(fd, mode)
+        with os.fdopen(fd, "wb") as stream:
+            stream.write(data)
+            stream.flush()
+            os.fsync(stream.fileno())
+        os.replace(temporary, path)
+    finally:
+        with contextlib.suppress(FileNotFoundError):
+            os.unlink(temporary)
+
+
+def load_config() -> dict:
+    """Read config.json, creating it with defaults on first use."""
+    home = ensure_runtime_home(runtime_home())
+    path = home / CONFIG_FILENAME
+    if not path.exists():
+        atomic_write_bytes(path, (json.dumps(DEFAULT_CONFIG, indent=2) + "\n").encode("utf-8"))
+        return dict(DEFAULT_CONFIG)
+    try:
+        loaded = json.loads(path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError as error:
+        raise ValueError(f"{path} is not valid JSON: {error}") from error
+    if not isinstance(loaded, dict):
+        raise ValueError(f"{path} must contain a JSON object")
+    return {**DEFAULT_CONFIG, **loaded}
+
+
+# ---------------------------------------------------------------------------
+# Names
+# ---------------------------------------------------------------------------
+
+EFFORTS = ("max", "xhigh", "high", "medium", "low", "minimal")  # highest first
+NON_REASONING = "non-reasoning"
+RUNG_ORDER = EFFORTS + (NON_REASONING,)
+
+
+def _whole_name(text: str, problem: str) -> dict:
+    return {"family": text, "rung": None, "tags": [], "problem": problem}
+
+
+def split_name(name: str) -> dict:
+    """Split a display name into family, effort rung and tags using string operations only."""
+    text = name.strip()
+    if text.endswith(")") and "(" in text:
+        start = text.rfind("(")
+        family, inner = text[:start].rstrip(), text[start + 1:-1]
+        if "(" in family or ")" in family:
+            return _whole_name(text, "more than one group")
+        words = [w.strip() for w in inner.split(",") if w.strip()]
+    else:
+        family, words = text, []
+    efforts = [w for w in words if w.lower() in EFFORTS]
+    if len(efforts) > 1:
+        return _whole_name(text, "two effort words")
+    rung = None
+    rest = list(words)
+    if efforts:
+        rung = efforts[0].lower()
+        rest.remove(efforts[0])
+    else:
+        for word in words:
+            if word.lower() == NON_REASONING:
+                rung = NON_REASONING
+                rest.remove(word)
+                break
+    return {"family": family, "rung": rung, "tags": rest, "problem": None}
+
+
+def _family_key(maker: str, family: str) -> str:
+    return json.dumps([maker, family])
+
+
+def classify(models: list[dict]) -> list[dict]:
+    """One row per scored model, in input order, with its family and effort rung."""
+    rows = []
+    for item in models:
+        index = (item.get("evaluations") or {}).get("artificial_analysis_intelligence_index")
+        if isinstance(index, bool) or not isinstance(index, (int, float)):
+            continue
+        cost_block = item.get("artificial_analysis_intelligence_index_cost") or {}
+        per_task = cost_block.get("cost_per_task") or {}
+        cost = per_task.get("total_cost") or None
+        maker = (item.get("model_creator") or {}).get("name")
+        parts = split_name(item.get("name") or "")
+        rows.append({
+            "slug": item.get("slug"),
+            "name": item.get("name"),
+            "maker": maker,
+            "family": parts["family"],
+            "family_key": _family_key(maker, parts["family"]),
+            "rung": parts["rung"],
+            "tags": parts["tags"],
+            "index": index,
+            "cost": cost,
+            "total_cost": cost_block.get("total_cost"),
+            "release_date": item.get("release_date"),
+            "problem": parts["problem"],
+        })
+    seen: dict[tuple, list[dict]] = {}
+    for row in rows:
+        if row["rung"] is not None:
+            seen.setdefault((row["family_key"], row["rung"]), []).append(row)
+    for group in seen.values():
+        if len(group) > 1:
+            for row in group:
+                row["family"] = row["name"]
+                row["family_key"] = _family_key(row["maker"], row["name"])
+                row["rung"] = None
+                row["problem"] = "duplicate rung"
+    return rows
+
+
+# ---------------------------------------------------------------------------
+# CLI
+# ---------------------------------------------------------------------------
+
+
+def build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(
+        prog="model_ladder",
+        description="Compare model effort levels by Intelligence Index and cost per task.",
+        epilog="Runtime home: ~/.model_ladder/ (override with MODEL_LADDER_HOME).",
+    )
+    parser.add_argument("--version", action="version", version=f"Model Ladder {VERSION}")
+    return parser
+
+
+def main(argv: list[str] | None = None) -> int:
+    build_parser().parse_args(argv)
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

@@ -8,6 +8,13 @@ test_requirements = "jtree/requirements-dev.txt"
 test_commands = [["pytest", "-q"]]
 smoke_args = ["--help"]
 
+[projects.model_ladder]
+project = "model_ladder"
+launcher = "model_ladder/model_ladder"
+test_requirements = "model_ladder/requirements-dev.txt"
+test_commands = [["pytest", "-q"]]
+smoke_args = ["--help"]
+
 [projects.tax2]
 project = "tax2"
 launcher = "tax2/tax2"
