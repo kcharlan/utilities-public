@@ -1602,7 +1602,7 @@ APP_JS = r"""
       <${Attention} view=${view} />
       <${Changes} mode=${state.mode} index=${state.index} />
       <div class="index-bar"><label for="index-select">Scored by</label><select id="index-select" value=${state.index} onChange=${(e) => update({ index: e.currentTarget.value })}>
-        ${DATA.indexes.filter((i) => i.count > 0).map((i) => html`<option key=${i.key} value=${i.key}>${i.label} (${i.count})</option>`)}
+        ${DATA.indexes.filter((i) => i.key === "intelligence" || i.count > 0).map((i) => html`<option key=${i.key} value=${i.key}>${i.label} (${i.count})</option>`)}
       </select></div>
       ${borrowed ? html`<p id="cost-notice" class="ver cost-notice">Costs here are from the Intelligence Index run. Artificial Analysis publishes no cost for the ${indexLabel} index, so every cost, frontier and cost per point on this page pairs these scores with that cost.</p>` : null}
       <div class="tabs" role="tablist">

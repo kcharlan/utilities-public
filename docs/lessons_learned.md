@@ -2437,3 +2437,7 @@ move the write onto the actor to confirm the test catches that regression.
 ## 2026-11-03: Hover a chart only after it is drawn at its measured width
 
 The shared SVG chart first draws at a 400px placeholder width and measures its container in an effect after paint. A Playwright `mouse.move` sent in that window lands outside the placeholder plot, the chart clears its hover, and Chromium sends no further move when the chart resizes under the stationary cursor, so the tooltip never appears; Git Fleet's date-boundary activity test failed this way under load. Call `_wait_for_chart_width` in `git-multirepo-dashboard/tests/test_e2e.py` before a single-move hover; `test_chart_hover_waits_for_measured_width` holds the placeholder width to prove the wait is needed.
+
+## 2026-11-11: Keep native select fallbacks among the options
+
+When a native select's saved or default value is absent from its options, its displayed value can disagree with the application state. Keep the fallback option available even when its count is zero, and test both the default and an unavailable saved choice against the rendered control.

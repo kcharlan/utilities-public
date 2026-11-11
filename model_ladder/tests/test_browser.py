@@ -141,6 +141,19 @@ def test_index_selector_and_borrowed_costs(open_page, ml):
     assert page.locator("#index-select").input_value() == "intelligence"
 
 
+def test_default_index_remains_available_when_only_domain_scores_exist(open_page, ml):
+    payload = payload_for(ml, [model("Synthetic Finance (High)", scores={"finance": 42})])
+    for fragment in ("", "#" + quote(json.dumps({"index": "healthcare"}))):
+        page = open_page(payload, fragment=fragment)
+        assert texts(page, "#index-select option") == ["Intelligence Index (0)", "Finance and accounting (1)"]
+        assert page.locator("#index-select").input_value() == "intelligence"
+        assert "Intelligence Index" in page.locator(".sub").inner_text()
+        assert page.locator("#all-table tbody tr").count() == 0
+        page.select_option("#index-select", "finance")
+        assert page.locator("#index-select").input_value() == "finance"
+        assert page.locator("#all-table tbody tr").count() == 1
+
+
 def test_opens_on_all_models(open_page, ml):
     page = open_page()
     expect(page.locator("#tab-all")).to_have_attribute("aria-selected", "true")
