@@ -6,23 +6,28 @@ import BrewVersionCore
     let notifier: UserNotifier
     private var status: (any PopoverPresenting)?
     private var events: SystemEvents?
+    private let log: any EventLogging
+    private let brewPath: String
     override convenience init() {
         let home = FileManager.default.homeDirectoryForCurrentUser
         let prefixes = HomebrewPrefix.detectAll(candidates: [URL(fileURLWithPath: "/opt/homebrew"), URL(fileURLWithPath: "/usr/local")])
         let installed = prefixes.isEmpty ? nil : InstalledReader(prefixes: prefixes, applicationDirectories: [URL(fileURLWithPath: "/Applications"), home.appendingPathComponent("Applications")], tappedTaps: { TapIndex.scan(prefixes: prefixes).taps })
+        let log = EventLog(directory: home.appendingPathComponent("Library/Logs/Brew Version"))
         let notifier = UserNotifier()
-        let controller = WatchController(transport: URLSessionTransport.standard(), installed: installed,
+        notifier.log = log
+        let controller = WatchController(transport: LoggingTransport(URLSessionTransport.standard(), log: log), installed: installed,
             store: WatchStore(fileURL: home.appendingPathComponent("Library/Application Support/Brew Version/state.json")),
             notifier: notifier,
-            catalogClient: CatalogClient(transport: CatalogClient.makeTransport(), cacheDirectory: home.appendingPathComponent("Library/Caches/Brew Version")), networkAvailable: false,
-            taps: { TapIndex.scan(prefixes: prefixes) })
-        self.init(controller: controller, notifier: notifier)
+            catalogClient: CatalogClient(transport: LoggingTransport(CatalogClient.makeTransport(), log: log), cacheDirectory: home.appendingPathComponent("Library/Caches/Brew Version")), networkAvailable: false,
+            taps: { TapIndex.scan(prefixes: prefixes) }, log: log)
+        self.init(controller: controller, notifier: notifier, log: log, brewPath: prefixes.first.map { $0.root.appendingPathComponent("bin/brew").path } ?? "none")
     }
-    init(controller: WatchController, notifier: UserNotifier, status: (any PopoverPresenting)? = nil) {
-        self.controller = controller; self.notifier = notifier; self.status = status
+    init(controller: WatchController, notifier: UserNotifier, status: (any PopoverPresenting)? = nil, log: any EventLogging = NoEventLog(), brewPath: String = "none") {
+        self.controller = controller; self.notifier = notifier; self.status = status; self.log = log; self.brewPath = brewPath
         super.init()
     }
     func applicationDidFinishLaunching(_ notification: Notification) {
+        log.record("app.launch", ["version": .string(Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "unknown"), "build": .string(Bundle.main.infoDictionary?["CFBundleVersion"] as? String ?? "unknown"), "os": .string(ProcessInfo.processInfo.operatingSystemVersionString), "brew": .string(brewPath), "confirmWithBrew": false, "watched": .int(controller.state.watched.count)])
         let status = StatusItemController(controller: controller, notifier: notifier)
         self.status = status
         notifier.showPopover = { [weak status] in status?.showPopover() }
@@ -35,6 +40,13 @@ import BrewVersionCore
     }
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
         status?.showPopover(); return true
+    }
+    func flushLog() async { await (log as? EventLog)?.flush() }
+    func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
+        guard log is EventLog else { return .terminateNow }
+        events?.stop()
+        Task { await flushLog(); sender.reply(toApplicationShouldTerminate: true) }
+        return .terminateLater
     }
     func applicationWillTerminate(_ notification: Notification) { events?.stop() }
 }

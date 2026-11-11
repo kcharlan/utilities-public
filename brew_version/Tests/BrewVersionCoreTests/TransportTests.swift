@@ -59,3 +59,28 @@ struct TransportTests {
         #expect(URLSessionTransport.standard().configuration.timeoutIntervalForResource == 30)
     }
 }
+
+private final class EventRecorder: EventLogging, @unchecked Sendable {
+    private let lock = NSLock()
+    private var entries: [(String, [String: LogValue])] = []
+    func record(_ event: String, _ fields: [String: LogValue]) { lock.withLock { entries.append((event, fields)) } }
+    var recorded: [(String, [String: LogValue])] { lock.withLock { entries } }
+}
+private struct FixedTransport: HTTPTransport {
+    let result: Result<HTTPResponse, URLError>
+    func get(_ url: URL, ifNoneMatch: String?) async throws -> HTTPResponse { try result.get() }
+}
+
+extension TransportTests {
+    @Test func loggingTransportRecordsResponsesAndErrorsButSkips304() async throws {
+        let log = EventRecorder(), url = URL(string: "https://example.invalid/synthetic")!
+        let response = HTTPResponse(status: 200, body: Data("synthetic".utf8), etag: "synthetic", headers: ["last-modified": "synthetic-date"])
+        let returned = try await LoggingTransport(FixedTransport(result: .success(response)), log: log).get(url, ifNoneMatch: nil)
+        #expect(returned.body == response.body && returned.headers == response.headers)
+        _ = try await LoggingTransport(FixedTransport(result: .success(HTTPResponse(status: 304, body: Data()))), log: log).get(url, ifNoneMatch: nil)
+        await #expect(throws: URLError.self) { try await LoggingTransport(FixedTransport(result: .failure(URLError(.timedOut))), log: log).get(url, ifNoneMatch: nil) }
+        #expect(log.recorded.map(\.0) == ["http", "http"])
+        #expect(log.recorded[0].1["lastModified"] == .string("synthetic-date"))
+        #expect(log.recorded[1].1["error"] != nil)
+    }
+}

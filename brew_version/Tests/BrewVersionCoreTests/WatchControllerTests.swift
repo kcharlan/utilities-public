@@ -464,3 +464,43 @@ func watchResponse(_ version: String, etag: String? = nil, kind: PackageKind = .
         #expect(c.state.watched[0].installed?.version == "3.0" && c.amberCount == 0)
     }
 }
+
+private final class ControllerEventRecorder: EventLogging, @unchecked Sendable {
+    private let lock = NSLock()
+    private var entries: [String] = []
+    func record(_ event: String, _ fields: [String: LogValue]) { lock.withLock { entries.append(event) } }
+    var events: [String] { lock.withLock { entries } }
+}
+@MainActor extension WatchControllerTests {
+    @Test func changedListingLogsCheckAndAlertInOrder() async throws {
+        let f = WatchFixture(); defer { f.clean() }
+        let name = PackageName("synthetic-log")!
+        var state = AppState.initial; state.watched = [baseline(Listing(name: name, kind: .formula, version: "1"))]; try f.store.save(state)
+        let log = ControllerEventRecorder()
+        let controller = WatchController(transport: StubTransport([watchURL(name): [watchResponse("2")]]), installed: nil, store: f.store, notifier: RecordingNotifier(), log: log)
+        await controller.checkNow()
+        #expect(log.events == ["check.start", "release.seen", "alert.enqueue", "check.end"])
+    }
+    @Test func failedSaveLogsStateProblem() async throws {
+        let f = WatchFixture(); defer { f.clean() }; try f.store.save(.initial)
+        let failures = IOFailures(); failures.operation = "replace"; let log = ControllerEventRecorder()
+        let controller = WatchController(transport: StubTransport([:]), installed: nil, store: WatchStore(fileURL: f.file, io: failures.io), notifier: RecordingNotifier(), log: log)
+        controller.setInterval(CheckInterval(minutes: 47)!)
+        #expect(log.events.contains("state.problem"))
+    }
+}
+
+@MainActor extension WatchControllerTests {
+    @Test func firstSuccessfulListingLogsReleaseAndUndoLogsWatch() async throws {
+        let f = WatchFixture(); defer { f.clean() }
+        let name = PackageName("synthetic-first")!
+        var state = AppState.initial; state.watched = [WatchEntry(name: name, kind: .formula)]; try f.store.save(state)
+        let log = ControllerEventRecorder()
+        let controller = WatchController(transport: StubTransport([watchURL(name): [watchResponse("2")]]), installed: nil, store: f.store, notifier: RecordingNotifier(), log: log)
+        await controller.checkNow()
+        #expect(log.events.contains("release.seen"))
+        let removed = try #require(controller.remove(name))
+        #expect(controller.restore(removed.entry, at: removed.index))
+        #expect(log.events.last == "watch.add")
+    }
+}

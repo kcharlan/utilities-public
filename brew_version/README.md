@@ -595,3 +595,18 @@ for deploy, dry-run, read-only audit, rollback and fleet-audit commands. The
 installer builds admitted tracked inputs, installs the signed CLI and app as
 one release, and preserves watches and catalog state. It never opens or quits
 the app. Quit and reopen an already running app after deployment.
+
+## Event log
+
+The app writes a local JSON Lines event log at
+`~/Library/Logs/Brew Version/events.jsonl`. Each line is a JSON object with a
+UTC timestamp (`t`), event name, and relevant fields. It includes package names,
+versions, HTTP validators, and error details; nothing is sent elsewhere. Files
+rotate at about 2 MB with two archives, for a ceiling of about 6 MB. Settings
+provides **Show log in Finder**. For example, read recent events with:
+
+```sh
+jq . "$HOME/Library/Logs/Brew Version/events.jsonl"
+```
+
+Removing the app leaves the log folder; delete it manually when no longer needed.

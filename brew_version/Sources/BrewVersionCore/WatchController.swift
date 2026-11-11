@@ -80,10 +80,12 @@ public enum AutomaticCheckSchedule: Equatable, Sendable {
     private var targetedVersions: [PackageKind: [PackageName: TargetedInstallation]] = [:]
     private var installationRevision = 0
     private let store: WatchStore
+    private let log: any EventLogging
     private let notifier: any Notifier
     private var alertQueue: Task<Void, Never>?
     @discardableResult private func enqueueAlert(_ delivery: AlertDelivery) -> Task<Void, Never> {
         let digest = alertDigest(for: state.watched), previous = alertQueue
+        if delivery != .keepCurrent, let digest { log.record("alert.enqueue", ["delivery": .string(String(describing: delivery)), "names": .list(digest.names.map(\.rawValue)), "title": .string(digest.title)]) }
         let deliveryTask = notifier.publishAlert(digest, delivery: delivery)
         let next = Task { await previous?.value; await deliveryTask.value }
         alertQueue = next
@@ -105,25 +107,26 @@ public enum AutomaticCheckSchedule: Equatable, Sendable {
 
     public convenience init(transport: any HTTPTransport, installed: (any InstalledReading)?, store: WatchStore,
                 notifier: any Notifier, now: @escaping () -> Date = Date.init,
-                catalogClient: CatalogClient? = nil, networkAvailable: Bool = true, taps: @escaping @Sendable () -> TapIndex = { .empty }) {
+                catalogClient: CatalogClient? = nil, networkAvailable: Bool = true, taps: @escaping @Sendable () -> TapIndex = { .empty }, log: any EventLogging = NoEventLog()) {
         self.init(transport: transport, installed: installed, store: store, notifier: notifier, now: now,
-                  catalogClient: catalogClient, networkAvailable: networkAvailable, initialCache: nil, taps: taps)
+                  catalogClient: catalogClient, networkAvailable: networkAvailable, initialCache: nil, taps: taps, log: log)
     }
 
     init(transport: any HTTPTransport, installed: (any InstalledReading)?, store: WatchStore,
          notifier: any Notifier, now: @escaping () -> Date = Date.init,
-         catalogClient: CatalogClient? = nil, networkAvailable: Bool = true, initialCache: ListingCache?, taps: @escaping @Sendable () -> TapIndex = { .empty }) {
+         catalogClient: CatalogClient? = nil, networkAvailable: Bool = true, initialCache: ListingCache?, taps: @escaping @Sendable () -> TapIndex = { .empty }, log: any EventLogging = NoEventLog()) {
         let load = store.load()
         state = load.state; persistenceError = load.problem; canSave = load.canSave
         persistenceIssue = load.problem == nil ? nil : (load.canSave ? .recoveryWarning : .loadFailure)
         self.networkAvailable = networkAvailable
         self.transport = transport; self.installed = installed; self.store = store
-        self.notifier = notifier; self.now = now
+        self.notifier = notifier; self.now = now; self.log = log
         self.catalogClient = catalogClient
         self.taps = taps; tapIndex = taps()
         let cache = initialCache ?? ListingCache(entries: load.state.listingCache)
         self.cache = cache; client = HomebrewClient(transport: transport, cache: cache)
         generations = Dictionary(uniqueKeysWithValues: load.state.watched.map { ($0.name, UUID()) })
+        if let problem = load.problem { log.record("state.problem", ["kind": .string(load.canSave ? "recoveryWarning" : "loadFailure"), "message": .string(problem)]) }
     }
 
     public func retryLoad() {
@@ -131,6 +134,7 @@ public enum AutomaticCheckSchedule: Equatable, Sendable {
         let load = store.load()
         state = load.state; persistenceError = load.problem; canSave = load.canSave
         persistenceIssue = load.problem == nil ? nil : (load.canSave ? .recoveryWarning : .loadFailure)
+        if let problem = load.problem { log.record("state.problem", ["kind": .string(load.canSave ? "recoveryWarning" : "loadFailure"), "message": .string(problem)]) }
         cache = ListingCache(entries: load.state.listingCache)
         client = HomebrewClient(transport: transport, cache: cache)
         generations = Dictionary(uniqueKeysWithValues: load.state.watched.map { ($0.name, UUID()) })
@@ -146,7 +150,7 @@ public enum AutomaticCheckSchedule: Equatable, Sendable {
         guard canSave, state.watched.contains(where: { $0.alertPendingSince != nil }) else { return }
         var candidate = state
         for index in candidate.watched.indices { candidate.watched[index].alertPendingSince = nil }
-        if commit(candidate) { enqueueAlert(.keepCurrent) }
+        if commit(candidate) { log.record("alert.ack", ["how": "acknowledgeAlerts"]); enqueueAlert(.keepCurrent) }
     }
 
     @discardableResult private func commit(_ candidate: AppState) -> Bool {
@@ -164,6 +168,7 @@ public enum AutomaticCheckSchedule: Equatable, Sendable {
         } catch {
             persistenceError = "Couldn't save state: \(error.localizedDescription)"
             persistenceIssue = .saveFailure; lastFailedSave = now()
+            log.record("state.problem", ["kind": "saveFailure", "message": .string(persistenceError ?? "")])
             return false
         }
     }
@@ -224,6 +229,7 @@ public enum AutomaticCheckSchedule: Equatable, Sendable {
         candidate.listingCache = snapshot
         if commit(candidate) {
             generations[entry.name] = UUID()
+            log.record("watch.add", ["name": .string(entry.name.rawValue)])
             await notifier.requestAuthorization()
         }
     }
@@ -235,7 +241,8 @@ public enum AutomaticCheckSchedule: Equatable, Sendable {
         let wasPending = entry.alertPendingSince != nil
         entry.alertPendingSince = nil
         guard commit(candidate) else { return nil }
-        if wasPending { enqueueAlert(.keepCurrent) }
+        if wasPending { log.record("alert.ack", ["how": "remove"]); enqueueAlert(.keepCurrent) }
+        log.record("watch.remove", ["name": .string(name.rawValue)])
         generations.removeValue(forKey: name)
         // Replace the cache boundary synchronously: in-flight lookups can finish
         // into their old actor, but cannot resurrect a removed watch's ETag.
@@ -249,6 +256,7 @@ public enum AutomaticCheckSchedule: Equatable, Sendable {
         candidate.watched.insert(entry, at: min(max(index, 0), candidate.watched.count))
         guard commit(candidate) else { return false }
         generations[entry.name] = UUID()
+        log.record("watch.add", ["name": .string(entry.name.rawValue)])
         return true
     }
     public func skip(_ name: PackageName) {
@@ -259,7 +267,10 @@ public enum AutomaticCheckSchedule: Equatable, Sendable {
         candidate.watched[index].skippedRelease = ReleaseID(listing)
         candidate.watched[index].unseenRelease = false
         candidate.watched[index].alertPendingSince = nil
-        if commit(candidate), wasPending { enqueueAlert(.keepCurrent) }
+        if commit(candidate) {
+            log.record("watch.skip", ["name": .string(name.rawValue)])
+            if wasPending { log.record("alert.ack", ["how": "skip"]); enqueueAlert(.keepCurrent) }
+        }
     }
     public func popoverClosed() {
         guard canSave else { return }
@@ -272,24 +283,24 @@ public enum AutomaticCheckSchedule: Equatable, Sendable {
             }
             candidate.watched[index].unseenRelease = false
         }
-        if commit(candidate), wasPending { enqueueAlert(.keepCurrent) }
+        if commit(candidate), wasPending { log.record("alert.ack", ["how": "popoverClosed"]); enqueueAlert(.keepCurrent) }
     }
     public func setInterval(_ interval: CheckInterval) {
         guard canSave else { return }
-        var candidate = state; candidate.interval = interval; commit(candidate)
+        var candidate = state; candidate.interval = interval; if commit(candidate) { log.record("setting", ["key": "interval", "value": .int(interval.minutes)]) }
     }
     public func setCatalogInterval(_ interval: CheckInterval) {
         guard canSave else { return }
-        var candidate = state; candidate.catalogInterval = interval; commit(candidate)
+        var candidate = state; candidate.catalogInterval = interval; if commit(candidate) { log.record("setting", ["key": "catalogInterval", "value": .int(interval.minutes)]) }
     }
     public func setIncludeSelfUpdating(_ on: Bool) {
         guard canSave else { return }
-        var candidate = state; candidate.includeSelfUpdating = on; commit(candidate)
+        var candidate = state; candidate.includeSelfUpdating = on; if commit(candidate) { log.record("setting", ["key": "includeSelfUpdating", "value": .bool(on)]) }
     }
     public func checkIfDue() async {
         guard automaticRequestsAllowed,
               watchCheckDeadline().map({ $0 <= now() }) ?? true else { return }
-        await checkNow()
+        await checkNow(trigger: "scheduled")
     }
 
     /// All watch retry gates share this deadline, including its reconnect preview.
@@ -307,6 +318,7 @@ public enum AutomaticCheckSchedule: Equatable, Sendable {
     /// The app starts with networkAvailable=false until its path monitor answers.
     /// Reconnection bypasses transport-failure backoff, never failed-save backoff.
     public func setNetworkAvailable(_ available: Bool) async {
+        if networkAvailable != available { log.record("network", ["available": .bool(available)]) }
         let reconnect = !networkAvailable && available
         networkAvailable = available
         guard reconnect else { return }
@@ -471,6 +483,9 @@ public enum AutomaticCheckSchedule: Equatable, Sendable {
             let taps = self.taps
             tapIndex = await Task.detached { taps() }.value
         }
+        let started = Date()
+        var revalidated = false
+        defer { if catalogClient != nil || (installed != nil && !tapIndex.taps.isEmpty) { log.record("catalog.refresh", ["ms": .int(Int(Date().timeIntervalSince(started) * 1000)), "revalidated": .bool(revalidated), "error": .string(catalogRefreshError ?? catalogWriteError ?? ""), "others": .int(others.count), "tapFailures": .int(tapCheckFailures), "tapUncheckable": .int(tapUncheckable)]) } }
         lastCatalogAttempt = now()
         // Keep the discovery snapshot and its metadata replacement in the same
         // overlap group as watched checks, including across the tap HTTP awaits.
@@ -482,6 +497,7 @@ public enum AutomaticCheckSchedule: Equatable, Sendable {
         if let catalogClient {
             do {
                 let result = try await catalogClient.load()
+                revalidated = result.revalidated
                 catalogWriteError = result.cacheWriteError
                 catalogRefreshError = result.refreshError
                 // Merge only after the final await, preserving watch/settings commits made in flight.
@@ -583,6 +599,7 @@ public enum AutomaticCheckSchedule: Equatable, Sendable {
         guard state.showOtherUpdates != on else { return }
         var candidate = state; candidate.showOtherUpdates = on
         guard commit(candidate) else { return }
+        log.record("setting", ["key": "showOtherUpdates", "value": .bool(on)])
         if on {
             Task { await self.hydrateCatalog(); await self.refreshCatalogIfDue() }
         } else {
@@ -591,7 +608,7 @@ public enum AutomaticCheckSchedule: Equatable, Sendable {
     }
 
     public func setOtherUpdatesCollapsed(_ collapsed: Bool) {
-        var candidate = state; candidate.otherUpdatesCollapsed = collapsed; commit(candidate)
+        var candidate = state; candidate.otherUpdatesCollapsed = collapsed; if commit(candidate) { log.record("setting", ["key": "otherUpdatesCollapsed", "value": .bool(collapsed)]) }
     }
 
     private func refreshSearchWatchState() {
@@ -658,8 +675,12 @@ public enum AutomaticCheckSchedule: Equatable, Sendable {
         }
     }
 
-    public func checkNow() async {
+    public func checkNow(trigger: String = "manual") async {
         guard canSave, !isChecking else { return }
+        let started = Date()
+        log.record("check.start", ["trigger": .string(trigger), "watched": .int(state.watched.count)])
+        var saved = false, announced = 0, alerted = 0, ok = 0, failed = 0, unreachable = 0
+        defer { log.record("check.end", ["ms": .int(Int(Date().timeIntervalSince(started) * 1000)), "ok": .int(ok), "failed": .int(failed), "unreachable": .int(unreachable), "announced": .int(announced), "alerted": .int(alerted), "saved": .bool(saved)]) }
         isChecking = true
         lastCheckAttempt = now()
         defer { isChecking = false }
@@ -704,12 +725,19 @@ public enum AutomaticCheckSchedule: Equatable, Sendable {
                   let index = candidate.watched.firstIndex(where: { $0.name == result.name }) else { continue }
             switch result.result {
             case .success(let listing):
+                ok += 1
                 let local = installation.installed(result.name, kind: listing.kind)
+                let previous = candidate.watched[index]
+                if previous.lastListing.map(ReleaseID.init) != ReleaseID(listing) {
+                    announced += 1
+                    log.record("release.seen", ["name": .string(result.name.rawValue), "kind": .string(listing.kind.rawValue), "from": .string(previous.lastListing.map { ReleaseID($0).displayVersion } ?? "none"), "to": .string(ReleaseID(listing).displayVersion), "installed": .string(local?.version ?? "none")])
+                }
+                if previous.installed?.version != local?.version { log.record("installed.changed", ["name": .string(result.name.rawValue), "from": .string(previous.installed?.version ?? "none"), "to": .string(local?.version ?? "none")]) }
                 var (entry, notice) = evaluate(candidate.watched[index], listing: listing, installed: local)
-                if notice != nil { entry.alertPendingSince = stamp; hasNotices = true }
+                if notice != nil { entry.alertPendingSince = stamp; hasNotices = true; alerted += 1 }
                 else if !entry.isAmber { entry.alertPendingSince = nil }
                 candidate.watched[index] = entry
-            case .failure(let error): candidate.watched[index].lastError = error.rowMessage
+            case .failure(let error): failed += 1; if case .unreachable = error { unreachable += 1 }; if case .tapUnreachable = error { unreachable += 1 }; candidate.watched[index].lastError = error.rowMessage
             }
         }
         retryWatchesOnReconnect = results.contains {
@@ -720,6 +748,8 @@ public enum AutomaticCheckSchedule: Equatable, Sendable {
         if !retryWatchesOnReconnect { candidate.lastCheck = now() }
         candidate.listingCache = snapshot
         guard commit(candidate) else { return }
+        saved = true
+        if alertCleared { log.record("alert.ack", ["how": "cleared"]) }
         let currentDigest = alertDigest(for: state.watched)
         if hasNotices { await enqueueAlert(listWasEmpty ? .withSound : .silent).value }
         else if previousDigest != currentDigest { await enqueueAlert(.keepCurrent).value }

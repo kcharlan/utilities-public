@@ -1027,3 +1027,50 @@ private struct IconPixel {
 }
 @MainActor private final class ChangeFlag { var changed = false }
 struct QuietNotifier: Notifier {}
+
+@MainActor extension NativeActionsTests {
+    @Test func revealLogSelectsFileOrDirectory() throws {
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent("brew-version-reveal-" + UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: dir) }
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        let file = dir.appendingPathComponent("events.jsonl")
+        var selected: [URL] = []
+        let action = LogRevealAction(fileURL: file, reveal: { selected.append($0) })
+        action.reveal()
+        try Data().write(to: file)
+        action.reveal()
+        #expect(selected.map(\.path) == [dir.path, file.path])
+    }
+}
+
+@MainActor extension NativeActionsTests {
+    @Test func terminationFlushesQueuedLog() async throws {
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent("brew-version-termination-" + UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let log = EventLog(directory: dir)
+        let notifier = UserNotifier(service: NotificationServiceStub())
+        let controller = WatchController(transport: URLSessionTransport.standard(), installed: nil, store: WatchStore(fileURL: dir.appendingPathComponent("state.json")), notifier: notifier)
+        let delegate = AppDelegate(controller: controller, notifier: notifier, log: log)
+        log.record("synthetic.termination", [:])
+        await delegate.flushLog()
+        let contents = try String(contentsOf: log.fileURL, encoding: .utf8)
+        #expect(contents.contains("synthetic.termination"))
+    }
+}
+
+private final class AppEventRecorder: EventLogging, @unchecked Sendable {
+    private let lock = NSLock()
+    private var values: [(String, [String: LogValue])] = []
+    func record(_ event: String, _ fields: [String: LogValue]) { lock.withLock { values.append((event, fields)) } }
+    var events: [(String, [String: LogValue])] { lock.withLock { values } }
+}
+@MainActor extension NativeActionsTests {
+    @Test func notificationResponseLogsTitleAndAction() {
+        let log = AppEventRecorder(), notifier = UserNotifier(service: NotificationServiceStub())
+        notifier.log = log
+        notifier.handleResponse(actionIdentifier: UNNotificationDismissActionIdentifier, requestIdentifier: "synthetic", title: "synthetic title")
+        #expect(log.events.first?.0 == "notify.response")
+        #expect(log.events.first?.1["title"] == .string("synthetic title"))
+        #expect(log.events.first?.1["action"] == .string("dismiss"))
+    }
+}

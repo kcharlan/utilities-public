@@ -47,10 +47,11 @@ struct SettingsView: View {
                     CatalogStatusLine(controller: controller)
                 }
                 Section("General") {
-                    Toggle("Open at login", isOn: Binding(get: { login.enabled }, set: { login.setEnabled($0) }))
+                    Toggle("Open at login", isOn: Binding(get: { login.enabled }, set: { value in login.setEnabled(value); if login.error == nil { notifier.log.record("setting", ["key": "openAtLogin", "value": .bool(login.enabled)]) } }))
                     Text(login.description).font(.caption).foregroundStyle(.secondary)
                     if login.requiresApproval { Button("Open Login Items Settings") { login.openSettings() } }
                     if let error = login.error { InlineWarning(message: error) }
+                    Button("Show log in Finder") { LogRevealAction().reveal() }
                     Button("Send test notification") { Task { await notifier.sendTestNotification() } }
                         .disabled(notifier.isSendingTestNotification)
                         .help("Send a Brew Version test notification. Click it to open the popover.")

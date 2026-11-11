@@ -26,6 +26,7 @@ import BrewVersionCore
 @MainActor @Observable final class UserNotifier: NSObject, Notifier, UNUserNotificationCenterDelegate {
     static let alertIdentifier = "brew-version.updates"
     static let deliveryGrace: TimeInterval = 5
+    var log: any EventLogging = NoEventLog()
     var showPopover: (() -> Void)?
     var acknowledgeAlert: (() -> Void)?
     private(set) var isSendingTestNotification = false
@@ -117,9 +118,11 @@ import BrewVersionCore
                 guard episode == packageEpisode, currentPackage != nil else {
                     service.removeDelivered([Self.alertIdentifier]); continue
                 }
+                log.record("notify.posted", ["title": .string(current.title), "sound": .bool(current.sound)])
                 failures[.package] = nil; lastAlertPost = now()
                 currentPackage?.sound = false
             } catch {
+                log.record("notify.failed", ["title": .string(current.title), "error": .string(error.localizedDescription)])
                 if episode == packageEpisode, let latest = currentPackage {
                     failures[.package] = Failure(post: latest, postingError: failureMessage("Couldn't post notification", error: error))
                 }
@@ -142,8 +145,10 @@ import BrewVersionCore
         if let category = payload.category { content.categoryIdentifier = category }
         do {
             try await service.post(UNNotificationRequest(identifier: payload.identifier, content: content, trigger: nil))
+            log.record("notify.posted", ["title": .string(payload.title), "sound": .bool(payload.sound)])
             if latestPosts[.test] == token { failures[.test] = nil }
         } catch {
+            log.record("notify.failed", ["title": .string(payload.title), "error": .string(error.localizedDescription)])
             if latestPosts[.test] == token {
                 failures[.test] = Failure(post: payload, postingError: failureMessage("Couldn't post notification", error: error))
             }
@@ -167,7 +172,8 @@ import BrewVersionCore
         let legacy = await service.deliveredIdentifiers().filter { $0 != Self.alertIdentifier }
         service.removeDelivered(Array(legacy))
     }
-    func handleResponse(actionIdentifier: String, requestIdentifier: String) {
+    func handleResponse(actionIdentifier: String, requestIdentifier: String, title: String = "") {
+        log.record("notify.response", ["title": .string(title), "action": .string(actionIdentifier == UNNotificationDismissActionIdentifier ? "dismiss" : "click")])
         if requestIdentifier == Self.alertIdentifier { acknowledgeAlert?() }
         if actionIdentifier != UNNotificationDismissActionIdentifier { showPopover?() }
     }
@@ -177,8 +183,8 @@ import BrewVersionCore
         return "\(context): \(detail)\(separator)Retry notifications."
     }
     nonisolated func userNotificationCenter(_ center: UNUserNotificationCenter, didReceive response: UNNotificationResponse) async {
-        let action = response.actionIdentifier, identifier = response.notification.request.identifier
-        await MainActor.run { self.handleResponse(actionIdentifier: action, requestIdentifier: identifier) }
+        let action = response.actionIdentifier, identifier = response.notification.request.identifier, title = response.notification.request.content.title
+        await MainActor.run { self.handleResponse(actionIdentifier: action, requestIdentifier: identifier, title: title) }
     }
     nonisolated func userNotificationCenter(_ center: UNUserNotificationCenter, willPresent notification: UNNotification) async -> UNNotificationPresentationOptions { [.banner, .sound, .list] }
 }
