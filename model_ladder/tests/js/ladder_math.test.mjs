@@ -199,6 +199,20 @@ test("findings in decimal mode print one decimal and omit a repeated step", () =
   assert.ok(text.includes("Kappa Test High to Max adds $2.00 per task and scores 0.6 lower."), text.join("|"));
 });
 
+test("dominated reason is the findings sentence after the label", () => {
+  const pareto = m.paretoRows(select(FIXTURE, "whole"));
+  const reasons = pareto.filter((r) => r.status === "dominated").map((r) => m.dominatedReason(r, "whole"));
+  assert.deepEqual(reasons, [
+    "Alpha Test 1 High scores 3 higher for $0.50 less per task",
+    "Alpha Test 1 High scores the same for $3.00 less per task",
+  ]);
+  const same = [row("Mu Test", "high", 50, 4), row("Nu Test", "high", 40, 4)];
+  const sameCost = m.paretoRows(select(same, "whole")).find((r) => r.status === "dominated");
+  assert.equal(m.dominatedReason(sameCost, "whole"), "Mu Test High scores 10 higher for the same cost per task");
+  assert.equal(m.dominatedReason({ status: "frontier", by: null }, "whole"), null);
+  assert.equal(m.rungLabel("xhigh"), "XHigh");
+});
+
 test("sort puts nulls last both directions and is stable", () => {
   const rows = [
     { label: "a", score: 5, cost: null },
