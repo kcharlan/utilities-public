@@ -482,6 +482,39 @@ def test_temp_group_ignores_hidden_child_and_bulk_action_rechecks_config(monkeyp
     assert hidden.exists() and newly_ignored.exists()
 
 
+@pytest.mark.parametrize("configured_ignore", [False, True])
+def test_unresolvable_temp_symlink_does_not_abort_report_or_action(monkeypatch, tmp_path, configured_ignore):
+    module = load(monkeypatch, tmp_path)
+    _discovery_home(module, monkeypatch, tmp_path)
+    root = tmp_path / "synthetic-temp"
+    root.mkdir()
+    loop = root / "synthetic-loop"
+    loop.symlink_to(loop.name)
+    candidate = root / "synthetic-old"
+    candidate.write_text("synthetic")
+    old = int(time.time()) - 4 * 86400
+    os.utime(candidate, (old, old))
+    monkeypatch.setattr(module, "temp_roots", lambda: [root])
+    monkeypatch.setattr(module, "TRASH_DIR", tmp_path / "synthetic-trash")
+    monkeypatch.setattr(module, "DATA_VOLUME", tmp_path / "synthetic-data")
+    if configured_ignore:
+        (module.RUNTIME_PATHS.home / "config.json").write_text(json.dumps({"ignore_paths": [str(root / "synthetic-unrelated")]}))
+    original_resolve = Path.resolve
+    def resolve_with_legacy_loop_error(path, *args, **kwargs):
+        if path == loop:
+            raise RuntimeError("synthetic symlink loop")
+        return original_resolve(path, *args, **kwargs)
+    monkeypatch.setattr(Path, "resolve", resolve_with_legacy_loop_error)
+    scan_id = _insert_scan(module, active=True)
+    report = module.build_findings_section([], scan_id, discovered=[])
+    group = next(item for item in report["items"] if item["category"] == "temp")
+    assert group["count"] == 1
+    assert group["other_count"] == (0 if configured_ignore else 1)
+    result = module.execute_trash_group(module.decode_action_token(group["action_token"]))
+    assert result["moved_count"] == 1 and not candidate.exists()
+    assert loop.is_symlink()
+
+
 def test_temp_group_rejects_unknown_root_and_removes_empty_destination(monkeypatch, tmp_path):
     module = load(monkeypatch, tmp_path)
     root = tmp_path / "synthetic-temp"

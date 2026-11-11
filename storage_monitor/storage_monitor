@@ -2829,7 +2829,12 @@ def collect_orphan_candidates(scan_id: int, installed_ids: Set[str]) -> Dict[str
 
 
 def path_is_ignored(path: Path, roots: List[Path], *, protect_ancestors: bool = False) -> bool:
-    path = path.resolve()
+    if not roots:
+        return False
+    try:
+        path = path.resolve()
+    except (OSError, RuntimeError, ValueError):
+        return True
     return any(path == root or root in path.parents or (protect_ancestors and path in root.parents) for root in roots)
 
 

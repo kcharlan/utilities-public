@@ -6,6 +6,8 @@ Apply path exclusions before a grouped result is counted or capped, and apply
 them again to the live candidates when a bulk action runs. Test an excluded
 entry beyond the visible cap and change the exclusions after presenting the
 group so the test catches both stale totals and unsafe execution.
+When resolving candidate paths for exclusions, handle unresolvable entries
+individually; supported Python versions can differ in symlink-loop behavior.
 
 ## Synthetic directory modes and umask
 
