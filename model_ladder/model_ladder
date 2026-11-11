@@ -12,8 +12,12 @@ import argparse
 import contextlib
 import json
 import os
+import subprocess
 import sys
 import tempfile
+import urllib.error
+import urllib.request
+from datetime import datetime
 from pathlib import Path
 
 VERSION = "1.0.0"
@@ -152,6 +156,155 @@ def classify(models: list[dict]) -> list[dict]:
                 row["rung"] = None
                 row["problem"] = "duplicate rung"
     return rows
+
+
+# ---------------------------------------------------------------------------
+# Fetch
+# ---------------------------------------------------------------------------
+
+API_URL = "https://artificialanalysis.ai/api/v2/language/models/free"
+OP_PATHS = ("/opt/homebrew/bin/op", "/usr/local/bin/op")
+MAX_PAGES = 20
+KEY_ENV = "MODEL_LADDER_AA_KEY"
+INDEX_FIELD = "artificial_analysis_intelligence_index"
+
+
+class KeyUnavailable(Exception):
+    """The API key could not be obtained; the message says what to configure or do."""
+
+
+class FetchError(Exception):
+    """A fetch failed; the message is one line and safe to print."""
+
+
+def get_api_key(config: dict, env=os.environ, op_paths=OP_PATHS, run=subprocess.run) -> str:
+    """Read the key from the environment, else 1Password. Held in memory only."""
+    value = env.get(KEY_ENV)
+    if value:
+        return value
+    item = config.get("op_item")
+    if not item:
+        raise KeyUnavailable(
+            f"No API key configured. Set the {KEY_ENV} environment variable, or set op_item "
+            "(and optionally op_vault and op_field) in config.json to a 1Password item."
+        )
+    op = next((path for path in op_paths if os.path.exists(path)), None)
+    if op is None:
+        raise KeyUnavailable("1Password CLI not found at " + " or ".join(op_paths)
+                             + f"; install it or set {KEY_ENV} instead")
+    argv = [op, "--cache=false", "item", "get", item, "--fields",
+            f"label={config.get('op_field') or 'credential'}", "--reveal"]
+    if config.get("op_vault"):
+        argv += ["--vault", config["op_vault"]]
+    try:
+        result = run(argv, capture_output=True, text=True, timeout=20)
+    except (subprocess.TimeoutExpired, OSError):
+        raise KeyUnavailable("Could not read the API key from 1Password: "
+                             "open and unlock 1Password, then retry") from None
+    if result.returncode != 0:
+        raise KeyUnavailable("Could not read the API key from 1Password: "
+                             "open and unlock 1Password, then retry")
+    key = (result.stdout or "").strip()
+    if not key:
+        raise KeyUnavailable("1Password returned an empty value for the configured item and field; "
+                             "check op_item, op_vault and op_field in config.json")
+    return key
+
+
+def _header_int(headers, name: str):
+    try:
+        return int(str(headers.get(name)).strip())
+    except (TypeError, ValueError):
+        return None
+
+
+def _rate_limit(headers) -> dict:
+    return {"limit": _header_int(headers, "x-ratelimit-limit"),
+            "remaining": _header_int(headers, "x-ratelimit-remaining"),
+            "reset": _header_int(headers, "x-ratelimit-reset")}
+
+
+def _http_failure(error: urllib.error.HTTPError) -> FetchError:
+    if error.code == 429:
+        reset = _header_int(error.headers, "x-ratelimit-reset")
+        when = (datetime.fromtimestamp(reset).strftime("%Y-%m-%d %H:%M")
+                if reset is not None else "an unknown time")
+        return FetchError(f"Artificial Analysis daily quota is used; it resets at {when} (local time)")
+    if error.code in (401, 403):
+        return FetchError("Artificial Analysis rejected the API key")
+    return FetchError(f"Artificial Analysis returned HTTP {error.code}")
+
+
+def _is_number(value) -> bool:
+    return isinstance(value, (int, float)) and not isinstance(value, bool)
+
+
+def _fetch_page(key: str, number: int, open_url) -> tuple[dict, dict]:
+    request = urllib.request.Request(f"{API_URL}?page={number}",
+                                     headers={"x-api-key": key, "Accept": "application/json"})
+    try:
+        with open_url(request, timeout=30) as response:
+            body, headers = response.read(), response.headers
+    except urllib.error.HTTPError as error:
+        raise _http_failure(error) from None
+    except urllib.error.URLError as error:
+        raise FetchError(f"Could not reach Artificial Analysis: {error.reason}") from None
+    except (OSError, TimeoutError) as error:
+        raise FetchError(f"Could not reach Artificial Analysis: {error}") from None
+    try:
+        envelope = json.loads(body)
+    except ValueError:
+        raise FetchError(f"Page {number} from Artificial Analysis is not valid JSON") from None
+    if not isinstance(envelope, dict):
+        raise FetchError(f"Page {number} from Artificial Analysis is not a JSON object")
+    if not isinstance(envelope.get("data"), list):
+        raise FetchError(f"Page {number} is missing the list field data")
+    pagination = envelope.get("pagination")
+    if not isinstance(pagination, dict) or not isinstance(pagination.get("has_more"), bool):
+        raise FetchError(f"Page {number} is missing the boolean field pagination.has_more")
+    if not _is_number(envelope.get("intelligence_index_version")):
+        raise FetchError(f"Page {number} is missing the numeric field intelligence_index_version")
+    return envelope, headers
+
+
+def fetch_all(key: str, open_url=urllib.request.urlopen) -> dict:
+    """Fetch every page; return models, index version and the last rate-limit headers."""
+    models: list = []
+    version = None
+    for number in range(1, MAX_PAGES + 1):
+        envelope, headers = _fetch_page(key, number, open_url)
+        if version is not None and envelope["intelligence_index_version"] != version:
+            raise FetchError(f"Pages disagree on intelligence_index_version "
+                             f"({version} and {envelope['intelligence_index_version']}); retry later")
+        version = envelope["intelligence_index_version"]
+        models.extend(envelope["data"])
+        if not envelope["pagination"]["has_more"]:
+            validate_models(models)
+            return {"models": models, "index_version": version, "rate_limit": _rate_limit(headers)}
+    raise FetchError(f"Artificial Analysis still reported more pages after {MAX_PAGES}; stopped")
+
+
+def validate_models(models: list) -> None:
+    """Check only the fields the tool uses; everything else is ignored."""
+    for position, item in enumerate(models, start=1):
+        if not isinstance(item, dict):
+            raise FetchError(f"model {position} is not an object")
+        slug = item.get("slug")
+        label = slug if isinstance(slug, str) and slug else f"model {position}"
+        for field in ("name", "slug"):
+            if not isinstance(item.get(field), str) or not item[field]:
+                raise FetchError(f"{label}: field {field} must be a non-empty string")
+        creator = item.get("model_creator")
+        if not isinstance(creator, dict) or not isinstance(creator.get("name"), str):
+            raise FetchError(f"{label}: field model_creator.name must be a string")
+        index = (item.get("evaluations") or {}).get(INDEX_FIELD)
+        if index is not None and not _is_number(index):
+            raise FetchError(f"{label}: field {INDEX_FIELD} must be a number")
+        per_task = (item.get("artificial_analysis_intelligence_index_cost") or {}).get("cost_per_task")
+        if per_task is not None:
+            total = per_task.get("total_cost") if isinstance(per_task, dict) else "invalid"
+            if total is not None and not _is_number(total):
+                raise FetchError(f"{label}: field cost_per_task.total_cost must be a number")
 
 
 # ---------------------------------------------------------------------------
