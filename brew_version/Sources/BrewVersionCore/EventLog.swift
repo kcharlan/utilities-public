@@ -59,7 +59,14 @@ public final class EventLog: EventLogging, @unchecked Sendable {
         do { try operation() } catch { lock.withLock { self.error = error.localizedDescription } }
     }
     private func prepare() throws {
-        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
+        let fm = FileManager.default
+        try fm.createDirectory(at: directory, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
+        try fm.setAttributes([.posixPermissions: 0o700], ofItemAtPath: directory.path)
+        var files = [fileURL]
+        if archives > 0 { files += (1...archives).map { directory.appendingPathComponent("events.\($0).jsonl") } }
+        for file in files where fm.fileExists(atPath: file.path) {
+            try fm.setAttributes([.posixPermissions: 0o600], ofItemAtPath: file.path)
+        }
     }
     private func rotateIfNeeded() throws {
         let fm = FileManager.default

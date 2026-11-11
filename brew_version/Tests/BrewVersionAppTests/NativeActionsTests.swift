@@ -1074,3 +1074,28 @@ private final class AppEventRecorder: EventLogging, @unchecked Sendable {
         #expect(log.events.first?.1["action"] == .string("dismiss"))
     }
 }
+
+@MainActor extension NativeActionsTests {
+    @Test func authorizationFailuresLogPendingTitleForPackageAndTestNotifications() async {
+        for thrown in [false, true] {
+            let service = NotificationServiceStub()
+            service.status = thrown ? .notDetermined : .denied
+            if thrown { service.authorizationFailure = "Synthetic authorization failure" }
+            let log = AppEventRecorder(), notifier = UserNotifier(service: service)
+            notifier.log = log
+            await notifier.post(Notice(name: PackageName("synthetic-log-auth")!, title: "Synthetic package title", body: "Synthetic body"))
+            await notifier.sendTestNotification()
+            let failures = log.events.filter { $0.0 == "notify.failed" }
+            #expect(failures.count == 2)
+            if failures.count == 2 {
+                #expect(failures[0].1["title"] == .string("Synthetic package title"))
+                #expect(failures[1].1["title"] == .string("Brew Version test notification"))
+                for failure in failures {
+                    guard case .string(let message) = failure.1["error"] else { Issue.record("Missing authorization error"); continue }
+                    #expect(message.contains(thrown ? "Synthetic authorization failure" : "Notifications are off"))
+                }
+            }
+            #expect(service.requests.isEmpty)
+        }
+    }
+}

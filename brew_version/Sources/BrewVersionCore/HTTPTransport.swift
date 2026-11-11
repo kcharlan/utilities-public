@@ -66,7 +66,8 @@ public struct LoggingTransport: HTTPTransport {
     public func get(_ url: URL, ifNoneMatch: String?) async throws -> HTTPResponse {
         let start = ContinuousClock.now
         func fields() -> [String: LogValue] {
-            ["host": .string(url.host ?? ""), "path": .string(url.path), "ms": .int(Int(start.duration(to: .now).components.seconds * 1000 + start.duration(to: .now).components.attoseconds / 1_000_000_000_000_000))]
+            let elapsed = start.duration(to: .now).components
+            return ["host": .string(url.host ?? ""), "path": .string(url.path), "ms": .int(Int(elapsed.seconds * 1000 + elapsed.attoseconds / 1_000_000_000_000_000))]
         }
         do {
             let response = try await base.get(url, ifNoneMatch: ifNoneMatch)

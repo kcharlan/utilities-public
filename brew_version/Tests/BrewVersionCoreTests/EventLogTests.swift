@@ -39,3 +39,28 @@ struct EventLogTests {
         #expect(log.lastWriteError != nil)
     }
 }
+
+extension EventLogTests {
+    @Test func reopeningRestrictsExistingDirectoryAndLogFilesBeforeAppendAndRotation() async throws {
+        for rotate in [false, true] {
+            let dir = FileManager.default.temporaryDirectory.appendingPathComponent("brew-version-permissions-" + UUID().uuidString)
+            defer { try? FileManager.default.removeItem(at: dir) }
+            let fm = FileManager.default
+            try fm.createDirectory(at: dir, withIntermediateDirectories: true)
+            let current = dir.appendingPathComponent("events.jsonl"), first = dir.appendingPathComponent("events.1.jsonl"), second = dir.appendingPathComponent("events.2.jsonl")
+            try Data(repeating: 65, count: 20).write(to: current)
+            try Data("synthetic archive".utf8).write(to: first)
+            try Data("synthetic older archive".utf8).write(to: second)
+            try fm.setAttributes([.posixPermissions: 0o755], ofItemAtPath: dir.path)
+            for file in [current, first, second] { try fm.setAttributes([.posixPermissions: 0o644], ofItemAtPath: file.path) }
+            let log = EventLog(directory: dir, maxBytes: rotate ? 10 : 1000)
+            await log.flush()
+            #expect((try fm.attributesOfItem(atPath: dir.path)[.posixPermissions] as? Int) == 0o700)
+            for file in (rotate ? [first, second] : [current, first, second]) {
+                #expect((try fm.attributesOfItem(atPath: file.path)[.posixPermissions] as? Int) == 0o600)
+            }
+            log.record("synthetic", [:]); await log.flush()
+            #expect((try fm.attributesOfItem(atPath: current.path)[.posixPermissions] as? Int) == 0o600)
+        }
+    }
+}

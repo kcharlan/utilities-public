@@ -103,7 +103,8 @@ import BrewVersionCore
             let episode = packageEpisode
             await requestAuthorization()
             guard episode == packageEpisode, let current = currentPackage else { continue }
-            guard authorizationError == nil else {
+            if let authorizationError {
+                log.record("notify.failed", ["title": .string(current.title), "error": .string(authorizationError)])
                 failures[.package] = Failure(post: current, postingError: failures[.package]?.postingError)
                 continue
             }
@@ -135,7 +136,8 @@ import BrewVersionCore
         latestPosts[.test] = token
         await requestAuthorization()
         guard latestPosts[.test] == token else { return }
-        guard authorizationError == nil else {
+        if let authorizationError {
+            log.record("notify.failed", ["title": .string(payload.title), "error": .string(authorizationError)])
             failures[.test] = Failure(post: payload, postingError: failures[.test]?.postingError)
             return
         }
