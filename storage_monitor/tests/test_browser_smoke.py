@@ -332,6 +332,39 @@ def test_finding_trash_requires_confirmation(monkeypatch, tmp_path):
         browser.close()
 
 
+def test_temp_group_confirmation_shows_rule_and_only_sends_on_accept(monkeypatch, tmp_path):
+    monkeypatch.setenv("STORAGE_MONITOR_HOME", str(tmp_path / "runtime"))
+    monkeypatch.setitem(SYNTHETIC_REPORT_ROWS, "findings", {"items": [{
+        "path": "/synthetic/temp", "label": "2 old entries", "category": "temp", "risk": "low",
+        "count": 2, "cleanup_kind": "trash_group", "estimated_reclaim_bytes": 10,
+        "actions": [{"kind": "execute", "label": "Move to Trash", "action_token": "synthetic-group"}],
+    }]})
+    module = load_launcher(PROJECT_ROOT / "storage_monitor")
+    with live_server(module.app) as url, sync_playwright() as playwright:
+        browser = playwright.chromium.launch(headless=True)
+        page = browser.new_page()
+        route_dashboard_api(page)
+        requests, dialogs = [], []
+        def execute(route):
+            requests.append(route.request.post_data_json)
+            route.fulfill(json={"ok": True, "label": "Moved to Trash"})
+        def confirm(dialog):
+            dialogs.append(dialog.message)
+            dialog.dismiss() if len(dialogs) == 1 else dialog.accept()
+        page.route("**/api/actions/execute", execute)
+        page.on("dialog", confirm)
+        with guard_browser_errors(page):
+            page.goto(url, wait_until="networkidle")
+            button = page.get_by_role("button", name="Trash", exact=True)
+            button.click()
+            assert requests == []
+            button.click()
+            page.get_by_text("Moved to Trash", exact=False).first.wait_for()
+            assert all("/synthetic/temp" in message and "2 entries" in message and "3 days" in message for message in dialogs)
+            assert requests == [{"action_token": "synthetic-group", "elevate": False}]
+        browser.close()
+
+
 def test_dashboard_persists_theme_without_browser_errors(
     monkeypatch,
     tmp_path,

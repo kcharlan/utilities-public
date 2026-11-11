@@ -2458,3 +2458,7 @@ Storage Monitor offered any directory named `Cache`, `Caches` or `.cache` as a o
 ## 2026-11-11: Classify review risk after all action gates
 
 Storage Monitor initially chose a discovery rule's actionable risk before grouping small matches as review-only. Include size, staleness and protection in the action decision before choosing risk, and test rules whose actionable and review risks differ.
+
+## 2026-11-11: Isolate system-discovered roots before report tests
+
+A Storage Monitor report test enumerated host temporary directories when a new collector used OS-discovered roots without a suite-wide fixture. Pin those roots to synthetic directories and guard host enumeration before any report builder runs. Keep the fixture directories outside walker inputs: putting them inside each test's input tree changed native enumeration counts. No cleanup action was run against the host roots.

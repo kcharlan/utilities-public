@@ -159,6 +159,17 @@ def test_trash_action_refreshes_index(indexed_tree, monkeypatch, caplog):
     assert "Immediate post-action refresh failed" not in caplog.text
 
 
+def test_temp_action_refreshes_indexed_data_volume_path(indexed_tree, monkeypatch):
+    module, data, scan_id = indexed_tree
+    monkeypatch.setattr(module, "collect_metadata", lambda: {})
+    monkeypatch.setattr(module, "rebuild_and_publish_report", lambda *args: None)
+    refreshed = []
+    monkeypatch.setattr(module, "refresh_directory_chain", lambda scan, path: refreshed.append(path))
+    monkeypatch.setattr(module, "TRASH_DIR", data / "synthetic-trash")
+    module.refresh_after_action({"kind": "trash_group", "root": "/synthetic/temp"}, {"trash_path": str(data / "synthetic-trash/group")})
+    assert refreshed == [data / "synthetic/temp", data / "synthetic-trash"]
+
+
 def test_walk_translation_maps_data_volume_aliases(monkeypatch, tmp_path):
     module = load_launcher(SCRIPT)
     data, home, apps = tmp_path / "Data", tmp_path / "Users/synthetic-user", tmp_path / "Applications"

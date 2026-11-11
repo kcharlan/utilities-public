@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import plistlib
+import os
+import socket
 import sys
 import time
 from pathlib import Path
@@ -307,6 +309,176 @@ def _index_dirs(module, scan_id, entries):
     } for path, size in entries])
 
 
+def test_size_only_homes_never_expose_or_move_children(monkeypatch, tmp_path):
+    module = load(monkeypatch, tmp_path)
+    home = _discovery_home(module, monkeypatch, tmp_path)
+    monkeypatch.setattr(module, "WATCHLIST_SPECS", [])
+    monkeypatch.setattr(module, "DATA_VOLUME", tmp_path)
+    root = home / ".claude"
+    child = root / "project" / "node_modules"
+    child.mkdir(parents=True)
+    (child.parent / "package.json").touch()
+    scan_id = _insert_scan(module)
+    _index_dirs(module, scan_id, [(root, 120), (child, 120)])
+    findings = module.discover_candidates(scan_id)
+    assert [item["path"] for item in findings if item.get("path", "").startswith(str(root))] == [str(root)]
+    assert not next(item for item in findings if item["path"] == str(root))["actionable"]
+    many = [{"path": str(home / f"synthetic-{i}"), "label": str(i), "category": "agent_residue", "allocated_bytes": 999999999} for i in range(81)]
+    retained = module.build_findings_section([], discovered=[*findings, *many])["items"]
+    assert any(item["path"] == str(root) for item in retained)
+    with pytest.raises(HTTPException):
+        module.execute_trash_path(child)
+    assert module.cleanup_protection_reason(module.RUNTIME_PATHS.home.parent) is not None
+    spec = {"path": "~/.claude/project/node_modules", "slug": "synthetic", "label": "Synthetic", "category": "cache", "risk": "low", "cleanup_kind": "trash_path", "description": "Synthetic", "actionable": True}
+    assert module.scan_watchlist_entry(spec, scan_id)["exists"] is False
+
+
+def test_temp_groups_recheck_entries_and_continue_after_refusal(monkeypatch, tmp_path):
+    module = load(monkeypatch, tmp_path)
+    root = tmp_path / "synthetic-temp"
+    root.mkdir()
+    monkeypatch.setattr(module, "temp_roots", lambda: [root])
+    monkeypatch.setattr(module, "TRASH_DIR", tmp_path / "trash")
+    monkeypatch.setattr(module, "DATA_VOLUME", tmp_path)
+    old = int(time.time()) - 4 * 86400
+    for name in ("old", "freshened", "refused", "com.apple.synthetic", "fresh"):
+        path = root / name
+        path.write_text("synthetic")
+        os.utime(path, (old, old))
+    os.utime(root / "fresh", None)
+    os.mkfifo(root / "synthetic-fifo")
+    (root / "TemporaryItems").write_text("synthetic")
+    os.utime(root / "TemporaryItems", (old, old))
+    sock = socket.socket(socket.AF_UNIX)
+    monkeypatch.chdir(root)
+    sock.bind("socket")
+    try:
+        scan_id = _insert_scan(module)
+        group = module.temp_findings(scan_id)[0]
+        assert group["count"] == 3
+        os.utime(root / "freshened", None)
+        real_rename = os.rename
+        def rename(source, destination):
+            if Path(source).name == "refused":
+                raise PermissionError("synthetic refusal")
+            real_rename(source, destination)
+        monkeypatch.setattr(module.os, "rename", rename)
+        result = module.execute_trash_group(module.decode_action_token(group["action_token"]))
+        assert result["moved_count"] == 1 and len(result["failures"]) == 1
+        assert (root / "freshened").exists() and (root / "refused").exists()
+        assert not (root / "old").exists()
+        module.record_action(module.decode_action_token(group["action_token"]), result)
+        log = module.RUNTIME_PATHS.action_log.read_text()
+        assert len(log.splitlines()) == 1 and str(root / "refused") not in log and str(root / "old") not in log
+    finally:
+        sock.close()
+
+
+def test_temp_group_rejects_unknown_root_and_removes_empty_destination(monkeypatch, tmp_path):
+    module = load(monkeypatch, tmp_path)
+    root = tmp_path / "synthetic-temp"
+    root.mkdir()
+    monkeypatch.setattr(module, "temp_roots", lambda: [root])
+    monkeypatch.setattr(module, "TRASH_DIR", tmp_path / "trash")
+    token = {"kind": "trash_group", "rule": "temp_old", "root": str(root), "min_age_days": 3}
+    result = module.execute_trash_group(token)
+    assert result["moved_count"] == 0
+    assert list(module.TRASH_DIR.iterdir()) == []
+    with pytest.raises(HTTPException):
+        module.execute_trash_group({**token, "root": str(tmp_path)})
+
+
+def test_temp_directory_requires_indexed_age_and_current_owner(monkeypatch, tmp_path):
+    module = load(monkeypatch, tmp_path)
+    root = tmp_path / "synthetic-temp"
+    root.mkdir()
+    directory = root / "synthetic-directory"
+    directory.mkdir()
+    old = int(time.time()) - 4 * 86400
+    os.utime(directory, (old, old))
+    data = tmp_path / "synthetic-data-volume"
+    monkeypatch.setattr(module, "DATA_VOLUME", data)
+    scan_id = _insert_scan(module)
+    assert not module.temp_entries(root, scan_id)[0]["old"]
+    indexed = data / str(directory).lstrip("/")
+    _index_dirs(module, scan_id, [(indexed, 1)])
+    with module.open_db_connection() as connection:
+        connection.execute("UPDATE nodes SET newest_mtime=? WHERE scan_id=? AND path=?", (old, scan_id, str(indexed)))
+        connection.commit()
+    assert module.temp_entries(root, scan_id)[0]["old"]
+    monkeypatch.setattr(module.os, "getuid", lambda: directory.stat().st_uid + 1)
+    assert not module.temp_entries(root, scan_id)[0]["old"]
+
+
+@pytest.mark.parametrize(("name", "expected"), [
+    (".synthetic-task.aB3dEf", True), (".synthetic-task.abcdef", True),
+    (".synthetic-review-aB3dEf9h", True), (".synthetic task.aB3dEf", True),
+    (".synthetic-task.xY7zQ2", True), (".zshrc.backup", False),
+    (".synthetic-review-abcdefgh", False), (".config", False),
+])
+def test_home_residue_name_cases_from_home_audit(monkeypatch, tmp_path, name, expected):
+    module = load(monkeypatch, tmp_path)
+    assert module.home_residue_name(name) is expected
+
+
+def test_home_residue_reports_old_direct_entries_only(monkeypatch, tmp_path):
+    module = load(monkeypatch, tmp_path)
+    home = _discovery_home(module, monkeypatch, tmp_path)
+    home.mkdir()
+    stale = home / ".synthetic-task.abcdef"
+    fresh = home / ".synthetic-review-aB3dEf9h"
+    stale.write_text("synthetic")
+    fresh.mkdir()
+    old = time.time() - 2 * 86400
+    os.utime(stale, (old, old))
+    scan_id = _insert_scan(module)
+    _index_dirs(module, scan_id, [(home, 1), (fresh, 1)])
+    findings = module.additional_findings(scan_id)
+    assert [item["path"] for item in findings] == [str(stale)]
+    assert not findings[0]["actionable"] and findings[0]["age_days"] >= 1
+
+
+def test_report_builder_uses_synthetic_temp_roots(monkeypatch, tmp_path):
+    module = load(monkeypatch, tmp_path)
+    home = _discovery_home(module, monkeypatch, tmp_path)
+    scan_id = _insert_scan(module)
+    findings = module.build_findings_section([], scan_id)["items"]
+    groups = [item for item in findings if item.get("category") == "temp"]
+    assert len(groups) == 1
+    assert Path(groups[0]["path"]).name == "synthetic-user-temp"
+
+
+def test_agent_residue_and_trash_are_reported_without_unsafe_actions(monkeypatch, tmp_path):
+    module = load(monkeypatch, tmp_path)
+    home = _discovery_home(module, monkeypatch, tmp_path)
+    monkeypatch.setattr(module, "WATCHLIST_SPECS", [])
+    monkeypatch.setattr(module, "temp_roots", lambda: [])
+    scan_id = _insert_scan(module)
+    workspace = home / "project/.superpowers"
+    tree = home / "project/.worktrees/synthetic-tree"
+    trash = home / ".Trash"
+    backup = home / "Library/Application Support/MobileSync/Backup/synthetic-backup"
+    for path in (workspace, tree, trash, backup):
+        path.mkdir(parents=True)
+    _index_dirs(module, scan_id, [(workspace, 0), (tree, 1), (trash, 1), (backup, 1)])
+    old = int(time.time()) - 15 * 86400
+    with module.open_db_connection() as connection:
+        connection.execute("UPDATE nodes SET newest_mtime=? WHERE scan_id=?", (old, scan_id))
+        connection.commit()
+    findings = module.build_findings_section([], scan_id)["items"]
+    by_path = {item["path"]: item for item in findings}
+    assert by_path[str(workspace)]["actionable"]
+    assert not by_path[str(tree)]["actionable"]
+    assert not by_path[str(backup)]["actionable"] and by_path[str(backup)]["risk"] == "high"
+    assert not by_path[str(trash)]["actionable"]
+    assert module.finding_summary({"items": findings})["trash_bytes"] == 1024 * 1024
+    with module.open_db_connection() as connection:
+        connection.execute("UPDATE nodes SET newest_mtime=? WHERE scan_id=? AND path=?", (int(time.time()), scan_id, str(workspace)))
+        connection.commit()
+    fresh = next(item for item in module.discover_candidates(scan_id) if item["path"] == str(workspace))
+    assert not fresh["actionable"] and fresh["stale"] is False
+
+
 @pytest.mark.parametrize(("relative", "marker", "marker_location"), [
     ("project/node_modules", "package.json", "sibling"),
     ("project/.venv", "pyvenv.cfg", "child"),
@@ -584,7 +756,9 @@ def test_model_stores_and_extensions_are_review_only(monkeypatch, tmp_path):
         item["path"]: item
         for item in module.build_findings_section(module.scan_watchlist()["items"])["items"]
     }
-    for store in stores:
+    # LM Studio is now size-only, so its model directory must not be listed.
+    assert str(stores[0]) not in findings
+    for store in stores[1:]:
         finding = findings[str(store)]
         assert finding["actionable"] is False
         assert finding["action_token"] is None

@@ -22,6 +22,35 @@ def native_walker_environment(monkeypatch, walker_binary):
     monkeypatch.setenv("STORAGE_MONITOR_WALKER", str(walker_binary))
 
 
+@pytest.fixture(autouse=True)
+def synthetic_temp_roots(monkeypatch, tmp_path_factory):
+    """Keep report discovery away from host temp and per-user cache roots."""
+    isolation = tmp_path_factory.mktemp("synthetic-system-roots")
+    synthetic_temp = isolation / "synthetic-user-temp"
+    synthetic_cache = isolation / "synthetic-user-cache"
+    synthetic_temp.mkdir()
+    synthetic_cache.mkdir()
+    original_confstr = os.confstr
+    original_is_dir = Path.is_dir
+    original_scandir = os.scandir
+    forbidden = {Path("/private/tmp"), Path("/private/var/tmp")}
+    def confstr(key):
+        if key == "CS_DARWIN_USER_TEMP_DIR":
+            return str(synthetic_temp)
+        if key == "CS_DARWIN_USER_CACHE_DIR":
+            return str(synthetic_cache)
+        return original_confstr(key)
+    def is_dir(path):
+        return False if path in forbidden else original_is_dir(path)
+    def scandir(path="."):
+        if not isinstance(path, int) and Path(path) in forbidden:
+            raise AssertionError("host temp root must not be enumerated")
+        return original_scandir(path)
+    monkeypatch.setattr(os, "confstr", confstr)
+    monkeypatch.setattr(Path, "is_dir", is_dir)
+    monkeypatch.setattr(os, "scandir", scandir)
+
+
 @pytest.fixture(scope="session")
 def bulk_fault_library(tmp_path_factory):
     """Inject unavailable attributes/APIs without changing production code."""

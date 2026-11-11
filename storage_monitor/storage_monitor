@@ -26,6 +26,7 @@ import shutil
 import signal
 import socket
 import sqlite3
+import stat
 import subprocess
 import tempfile
 import threading
@@ -209,6 +210,10 @@ SCAN_WORKER_COUNT = max(1, min(16, int(os.environ.get("STORAGE_MONITOR_SCAN_WORK
 LARGE_FILE_EXCLUDED_PREFIXES = [str(DATA_VOLUME / "private/var/vm")]
 LARGE_FILE_DESCRIPTION = "Large file found in the volume-wide storage scan."
 CACHE_DISCOVERY_MIN_BYTES = 100 * 1024 * 1024
+# Apple DTS describes the historical three-day temporary-file default:
+# https://developer.apple.com/forums/thread/71382 . Our newest-mtime rule is
+# not Apple's full atime/mtime/ctime predicate; /private/var/tmp is our scope.
+TEMP_STALE_DAYS = 3
 CACHE_DISCOVERY_BUNDLE_SUFFIXES = (
     ".app", ".photoslibrary", ".musiclibrary", ".tvlibrary", ".aplibrary",
 )
@@ -230,6 +235,10 @@ DISCOVERY_RULES = [
         ("next_build", {"names": [".next"], "marker": ("sibling", "package.json")}, "Rebuilt on the next Next.js build."),
     ]
 ] + [{
+    "id": "superpowers_workspace", "category": "agent_residue", "names": [".superpowers"],
+    "scope": "home_root", "min_bytes": 0, "action": "when_stale", "stale_days": 14,
+    "risk": "low", "review_risk": "low", "description": "Agent workspace; review before moving it to Trash.",
+}, {
     "id": "python_bytecode", "category": "python_bytecode", "names": ["__pycache__"],
     "scope": "home_root", "min_bytes": 1024 * 1024, "action": "never",
     "risk": "medium", "review_risk": "medium", "group_all": True,
@@ -1689,7 +1698,8 @@ def parse_snapshot_token(snapshot_name: str) -> Optional[str]:
 
 def scan_watchlist_entry(spec: Dict[str, Any], scan_id: Optional[int] = None) -> Dict[str, Any]:
     path = expand_path(spec["path"])
-    exists = path.exists()
+    protected_home = any(path == root or root in path.parents for root in size_only_homes())
+    exists = not protected_home and path.exists()
     allocated = None
     file_count = newest_mtime = None
     scan_id = scan_id or fetch_active_scan_id() or fetch_running_scan_id()
@@ -1740,6 +1750,7 @@ def scan_watchlist(scan_id: Optional[int] = None) -> Dict[str, Any]:
     task_map = {
         spec["slug"]: (lambda spec=spec: scan_watchlist_entry(spec, scan_id))
         for spec in WATCHLIST_SPECS
+        if not any(expand_path(spec["path"]) == root or root in expand_path(spec["path"]).parents for root in size_only_homes())
     }
     results = list(run_parallel_call_map(task_map).values())
     results.sort(key=lambda item: bytes_or_zero(item["allocated_bytes"]), reverse=True)
@@ -1762,7 +1773,7 @@ def build_finding_actions(finding: Dict[str, Any]) -> List[Dict[str, Any]]:
     )
     if finding.get("actionable") and finding.get("action_token"):
         action_kind = finding.get("cleanup_kind") or "cleanup"
-        if action_kind == "trash_path":
+        if action_kind in ("trash_path", "trash_group"):
             actions.append(
                 {
                     "label": "Move to Trash",
@@ -1929,8 +1940,7 @@ def collect_scan_report(scan_id: int) -> Dict[str, Any]:
         publish_event("large_file_found", item)
     visible = totals.get(str(DATA_VOLUME.resolve()))
     hidden = max(data_volume["volume_used_bytes"] - visible, 0) if data_volume["volume_used_bytes"] is not None and visible is not None else None
-    safe = sum(bytes_or_zero(item.get("estimated_reclaim_bytes")) for item in findings["items"] if item.get("risk") == "low" and item.get("actionable"))
-    medium = sum(bytes_or_zero(item.get("estimated_reclaim_bytes")) for item in findings["items"] if item.get("risk") == "medium" and item.get("actionable"))
+    reclaimable = finding_summary(findings)
     checks = []
     for label, command_result in [("APFS container", apfs_list), ("Data volume info", data_info), ("System volume info", root_info), ("Local snapshots", snapshot_info)]:
         checks.append({"label": label, "command": command_result["command"], "ok": command_result["ok"], "duration_ms": command_result["duration_ms"], "summary": "Metadata probe completed." if command_result["ok"] else command_result["stderr"]})
@@ -1940,7 +1950,7 @@ def collect_scan_report(scan_id: int) -> Dict[str, Any]:
     checks.append({"label": "Safe cleanup watchlist", "command": "fresh scan index lookup", "ok": True, "duration_ms": 0, "summary": f"Checked {len(watchlist)} known targets."})
     report = {
         "version": VERSION, "generated_at": iso_now(), "started_at": started_at, "warnings": [],
-        "summary": {**metadata, "visible_data_bytes": visible, "hidden_delta_bytes": hidden, "home_total_bytes": breakdowns["home_root"]["total_bytes"], "applications_total_bytes": breakdowns["applications_root"]["total_bytes"], "snapshot_count": len(snapshots["items"]), "safe_reclaimable_bytes": safe, "medium_reclaimable_bytes": medium},
+        "summary": {**metadata, "visible_data_bytes": visible, "hidden_delta_bytes": hidden, "home_total_bytes": breakdowns["home_root"]["total_bytes"], "applications_total_bytes": breakdowns["applications_root"]["total_bytes"], "snapshot_count": len(snapshots["items"]), **reclaimable},
         "breakdowns": breakdowns, "watchlist": watchlist, "large_files": large_files,
         "findings": findings, "snapshots": snapshots, "providers": providers,
         "orphans": orphans, "checks": checks,
@@ -2051,6 +2061,97 @@ def unique_trash_destination(path: Path) -> Path:
         if not test.exists():
             return test
         suffix += 1
+
+
+def darwin_user_directory(key: str) -> Optional[Path]:
+    try:
+        value = os.confstr(key)
+        return Path(value).resolve() if value else None
+    except (ValueError, OSError):
+        return None
+
+
+def temp_roots() -> List[Path]:
+    user_temp = darwin_user_directory("CS_DARWIN_USER_TEMP_DIR")
+    return list(dict.fromkeys(root for root in (user_temp, Path("/private/tmp"), Path("/private/var/tmp")) if root))
+
+
+def temp_entries(root: Path, scan_id: Optional[int]) -> List[Dict[str, Any]]:
+    entries = []
+    try:
+        with os.scandir(root) as iterator:
+            children = list(iterator)
+    except OSError:
+        return entries
+    for child in children:
+        path = Path(child.path)
+        try:
+            info = child.stat(follow_symlinks=False)
+        except OSError:
+            continue
+        size, newest = info.st_blocks * 512, int(info.st_mtime)
+        if stat.S_ISDIR(info.st_mode):
+            indexed_path = DATA_VOLUME / str(path).lstrip("/")
+            row = None
+            if scan_id is not None:
+                with open_db_connection() as connection:
+                    row = connection.execute("SELECT allocated_bytes, newest_mtime FROM nodes WHERE scan_id=? AND path=?", (scan_id, str(indexed_path))).fetchone()
+            size = int(row["allocated_bytes"]) if row else 0
+            newest = max(newest, row["newest_mtime"]) if row and row["newest_mtime"] is not None else None
+        old = (info.st_uid == os.getuid() and (stat.S_ISDIR(info.st_mode) or stat.S_ISREG(info.st_mode))
+               and not child.name.startswith("com.apple.") and child.name not in ("TemporaryItems", ".", "..")
+               and newest is not None and newest <= time.time() - TEMP_STALE_DAYS * 86400
+               and cleanup_protection_reason(path) is None and cleanup_protection_reason(path.resolve()) is None)
+        entries.append({"path": str(path), "label": child.name, "allocated_bytes": size, "newest_mtime": newest, "old": old})
+    return entries
+
+
+def temp_findings(scan_id: Optional[int]) -> List[Dict[str, Any]]:
+    findings = []
+    for root in temp_roots():
+        if not root.is_dir():
+            continue
+        entries = temp_entries(root, scan_id)
+        old = sorted((item for item in entries if item["old"]), key=lambda item: item["allocated_bytes"], reverse=True)
+        other = [item for item in entries if not item["old"]]
+        total = sum(item["allocated_bytes"] for item in old)
+        action = {"kind": "trash_group", "rule": "temp_old", "root": str(root), "min_age_days": TEMP_STALE_DAYS}
+        other_bytes = sum(item["allocated_bytes"] for item in other)
+        finding = {"group": True, "path": str(root), "label": f"{len(old)} entries older than {TEMP_STALE_DAYS} days, {total / (1024 * 1024):.1f} MiB; {len(other)} other entries, {other_bytes / (1024 * 1024):.1f} MiB",
+                   "category": "temp", "risk": "low", "description": "Old temporary entries; review before moving to Trash.",
+                   "count": len(old), "items": old[:20], "other_count": len(other), "other_bytes": other_bytes,
+                   "allocated_bytes": total, "estimated_reclaim_bytes": total, "actionable": bool(old),
+                   "cleanup_kind": "trash_group", "action_token": encode_action_token(action) if old else None}
+        finding["actions"] = build_finding_actions(finding)
+        findings.append(finding)
+    return findings
+
+
+def execute_trash_group(action: Dict[str, Any]) -> Dict[str, Any]:
+    root = Path(action.get("root", ""))
+    if (action.get("rule") != "temp_old" or action.get("min_age_days") != TEMP_STALE_DAYS
+            or root not in temp_roots() or root.is_symlink() or root.resolve() != root):
+        raise HTTPException(status_code=400, detail="Invalid temporary root or rule.")
+    entries = temp_entries(root, fetch_active_scan_id())
+    destination = unique_trash_destination(Path("temp"))
+    destination.mkdir()
+    moved_count = moved_bytes = failure_count = 0
+    failures = []
+    for entry in entries:
+        if not entry["old"]:
+            continue
+        try:
+            os.rename(entry["path"], destination / entry["label"])
+            moved_count += 1
+            moved_bytes += entry["allocated_bytes"]
+        except OSError as exc:
+            failure_count += 1
+            if len(failures) < 20:
+                failures.append({"path": entry["path"], "error": str(exc)})
+    if not moved_count:
+        destination.rmdir()
+    return {"ok": True, "label": f"Moved {moved_count} temporary entries to Trash; {failure_count} refused", "trash_path": str(destination) if moved_count else None,
+            "moved_count": moved_count, "moved_bytes": moved_bytes, "failure_count": failure_count, "failures": failures}
 
 
 def execute_trash_path(path: Path) -> Dict[str, Any]:
@@ -2174,6 +2275,8 @@ def execute_provider(slug: str) -> Dict[str, Any]:
 
 
 def record_action(payload: Dict[str, Any], result: Dict[str, Any]) -> None:
+    if payload.get("kind") == "trash_group":
+        result = {"moved_count": result["moved_count"], "moved_bytes": result["moved_bytes"], "failure_count": result["failure_count"]}
     append_jsonl(
         RUNTIME_PATHS.action_log,
         {
@@ -2301,7 +2404,7 @@ def discover_candidates(scan_id: int) -> List[Dict[str, Any]]:
     candidates = []
     with open_db_connection() as connection:
         for order, rule in enumerate(DISCOVERY_RULES):
-            clauses, params = [], [scan_id, 0 if rule.get("group_all") else 1024 * 1024]
+            clauses, params = [], [scan_id, 0 if rule.get("group_all") or rule.get("min_bytes") == 0 else 1024 * 1024]
             name_expr = "LOWER(name)" if rule.get("case_insensitive") else "name"
             for name in rule.get("names", []):
                 clauses.append(f"{name_expr} = ?")
@@ -2328,6 +2431,8 @@ def discover_candidates(scan_id: int) -> List[Dict[str, Any]]:
     survivors = []
     for row, rule, order in sorted(candidates, key=lambda entry: (entry[0]["depth"], entry[2], entry[0]["path"])):
         path = Path(row["path"])
+        if any(path == root or root in path.parents for root in size_only_homes()):
+            continue
         if path in buckets:
             continue
         if any(path == root or root in path.parents for root in actionable_roots):
@@ -2412,6 +2517,15 @@ def discover_candidates(scan_id: int) -> List[Dict[str, Any]]:
     # A shared cache folder is never one target: list it and its entries for review.
     listed = [Path(row["path"]) for row, rule in survivors if row["allocated_bytes"] >= rule["min_bytes"]] + actionable_roots + review_roots
     with open_db_connection() as connection:
+        for root in size_only_homes():
+            row = connection.execute(
+                "SELECT path, allocated_bytes, file_count, newest_mtime FROM nodes WHERE scan_id=? AND path=?",
+                (scan_id, str(root)),
+            ).fetchone()
+            if row is not None:
+                finding = review_only(row, "agent_residue", "high", "Runtime home: size only; review with its owning tool.")
+                finding["always_include"] = True
+                findings.append(finding)
         for bucket in buckets:
             if bucket not in review_roots:
                 row = connection.execute(
@@ -2425,6 +2539,8 @@ def discover_candidates(scan_id: int) -> List[Dict[str, Any]]:
                 (scan_id, str(bucket), CACHE_DISCOVERY_MIN_BYTES),
             ).fetchall():
                 child = Path(row["path"])
+                if any(child == root or root in child.parents for root in size_only_homes()):
+                    continue
                 if any(child == other or child in other.parents for other in listed):
                     continue
                 findings.append(review_only(
@@ -2438,7 +2554,76 @@ def discover_cache_candidates(scan_id: int) -> List[Dict[str, Any]]:
     return discover_candidates(scan_id)
 
 
+def home_residue_name(name: str) -> bool:
+    # Keep aligned with tools/check_home_residue.zsh's two patterns.
+    dot = re.fullmatch(r"\..+\.([A-Za-z0-9]{6})", name)
+    dash = re.fullmatch(r"\..+-([A-Za-z0-9]{8})", name)
+    return bool((dot and dot.group(1) != "backup") or (dash and re.search(r"[A-Z0-9]", dash.group(1))))
+
+
+def additional_findings(scan_id: int) -> List[Dict[str, Any]]:
+    home = HOME_DIR.resolve()
+    backup_root = home / "Library/Application Support/MobileSync/Backup"
+    cache_root = darwin_user_directory("CS_DARWIN_USER_CACHE_DIR")
+    with open_db_connection() as connection:
+        rows = connection.execute(
+            "SELECT path, name, parent_path, allocated_bytes, file_count, newest_mtime FROM nodes "
+            "WHERE scan_id=? AND (path IN (?, ?, ?) OR parent_path IN (?, ?) "
+            "OR parent_path LIKE '%/.worktrees' OR parent_path LIKE '%/.claude/worktrees')",
+            (scan_id, str(home), str(TRASH_DIR.resolve()), str(DATA_VOLUME / str(cache_root).lstrip("/")) if cache_root else "", str(home), str(backup_root)),
+        ).fetchall()
+    findings = []
+    for row in rows:
+        path = Path(row["path"])
+        if any(path == root or root in path.parents for root in size_only_homes()):
+            continue
+        parent = path.parent
+        category = description = None
+        risk = "medium"
+        if path == TRASH_DIR.resolve():
+            category, description = "trash", "Empty the Trash in Finder to free this space."
+        elif cache_root and path == DATA_VOLUME / str(cache_root).lstrip("/"):
+            category, description = "temp", "Per-user cache directory, shown for size review only."
+        elif parent == backup_root:
+            category, description, risk = "ios_backups", "Device backup; manage it in Finder.", "high"
+        elif parent.name == ".worktrees" or (parent.name == "worktrees" and parent.parent.name == ".claude"):
+            category, description = "agent_residue", "Remove worktrees only through the manager that created them."
+        if category:
+            newest = row["newest_mtime"]
+            finding = {"path": str(cache_root if cache_root and category == "temp" else path), "label": path.name,
+                       "category": category, "risk": risk, "description": description, "allocated_bytes": row["allocated_bytes"],
+                       "file_count": row["file_count"], "newest_mtime": newest,
+                       "age_days": (int(time.time()) - newest) // 86400 if newest is not None else None,
+                       "actionable": False, "action_token": None, "estimated_reclaim_bytes": None}
+            finding["actions"] = build_finding_actions(finding)
+            findings.append(finding)
+    if any(row["path"] == str(home) for row in rows):
+        try:
+            with os.scandir(home) as entries:
+                for entry in entries:
+                    if not home_residue_name(entry.name):
+                        continue
+                    info = entry.stat(follow_symlinks=False)
+                    if time.time() - info.st_mtime <= 86400:
+                        continue
+                    path = Path(entry.path)
+                    if cleanup_protection_reason(path) or cleanup_protection_reason(path.resolve()):
+                        continue
+                    indexed = next((row for row in rows if row["path"] == str(path)), None)
+                    size = indexed["allocated_bytes"] if stat.S_ISDIR(info.st_mode) and indexed else info.st_blocks * 512
+                    finding = {"path": str(path), "label": entry.name, "category": "agent_residue", "risk": "medium",
+                               "description": "Possible temporary-name residue; review only.", "allocated_bytes": size,
+                               "newest_mtime": int(info.st_mtime), "age_days": int((time.time() - info.st_mtime) // 86400),
+                               "actionable": False, "action_token": None, "estimated_reclaim_bytes": None}
+                    finding["actions"] = build_finding_actions(finding)
+                    findings.append(finding)
+        except OSError:
+            logger.warning("Unable to inspect home temporary-name residue")
+    return findings
+
+
 SHARED_CACHE_BUCKET_RELATIVE_PATHS = (".cache", "Library/Caches")
+SIZE_ONLY_HOME_RELATIVE_PATHS = (".claude", ".codex", ".config", ".gemini", ".t3", ".lmstudio", ".docker", ".local", ".venvs", ".storage_monitor")
 SHARED_CACHE_BUCKET_REASON = "Shared cache folder used by many tools. Review its entries instead of removing it whole."
 # System-managed or synced locations under the home directory. Moving anything
 # out of them can corrupt live system state or delete the copy on other devices.
@@ -2455,11 +2640,23 @@ def shared_cache_buckets() -> List[Path]:
     return [home / relative for relative in SHARED_CACHE_BUCKET_RELATIVE_PATHS]
 
 
+def size_only_homes() -> List[Path]:
+    roots = [HOME_DIR.resolve() / relative for relative in SIZE_ONLY_HOME_RELATIVE_PATHS]
+    runtime = RUNTIME_PATHS.home.resolve()
+    return list(dict.fromkeys([*roots, runtime]))
+
+
 def cleanup_protection_reason(path: Path) -> Optional[str]:
     """Return why Storage Monitor must not trash this path, or None when it may."""
     home = HOME_DIR.resolve()
     if path == home or path in home.parents:
         return "This is not a cleanup target."
+    if path == TRASH_DIR.resolve() or TRASH_DIR.resolve() in path.parents:
+        return "Empty the Trash in Finder to free this space."
+    if any(path == root or root in path.parents or path in root.parents for root in size_only_homes()):
+        return "Runtime home is size-only; manage it with its owning tool."
+    if any(part.name == ".worktrees" or (part.name == "worktrees" and part.parent.name == ".claude") for part in (path, *path.parents)):
+        return "Remove worktrees only through the manager that created them."
     if path in shared_cache_buckets():
         return SHARED_CACHE_BUCKET_REASON
     for relative in PROTECTED_HOME_RELATIVE_PATHS:
@@ -2531,6 +2728,8 @@ def collect_orphan_candidates(scan_id: int, installed_ids: Set[str]) -> Dict[str
         except OSError:
             continue
         for path in candidates:
+            if any(path == root or root in path.parents for root in size_only_homes()):
+                continue
             if not path.is_dir() or UUID_NAME_RE.match(path.name):
                 continue
             candidate_id = normalize_group_container_id(path.name) if source == "group_containers" else path.name
@@ -2558,6 +2757,9 @@ def build_findings_section(
     for item in watchlist:
         if not item["exists"]:
             continue
+        path = Path(item["path"])
+        if any(path == root or root in path.parents for root in size_only_homes()):
+            continue
         finding = {
             "label": item["label"],
             "path": item["path"],
@@ -2580,6 +2782,9 @@ def build_findings_section(
     if discovered is None and scan_id is not None:
         discovered = discover_cache_candidates(scan_id)
     findings.extend(discovered or [])
+    if scan_id is not None:
+        findings.extend(temp_findings(scan_id))
+        findings.extend(additional_findings(scan_id))
     findings.sort(
         key=lambda item: (
             bytes_or_zero(item.get("allocated_bytes")),
@@ -2589,15 +2794,21 @@ def build_findings_section(
     kept, counts, truncated = [], {}, {}
     for item in findings:
         category = item["category"]
-        if item.get("group") or counts.get(category, 0) < MAX_FINDINGS:
+        if item.get("group") or item.get("always_include") or counts.get(category, 0) < MAX_FINDINGS:
             kept.append(item)
-            if not item.get("group"):
+            if not item.get("group") and not item.get("always_include"):
                 counts[category] = counts.get(category, 0) + 1
         else:
             dropped = truncated.setdefault(category, {"count": 0, "bytes": 0})
             dropped["count"] += 1
             dropped["bytes"] += bytes_or_zero(item.get("allocated_bytes"))
     return {"items": kept, "truncated": truncated, "updated_at": iso_now()}
+
+
+def finding_summary(findings: Dict[str, Any]) -> Dict[str, int]:
+    result = {f"{label}_reclaimable_bytes": sum(bytes_or_zero(item.get("estimated_reclaim_bytes")) for item in findings["items"] if item.get("risk") == risk and item.get("actionable")) for label, risk in (("safe", "low"), ("medium", "medium"))}
+    result["trash_bytes"] = sum(bytes_or_zero(item.get("allocated_bytes")) for item in findings["items"] if item.get("category") == "trash")
+    return result
 
 
 def build_breakdowns_from_db(scan_id: int) -> Dict[str, Any]:
@@ -2627,16 +2838,7 @@ def build_updated_report(
     hidden_delta_bytes = None
     if metadata["data_volume_used_bytes"] is not None and visible_data_bytes is not None:
         hidden_delta_bytes = max(metadata["data_volume_used_bytes"] - visible_data_bytes, 0)
-    safe_reclaimable_bytes = sum(
-        bytes_or_zero(item.get("estimated_reclaim_bytes"))
-        for item in findings["items"]
-        if item.get("risk") == "low" and item.get("actionable")
-    )
-    medium_reclaimable_bytes = sum(
-        bytes_or_zero(item.get("estimated_reclaim_bytes"))
-        for item in findings["items"]
-        if item.get("risk") == "medium" and item.get("actionable")
-    )
+    reclaimable = finding_summary(findings)
     return {
         **base_report,
         "generated_at": iso_now(),
@@ -2651,8 +2853,7 @@ def build_updated_report(
             "home_total_bytes": breakdowns["home_root"]["total_bytes"],
             "applications_total_bytes": breakdowns["applications_root"]["total_bytes"],
             "snapshot_count": len(snapshots["items"]),
-            "safe_reclaimable_bytes": safe_reclaimable_bytes,
-            "medium_reclaimable_bytes": medium_reclaimable_bytes,
+            **reclaimable,
         },
         "breakdowns": breakdowns,
         "watchlist": watchlist,
@@ -2724,6 +2925,10 @@ def refresh_after_action(action: Dict[str, Any], result: Dict[str, Any]) -> Opti
         if destination_root_key is not None:
             refresh_directory_chain(scan_id, trash_path.parent)
         refresh_large_files_for_paths(scan_id, [trash_path])
+    elif action.get("kind") == "trash_group":
+        refresh_directory_chain(scan_id, DATA_VOLUME / action["root"].lstrip("/"))
+        if result.get("trash_path"):
+            refresh_directory_chain(scan_id, TRASH_DIR)
 
     provider_slug = action.get("slug") if action.get("kind") == "provider_execute" else None
     return rebuild_and_publish_report(scan_id, metadata, provider_slug)
@@ -3077,6 +3282,8 @@ def api_execute_action(payload: Dict[str, Any]) -> Dict[str, Any]:
     kind = action.get("kind")
     if kind == "trash_path":
         result = execute_trash_path(Path(action["path"]))
+    elif kind == "trash_group":
+        result = execute_trash_group(action)
     elif kind == "delete_snapshot":
         elevate = payload.get("elevate", False)
         result = execute_delete_snapshot(action["snapshot_name"], action["token"], elevate=elevate)
@@ -4308,7 +4515,7 @@ const html = htm.bind(preact.h);
                     background: `${CATEGORY_COLORS[item.category] || '#666'}22`,
                     color: CATEGORY_COLORS[item.category] || 'var(--text-secondary)',
                   }}>${(item.category || '').replace(/_/g, ' ')}</span><span style=${{ padding: '1px 6px', borderRadius: 4, fontSize: 11, textAlign: 'center', background: risk.bg, color: risk.color }}>${risk.label}</span><span class=${"mono"} style=${{ textAlign: 'right' }}>${formatBytes(item.estimated_reclaim_bytes || item.allocated_bytes)}</span><span style=${{ display: 'flex', gap: 3, justifyContent: 'flex-end' }}>${item.actions?.filter(a => a.kind === 'execute').map(a => (
-                      html`<button key=${a.label} disabled=${busyToken === a.action_token} onClick=${() => window.confirm(`${a.label}?\n\n${item.path}\n${formatBytes(item.estimated_reclaim_bytes || item.allocated_bytes)}\n\nQuit the app that owns it first. Space is freed only when you empty the Trash.`) && onExecute(a.action_token)} style=${{ padding: '2px 7px', borderRadius: 4, fontSize: 11, border: 'none', cursor: 'pointer', background: 'var(--accent)', color: '#fff' }}>${busyToken === a.action_token ? '...' : (a.label === 'Move to Trash' ? 'Trash' : a.label)}</button>`
+                      html`<button key=${a.label} disabled=${busyToken === a.action_token} onClick=${() => window.confirm(item.cleanup_kind === 'trash_group' ? `Move ${item.count} entries older than 3 days to Trash?\n\n${item.path}\n\nEntries are checked again before moving. Space is freed only when you empty the Trash.` : `${a.label}?\n\n${item.path}\n${formatBytes(item.estimated_reclaim_bytes || item.allocated_bytes)}\n\nQuit the app that owns it first. Space is freed only when you empty the Trash.`) && onExecute(a.action_token)} style=${{ padding: '2px 7px', borderRadius: 4, fontSize: 11, border: 'none', cursor: 'pointer', background: 'var(--accent)', color: '#fff' }}>${busyToken === a.action_token ? '...' : (a.label === 'Move to Trash' ? 'Trash' : a.label)}</button>`
                     ))}<button onClick=${() => onReveal(item.path)} style=${{ padding: '2px 7px', borderRadius: 4, fontSize: 11, border: '1px solid var(--border)', cursor: 'pointer', background: 'transparent', color: 'var(--text-secondary)' }}>Reveal</button></span></div>`
               );
             })}</div></div>`
