@@ -455,6 +455,24 @@ def test_unscored_selection_survives_index_switches(open_page, ml):
     expect(page.locator(".empty.box")).to_have_text("None of the selected models has a Finance score.")
 
 
+def test_ladder_table_fills_the_row_when_the_chart_is_hidden(open_page, ml):
+    models = indexed_ladder_models()
+    models[0]["evaluations"]["artificial_analysis_finance_and_accounting_index"] = None
+    page = open_page(payload_for(ml, models))
+    compare(page)
+    add(page, "alpha")
+    page.keyboard.press("Escape")
+    page.select_option("#index-select", "finance")
+    expect(page.locator("#ladder svg")).to_have_count(1)
+    page.select_option("#effort-hi", "medium")
+    page.select_option("#effort-lo", "medium")
+    expect(page.locator("#ladder svg")).to_have_count(0)
+    assert page.locator("#ladder-table td.none", has_text="No score").count() == 1
+    widths = page.evaluate("""() => [document.querySelector('#ladder-table').closest('.box').getBoundingClientRect().width,
+        document.querySelector('#ladder').getBoundingClientRect().width]""")
+    assert widths[0] == widths[1]
+
+
 def test_changes_use_selected_index_for_disappearing_score(open_page, ml):
     current = indexed_ladder_models()
     previous = indexed_ladder_models()
