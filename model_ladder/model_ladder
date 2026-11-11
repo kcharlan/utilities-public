@@ -25,7 +25,7 @@ import zlib
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-VERSION = "1.0.1"
+VERSION = "1.1.0"
 
 # ---------------------------------------------------------------------------
 # Config and atomic writes
@@ -917,8 +917,9 @@ button:focus-visible, select:focus-visible, input:focus-visible, th:focus-visibl
 .chip .mk { color: var(--muted); font-weight: 400; font-size: 13px; }
 .chip button.x { border: 0; background: none; color: var(--muted); padding: 0 6px; border-radius: 999px; line-height: 1.2; }
 .chip button.x:hover { color: var(--ink); background: var(--dom-bg); }
-.chip.gone { border-style: dashed; border-color: var(--muted); color: var(--muted); font-weight: 400; }
+.chip.gone, .chip.unscored { border-style: dashed; border-color: var(--muted); color: var(--muted); font-weight: 400; }
 .chip.gone .gone-text { text-decoration: line-through; }
+td.none { color: var(--muted); }
 .picker { position: relative; }
 .pop { position: absolute; z-index: 5; top: calc(100% + 6px); left: 0; width: min(430px, calc(100vw - 48px)); background: var(--panel); border: 1px solid var(--ink); border-radius: 8px; padding: 8px; display: flex; flex-direction: column; gap: 6px; }
 .pop input { width: 100%; }
@@ -1000,6 +1001,8 @@ APP_JS = r"""
   const ALL_ROWS = DATA.rows;
   const ORDER = DATA.rung_order;
   const RUNGS = M.presentRungs(ALL_ROWS, ORDER);
+  const KNOWN_FAMILIES = {};
+  ALL_ROWS.forEach((r) => { KNOWN_FAMILIES[r.family_key] = { family: r.family, maker: r.maker }; });
   const views = {};
   function viewFor(key) {
     if (!views[key]) {
@@ -1418,7 +1421,7 @@ APP_JS = r"""
     </div>`;
   }
 
-  function Controls({ state, update, toggleKey, view }) {
+  function Controls({ state, update, toggleKey, view, indexShort }) {
     const setHi = (hi) => update((s) => ({ hi, lo: RUNGS.indexOf(hi) > RUNGS.indexOf(s.lo) ? hi : s.lo }));
     const setLo = (lo) => update((s) => ({ lo, hi: RUNGS.indexOf(lo) < RUNGS.indexOf(s.hi) ? lo : s.hi }));
     const options = RUNGS.map((r) => html`<option key=${r} value=${r}>${M.rungLabel(r)}</option>`);
@@ -1428,6 +1431,9 @@ APP_JS = r"""
         <span class="group" id="chips">${state.keys.map((k) => {
           const f = view.familyByKey[k];
           if (!f) {
+            const known = KNOWN_FAMILIES[k];
+            if (known) return html`<span class="chip unscored" key=${k}><${Dot} color=${colorOf(state.keys, k)} /><span><span class="fam">${known.family}</span> has no ${indexShort} score</span>
+              <button type="button" class="x" aria-label=${"Remove " + known.family} onClick=${() => toggleKey(k)}>×</button></span>`;
             const name = missingName(k);
             return html`<span class="chip gone" key=${k}><span class="gone-text"><span class="fam">${name}</span> is no longer listed</span>
               <button type="button" class="x" aria-label=${"Remove " + name} onClick=${() => toggleKey(k)}>×</button></span>`;
@@ -1456,11 +1462,21 @@ APP_JS = r"""
     </div>`;
   }
 
-  function CompareView({ state, update, onSort, toggleKey, view, borrowed, indexLabel }) {
+  function CompareView({ state, update, onSort, toggleKey, view, borrowed, indexLabel, indexShort }) {
     const present = state.keys.filter((k) => view.familyByKey[k]);
-    const controls = html`<${Controls} state=${state} update=${update} toggleKey=${toggleKey} view=${view} />`;
+    const controls = html`<${Controls} state=${state} update=${update} toggleKey=${toggleKey} view=${view} indexShort=${indexShort} />`;
+    const missing = M.unscoredRows(ALL_ROWS, state.index, { keys: state.keys, hi: state.hi, lo: state.lo, rungOrder: ORDER, mode: state.mode });
+    const labels = [];
+    state.keys.forEach((k) => {
+      const rows = missing.filter((r) => r.family_key === k);
+      if (!rows.length) return;
+      if (!view.familyByKey[k] && KNOWN_FAMILIES[k]) labels.push(KNOWN_FAMILIES[k].family + " (all levels)");
+      else rows.forEach((r) => labels.push(r.label));
+    });
+    const note = labels.length ? html`<p id="unscored-note" class="note">Not scored in ${indexLabel}: ${labels.join(", ")}.</p>` : null;
     if (!present.length) {
-      return html`<div class="view">${controls}<p class="empty box">Add a model to start comparing.</p></div>`;
+      const known = state.keys.some((k) => KNOWN_FAMILIES[k]);
+      return html`<div class="view">${controls}${note}<p class="empty box">${known ? "None of the selected models has a " + indexShort + " score." : "Add a model to start comparing."}</p></div>`;
     }
     const mode = state.mode;
     const sel = M.selectRows(view.rows, { keys: present, hi: state.hi, lo: state.lo, rungOrder: ORDER, mode });
@@ -1470,11 +1486,12 @@ APP_JS = r"""
     [sel, steps, pareto].forEach((list) => list.forEach((r) => { r.effort = effortValue(r); }));
     const color = (r) => colorOf(state.keys, r.family_key);
 
-    const rungs = M.presentRungs(sel, ORDER);
-    const fams = present.filter((k) => sel.some((r) => r.family_key === k && r.rank !== null));
+    const rungs = M.presentRungs(sel.concat(missing.filter((r) => present.includes(r.family_key))), ORDER);
+    const fams = present.filter((k) => sel.concat(missing).some((r) => r.family_key === k && r.rank !== null));
     const cells = {};
     sel.forEach((r) => { if (r.rank !== null) cells[r.family_key + "\n" + r.rung] = r; });
     const cell = (k, rung) => cells[k + "\n" + rung] || null;
+    const missingCell = (k, rung) => missing.some((r) => r.family_key === k && r.rung === rung);
 
     const stepRows = state.sorts.steps ? ordered(steps, "steps", state.sorts)
       : present.reduce((acc, k) => acc.concat(steps.filter((r) => r.family_key === k)), []);
@@ -1487,10 +1504,11 @@ APP_JS = r"""
 
     return html`<div class="view">
       ${controls}
+      ${note}
       <section id="ladder">
         <h2>Effort ladder</h2>
         ${fams.length ? html`<div class="pair">
-          <div class="box chart"><${LadderChart} rungs=${rungs} fams=${fams} cell=${cell} keys=${state.keys} mode=${mode} indexLabel=${indexLabel} /></div>
+          ${sel.some((r) => r.rank !== null) ? html`<div class="box chart"><${LadderChart} rungs=${rungs} fams=${fams} cell=${cell} keys=${state.keys} mode=${mode} indexLabel=${indexLabel} /></div>` : null}
           <div class="box scroll"><table id="ladder-table">
             <thead>
               <tr class="grp"><th></th>${fams.map((k) => html`<th key=${k} colspan="2" class="b"><${Dot} color=${colorOf(state.keys, k)} />${view.familyByKey[k].family}</th>`)}</tr>
@@ -1501,7 +1519,7 @@ APP_JS = r"""
               return r ? [html`<td class="b" data-c="score" data-v=${r.score}><span class="num">${scoreText(r.index, mode)}</span>${
                 mode === "whole" ? html`<span class="raw">${r.index.toFixed(1)}</span>` : null}</td>`,
                 html`<${CostCell} row=${r} borrowed=${borrowed} />`]
-                : [html`<td class="b"></td>`, html`<td></td>`];
+                : [html`<td class=${missingCell(k, rung) ? "b none" : "b"}>${missingCell(k, rung) ? "No score" : ""}</td>`, html`<td></td>`];
             })}</tr>`)}</tbody>
           </table></div>
         </div>` : html`<p class="empty box">None of the selected models has effort levels in this range.</p>`}
@@ -1592,8 +1610,9 @@ APP_JS = r"""
     const tab = (view, label) => html`<button role="tab" type="button" id=${"tab-" + view} aria-selected=${String(state.view === view)}
       onClick=${() => update({ view })}>${label}</button>`;
     const view = viewFor(state.index), borrowed = state.index !== "intelligence";
-    const indexLabel = DATA.indexes.find((i) => i.key === state.index).label;
-    const props = { state, update, onSort, toggleKey, view, borrowed, indexLabel };
+    const indexInfo = DATA.indexes.find((i) => i.key === state.index);
+    const indexLabel = indexInfo.label, indexShort = indexInfo.short;
+    const props = { state, update, onSort, toggleKey, view, borrowed, indexLabel, indexShort };
     return html`<div class="wrap">
       <header>
         <div><h1>Model Ladder</h1><p class="sub">Effort levels compared by ${borrowed ? "the " + indexLabel + " index" : indexLabel} and cost per task.</p></div>

@@ -117,7 +117,7 @@ def alpha_and_beta(page):
 def test_index_selector_and_borrowed_costs(open_page, ml):
     page = open_page(payload_for(ml, indexed_ladder_models()))
     assert texts(page, "#index-select option") == ["Intelligence Index (12)", "Finance and accounting (8)"]
-    assert page.locator("#index-select").input_value() == "intelligence"
+    expect(page.locator("#index-select")).to_have_value("intelligence")
     assert page.locator("#cost-notice, td.borrowed, path.stair.borrowed").count() == 0
     page.select_option("#all-creator", "Sample Works")
     page.select_option("#index-select", "finance")
@@ -138,7 +138,7 @@ def test_index_selector_and_borrowed_costs(open_page, ml):
     page.reload()
     assert page.locator("#index-select").input_value() == "finance"
     page.goto(page.url.split('#')[0] + '#' + quote(json.dumps({"index": "unknown"})))
-    assert page.locator("#index-select").input_value() == "intelligence"
+    expect(page.locator("#index-select")).to_have_value("intelligence")
 
 
 def test_default_index_remains_available_when_only_domain_scores_exist(open_page, ml):
@@ -411,6 +411,59 @@ def test_missing_family_chip(open_page):
     chip.locator("button").click()
     expect(page.locator("#chips .chip")).to_have_count(0)
     expect(page.locator(".empty", has_text="Add a model to start comparing.")).to_be_visible()
+
+
+def test_unscored_selection_survives_index_switches(open_page, ml):
+    models = indexed_ladder_models()
+    models[0]["evaluations"]["artificial_analysis_finance_and_accounting_index"] = None
+    models.append(model("Beta Test 1 (Low)", scores={"finance": 44}))
+    page = open_page(payload_for(ml, models))
+    compare(page)
+    for name in ("alpha", "beta", "gamma"):
+        add(page, name)
+    page.keyboard.press("Escape")
+    colors = page.locator("#chips .dot").evaluate_all("els => els.map(e => getComputedStyle(e).backgroundColor)")
+    page.select_option("#index-select", "finance")
+    gamma = page.locator("#chips .unscored")
+    expect(gamma).to_contain_text("Gamma Test 1 has no Finance score")
+    assert gamma.locator("button").count() == 1
+    assert page.locator("#chips .dot").evaluate_all("els => els.map(e => getComputedStyle(e).backgroundColor)") == colors
+    page.click("#add-model")
+    assert "Gamma Test 1" not in page.locator("#model-list").inner_text()
+    page.keyboard.press("Escape")
+    assert "Gamma Test 1" not in page.locator("#ladder").inner_text()
+    for section in ("#ladder", "#steps", "#pareto", "#say"):
+        assert "Gamma Test 1" not in page.locator(section).text_content()
+    expect(page.locator("#unscored-note")).to_have_text("Not scored in Finance and accounting: Alpha Test 1 Medium, Gamma Test 1 (all levels).")
+    assert page.locator("#ladder-table td.none", has_text="No score").count() == 1
+    assert "Alpha Test 1 Medium" not in page.locator("#pareto").inner_text()
+    assert page.locator("#steps-table tr:has-text('Alpha Test 1'):has-text('Medium')").count() == 0
+    page.select_option("#effort-lo", "high")
+    expect(page.locator("#unscored-note")).to_have_text("Not scored in Finance and accounting: Gamma Test 1 (all levels).")
+    page.select_option("#effort-lo", "low")
+    page.select_option("#effort-hi", "medium")
+    page.select_option("#effort-lo", "medium")
+    assert page.locator("#ladder-table td.none", has_text="No score").count() == 1
+    page.select_option("#effort-hi", "max")
+    page.select_option("#effort-lo", "low")
+    page.select_option("#index-select", "intelligence")
+    expect(page.locator("#unscored-note")).to_have_text("Not scored in Intelligence Index: Beta Test 1 Low.")
+    assert page.locator("#chips .dot").evaluate_all("els => els.map(e => getComputedStyle(e).backgroundColor)") == colors
+    page.select_option("#index-select", "finance")
+    page.locator("#chips button[aria-label='Remove Alpha Test 1']").click()
+    page.locator("#chips button[aria-label='Remove Beta Test 1']").click()
+    expect(page.locator(".empty.box")).to_have_text("None of the selected models has a Finance score.")
+
+
+def test_changes_use_selected_index_for_disappearing_score(open_page, ml):
+    current = indexed_ladder_models()
+    previous = indexed_ladder_models()
+    current[0]["evaluations"]["artificial_analysis_finance_and_accounting_index"] = None
+    page = open_page(payload_for(ml, current, previous=snapshot(previous)))
+    page.locator("#changes summary").click()
+    assert "Alpha Test 1 (Medium)" not in page.locator("#changes").inner_text()
+    page.select_option("#index-select", "finance")
+    expect(page.locator("#changes")).to_contain_text("Alpha Test 1 (Medium): score 30 to no score")
 
 
 def test_changes_panel(open_page, ml):

@@ -1,10 +1,12 @@
 # Model Ladder
 
 Model Ladder compares the effort levels of AI models by their Artificial Analysis
-Intelligence Index score and by what one task costs. One command fetches the
+available index scores and by what one task costs. One command fetches the
 current data and builds a single offline page with:
 
-- an all-models view: every scored model, the overall frontier, and a sortable
+- an index selector for the Intelligence Index and available domain indexes;
+  Coding and Agentic appear when the API supplies scores for them;
+- an all-models view: every model scored in the selected index, the overall frontier, and a sortable
   table filterable by creator and by text (matching creator, family or the full
   model name, so tags are searchable);
 - a compare view for the model families you pick: an effort ladder per family
@@ -14,10 +16,17 @@ current data and builds a single offline page with:
 - a status strip with the age of the data, the index version, the request quota
   left, and a panel listing what changed. It compares the newest snapshot with the
   most recent older one that differs in what the page shows (index version, an
-  added or removed model, a score or cost), so a refetch that changes only fields
+  added or removed model, any index score or cost), so a refetch that changes only fields
   the page does not use leaves the last real change visible.
 
 The page states facts. It makes no recommendation. Same data in, same page out.
+
+## Indexes and cost
+
+The API supplies cost per task for the Intelligence Index run only. Other indexes
+pair their scores with that borrowed cost; the page marks costs and frontiers accordingly.
+Models without a score in the selected index remain selected with an unscored chip.
+Individual unscored effort levels show `No score`, and a note lists the omitted levels.
 
 ## Setup
 

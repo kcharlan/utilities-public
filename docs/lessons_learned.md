@@ -2441,3 +2441,8 @@ The shared SVG chart first draws at a 400px placeholder width and measures its c
 ## 2026-11-11: Keep native select fallbacks among the options
 
 When a native select's saved or default value is absent from its options, its displayed value can disagree with the application state. Keep the fallback option available even when its count is zero, and test both the default and an unavailable saved choice against the rendered control.
+
+## 2026-11-11: Wait for browser hash state to render
+
+After navigating to a new hash on the same page, wait for the rendered state to
+settle before asserting it; a synchronous read can observe the previous state.
