@@ -292,16 +292,36 @@ test("data age", () => {
   assert.deepEqual(m.dataAge(last, t + 72 * 3.6e6, 12), { text: "Data is 3 days old", stale: true });
 });
 
-test("changes filter", () => {
+test("index rows and unscored rows use family and range filtering", () => {
+  const rows = [row("Alpha", "high", 1, 1, {scores: {finance: 12}}),
+    row("Alpha", "medium", 1, 1, {scores: {finance: null}}),
+    row("Alpha", "low", 1, 1, {scores: {finance: null}}),
+    row("Beta", "high", 1, 1, {scores: {finance: null}})];
+  assert.deepEqual(m.rowsForIndex(rows, "finance").map(r => r.index), [12]);
+  assert.notEqual(m.rowsForIndex(rows, "finance")[0], rows[0]);
+  const selected = m.unscoredRows(rows, "finance", {keys: keysOf(rows), hi: "high", lo: "medium", rungOrder: ORDER});
+  assert.deepEqual(selected.map(r => [r.label, r.rank]), [["Alpha Medium", 3], ["Beta High", 2]]);
+  assert.deepEqual(m.unscoredRows(rows, "finance", {keys: [rows[0].family_key], hi: "high", lo: "medium", rungOrder: ORDER}).map(r => r.label), ["Alpha Medium"]);
+});
+
+test("changes filter uses per-index scores including null", () => {
   const changes = {
     changed: [
-      { slug: "a", name: "A", index: [61.8, 62.2], cost: [1, 1] },
-      { slug: "b", name: "B", index: [61.4, 61.6], cost: [1, 1] },
-      { slug: "c", name: "C", index: [50, 50], cost: [1.2341, 1.2349] },
-      { slug: "d", name: "D", index: [50, 50], cost: [1.23, 1.25] },
+      { slug: "a", name: "A", scores: {intelligence: [61.8, 62.2]}, cost: [1, 1] },
+      { slug: "b", name: "B", scores: {intelligence: [61.4, 61.6]}, cost: [1, 1] },
+      { slug: "c", name: "C", scores: {intelligence: [50, 50]}, cost: [1.2341, 1.2349] },
+      { slug: "d", name: "D", scores: {intelligence: [50, 50]}, cost: [1.23, 1.25] },
+      { slug: "e", name: "E", scores: {intelligence: [null, 0]}, cost: [1, 1] },
+      { slug: "f", name: "F", scores: {intelligence: [null, null]}, cost: [1, 1] },
     ],
   };
-  assert.deepEqual(m.changesToShow(changes, "whole").map((c) => c.slug), ["b", "d"]);
-  assert.deepEqual(m.changesToShow(changes, "decimal").map((c) => c.slug), ["a", "b", "d"]);
+  assert.deepEqual(m.changesToShow(changes, "whole", "intelligence").map((c) => c.slug), ["b", "d", "e"]);
+  assert.deepEqual(m.changesToShow(changes, "decimal", "intelligence").map((c) => c.slug), ["a", "b", "d", "e"]);
+  const domain = {changed: [
+    {slug: "appears", scores: {finance: [null, 0]}, cost: [1, 1]},
+    {slug: "disappears", scores: {finance: [5, null]}, cost: [1, 1]},
+    {slug: "unchanged", scores: {finance: [null, null]}, cost: [1, 1]},
+  ]};
+  assert.deepEqual(m.changesToShow(domain, "whole", "finance").map(c => c.slug), ["appears", "disappears"]);
   assert.deepEqual(m.changesToShow(null, "whole"), []);
 });

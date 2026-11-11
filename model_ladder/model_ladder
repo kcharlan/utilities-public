@@ -131,12 +131,28 @@ def _family_key(maker: str, family: str) -> str:
     return json.dumps([maker, family])
 
 
+INDEXES = (
+    ("intelligence", "artificial_analysis_intelligence_index", "Intelligence Index", "Intelligence"),
+    ("coding", "artificial_analysis_coding_index", "Coding", "Coding"),
+    ("agentic", "artificial_analysis_agentic_index", "Agentic", "Agentic"),
+    ("economics", "artificial_analysis_economics_index", "Economics", "Economics"),
+    ("engineering", "artificial_analysis_engineering_index", "Engineering", "Engineering"),
+    ("finance", "artificial_analysis_finance_and_accounting_index", "Finance and accounting", "Finance"),
+    ("healthcare", "artificial_analysis_healthcare_and_medical_index", "Healthcare and medical", "Healthcare"),
+    ("legal", "artificial_analysis_legal_index", "Legal", "Legal"),
+    ("strategy", "artificial_analysis_strategy_and_ops_index", "Strategy and ops", "Strategy"),
+)
+DEFAULT_INDEX = "intelligence"
+
+
 def classify(models: list[dict]) -> list[dict]:
     """One row per scored model, in input order, with its family and effort rung."""
     rows = []
     for item in models:
-        index = (item.get("evaluations") or {}).get("artificial_analysis_intelligence_index")
-        if isinstance(index, bool) or not isinstance(index, (int, float)):
+        evaluations = item.get("evaluations") or {}
+        scores = {key: value if not isinstance(value, bool) and isinstance(value, (int, float)) else None
+                  for key, field, _, _ in INDEXES for value in [evaluations.get(field)]}
+        if all(value is None for value in scores.values()):
             continue
         cost_block = item.get("artificial_analysis_intelligence_index_cost") or {}
         per_task = cost_block.get("cost_per_task") or {}
@@ -151,7 +167,7 @@ def classify(models: list[dict]) -> list[dict]:
             "family_key": _family_key(maker, parts["family"]),
             "rung": parts["rung"],
             "tags": parts["tags"],
-            "index": index,
+            "scores": scores,
             "cost": cost,
             "total_cost": cost_block.get("total_cost"),
             "release_date": item.get("release_date"),
@@ -179,7 +195,6 @@ API_URL = "https://artificialanalysis.ai/api/v2/language/models/free"
 OP_PATHS = ("/opt/homebrew/bin/op", "/usr/local/bin/op")
 MAX_PAGES = 20
 KEY_ENV = "MODEL_LADDER_AA_KEY"
-INDEX_FIELD = "artificial_analysis_intelligence_index"
 COST_FIELD = "artificial_analysis_intelligence_index_cost"
 
 
@@ -331,9 +346,10 @@ def validate_models(models: list) -> None:
         evaluations = item.get("evaluations")
         if evaluations is not None and not isinstance(evaluations, dict):
             raise FetchError(f"{label}: field evaluations must be an object")
-        index = (evaluations or {}).get(INDEX_FIELD)
-        if index is not None and not _is_finite_number(index):
-            raise FetchError(f"{label}: field {INDEX_FIELD} must be a finite number")
+        for _, field, _, _ in INDEXES:
+            index = (evaluations or {}).get(field)
+            if index is not None and not _is_finite_number(index):
+                raise FetchError(f"{label}: field {field} must be a finite number")
         cost_block = item.get(COST_FIELD)
         if cost_block is not None and not isinstance(cost_block, dict):
             raise FetchError(f"{label}: field {COST_FIELD} must be an object")
@@ -434,9 +450,9 @@ def diff_rows(old: dict | None, new: dict) -> dict | None:
     changed = []
     for slug, row in after.items():
         prior = before.get(slug)
-        if prior and (prior["index"] != row["index"] or prior["cost"] != row["cost"]):
+        if prior and (prior["scores"] != row["scores"] or prior["cost"] != row["cost"]):
             changed.append({"slug": slug, "name": row["name"],
-                            "index": [prior["index"], row["index"]],
+                            "scores": {key: [prior["scores"][key], row["scores"][key]] for key, *_ in INDEXES},
                             "cost": [prior["cost"], row["cost"]]})
     return {
         "from": old["fetched_at"],
@@ -453,11 +469,15 @@ def diff_rows(old: dict | None, new: dict) -> dict | None:
 # Page build
 # ---------------------------------------------------------------------------
 
-PAGE_SCHEMA = 1
+PAGE_SCHEMA = 2
 
 
 def build_payload(snapshot: dict, previous: dict | None, config: dict) -> dict:
     """Everything the page shows; all analysis happens in the page's JavaScript."""
+    rows = classify(snapshot["models"])
+    indexes = [{"key": key, "label": label, "short": short,
+                "count": sum(row["scores"][key] is not None for row in rows)}
+               for key, _, label, short in INDEXES]
     return {
         "schema": PAGE_SCHEMA,
         "app": {"name": "Model Ladder", "version": VERSION},
@@ -467,7 +487,8 @@ def build_payload(snapshot: dict, previous: dict | None, config: dict) -> dict:
         "index_version": snapshot["index_version"],
         "rate_limit": snapshot.get("rate_limit") or {"limit": None, "remaining": None, "reset": None},
         "rung_order": list(RUNG_ORDER),
-        "rows": classify(snapshot["models"]),
+        "rows": rows,
+        "indexes": [index for index in indexes if index["count"] or index["key"] == DEFAULT_INDEX],
         "changes": diff_rows(previous, snapshot),
     }
 
@@ -592,6 +613,15 @@ function presentRungs(rows, rungOrder) {
   var seen = {};
   rows.forEach(function (row) { if (row.rung) seen[row.rung] = true; });
   return rungOrder.filter(function (rung) { return seen[rung]; });
+}
+
+function rowsForIndex(rows, key) {
+  return rows.filter(function (row) { return typeof row.scores[key] === "number"; })
+    .map(function (row) { return Object.assign({}, row, { index: row.scores[key] }); });
+}
+
+function unscoredRows(rows, key, opts) {
+  return selectRows(rows.filter(function (row) { return typeof row.scores[key] !== "number"; }), opts);
 }
 
 function selectRows(rows, opts) {
@@ -818,11 +848,11 @@ function dataAge(lastCheckedIso, nowMs, maxAgeHours) {
   return { text: text, stale: hours > maxAgeHours };
 }
 
-function changesToShow(changes, mode) {
+function changesToShow(changes, mode, key) {
   if (!changes || !changes.changed) return [];
-  function shownScore(raw) { return mode === "decimal" ? raw : wholePoints(raw); }
+  function shownScore(raw) { return raw === null ? null : mode === "decimal" ? raw : wholePoints(raw); }
   return changes.changed.filter(function (item) {
-    var scoreMoved = shownScore(item.index[0]) !== shownScore(item.index[1]);
+    var scoreMoved = shownScore(item.scores[key][0]) !== shownScore(item.scores[key][1]);
     var costMoved = money(item.cost[0]) !== money(item.cost[1]);
     return scoreMoved || costMoved;
   });
@@ -830,7 +860,7 @@ function changesToShow(changes, mode) {
 
 var api = {
   wholePoints: wholePoints, families: families, searchFamilies: searchFamilies, searchRows: searchRows,
-  presentRungs: presentRungs, selectRows: selectRows, frontier: frontier,
+  presentRungs: presentRungs, selectRows: selectRows, rowsForIndex: rowsForIndex, unscoredRows: unscoredRows, frontier: frontier,
   paretoRows: paretoRows, familySteps: familySteps, sortRows: sortRows,
   findings: findings, money: money, dataAge: dataAge, changesToShow: changesToShow,
   dominatedReason: dominatedReason, rungLabel: rungLabel, showPoints: showPoints
@@ -962,7 +992,7 @@ APP_JS = r"""
   const html = window.htm.bind(h);
 
   const DATA = JSON.parse(document.getElementById("payload").textContent);
-  const ROWS = DATA.rows;
+  const ROWS = M.rowsForIndex(DATA.rows, "intelligence");
   const ORDER = DATA.rung_order;
   const RUNGS = M.presentRungs(ROWS, ORDER);
   const FAMILIES = M.families(ROWS);
@@ -1237,11 +1267,12 @@ APP_JS = r"""
   function Changes({ mode }) {
     const c = DATA.changes;
     if (!c) return null;
-    const shown = M.changesToShow(c, mode);
+    const shown = M.changesToShow(c, mode, "intelligence");
     const empty = !c.version && !c.added.length && !c.removed.length && !shown.length;
     const describe = (item) => {
       const parts = [];
-      const a = scoreText(item.index[0], mode), b = scoreText(item.index[1], mode);
+      const a = item.scores.intelligence[0] === null ? "no score" : scoreText(item.scores.intelligence[0], mode);
+      const b = item.scores.intelligence[1] === null ? "no score" : scoreText(item.scores.intelligence[1], mode);
       parts.push(a === b ? "score " + a : "score " + a + " to " + b);
       const ca = M.money(item.cost[0]) || "no cost", cb = M.money(item.cost[1]) || "no cost";
       parts.push(ca === cb ? "cost " + ca : "cost " + ca + " to " + cb);

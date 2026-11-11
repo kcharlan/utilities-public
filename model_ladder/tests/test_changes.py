@@ -20,7 +20,15 @@ def test_diff_added_removed_changed(ml):
     assert diff["version"] is None
     assert diff["added"] == ["Delta Test 4"] and diff["removed"] == ["Beta Test 2"]
     assert diff["changed"] == [{"slug": "alpha-test-1--high-", "name": "Alpha Test 1 (high)",
-                                "index": [50.04, 51.26], "cost": [1.5, 1.75]}]
+                                "scores": {key: [50.04, 51.26] if key == "intelligence" else [None, None]
+                                           for key, *_ in ml.INDEXES}, "cost": [1.5, 1.75]}]
+
+
+def test_domain_changes_and_disappearing_score(ml):
+    old = snap([model("Example", 50, scores={"finance": 10})])
+    for value in (11, None):
+        new = snap([model("Example", 50, scores={"finance": value})])
+        assert ml.diff_rows(old, new)["changed"][0]["scores"]["finance"] == [10, value]
 
 
 def test_diff_ignores_unscored_and_identical(ml):
