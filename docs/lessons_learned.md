@@ -2450,3 +2450,7 @@ settle before asserting it; a synchronous read can observe the previous state.
 ## 2026-11-11: Attach page-wide listeners before the first paint
 
 Model Ladder attached its `hashchange` listener in a Preact `useEffect`, which runs after paint. A hash change in the first moments after load was missed, and `test_index_selector_and_borrowed_costs` failed about one run in three when it navigated to a new hash straight after a reload. Attach listeners that must not miss an early event in `useLayoutEffect`.
+
+## 2026-11-11: A cleanup rule keyed on a directory name needs a deny list and a shared-folder rule
+
+Storage Monitor offered any directory named `Cache`, `Caches` or `.cache` as a one-click Trash target and collapsed nested matches into the outermost one. That made the whole of `~/.cache` a single "low risk" item, although it holds many tools' data including the uv cache the app runs from, and it offered live system state such as the CoreSpotlight index and Apple containers. Treat a folder shared by many owners as review-only and list its entries, refuse system-managed and synced locations on the server as well as in discovery, and confirm every move. Move with `os.rename` and fail closed: `shutil.move` falls back to copying the tree and deleting the source when the rename is refused.

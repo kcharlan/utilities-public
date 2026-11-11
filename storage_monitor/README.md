@@ -111,8 +111,10 @@ Full-scan time depends on directory count, storage performance, permissions, and
 
 ### Cleanup intelligence
 
-- A fixed watchlist covers common caches, model stores, stale installers, runtime payloads, and large user-controlled data locations.
+- A fixed watchlist covers common caches, model stores, stale installers, runtime payloads, and large user-controlled data locations. Model stores, VS Code extensions, and user data are review-only.
 - The index also discovers cache-named directories of at least 100 MiB under the home directory.
+- Shared cache folders (`~/.cache`, `~/Library/Caches`) are never offered as one target. They and their entries of at least 100 MiB are listed for review. Inside them, only the watchlist's named caches and a cache-named directory within an entry can be moved to Trash.
+- Discovered caches are review-only when they sit in a location macOS manages or syncs: any `com.apple.*` container or cache, `~/Library/Metadata`, `Messages`, `Mail`, `Safari`, `Mobile Documents`, `CloudStorage`, `~/Documents`, `~/Desktop`, and uv's own cache.
 - Potential leftovers in `~/Library/Containers` and `~/Library/Group Containers` are heuristic, report-only results with a Reveal in Finder action.
 - Homebrew and Docker integrations provide estimates and explicit cleanup actions when their command-line tools are installed and usable.
 - uv cache size is reported as an upper bound with a copyable `uv cache prune` command. Quit Storage Monitor before running it because the parent uv process holds the cache lock.
@@ -120,7 +122,8 @@ Full-scan time depends on directory count, storage performance, permissions, and
 ### Snapshots and actions
 
 - The snapshot manager inventories local Time Machine snapshots, shows APFS purgeability and container-shrink details when available, supports sorting and multi-selection, and can request snapshot thinning.
-- Cache-like and stale-installer paths are moved to `~/.Trash/`; they are not permanently deleted by Storage Monitor.
+- Cache-like and stale-installer paths are moved to `~/.Trash/` after a confirmation; they are not permanently deleted by Storage Monitor, and space is freed only when the Trash is emptied. Items are renamed `storage-monitor-<timestamp>-<name>`, so Finder's Put Back is unavailable; the original path is recorded in `action_log.jsonl`.
+- The move is a rename. If macOS refuses it, the action fails and nothing is changed; Storage Monitor never copies and deletes instead. The server also refuses the protected locations above regardless of what the page requests.
 - Snapshot deletion and thinning are permanent operations delegated to macOS.
 - Finder reveal actions are available for files, directories, and report-only candidates.
 - After cleanup actions, Storage Monitor refreshes affected index paths, APFS metadata, and the persisted report without requiring another full scan. If a refreshed directory loses the owner of a hard-linked file, a surviving link elsewhere remains uncounted until its own directory is refreshed or a full scan runs.

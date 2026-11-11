@@ -289,6 +289,100 @@ def test_cache_discovery_watchlist_bundle_and_dedup(monkeypatch, tmp_path):
     assert {item["risk"] for item in findings} == {"low", "medium"}
 
 
+def _discovery_home(module, monkeypatch, tmp_path):
+    home = tmp_path / "home"
+    monkeypatch.setattr(module, "HOME_DIR", home)
+    monkeypatch.setattr(module, "TRASH_DIR", home / ".Trash")
+    monkeypatch.setattr(module, "expand_path", lambda value: Path(str(value).replace("~", str(home))).resolve())
+    monkeypatch.delenv("UV_CACHE_DIR", raising=False)
+    return home
+
+
+def _index_dirs(module, scan_id, entries):
+    module.upsert_node_rows(scan_id, [{
+        "path": str(path), "parent_path": str(path.parent), "name": path.name,
+        "root_key": "home_root", "depth": len(path.parts),
+        "allocated_bytes": size * 1024 * 1024, "children_indexed": True,
+        "updated_at": module.iso_now(),
+    } for path, size in entries])
+
+
+def test_shared_cache_folders_are_review_only_with_entries_listed(monkeypatch, tmp_path):
+    module = load(monkeypatch, tmp_path)
+    home = _discovery_home(module, monkeypatch, tmp_path)
+    scan_id = _insert_scan(module)
+    _index_dirs(module, scan_id, [
+        (home / ".cache", 900),
+        (home / ".cache/synthetic-prepared-data", 500),
+        (home / ".cache/synthetic-small", 50),
+        (home / ".cache/whisper", 300),
+        (home / "Library/Caches", 2000),
+        (home / "Library/Caches/synthetic-app", 400),
+        (home / "Library/Caches/synthetic-browser", 700),
+        (home / "Library/Caches/synthetic-browser/Default/Cache", 600),
+    ])
+    monkeypatch.setattr(module, "WATCHLIST_SPECS", [
+        {"path": "~/Library/Caches", "actionable": False},
+        {"path": "~/.cache/whisper", "actionable": True},
+    ])
+    findings = {item["path"]: item for item in module.discover_cache_candidates(scan_id)}
+    nested = str(home / "Library/Caches/synthetic-browser/Default/Cache")
+    review_only = [str(home / relative) for relative in (
+        ".cache", ".cache/synthetic-prepared-data", "Library/Caches/synthetic-app",
+    )]
+    assert set(findings) == {*review_only, nested}
+    for path in review_only:
+        assert findings[path]["actionable"] is False
+        assert findings[path]["action_token"] is None
+        assert [action["kind"] for action in findings[path]["actions"]] == ["reveal"]
+    assert findings[nested]["actionable"] is True
+    assert findings[nested]["risk"] == "low"
+
+
+@pytest.mark.parametrize("relative", [
+    "Library/Metadata/CoreSpotlight/index.spotlightV3/Cache",
+    "Library/Containers/com.apple.Safari/Data/Library/Caches",
+    "Library/Group Containers/group.com.apple.notes/Library/Caches",
+    "Library/Messages/Caches",
+    "Library/Mobile Documents/synthetic-app/Caches",
+    "Library/CloudStorage/synthetic-drive/.cache",
+    "Documents/synthetic-project/.cache",
+    ".cache/uv/archive-v0/synthetic-package/Cache",
+])
+def test_cache_discovery_never_offers_protected_locations(monkeypatch, tmp_path, relative):
+    module = load(monkeypatch, tmp_path)
+    home = _discovery_home(module, monkeypatch, tmp_path)
+    scan_id = _insert_scan(module)
+    third_party = home / "Library/Containers/synthetic.vendor.tool/Data/Library/Caches"
+    _index_dirs(module, scan_id, [(home / relative, 300), (third_party, 300)])
+    monkeypatch.setattr(module, "WATCHLIST_SPECS", [])
+    findings = {item["path"]: item for item in module.discover_cache_candidates(scan_id)}
+    protected = findings[str(home / relative)]
+    assert protected["actionable"] is False
+    assert protected["action_token"] is None
+    assert protected["risk"] == "high"
+    assert [action["kind"] for action in protected["actions"]] == ["reveal"]
+    assert findings[str(third_party)]["actionable"] is True
+
+
+def test_model_stores_and_extensions_are_review_only(monkeypatch, tmp_path):
+    module = load(monkeypatch, tmp_path)
+    home = _discovery_home(module, monkeypatch, tmp_path)
+    stores = [home / ".lmstudio/models", home / ".ollama/models", home / ".vscode/extensions"]
+    for store in stores:
+        store.mkdir(parents=True)
+        (store / "synthetic-payload").write_bytes(b"x" * 4096)
+    findings = {
+        item["path"]: item
+        for item in module.build_findings_section(module.scan_watchlist()["items"])["items"]
+    }
+    for store in stores:
+        finding = findings[str(store)]
+        assert finding["actionable"] is False
+        assert finding["action_token"] is None
+        assert [action["kind"] for action in finding["actions"]] == ["reveal"]
+
+
 def test_orphan_normalization_and_classification(monkeypatch, tmp_path):
     module = load(monkeypatch, tmp_path)
     home = tmp_path / "home"
