@@ -220,6 +220,8 @@ DISCOVERY_RULES = [{
     "name_suffixes": [".cache"], "case_insensitive": True,
     "scope": "home_root", "min_bytes": CACHE_DISCOVERY_MIN_BYTES,
     "action": "always", "risk": "medium", "review_risk": "medium",
+    "description": "Cache-named directory discovered by index scan. Apps rebuild caches; verify the owner before trashing.",
+    "group_label": "cache folders",
 }]
 
 PROVIDER_SPECS = {
@@ -2339,17 +2341,18 @@ def discover_candidates(scan_id: int) -> List[Dict[str, Any]]:
     library_caches = (HOME_DIR / "Library/Caches").resolve()
     dot_cache = (HOME_DIR / ".cache").resolve()
     findings: List[Dict[str, Any]] = []
-    small: Dict[str, List[Dict[str, Any]]] = {}
+    small: Dict[str, List[Tuple[Dict[str, Any], Dict[str, Any]]]] = {}
     now = int(time.time())
     for row, rule in survivors:
         path = Path(row["path"])
         protection = cleanup_protection_reason(path)
         age = (now - row["newest_mtime"]) // 86400 if row["newest_mtime"] is not None else None
         stale = (age >= rule["stale_days"] if age is not None else None) if rule["action"] == "when_stale" else None
-        actionable = protection is None and (rule["action"] == "always" or (rule["action"] == "when_stale" and stale is True))
+        actionable = (protection is None and row["allocated_bytes"] >= rule["min_bytes"]
+                      and (rule["action"] == "always" or (rule["action"] == "when_stale" and stale is True)))
         low_risk = library_caches in path.parents or dot_cache in path.parents
         risk = ("low" if low_risk else "medium") if rule["id"] == "cache" else rule["risk"]
-        description = protection or "Cache-named directory discovered by index scan. Apps rebuild caches; verify the owner before trashing."
+        description = protection or rule.get("description", "Directory discovered by index scan. Review its contents before taking action.")
         finding = {
             "label": rule.get("label_prefix", "") + path.name, "path": str(path), "category": rule["category"],
             "risk": "high" if protection else (risk if actionable else rule.get("review_risk", "medium")),
@@ -2364,15 +2367,18 @@ def discover_candidates(scan_id: int) -> List[Dict[str, Any]]:
         if row["allocated_bytes"] < rule["min_bytes"]:
             finding.update(actionable=False, cleanup_kind=None, action_token=None, estimated_reclaim_bytes=None)
             finding["actions"] = build_finding_actions(finding)
-            small.setdefault(rule["category"], []).append(finding)
+            small.setdefault(rule["category"], []).append((finding, rule))
         else:
             findings.append(finding)
 
-    for category, items in small.items():
+    for category, matches in small.items():
+        items = [finding for finding, _ in matches]
         items.sort(key=lambda item: item["allocated_bytes"], reverse=True)
         total = sum(item["allocated_bytes"] for item in items)
+        labels = {rule.get("group_label", "folders") for _, rule in matches}
+        group_label = labels.pop() if len(labels) == 1 else "folders"
         findings.append({"group": True, "count": len(items), "allocated_bytes": total,
-                         "items": items[:10], "label": f"{len(items)} smaller cache folders, {total / (1024 * 1024):.1f} MiB total",
+                         "items": items[:10], "label": f"{len(items)} smaller {group_label}, {total / (1024 * 1024):.1f} MiB total",
                          "category": category, "path": None, "risk": "medium", "description": "Smaller matches for review.",
                          "actionable": False, "actions": [], "cleanup_kind": None, "action_token": None,
                          "estimated_reclaim_bytes": None, "apparent_bytes": None, "rule_id": None,

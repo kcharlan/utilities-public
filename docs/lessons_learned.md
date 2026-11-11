@@ -2454,3 +2454,7 @@ Model Ladder attached its `hashchange` listener in a Preact `useEffect`, which r
 ## 2026-11-11: A cleanup rule keyed on a directory name needs a deny list and a shared-folder rule
 
 Storage Monitor offered any directory named `Cache`, `Caches` or `.cache` as a one-click Trash target and collapsed nested matches into the outermost one. That made the whole of `~/.cache` a single "low risk" item, although it holds many tools' data including the uv cache the app runs from, and it offered live system state such as the CoreSpotlight index and Apple containers. Treat a folder shared by many owners as review-only and list its entries, refuse system-managed and synced locations on the server as well as in discovery, and confirm every move. Move with `os.rename` and fail closed: `shutil.move` falls back to copying the tree and deleting the source when the rename is refused.
+
+## 2026-11-11: Classify review risk after all action gates
+
+Storage Monitor initially chose a discovery rule's actionable risk before grouping small matches as review-only. Include size, staleness and protection in the action decision before choosing risk, and test rules whose actionable and review risks differ.

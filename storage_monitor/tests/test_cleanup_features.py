@@ -411,6 +411,35 @@ def test_small_nested_cache_does_not_hide_large_shared_entry(monkeypatch, tmp_pa
     assert any(item.get("group") and item["count"] == 1 for item in findings)
 
 
+def test_small_rule_match_uses_review_risk_and_neutral_description(monkeypatch, tmp_path):
+    module = load(monkeypatch, tmp_path)
+    home = _discovery_home(module, monkeypatch, tmp_path)
+    monkeypatch.setattr(module, "WATCHLIST_SPECS", [])
+    monkeypatch.setattr(module, "DISCOVERY_RULES", [{"id": "synthetic", "category": "synthetic", "label_prefix": "", "names": ["artifact"], "scope": "home_root", "min_bytes": 100 * 1024 * 1024, "action": "always", "risk": "low", "review_risk": "high"}])
+    scan_id = _insert_scan(module)
+    _index_dirs(module, scan_id, [(home / "artifact", 2)])
+    group = module.discover_candidates(scan_id)[0]
+    item = group["items"][0]
+    assert not item["actionable"] and item["risk"] == "high"
+    assert "cache" not in item["description"].lower()
+    assert "cache" not in group["label"].lower()
+
+
+def test_null_time_cache_trashable_paths_match_baseline_plus_new_names(monkeypatch, tmp_path):
+    module = load(monkeypatch, tmp_path)
+    home = _discovery_home(module, monkeypatch, tmp_path)
+    monkeypatch.setattr(module, "WATCHLIST_SPECS", [{"path": "~/managed", "actionable": True}])
+    scan_id = _insert_scan(module)
+    _index_dirs(module, scan_id, [(home / name, size) for name, size in [
+        ("work/Cache", 120), ("work/Caches/child.cache", 110), ("work/Caches", 150),
+        (".cache/synthetic/old.cache", 130), ("managed/Cache", 140),
+        ("Synthetic.app/Contents/Cache", 160), ("small/Cache", 2),
+        ("work/cAcHe", 170), ("work/GPUCache", 180), ("work/notcache", 190),
+    ]])
+    paths = {item["path"] for item in module.discover_candidates(scan_id) if item.get("actionable")}
+    assert paths == {str(home / name) for name in ["work/Cache", "work/Caches", ".cache/synthetic/old.cache", "work/cAcHe", "work/GPUCache"]}
+
+
 def test_shared_cache_folders_are_review_only_with_entries_listed(monkeypatch, tmp_path):
     module = load(monkeypatch, tmp_path)
     home = _discovery_home(module, monkeypatch, tmp_path)
