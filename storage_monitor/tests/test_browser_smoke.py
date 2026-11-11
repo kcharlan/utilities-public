@@ -295,6 +295,43 @@ def test_single_snapshot_delete_requires_confirmation(monkeypatch, tmp_path, adm
         browser.close()
 
 
+def test_finding_trash_requires_confirmation(monkeypatch, tmp_path):
+    monkeypatch.setenv("STORAGE_MONITOR_HOME", str(tmp_path / "runtime"))
+    module = load_launcher(PROJECT_ROOT / "storage_monitor")
+    with live_server(module.app) as url, sync_playwright() as playwright:
+        browser = playwright.chromium.launch(headless=True)
+        page = browser.new_page()
+        route_dashboard_api(page)
+        requests = []
+        dialogs = []
+
+        def execute(route):
+            requests.append(route.request.post_data_json)
+            route.fulfill(json={"ok": True, "label": "Moved to Trash", "source_path": "/synthetic/cache"})
+
+        def confirm(dialog):
+            dialogs.append(dialog.message)
+            if len(dialogs) == 1:
+                dialog.dismiss()
+            else:
+                dialog.accept()
+
+        page.route("**/api/actions/execute", execute)
+        page.on("dialog", confirm)
+        with guard_browser_errors(page):
+            page.goto(url, wait_until="networkidle")
+            button = page.get_by_role("button", name="Trash", exact=True)
+            button.click()
+            assert len(dialogs) == 1
+            assert requests == []
+            button.click()
+            page.get_by_text("Moved to Trash", exact=False).first.wait_for()
+            assert len(dialogs) == 2
+            assert all("/synthetic/cache" in message and "Trash" in message for message in dialogs)
+            assert requests == [{"action_token": "synthetic-token", "elevate": False}]
+        browser.close()
+
+
 def test_dashboard_persists_theme_without_browser_errors(
     monkeypatch,
     tmp_path,

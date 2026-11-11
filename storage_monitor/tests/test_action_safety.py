@@ -1,4 +1,5 @@
 import base64
+import errno
 import json
 import os
 import subprocess
@@ -76,6 +77,53 @@ def test_trash_rejects_symlinked_target(monkeypatch, tmp_path):
     with pytest.raises(HTTPException):
         module.execute_trash_path(link)
     assert target.exists() and link.is_symlink()
+
+
+@pytest.mark.parametrize("relative", [
+    ".cache",
+    "Library/Caches",
+    "Library/Containers/com.apple.Safari/Data/Library/Caches",
+    "Library/Mobile Documents/synthetic-app/Caches",
+    "Library/Metadata/CoreSpotlight/index.spotlightV3/Cache",
+])
+def test_trash_refuses_protected_paths_even_with_a_valid_request(monkeypatch, tmp_path, relative):
+    module = load(monkeypatch, tmp_path)
+    module.ensure_runtime_dirs()
+    home = tmp_path / "home"
+    target = home / relative
+    target.mkdir(parents=True)
+    (target / "synthetic-payload").write_text("synthetic")
+    trash = tmp_path / "trash"
+    monkeypatch.setattr(module, "HOME_DIR", home)
+    monkeypatch.setattr(module, "DATA_VOLUME", tmp_path)
+    monkeypatch.setattr(module, "TRASH_DIR", trash)
+    with pytest.raises(HTTPException) as error:
+        module.execute_trash_path(target)
+    assert error.value.status_code == 400
+    assert (target / "synthetic-payload").read_text() == "synthetic"
+    assert not trash.exists() or not any(trash.iterdir())
+
+
+def test_trash_fails_closed_when_the_move_is_refused(monkeypatch, tmp_path):
+    module = load(monkeypatch, tmp_path)
+    module.ensure_runtime_dirs()
+    victim = tmp_path / "victim"
+    victim.mkdir()
+    (victim / "synthetic-payload").write_text("synthetic")
+    trash = tmp_path / "trash"
+    monkeypatch.setattr(module, "DATA_VOLUME", tmp_path)
+    monkeypatch.setattr(module, "TRASH_DIR", trash)
+
+    def refuse(source, destination, **kwargs):
+        raise PermissionError(errno.EPERM, "Operation not permitted", str(source))
+
+    monkeypatch.setattr(module.os, "rename", refuse)
+    with pytest.raises(HTTPException) as error:
+        module.execute_trash_path(victim)
+    assert error.value.status_code == 409
+    assert "Nothing was changed" in error.value.detail
+    assert (victim / "synthetic-payload").read_text() == "synthetic"
+    assert not any(trash.iterdir())
 
 
 def test_reveal_rejects_outside_roots_and_uses_finder_reveal(monkeypatch, tmp_path):

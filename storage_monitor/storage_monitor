@@ -185,7 +185,7 @@ def initialize_scan_db(paths: RuntimePaths) -> None:
         connection.commit()
 
 RUNTIME_PATHS = build_runtime_paths()
-VERSION = "0.4.4"
+VERSION = "0.4.5"
 DATA_VOLUME = Path("/System/Volumes/Data")
 HOME_DIR = Path.home()
 APPLICATIONS_DIR = Path("/Applications")
@@ -374,30 +374,30 @@ WATCHLIST_SPECS = [
         "label": "LM Studio Models",
         "path": "~/.lmstudio/models",
         "category": "model_store",
-        "risk": "medium",
-        "cleanup_kind": "trash_path",
-        "description": "Locally downloaded LM Studio models.",
-        "actionable": True,
+        "risk": "high",
+        "cleanup_kind": None,
+        "description": "Locally downloaded LM Studio models. Review manually; remove individual models from LM Studio.",
+        "actionable": False,
     },
     {
         "slug": "ollama-models",
         "label": "Ollama Models",
         "path": "~/.ollama/models",
         "category": "model_store",
-        "risk": "medium",
-        "cleanup_kind": "trash_path",
-        "description": "Locally cached Ollama model blobs.",
-        "actionable": True,
+        "risk": "high",
+        "cleanup_kind": None,
+        "description": "Locally downloaded Ollama models. Review manually; remove individual models with `ollama rm`.",
+        "actionable": False,
     },
     {
         "slug": "vscode-extensions",
         "label": "VS Code Extensions",
         "path": "~/.vscode/extensions",
         "category": "runtime_payload",
-        "risk": "medium",
-        "cleanup_kind": "trash_path",
-        "description": "Installed VS Code extensions. Safe only if you are willing to reinstall them.",
-        "actionable": True,
+        "risk": "high",
+        "cleanup_kind": None,
+        "description": "Installed VS Code extensions. Review manually; uninstall unused extensions from VS Code.",
+        "actionable": False,
     },
     {
         "slug": "photos-library",
@@ -1974,6 +1974,9 @@ def execute_trash_path(path: Path) -> Dict[str, Any]:
         raise HTTPException(status_code=404, detail=f"Path does not exist: {path}")
     if path.is_symlink() or path.stat().st_dev != DATA_VOLUME.stat().st_dev:
         raise HTTPException(status_code=400, detail="Target is not on the Data volume.")
+    protection = cleanup_protection_reason(path) or cleanup_protection_reason(path.resolve())
+    if protection is not None:
+        raise HTTPException(status_code=400, detail=f"Storage Monitor will not move {path} to Trash. {protection}")
     destination = unique_trash_destination(path)
     if path.is_file():
         sizes = stat_file_sizes(path)
@@ -1989,7 +1992,15 @@ def execute_trash_path(path: Path) -> Dict[str, Any]:
             _, totals, _ = walk_with_ownership(path, scan_id=-1, excluded_paths=[])
             allocated = totals[str(path)]
         sizes = {"allocated_bytes": allocated, "apparent_bytes": allocated}
-    shutil.move(str(path), str(destination))
+    # Rename only. shutil.move would fall back to copying the tree and deleting
+    # the source, which is a permanent delete that can stop halfway.
+    try:
+        os.rename(path, destination)
+    except OSError as exc:
+        raise HTTPException(
+            status_code=409,
+            detail=f"Could not move {path} to Trash ({exc.strerror or exc}). Nothing was changed.",
+        ) from exc
     return {
         "ok": True,
         "label": "Moved to Trash",
@@ -2211,10 +2222,13 @@ def discover_cache_candidates(scan_id: int) -> List[Dict[str, Any]]:
         ).fetchall()
     actionable_roots = [expand_path(spec["path"]) for spec in WATCHLIST_SPECS if spec["actionable"]]
     review_roots = [expand_path(spec["path"]) for spec in WATCHLIST_SPECS if not spec["actionable"]]
+    buckets = shared_cache_buckets()
     trash = TRASH_DIR.resolve()
     survivors: List[sqlite3.Row] = []
     for row in rows:
         path = Path(row["path"])
+        if path in buckets:
+            continue
         if any(path == root or root in path.parents for root in actionable_roots):
             continue
         if any(path == root for root in review_roots):
@@ -2226,12 +2240,28 @@ def discover_cache_candidates(scan_id: int) -> List[Dict[str, Any]]:
         if any(Path(existing["path"]) in path.parents for existing in survivors):
             continue
         survivors.append(row)
+
+    def review_only(row: sqlite3.Row, category: str, risk: str, description: str) -> Dict[str, Any]:
+        finding = {
+            "label": Path(row["path"]).name, "path": row["path"], "category": category,
+            "risk": risk, "description": description,
+            "apparent_bytes": None, "allocated_bytes": int(row["allocated_bytes"]),
+            "estimated_reclaim_bytes": None, "actionable": False,
+            "cleanup_kind": None, "action_token": None,
+        }
+        finding["actions"] = build_finding_actions(finding)
+        return finding
+
     library_caches = (HOME_DIR / "Library/Caches").resolve()
     dot_cache = (HOME_DIR / ".cache").resolve()
     findings: List[Dict[str, Any]] = []
     for row in survivors:
         path = Path(row["path"])
-        low_risk = path == library_caches or library_caches in path.parents or path == dot_cache or dot_cache in path.parents
+        protection = cleanup_protection_reason(path)
+        if protection is not None:
+            findings.append(review_only(row, "discovered_cache", "high", protection))
+            continue
+        low_risk = library_caches in path.parents or dot_cache in path.parents
         finding = {
             "label": path.name, "path": str(path), "category": "discovered_cache",
             "risk": "low" if low_risk else "medium",
@@ -2243,7 +2273,66 @@ def discover_cache_candidates(scan_id: int) -> List[Dict[str, Any]]:
         }
         finding["actions"] = build_finding_actions(finding)
         findings.append(finding)
+
+    # A shared cache folder is never one target: list it and its entries for review.
+    listed = [Path(row["path"]) for row in survivors] + actionable_roots + review_roots
+    with open_db_connection() as connection:
+        for bucket in buckets:
+            if bucket not in review_roots:
+                row = connection.execute(
+                    "SELECT path, allocated_bytes FROM nodes WHERE scan_id=? AND path=? AND allocated_bytes>=?",
+                    (scan_id, str(bucket), CACHE_DISCOVERY_MIN_BYTES),
+                ).fetchone()
+                if row is not None:
+                    findings.append(review_only(row, "cache_bucket", "low", SHARED_CACHE_BUCKET_REASON))
+            for row in connection.execute(
+                "SELECT path, allocated_bytes FROM nodes WHERE scan_id=? AND parent_path=? AND allocated_bytes>=? ORDER BY path ASC",
+                (scan_id, str(bucket), CACHE_DISCOVERY_MIN_BYTES),
+            ).fetchall():
+                child = Path(row["path"])
+                if any(child == other or child in other.parents for other in listed):
+                    continue
+                findings.append(review_only(
+                    row, "discovered_cache", "medium",
+                    "Entry in a shared cache folder. Review-only: some tools keep data here that is slow or costly to rebuild.",
+                ))
     return findings
+
+
+SHARED_CACHE_BUCKET_RELATIVE_PATHS = (".cache", "Library/Caches")
+SHARED_CACHE_BUCKET_REASON = "Shared cache folder used by many tools. Review its entries instead of removing it whole."
+# System-managed or synced locations under the home directory. Moving anything
+# out of them can corrupt live system state or delete the copy on other devices.
+PROTECTED_HOME_RELATIVE_PATHS = (
+    "Desktop", "Documents",
+    "Library/Application Support/CloudDocs", "Library/Application Support/MobileSync",
+    "Library/CloudStorage", "Library/Mail", "Library/Messages", "Library/Metadata",
+    "Library/Mobile Documents", "Library/Safari",
+)
+
+
+def shared_cache_buckets() -> List[Path]:
+    home = HOME_DIR.resolve()
+    return [home / relative for relative in SHARED_CACHE_BUCKET_RELATIVE_PATHS]
+
+
+def cleanup_protection_reason(path: Path) -> Optional[str]:
+    """Return why Storage Monitor must not trash this path, or None when it may."""
+    home = HOME_DIR.resolve()
+    if path == home or path in home.parents:
+        return "This is not a cleanup target."
+    if path in shared_cache_buckets():
+        return SHARED_CACHE_BUCKET_REASON
+    for relative in PROTECTED_HOME_RELATIVE_PATHS:
+        root = home / relative
+        if path == root or root in path.parents:
+            return f"Inside ~/{relative}, which macOS manages or syncs. Clear it from the owning app instead."
+    if any(normalize_group_container_id(part).startswith("com.apple.") for part in path.parts):
+        return "Managed by macOS. Clear it from the owning app or System Settings instead."
+    uv_cache = Path(os.environ.get("UV_CACHE_DIR") or home / ".cache/uv")
+    if path == uv_cache or uv_cache in path.parents:
+        return "Part of uv's package cache, which Storage Monitor runs from. Use the uv Cache Prune provider instead."
+    return None
 
 
 def collect_installed_bundle_ids() -> Set[str]:
@@ -4060,7 +4149,7 @@ const html = htm.bind(preact.h);
                     background: `${CATEGORY_COLORS[item.category] || '#666'}22`,
                     color: CATEGORY_COLORS[item.category] || 'var(--text-secondary)',
                   }}>${(item.category || '').replace(/_/g, ' ')}</span><span style=${{ padding: '1px 6px', borderRadius: 4, fontSize: 11, textAlign: 'center', background: risk.bg, color: risk.color }}>${risk.label}</span><span class=${"mono"} style=${{ textAlign: 'right' }}>${formatBytes(item.estimated_reclaim_bytes || item.allocated_bytes)}</span><span style=${{ display: 'flex', gap: 3, justifyContent: 'flex-end' }}>${item.actions?.filter(a => a.kind === 'execute').map(a => (
-                      html`<button key=${a.label} disabled=${busyToken === a.action_token} onClick=${() => onExecute(a.action_token)} style=${{ padding: '2px 7px', borderRadius: 4, fontSize: 11, border: 'none', cursor: 'pointer', background: 'var(--accent)', color: '#fff' }}>${busyToken === a.action_token ? '...' : (a.label === 'Move to Trash' ? 'Trash' : a.label)}</button>`
+                      html`<button key=${a.label} disabled=${busyToken === a.action_token} onClick=${() => window.confirm(`${a.label}?\n\n${item.path}\n${formatBytes(item.estimated_reclaim_bytes || item.allocated_bytes)}\n\nQuit the app that owns it first. Space is freed only when you empty the Trash.`) && onExecute(a.action_token)} style=${{ padding: '2px 7px', borderRadius: 4, fontSize: 11, border: 'none', cursor: 'pointer', background: 'var(--accent)', color: '#fff' }}>${busyToken === a.action_token ? '...' : (a.label === 'Move to Trash' ? 'Trash' : a.label)}</button>`
                     ))}<button onClick=${() => onReveal(item.path)} style=${{ padding: '2px 7px', borderRadius: 4, fontSize: 11, border: '1px solid var(--border)', cursor: 'pointer', background: 'transparent', color: 'var(--text-secondary)' }}>Reveal</button></span></div>`
               );
             })}</div></div>`
