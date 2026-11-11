@@ -212,7 +212,29 @@ CACHE_DISCOVERY_MIN_BYTES = 100 * 1024 * 1024
 CACHE_DISCOVERY_BUNDLE_SUFFIXES = (
     ".app", ".photoslibrary", ".musiclibrary", ".tvlibrary", ".aplibrary",
 )
-DISCOVERY_RULES = [{
+DISCOVERY_RULES = [
+    {
+        "id": rule_id, "category": "dev_artifact", "scope": "home_root",
+        "min_bytes": 50 * 1024 * 1024, "action": "when_stale", "stale_days": 30,
+        "risk": "medium", "review_risk": "medium", "description": description,
+        **selector,
+    }
+    for rule_id, selector, description in [
+        ("node_modules", {"names": ["node_modules"], "marker": ("sibling", "package.json")}, "Rebuilt by npm install or the project's package manager."),
+        ("python_venv", {"names": [".venv", "venv"], "marker": ("child", "pyvenv.cfg")}, "Rebuilt by recreating the Python virtual environment and installing its dependencies."),
+        ("swift_build", {"names": [".build"], "marker": ("sibling", "Package.swift")}, "Rebuilt on the next swift build."),
+        ("rust_target", {"names": ["target"], "marker": ("sibling", "Cargo.toml")}, "Rebuilt on the next cargo build."),
+        ("xcode_derived_data", {"paths": ["~/Library/Developer/Xcode/DerivedData"]}, "Rebuilt by Xcode on the next build."),
+        ("gradle_caches", {"fixed_paths": ["~/.gradle/caches"]}, "Rebuilt by Gradle when dependencies are needed."),
+        ("cocoapods", {"names": ["Pods"], "marker": ("sibling", "Podfile")}, "Rebuilt by pod install."),
+        ("next_build", {"names": [".next"], "marker": ("sibling", "package.json")}, "Rebuilt on the next Next.js build."),
+    ]
+] + [{
+    "id": "python_bytecode", "category": "python_bytecode", "names": ["__pycache__"],
+    "scope": "home_root", "min_bytes": 1024 * 1024, "action": "never",
+    "risk": "medium", "review_risk": "medium", "group_all": True,
+    "group_label": "Python bytecode caches", "description": "Rebuilt by Python as modules are loaded.",
+}, {
     "id": "cache", "category": "discovered_cache", "label_prefix": "",
     "names": ["Cache", "Caches", ".cache", "Code Cache", "GPUCache", "DawnCache",
               "GrShaderCache", "ShaderCache", "CachedData", "CachedExtensionVSIXs",
@@ -2279,7 +2301,7 @@ def discover_candidates(scan_id: int) -> List[Dict[str, Any]]:
     candidates = []
     with open_db_connection() as connection:
         for order, rule in enumerate(DISCOVERY_RULES):
-            clauses, params = [], [scan_id, 1024 * 1024]
+            clauses, params = [], [scan_id, 0 if rule.get("group_all") else 1024 * 1024]
             name_expr = "LOWER(name)" if rule.get("case_insensitive") else "name"
             for name in rule.get("names", []):
                 clauses.append(f"{name_expr} = ?")
@@ -2290,6 +2312,9 @@ def discover_candidates(scan_id: int) -> List[Dict[str, Any]]:
                 params.extend((value, value))
             for fixed in rule.get("paths", []):
                 clauses.append("parent_path = ?")
+                params.append(str(expand_path(fixed)))
+            for fixed in rule.get("fixed_paths", []):
+                clauses.append("path = ?")
                 params.append(str(expand_path(fixed)))
             if not clauses:
                 continue
@@ -2364,7 +2389,7 @@ def discover_candidates(scan_id: int) -> List[Dict[str, Any]]:
             "action_token": encode_action_token({"kind": "trash_path", "path": str(path)}) if actionable else None,
         }
         finding["actions"] = build_finding_actions(finding)
-        if row["allocated_bytes"] < rule["min_bytes"]:
+        if row["allocated_bytes"] < rule["min_bytes"] or rule.get("group_all"):
             finding.update(actionable=False, cleanup_kind=None, action_token=None, estimated_reclaim_bytes=None)
             finding["actions"] = build_finding_actions(finding)
             small.setdefault(rule["category"], []).append((finding, rule))

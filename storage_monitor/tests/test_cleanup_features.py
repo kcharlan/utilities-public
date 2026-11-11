@@ -307,6 +307,81 @@ def _index_dirs(module, scan_id, entries):
     } for path, size in entries])
 
 
+@pytest.mark.parametrize(("relative", "marker", "marker_location"), [
+    ("project/node_modules", "package.json", "sibling"),
+    ("project/.venv", "pyvenv.cfg", "child"),
+    ("project/venv", "pyvenv.cfg", "child"),
+    ("project/.build", "Package.swift", "sibling"),
+    ("project/target", "Cargo.toml", "sibling"),
+    ("project/Pods", "Podfile", "sibling"),
+    ("project/.next", "package.json", "sibling"),
+    ("Library/Developer/Xcode/DerivedData/synthetic-project", None, None),
+    (".gradle/caches", None, None),
+])
+def test_developer_artifact_requires_marker_and_staleness(monkeypatch, tmp_path, relative, marker, marker_location):
+    module = load(monkeypatch, tmp_path)
+    home = _discovery_home(module, monkeypatch, tmp_path)
+    monkeypatch.setattr(module, "WATCHLIST_SPECS", [])
+    path = home / relative
+    path.mkdir(parents=True)
+    scan_id = _insert_scan(module)
+    _index_dirs(module, scan_id, [(path, 60)])
+    now = int(module.time.time())
+    with module.open_db_connection() as connection:
+        connection.execute("UPDATE nodes SET newest_mtime=? WHERE scan_id=?", (now - 31 * 86400, scan_id))
+        connection.commit()
+    if marker:
+        assert not any(item.get("path") == str(path) for item in module.discover_candidates(scan_id))
+        (path.parent if marker_location == "sibling" else path).joinpath(marker).touch()
+    finding = next(item for item in module.discover_candidates(scan_id) if item.get("path") == str(path))
+    assert finding["actionable"] and finding["stale"] is True and finding["risk"] == "medium"
+    assert "Rebuilt" in finding["description"]
+    with module.open_db_connection() as connection:
+        connection.execute("UPDATE nodes SET newest_mtime=? WHERE scan_id=?", (now, scan_id))
+        connection.commit()
+    finding = next(item for item in module.discover_candidates(scan_id) if item.get("path") == str(path))
+    assert not finding["actionable"] and finding["stale"] is False
+
+
+def test_developer_artifacts_deduplicate_and_respect_protection(monkeypatch, tmp_path):
+    module = load(monkeypatch, tmp_path)
+    home = _discovery_home(module, monkeypatch, tmp_path)
+    monkeypatch.setattr(module, "WATCHLIST_SPECS", [])
+    outer = home / "project/node_modules"
+    nested = outer / "synthetic/node_modules"
+    protected = home / "Documents/project/node_modules"
+    for path in (outer, nested, protected):
+        path.mkdir(parents=True)
+        (path.parent / "package.json").touch()
+    scan_id = _insert_scan(module)
+    _index_dirs(module, scan_id, [(outer, 100), (nested, 60), (protected, 60)])
+    with module.open_db_connection() as connection:
+        connection.execute("UPDATE nodes SET newest_mtime=? WHERE scan_id=?", (int(module.time.time()) - 31 * 86400, scan_id))
+        connection.commit()
+    findings = {item["path"]: item for item in module.discover_candidates(scan_id)}
+    assert findings[str(outer)]["actionable"]
+    assert str(nested) not in findings
+    assert not findings[str(protected)]["actionable"]
+
+
+def test_pycache_group_excludes_claimed_descendants(monkeypatch, tmp_path):
+    module = load(monkeypatch, tmp_path)
+    home = _discovery_home(module, monkeypatch, tmp_path)
+    monkeypatch.setattr(module, "WATCHLIST_SPECS", [])
+    outer = home / "project/.venv"
+    outer.mkdir(parents=True)
+    (outer / "pyvenv.cfg").touch()
+    scan_id = _insert_scan(module)
+    _index_dirs(module, scan_id, [(outer, 100), (outer / "lib/__pycache__", 5),
+                                  (home / "a/__pycache__", 2), (home / "b/__pycache__", 70),
+                                  (home / "c/__pycache__", 0)])
+    findings = module.discover_candidates(scan_id)
+    groups = [item for item in findings if item.get("group") and item["category"] == "python_bytecode"]
+    assert len(groups) == 1
+    assert groups[0]["count"] == 3 and groups[0]["allocated_bytes"] == 72 * 1024 * 1024
+    assert not groups[0]["actionable"] and not groups[0]["actions"]
+
+
 def test_rule_discovery_names_bundles_and_small_groups(monkeypatch, tmp_path):
     module = load(monkeypatch, tmp_path)
     home = _discovery_home(module, monkeypatch, tmp_path)
