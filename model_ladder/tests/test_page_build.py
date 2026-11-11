@@ -145,3 +145,47 @@ def test_cli_writes_private_pages(ml, tmp_path):
     assert stat.S_IMODE(target.stat().st_mode) == 0o600
     assert payload_of(target.read_text(encoding="utf-8"))["app"]["name"] == "Model Ladder"
     assert [p.name for p in target.parent.iterdir()] == ["page.html"]
+
+
+def gamma_free():
+    return [m for m in ladder_models() if m["name"] != "Gamma Test 1"]
+
+
+def with_unused_field_change(field="performance"):
+    models = ladder_models()
+    models[0][field] = {"synthetic_value": 1}
+    return models
+
+
+def test_build_page_keeps_last_real_change_visible(ml, tmp_path):
+    """A refetch that differs only in unused fields must not hide the last real change."""
+    seed(ml, gamma_free(), when=datetime(2026, 11, 1, tzinfo=timezone.utc))
+    seed(ml, ladder_models(), when=datetime(2026, 11, 3, tzinfo=timezone.utc))
+    seed(ml, with_unused_field_change())
+    assert len(ml.load_snapshots(ml.runtime_home())) == 3
+    out = tmp_path / "page.html"
+    ml.build_page(ml.runtime_home(), out)
+    changes = payload_of(out.read_text(encoding="utf-8"))["changes"]
+    assert changes["added"] == ["Gamma Test 1"]
+    assert changes["from"] == "2026-11-01T00:00:00+00:00"
+    assert changes["to"] == NOW.isoformat()
+
+
+def test_build_page_without_any_real_change_has_no_changes(ml, tmp_path):
+    seed(ml, ladder_models(), when=datetime(2026, 11, 1, tzinfo=timezone.utc))
+    seed(ml, with_unused_field_change("pricing"))
+    out = tmp_path / "page.html"
+    ml.build_page(ml.runtime_home(), out)
+    assert payload_of(out.read_text(encoding="utf-8"))["changes"] is None
+
+
+def test_build_page_skips_unreadable_snapshot_while_walking_back(ml, tmp_path, capsys):
+    seed(ml, gamma_free(), when=datetime(2026, 11, 1, tzinfo=timezone.utc))
+    broken = seed(ml, ladder_models(), when=datetime(2026, 11, 3, tzinfo=timezone.utc))
+    seed(ml, with_unused_field_change())
+    broken.write_bytes(b"not gzip")
+    out = tmp_path / "page.html"
+    ml.build_page(ml.runtime_home(), out)
+    assert payload_of(out.read_text(encoding="utf-8"))["changes"]["added"] == ["Gamma Test 1"]
+    err = capsys.readouterr().err
+    assert str(broken) in err and err.count("\n") == 1 and "Traceback" not in err

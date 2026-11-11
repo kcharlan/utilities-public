@@ -1,3 +1,4 @@
+import gzip
 import json
 from datetime import datetime, timedelta, timezone
 
@@ -212,6 +213,63 @@ def test_cli_unsavable_snapshot_still_builds_from_old(env, monkeypatch, capsys):
     assert env.run() == 0
     assert "Model Ladder: cannot save snapshot: disk full" in capsys.readouterr().err
     assert len(env.built) == 1
+
+
+def assert_one_line(capsys):
+    err = capsys.readouterr().err
+    assert err.startswith("Model Ladder: ") and err.count("\n") == 1 and "Traceback" not in err
+    return err
+
+
+def test_cli_home_is_a_file(env, tmp_path, monkeypatch, capsys):
+    blocker = tmp_path / "not-a-dir"
+    blocker.write_text("synthetic")
+    monkeypatch.setenv("MODEL_LADDER_HOME", str(blocker))
+    assert env.run() == 1
+    assert str(blocker) in assert_one_line(capsys)
+    assert env.fetch.calls == []
+
+
+def test_cli_home_cannot_be_created(env, tmp_path, monkeypatch, capsys):
+    locked = tmp_path / "locked"
+    locked.mkdir()
+    locked.chmod(0o500)
+    monkeypatch.setenv("MODEL_LADDER_HOME", str(locked / "home"))
+    try:
+        assert env.run() == 1
+    finally:
+        locked.chmod(0o700)
+    assert_one_line(capsys)
+
+
+def test_cli_unreadable_config(env, tmp_path, capsys):
+    home = env.ml.ensure_runtime_home(tmp_path / "ml-home")
+    config = home / "config.json"
+    config.write_text("{}")
+    config.chmod(0o000)
+    try:
+        assert env.run() == 1
+    finally:
+        config.chmod(0o600)
+    assert "config.json" in assert_one_line(capsys)
+
+
+def test_cli_huge_max_age_is_one_line(env, tmp_path, capsys):
+    home = env.ml.ensure_runtime_home(tmp_path / "ml-home")
+    (home / "config.json").write_text(json.dumps({"max_age_hours": 1e300}))
+    env.seed(1)
+    assert env.run() == 1
+    assert "max_age_hours" in assert_one_line(capsys)
+
+
+def test_cli_snapshot_without_index_version(env, capsys):
+    path = env.seed(1)
+    data = json.loads(gzip.decompress(path.read_bytes()))
+    del data["index_version"]
+    path.write_bytes(gzip.compress(json.dumps(data).encode()))
+    assert env.run("refresh") == 1
+    err = assert_one_line(capsys)
+    assert str(path) in err and "index_version" in err
 
 
 def test_cli_rejects_unknown_command(env):

@@ -137,6 +137,23 @@ def test_all_models_filters(open_page):
     assert texts(page, "#all-table tbody [data-c=family]") == ["Gamma Test 1"]
 
 
+def test_all_models_filter_matches_tags(open_page, ml):
+    tagged = model("Iota Test 1 (High, Synthetic Tag)", 28.0, 0.5, slug="iota")
+    page = open_page(payload_for(ml, ladder_models() + [tagged]))
+    page.fill("#all-filter", "synthetic TAG")
+    assert texts(page, "#all-table tbody [data-c=family]") == ["Iota Test 1"]
+    assert texts(page, "#all-table tbody [data-c=tags]") == ["Synthetic Tag"]
+
+
+def test_picker_counts_only_effort_levels(open_page, ml):
+    plain = model("Alpha Test 1", 30.0, 1.0, maker=MAKER, slug="alpha-plain")
+    page = open_page(payload_for(ml, ladder_models() + [plain]))
+    compare(page)
+    page.click("#add-model")
+    page.fill("#model-search", "alpha")
+    expect(page.locator("#model-list li").first).to_contain_text("4 effort levels")
+
+
 def test_add_from_all_models_table(open_page):
     page = open_page()
     page.locator("#all-table tbody tr", has_text="Beta Test 1").first.locator("input[type=checkbox]").check()
@@ -274,7 +291,7 @@ def test_markup_in_names_is_text(open_page, ml):
     assert texts(page, "#chips .chip .fam") == [MARKUP, laddered]
     assert laddered in page.locator("#ladder-table thead").text_content()
     assert sorted(r["label"] for r in pareto_rows(page)) == sorted([MARKUP, laddered + " High"])
-    assert page.locator("img").count() == 0 and page.locator("main i, #app td i").count() == 0
+    assert page.locator("#app img").count() == 0 and page.locator("#app i").count() == 0
 
 
 def ui_state(page):
@@ -348,7 +365,8 @@ def test_changes_panel(open_page, ml):
         panel.locator("summary").click()
     text = panel.text_content()
     assert "version changed from 4 to 5" in text
-    assert "New Test 1 (High)" in text and "Old Test 1 (High)" in text
+    assert texts(panel, "[data-changes=added] li") == ["New Test 1 (High)"]
+    assert texts(panel, "[data-changes=removed] li") == ["Old Test 1 (High)"]
     assert "Alpha Test 1 (Medium)" in text and "38 to 40" in text
     assert "Rho Test 1" not in text
     compare(page)

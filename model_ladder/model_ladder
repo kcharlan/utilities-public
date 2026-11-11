@@ -33,6 +33,7 @@ VERSION = "1.0.0"
 
 CONFIG_FILENAME = "config.json"
 DEFAULT_CONFIG = {"op_item": "", "op_vault": "", "op_field": "credential", "max_age_hours": 12}
+MAX_AGE_LIMIT = 87600  # ten years in hours; larger values overflow date arithmetic
 
 
 def runtime_home() -> Path:
@@ -80,8 +81,8 @@ def load_config() -> dict:
         if not isinstance(config[key], str):
             raise ValueError(f"{path}: {key} must be a string")
     age = config["max_age_hours"]
-    if isinstance(age, bool) or not isinstance(age, (int, float)) or not math.isfinite(age) or age <= 0:
-        raise ValueError(f"{path}: max_age_hours must be a positive number")
+    if isinstance(age, bool) or not isinstance(age, (int, float)) or not 0 < age <= MAX_AGE_LIMIT:
+        raise ValueError(f"{path}: max_age_hours must be a positive number of at most {MAX_AGE_LIMIT}")
     return config
 
 
@@ -199,7 +200,8 @@ def get_api_key(config: dict, env=os.environ, op_paths=OP_PATHS, run=subprocess.
     if not item:
         raise KeyUnavailable(
             f"No API key configured. Set the {KEY_ENV} environment variable, or set op_item "
-            "(and optionally op_vault and op_field) in config.json to a 1Password item."
+            f"(and optionally op_vault and op_field) in {runtime_home() / CONFIG_FILENAME} "
+            "to a 1Password item."
         )
     op = next((path for path in op_paths if os.path.exists(path)), None)
     if op is None:
@@ -259,6 +261,10 @@ def _http_failure(error: urllib.error.HTTPError) -> FetchError:
 
 def _is_number(value) -> bool:
     return isinstance(value, (int, float)) and not isinstance(value, bool)
+
+
+def _is_finite_number(value) -> bool:
+    return _is_number(value) and math.isfinite(value)
 
 
 def _fetch_page(key: str, number: int, open_url) -> tuple[dict, dict]:
@@ -326,16 +332,16 @@ def validate_models(models: list) -> None:
         if evaluations is not None and not isinstance(evaluations, dict):
             raise FetchError(f"{label}: field evaluations must be an object")
         index = (evaluations or {}).get(INDEX_FIELD)
-        if index is not None and not _is_number(index):
-            raise FetchError(f"{label}: field {INDEX_FIELD} must be a number")
+        if index is not None and not _is_finite_number(index):
+            raise FetchError(f"{label}: field {INDEX_FIELD} must be a finite number")
         cost_block = item.get(COST_FIELD)
         if cost_block is not None and not isinstance(cost_block, dict):
             raise FetchError(f"{label}: field {COST_FIELD} must be an object")
         per_task = (cost_block or {}).get("cost_per_task")
         if per_task is not None:
             total = per_task.get("total_cost") if isinstance(per_task, dict) else "invalid"
-            if total is not None and not _is_number(total):
-                raise FetchError(f"{label}: field cost_per_task.total_cost must be a number")
+            if total is not None and not _is_finite_number(total):
+                raise FetchError(f"{label}: field cost_per_task.total_cost must be a finite number")
 
 
 # ---------------------------------------------------------------------------
@@ -378,6 +384,8 @@ def read_snapshot(path: Path) -> dict:
         raise StoreError(f"cannot read {path}: not a version {SCHEMA} snapshot")
     if not isinstance(data.get("models"), list):
         raise StoreError(f"cannot read {path}: missing the models list")
+    if not _is_number(data.get("index_version")):
+        raise StoreError(f"cannot read {path}: missing the numeric index_version")
     for field in ("fetched_at", "last_checked"):
         try:
             datetime.fromisoformat(data[field])
@@ -389,6 +397,7 @@ def read_snapshot(path: Path) -> dict:
 def save_snapshot(home: Path, result: dict, now: datetime) -> Path:
     """Store a fetch. An unchanged one only refreshes the newest file's last_checked."""
     moment = _utc(now).replace(microsecond=0)
+    ensure_runtime_home(home / SNAPSHOT_DIR)
     existing = load_snapshots(home)
     if existing:
         newest = read_snapshot(existing[0])
@@ -485,18 +494,35 @@ def render_page(payload: dict) -> bytes:
     return "".join(out).encode("utf-8")
 
 
+def _shows_a_change(diff: dict) -> bool:
+    return bool(diff["version"] or diff["added"] or diff["removed"] or diff["changed"])
+
+
+def _last_real_change(older: list[Path], snapshot: dict) -> dict | None:
+    """The newest older snapshot that differs from snapshot in what the page shows.
+
+    A new snapshot is stored whenever any delivered field differs, including fields the page
+    never uses, so the one just before the newest may show nothing changed. Walking back keeps
+    the last real change visible until the next one. Unreadable snapshots are reported and skipped.
+    """
+    for path in older:
+        try:
+            candidate = read_snapshot(path)
+        except StoreError as error:
+            _complain(f"{error}; skipping it for the list of changes")
+            continue
+        if _shows_a_change(diff_rows(candidate, snapshot)):
+            return candidate
+    return None
+
+
 def build_page(home: Path, output: Path) -> None:
-    """Build from the newest snapshot, comparing with the one before it when it is readable."""
+    """Build from the newest snapshot, comparing with the last older one that differs in what is shown."""
     paths = load_snapshots(home)
     if not paths:
         raise StoreError("no snapshot to build from")
     snapshot = read_snapshot(paths[0])
-    previous = None
-    if len(paths) > 1:
-        try:
-            previous = read_snapshot(paths[1])
-        except StoreError as error:
-            _complain(f"{error}; building without the list of changes")
+    previous = _last_real_change(paths[1:], snapshot)
     atomic_write_bytes(output, render_page(build_payload(snapshot, previous, load_config())))
 
 
@@ -537,7 +563,7 @@ function families(rows) {
       byKey[row.family_key] = entry;
       order.push(entry);
     }
-    entry.levels += 1;
+    if (row.rung) entry.levels += 1;
     entry.top = Math.max(entry.top, wholePoints(row.index));
   });
   return order.sort(function (a, b) {
@@ -551,6 +577,14 @@ function searchFamilies(list, query) {
   if (!needle) return list.slice();
   return list.filter(function (item) {
     return (item.maker + " " + item.family).toLowerCase().indexOf(needle) !== -1;
+  });
+}
+
+function searchRows(rows, query) {
+  var needle = String(query || "").trim().toLowerCase();
+  if (!needle) return rows.slice();
+  return rows.filter(function (row) {
+    return (row.maker + " " + row.family + " " + (row.name || "")).toLowerCase().indexOf(needle) !== -1;
   });
 }
 
@@ -723,7 +757,9 @@ function sortRows(rows, key, dir) {
 function money(v) {
   if (v === null || v === undefined || isNaN(v)) return "";
   var size = Math.round(Math.abs(v) * FLOAT_NOISE) / FLOAT_NOISE;
-  return "$" + (size >= 0.1 ? size.toFixed(2) : size.toFixed(3));
+  // Three decimals only for amounts that still show under ten cents at that precision.
+  var small = size.toFixed(3);
+  return "$" + (size === 0 || Number(small) >= 0.1 ? size.toFixed(2) : small);
 }
 
 function showPoints(value, mode) {
@@ -793,7 +829,7 @@ function changesToShow(changes, mode) {
 }
 
 var api = {
-  wholePoints: wholePoints, families: families, searchFamilies: searchFamilies,
+  wholePoints: wholePoints, families: families, searchFamilies: searchFamilies, searchRows: searchRows,
   presentRungs: presentRungs, selectRows: selectRows, frontier: frontier,
   paretoRows: paretoRows, familySteps: familySteps, sortRows: sortRows,
   findings: findings, money: money, dataAge: dataAge, changesToShow: changesToShow,
@@ -1215,8 +1251,8 @@ APP_JS = r"""
       <summary>What changed between ${when(c.from)} and ${when(c.to)}</summary>
       <div class="changes-body">
         ${c.version ? html`<p class="ver">Intelligence Index version changed from ${c.version[0]} to ${c.version[1]}. Scores from different versions are not comparable.</p>` : null}
-        ${c.added.length ? html`<div><h3>Added (${c.added.length})</h3><ul>${c.added.map((n, i) => html`<li key=${i}>${n}</li>`)}</ul></div>` : null}
-        ${c.removed.length ? html`<div><h3>Removed (${c.removed.length})</h3><ul>${c.removed.map((n, i) => html`<li key=${i}>${n}</li>`)}</ul></div>` : null}
+        ${c.added.length ? html`<div data-changes="added"><h3>Added (${c.added.length})</h3><ul>${c.added.map((n, i) => html`<li key=${i}>${n}</li>`)}</ul></div>` : null}
+        ${c.removed.length ? html`<div data-changes="removed"><h3>Removed (${c.removed.length})</h3><ul>${c.removed.map((n, i) => html`<li key=${i}>${n}</li>`)}</ul></div>` : null}
         ${shown.length ? html`<div><h3>Score or cost changed (${shown.length})</h3><ul>${shown.map((item) => html`<li key=${item.slug}>${item.name}: ${describe(item)}</li>`)}</ul></div>` : null}
         ${empty ? html`<p class="note">Nothing changed that shows in ${mode === "whole" ? "whole points" : "decimals"}.</p>` : null}
       </div>
@@ -1236,8 +1272,7 @@ APP_JS = r"""
       }));
     }, [state.mode]);
     const front = useMemo(() => M.frontier(rows), [rows]);
-    const matching = new Set(M.searchFamilies(FAMILIES, query).map((f) => f.key));
-    const visible = ordered(rows.filter((r) => matching.has(r.family_key) && (!creator || r.maker === creator)), "all", state.sorts);
+    const visible = ordered(M.searchRows(rows, query).filter((r) => !creator || r.maker === creator), "all", state.sorts);
     const priced = rows.filter((r) => r.status);
     const full = state.keys.length >= LIMIT;
     const p = { table: "all", sorts: state.sorts, onSort };
@@ -1947,7 +1982,7 @@ def main(argv: list[str] | None = None, *, now: datetime | None = None, fetch=fe
     now = now or datetime.now(timezone.utc)
     try:
         config = load_config()
-    except ValueError as error:
+    except (ValueError, OSError) as error:
         _complain(str(error))
         return 1
     home = runtime_home()

@@ -4,14 +4,18 @@ Model Ladder compares the effort levels of AI models by their Artificial Analysi
 Intelligence Index score and by what one task costs. One command fetches the
 current data and builds a single offline page with:
 
-- an all-models view: every scored model, the overall frontier, and a sortable,
-  filterable table;
+- an all-models view: every scored model, the overall frontier, and a sortable
+  table filterable by creator and by text (matching creator, family or the full
+  model name, so tags are searchable);
 - a compare view for the model families you pick: an effort ladder per family
   (in fixed effort order from the highest level to the lowest; this table is not
   header-sortable, the other tables sort by header), a whole-point Pareto ladder, what one step
   up or down costs, and plain sentences stating what the numbers show;
 - a status strip with the age of the data, the index version, the request quota
-  left, and a panel listing what changed since the previous fetch.
+  left, and a panel listing what changed. It compares the newest snapshot with the
+  most recent older one that differs in what the page shows (index version, an
+  added or removed model, a score or cost), so a refetch that changes only fields
+  the page does not use leaves the last real change visible.
 
 The page states facts. It makes no recommendation. Same data in, same page out.
 
@@ -99,8 +103,9 @@ in the launcher.
 files 0600:
 
 - `config.json`: written on first run. Keys `op_item`, `op_vault`, `op_field`,
-  `max_age_hours`.
-- `snapshots/<UTC timestamp>.json.gz`: each fetch as delivered, newest 60 kept.
+  `max_age_hours` (a positive number of hours, at most 87600, ten years).
+- `snapshots/<UTC timestamp>.json.gz` (directory mode 0700): each fetch as
+  delivered, newest 60 kept.
 - `model_ladder.html`: the built page, replaced atomically.
 
 Nothing is written inside the repository.

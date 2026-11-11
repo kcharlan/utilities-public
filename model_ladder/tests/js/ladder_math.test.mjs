@@ -248,6 +248,24 @@ test("families summary", () => {
   assert.equal(list[1].top, 43);
 });
 
+test("families count only rows with an effort level", () => {
+  const rows = FIXTURE.concat([row("Alpha Test 1", null, 30.0, 1.0, { slug: "alpha-plain" })]);
+  assert.equal(m.families(rows)[0].levels, 4);
+  assert.equal(m.families([row("Plain Test 1", null, 10.0, 1.0)])[0].levels, 0);
+});
+
+test("row search matches maker, family and the full name with tags", () => {
+  const tagged = row("Iota Test 1", "high", 30.0, 1.0, {
+    name: "Iota Test 1 (High, Synthetic Tag)", tags: ["Synthetic Tag"],
+  });
+  const rows = FIXTURE.concat([tagged]);
+  assert.deepEqual(m.searchRows(rows, "synthetic TAG").map((r) => r.slug), [tagged.slug]);
+  assert.equal(m.searchRows(rows, "beta").length, 4);
+  assert.equal(m.searchRows(rows, "example lab").length, 9);
+  assert.equal(m.searchRows(rows, "  ").length, 9);
+  assert.equal(m.searchRows(rows, "nothing here").length, 0);
+});
+
 test("present rungs", () => {
   assert.deepEqual(m.presentRungs(FIXTURE, ORDER), ["max", "xhigh", "high", "medium"]);
 });
@@ -258,6 +276,11 @@ test("money", () => {
   assert.equal(m.money(0.1), "$0.10");
   assert.equal(m.money(null), "");
   assert.equal(m.money(-3), "$3.00");
+  assert.equal(m.money(0), "$0.00");
+  assert.equal(m.money(-0), "$0.00");
+  assert.equal(m.money(0.0996), "$0.10");
+  assert.equal(m.money(-0.0996), "$0.10");
+  assert.equal(m.money(0.0994), "$0.099");
 });
 
 test("data age", () => {

@@ -92,3 +92,29 @@ def test_read_bad_snapshots(ml, home, payload):
     path.write_bytes(payload)
     with pytest.raises(ml.StoreError, match="cannot read"):
         ml.read_snapshot(path)
+
+
+def test_snapshot_directory_is_private(ml, home):
+    path = ml.save_snapshot(home, result(), T0)
+    assert path.parent.stat().st_mode & 0o777 == 0o700
+
+
+def test_snapshot_directory_mode_is_fixed(ml, home):
+    (home / "snapshots").mkdir()
+    (home / "snapshots").chmod(0o755)
+    ml.save_snapshot(home, result(), T0)
+    assert (home / "snapshots").stat().st_mode & 0o777 == 0o700
+
+
+@pytest.mark.parametrize("version", ["missing", "5", True, None, [5]])
+def test_read_snapshot_needs_numeric_index_version(ml, home, version):
+    data = {"schema": 1, "fetched_at": "2026-11-01T12:00:00+00:00",
+            "last_checked": "2026-11-01T12:00:00+00:00", "rate_limit": RATE, "models": []}
+    if version != "missing":
+        data["index_version"] = version
+    path = home / "snapshots" / "20261101T120000Z.json.gz"
+    path.parent.mkdir()
+    path.write_bytes(gzip.compress(json.dumps(data).encode()))
+    with pytest.raises(ml.StoreError, match="index_version") as info:
+        ml.read_snapshot(path)
+    assert str(path) in str(info.value)

@@ -84,3 +84,37 @@ def test_whitespace_env_key_counts_as_unset(ml, value):
 
 def test_env_key_is_stripped(ml):
     assert ml.get_api_key({}, env={"MODEL_LADDER_AA_KEY": f"  {SECRET}\n"}) == SECRET
+
+
+@pytest.mark.parametrize("text", ["1e300", "87600.5", "9" * 400])
+def test_absurd_max_age_is_rejected(ml, tmp_path, text):
+    write_config(ml, tmp_path, '{"max_age_hours": ' + text + "}")
+    with pytest.raises(ValueError, match=r"config.json.*max_age_hours"):
+        ml.load_config()
+
+
+def test_ten_year_max_age_is_accepted(ml, tmp_path):
+    write_config(ml, tmp_path, json.dumps({"max_age_hours": 87600}))
+    assert ml.load_config()["max_age_hours"] == 87600
+
+
+def test_no_key_message_names_full_config_path(ml):
+    with pytest.raises(ml.KeyUnavailable) as info:
+        ml.get_api_key({"op_item": ""}, env={})
+    assert str(ml.runtime_home() / "config.json") in str(info.value)
+
+
+@pytest.mark.parametrize("value", [float("nan"), float("inf"), float("-inf")])
+def test_non_finite_index_is_rejected(ml, value):
+    bad = model("Alpha Test 1", index=10, cost=1.0)
+    bad["evaluations"]["artificial_analysis_intelligence_index"] = value
+    with pytest.raises(ml.FetchError, match="alpha-test-1.*artificial_analysis_intelligence_index"):
+        ml.validate_models([bad])
+
+
+@pytest.mark.parametrize("value", [float("nan"), float("inf"), float("-inf")])
+def test_non_finite_cost_is_rejected(ml, value):
+    bad = model("Alpha Test 1", index=10, cost=1.0)
+    bad["artificial_analysis_intelligence_index_cost"]["cost_per_task"]["total_cost"] = value
+    with pytest.raises(ml.FetchError, match="alpha-test-1.*cost_per_task.total_cost"):
+        ml.validate_models([bad])
