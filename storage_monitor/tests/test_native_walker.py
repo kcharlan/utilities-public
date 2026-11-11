@@ -53,7 +53,7 @@ def allocated_total(records):
 def test_version_reports_protocol(walker_binary):
     result = subprocess.run([walker_binary, "--version"], capture_output=True)
     assert result.returncode == 0 and not result.stderr
-    assert result.stdout == b"storage_monitor_walk 1.1.0 protocol 2\n"
+    assert result.stdout == b"storage_monitor_walk 1.2.0 protocol 2\n"
 
 
 def test_directory_times_and_file_counts(walker_binary, tmp_path):

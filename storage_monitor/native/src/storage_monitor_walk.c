@@ -16,7 +16,7 @@
 #include <time.h>
 #include <unistd.h>
 
-#define SMW_VERSION "1.1.0"
+#define SMW_VERSION "1.2.0"
 #define SMW_PROTOCOL 2
 #define BULK_SIZE (256 * 1024)
 #define FLUSH_SIZE (64 * 1024)
@@ -31,7 +31,7 @@ static struct {
     size_t exclude_count;
     uint64_t *registered;
     size_t registered_count;
-    bool stat_mode;
+    bool stat_mode, inspect_ipc;
     struct job *jobs;
     uint64_t pending, dirs, files, errors;
     pthread_mutex_t queue_lock, output_lock;
@@ -154,6 +154,11 @@ static void stat_entry(struct worker *w, int fd, const char *parent,
                        const char *name, struct totals *totals) {
     struct stat st;
     if (fstatat(fd, name, &st, AT_SYMLINK_NOFOLLOW)) { totals->errors++; return; }
+    if (state.inspect_ipc && (S_ISSOCK(st.st_mode) || S_ISFIFO(st.st_mode))) {
+        char *path = join_path(parent, name);
+        error_record(w, path, S_ISSOCK(st.st_mode) ? EPROTOTYPE : ENXIO);
+        free(path); totals->errors++; return;
+    }
     entry(w, parent, name, st.st_dev, st.st_ino, st.st_nlink,
           (uint64_t)st.st_blocks * 512, (uint64_t)st.st_size, st.st_mtimespec.tv_sec, S_ISDIR(st.st_mode), totals);
 }
@@ -214,6 +219,11 @@ static bool bulk_entry(struct worker *w, int fd, const char *parent,
     if ((ret.fileattr & ATTR_FILE_DATALENGTH) && !take(&p, end, &size, 8)) return false;
     if (!name) { totals->errors++; return true; }
     if (!strcmp(name, ".") || !strcmp(name, "..")) return true;
+    if (state.inspect_ipc && (type == VSOCK || type == VFIFO)) {
+        char *path = join_path(parent, name);
+        error_record(w, path, type == VSOCK ? EPROTOTYPE : ENXIO);
+        free(path); totals->errors++; return true;
+    }
     attrgroup_t common = ATTR_CMN_NAME | ATTR_CMN_DEVID | ATTR_CMN_OBJTYPE | ATTR_CMN_MODTIME | ATTR_CMN_FILEID;
     attrgroup_t file = ATTR_FILE_LINKCOUNT | ATTR_FILE_ALLOCSIZE | ATTR_FILE_DATALENGTH;
     /* Directories need st_blocks for the failed-open D record. Opened ones are
@@ -339,6 +349,7 @@ int main(int argc, char **argv) {
     for (int i = 2; i < argc; i++) {
         const char *arg = argv[i];
         if (!strcmp(arg, "--stat-mode")) { state.stat_mode = true; continue; }
+        if (!strcmp(arg, "--inspect-ipc")) { state.inspect_ipc = true; continue; }
         if (!strcmp(arg, "--registered-inodes-stdin")) { read_inodes = true; continue; }
         if (++i >= argc) usage();
         if (!strcmp(arg, "--root")) root = argv[i];
