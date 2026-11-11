@@ -25,7 +25,7 @@ import zlib
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-VERSION = "1.1.0"
+VERSION = "1.1.1"
 
 # ---------------------------------------------------------------------------
 # Config and atomic writes
@@ -621,7 +621,13 @@ function rowsForIndex(rows, key) {
 }
 
 function unscoredRows(rows, key, opts) {
-  return selectRows(rows.filter(function (row) { return typeof row.scores[key] !== "number"; }), opts);
+  var keys = opts.keys || [];
+  function last(rank) { return rank === null ? Infinity : rank; }
+  // Selection order, then effort order with rungless rows last, so the list reads like the ladder.
+  return selectRows(rows.filter(function (row) { return typeof row.scores[key] !== "number"; }), opts)
+    .sort(function (a, b) {
+      return (keys.indexOf(a.family_key) - keys.indexOf(b.family_key)) || (last(a.rank) - last(b.rank));
+    });
 }
 
 function selectRows(rows, opts) {
@@ -852,6 +858,8 @@ function changesToShow(changes, mode, key) {
   if (!changes || !changes.changed) return [];
   function shownScore(raw) { return raw === null ? null : mode === "decimal" ? raw : wholePoints(raw); }
   return changes.changed.filter(function (item) {
+    // Unscored in this index before and after: the view never lists the model, so its cost is not news here.
+    if (item.scores[key][0] === null && item.scores[key][1] === null) return false;
     var scoreMoved = shownScore(item.scores[key][0]) !== shownScore(item.scores[key][1]);
     var costMoved = money(item.cost[0]) !== money(item.cost[1]);
     return scoreMoved || costMoved;
@@ -1507,7 +1515,7 @@ APP_JS = r"""
       ${note}
       <section id="ladder">
         <h2>Effort ladder</h2>
-        ${fams.length ? html`<div class="pair">
+        ${fams.length ? html`<div class=${sel.some((r) => r.rank !== null) ? "pair" : ""}>
           ${sel.some((r) => r.rank !== null) ? html`<div class="box chart"><${LadderChart} rungs=${rungs} fams=${fams} cell=${cell} keys=${state.keys} mode=${mode} indexLabel=${indexLabel} /></div>` : null}
           <div class="box scroll"><table id="ladder-table">
             <thead>
@@ -1590,7 +1598,9 @@ APP_JS = r"""
     // Layout effect: the hash and storage are current as soon as the change renders,
     // so a reload or bookmark right after a click keeps it.
     useLayoutEffect(() => { saveState(state); }, [state]);
-    useEffect(() => {
+    // Layout effect: the listener is attached before the first paint, so a hash change
+    // right after the page loads is never missed.
+    useLayoutEffect(() => {
       const onHash = () => { const s = readHash(); if (s) setState(s); };
       window.addEventListener("hashchange", onHash);
       return () => window.removeEventListener("hashchange", onHash);

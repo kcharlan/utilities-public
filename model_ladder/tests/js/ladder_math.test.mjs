@@ -304,6 +304,15 @@ test("index rows and unscored rows use family and range filtering", () => {
   assert.deepEqual(m.unscoredRows(rows, "finance", {keys: [rows[0].family_key], hi: "high", lo: "medium", rungOrder: ORDER}).map(r => r.label), ["Alpha Medium"]);
 });
 
+test("unscored rows follow the selection order, then effort order", () => {
+  const none = {scores: {finance: null}};
+  const rows = [row("Beta", "low", 1, 1, none), row("Alpha", "medium", 1, 1, none), row("Beta", "max", 1, 1, none),
+    row("Alpha", "xhigh", 1, 1, none), row("Alpha", null, 1, 1, none), row("Alpha", "high", 1, 1, none)];
+  const keys = [rows[1].family_key, rows[0].family_key];
+  assert.deepEqual(m.unscoredRows(rows, "finance", {keys, hi: null, lo: null, rungOrder: ORDER}).map(r => r.label),
+    ["Alpha XHigh", "Alpha High", "Alpha Medium", "Alpha", "Beta Max", "Beta Low"]);
+});
+
 test("changes filter uses per-index scores including null", () => {
   const changes = {
     changed: [
@@ -321,7 +330,10 @@ test("changes filter uses per-index scores including null", () => {
     {slug: "appears", scores: {finance: [null, 0]}, cost: [1, 1]},
     {slug: "disappears", scores: {finance: [5, null]}, cost: [1, 1]},
     {slug: "unchanged", scores: {finance: [null, null]}, cost: [1, 1]},
+    // Not scored in this index before or after, so the view does not list it: a cost change alone stays out.
+    {slug: "cost-only-unscored", scores: {finance: [null, null]}, cost: [1, 2]},
+    {slug: "cost-only-scored", scores: {finance: [7, 7]}, cost: [1, 2]},
   ]};
-  assert.deepEqual(m.changesToShow(domain, "whole", "finance").map(c => c.slug), ["appears", "disappears"]);
+  assert.deepEqual(m.changesToShow(domain, "whole", "finance").map(c => c.slug), ["appears", "disappears", "cost-only-scored"]);
   assert.deepEqual(m.changesToShow(null, "whole"), []);
 });

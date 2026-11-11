@@ -2446,3 +2446,7 @@ When a native select's saved or default value is absent from its options, its di
 
 After navigating to a new hash on the same page, wait for the rendered state to
 settle before asserting it; a synchronous read can observe the previous state.
+
+## 2026-11-11: Attach page-wide listeners before the first paint
+
+Model Ladder attached its `hashchange` listener in a Preact `useEffect`, which runs after paint. A hash change in the first moments after load was missed, and `test_index_selector_and_borrowed_costs` failed about one run in three when it navigated to a new hash straight after a reload. Attach listeners that must not miss an early event in `useLayoutEffect`.

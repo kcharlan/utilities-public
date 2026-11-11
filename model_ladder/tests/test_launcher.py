@@ -17,5 +17,5 @@ def test_help_has_no_side_effects(tmp_path):
 def test_version_prints_and_creates_nothing(tmp_path):
     result = run_launcher(LAUNCHER, "--version")
     assert result.returncode == 0, result.stderr
-    assert result.stdout.strip() == "Model Ladder 1.1.0"
+    assert result.stdout.strip() == "Model Ladder 1.1.1"
     assert not (tmp_path / "ml-home").exists()
