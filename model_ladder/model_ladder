@@ -6,18 +6,23 @@
 """Model Ladder: compare model effort levels by Intelligence Index and cost per task.
 
 Runtime home: ~/.model_ladder/ (override with MODEL_LADDER_HOME), holding
-config.json. Later releases add snapshots and the offline page there.
+config.json and snapshots/ (newest 60 fetches, gzip). The offline page is added there later.
 """
 import argparse
 import contextlib
+import gzip
+import http.client
 import json
+import math
 import os
 import subprocess
 import sys
 import tempfile
 import urllib.error
 import urllib.request
-from datetime import datetime
+import webbrowser
+import zlib
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 VERSION = "1.0.0"
@@ -70,7 +75,14 @@ def load_config() -> dict:
         raise ValueError(f"{path} is not valid JSON: {error}") from error
     if not isinstance(loaded, dict):
         raise ValueError(f"{path} must contain a JSON object")
-    return {**DEFAULT_CONFIG, **loaded}
+    config = {**DEFAULT_CONFIG, **loaded}
+    for key in ("op_item", "op_vault", "op_field"):
+        if not isinstance(config[key], str):
+            raise ValueError(f"{path}: {key} must be a string")
+    age = config["max_age_hours"]
+    if isinstance(age, bool) or not isinstance(age, (int, float)) or not math.isfinite(age) or age <= 0:
+        raise ValueError(f"{path}: max_age_hours must be a positive number")
+    return config
 
 
 # ---------------------------------------------------------------------------
@@ -167,6 +179,7 @@ OP_PATHS = ("/opt/homebrew/bin/op", "/usr/local/bin/op")
 MAX_PAGES = 20
 KEY_ENV = "MODEL_LADDER_AA_KEY"
 INDEX_FIELD = "artificial_analysis_intelligence_index"
+COST_FIELD = "artificial_analysis_intelligence_index_cost"
 
 
 class KeyUnavailable(Exception):
@@ -179,7 +192,7 @@ class FetchError(Exception):
 
 def get_api_key(config: dict, env=os.environ, op_paths=OP_PATHS, run=subprocess.run) -> str:
     """Read the key from the environment, else 1Password. Held in memory only."""
-    value = env.get(KEY_ENV)
+    value = (env.get(KEY_ENV) or "").strip()
     if value:
         return value
     item = config.get("op_item")
@@ -224,11 +237,20 @@ def _rate_limit(headers) -> dict:
             "reset": _header_int(headers, "x-ratelimit-reset")}
 
 
+def _local_time(epoch, fmt: str) -> str | None:
+    """Format an epoch-seconds value in local time, or None when it is missing or out of range."""
+    if epoch is None:
+        return None
+    try:
+        return datetime.fromtimestamp(epoch).strftime(fmt)
+    except (OverflowError, OSError, ValueError):
+        return None
+
+
 def _http_failure(error: urllib.error.HTTPError) -> FetchError:
     if error.code == 429:
         reset = _header_int(error.headers, "x-ratelimit-reset")
-        when = (datetime.fromtimestamp(reset).strftime("%Y-%m-%d %H:%M")
-                if reset is not None else "an unknown time")
+        when = _local_time(reset, "%Y-%m-%d %H:%M") or "an unknown time"
         return FetchError(f"Artificial Analysis daily quota is used; it resets at {when} (local time)")
     if error.code in (401, 403):
         return FetchError("Artificial Analysis rejected the API key")
@@ -249,6 +271,9 @@ def _fetch_page(key: str, number: int, open_url) -> tuple[dict, dict]:
         raise _http_failure(error) from None
     except urllib.error.URLError as error:
         raise FetchError(f"Could not reach Artificial Analysis: {error.reason}") from None
+    except http.client.HTTPException as error:
+        raise FetchError(f"Artificial Analysis response was incomplete or malformed "
+                         f"({type(error).__name__})") from None
     except (OSError, TimeoutError) as error:
         raise FetchError(f"Could not reach Artificial Analysis: {error}") from None
     try:
@@ -297,10 +322,16 @@ def validate_models(models: list) -> None:
         creator = item.get("model_creator")
         if not isinstance(creator, dict) or not isinstance(creator.get("name"), str):
             raise FetchError(f"{label}: field model_creator.name must be a string")
-        index = (item.get("evaluations") or {}).get(INDEX_FIELD)
+        evaluations = item.get("evaluations")
+        if evaluations is not None and not isinstance(evaluations, dict):
+            raise FetchError(f"{label}: field evaluations must be an object")
+        index = (evaluations or {}).get(INDEX_FIELD)
         if index is not None and not _is_number(index):
             raise FetchError(f"{label}: field {INDEX_FIELD} must be a number")
-        per_task = (item.get("artificial_analysis_intelligence_index_cost") or {}).get("cost_per_task")
+        cost_block = item.get(COST_FIELD)
+        if cost_block is not None and not isinstance(cost_block, dict):
+            raise FetchError(f"{label}: field {COST_FIELD} must be an object")
+        per_task = (cost_block or {}).get("cost_per_task")
         if per_task is not None:
             total = per_task.get("total_cost") if isinstance(per_task, dict) else "invalid"
             if total is not None and not _is_number(total):
@@ -308,8 +339,123 @@ def validate_models(models: list) -> None:
 
 
 # ---------------------------------------------------------------------------
+# Store
+# ---------------------------------------------------------------------------
+
+KEEP = 60
+SCHEMA = 1
+SNAPSHOT_DIR = "snapshots"
+SNAPSHOT_SUFFIX = ".json.gz"
+
+
+class StoreError(Exception):
+    """A snapshot could not be read; the message names the file and the reason."""
+
+
+def _utc(moment: datetime) -> datetime:
+    """An aware UTC datetime; a naive one is taken to be UTC already."""
+    if moment.tzinfo is None:
+        return moment.replace(tzinfo=timezone.utc)
+    return moment.astimezone(timezone.utc)
+
+
+def _write_snapshot(path: Path, data: dict) -> None:
+    atomic_write_bytes(path, gzip.compress(json.dumps(data).encode("utf-8")))
+
+
+def load_snapshots(home: Path) -> list[Path]:
+    """Snapshot files, newest first by file name."""
+    return sorted((home / SNAPSHOT_DIR).glob("*" + SNAPSHOT_SUFFIX), key=lambda p: p.name, reverse=True)
+
+
+def read_snapshot(path: Path) -> dict:
+    try:
+        with gzip.open(path, "rb") as stream:
+            data = json.loads(stream.read().decode("utf-8"))
+    except (OSError, EOFError, ValueError, zlib.error) as error:
+        raise StoreError(f"cannot read {path}: {error or type(error).__name__}") from None
+    if not isinstance(data, dict) or data.get("schema") != SCHEMA:
+        raise StoreError(f"cannot read {path}: not a version {SCHEMA} snapshot")
+    if not isinstance(data.get("models"), list):
+        raise StoreError(f"cannot read {path}: missing the models list")
+    for field in ("fetched_at", "last_checked"):
+        try:
+            datetime.fromisoformat(data[field])
+        except (KeyError, TypeError, ValueError):
+            raise StoreError(f"cannot read {path}: bad {field}") from None
+    return data
+
+
+def save_snapshot(home: Path, result: dict, now: datetime) -> Path:
+    """Store a fetch. An unchanged one only refreshes the newest file's last_checked."""
+    moment = _utc(now).replace(microsecond=0)
+    existing = load_snapshots(home)
+    if existing:
+        newest = read_snapshot(existing[0])
+        if newest["models"] == result["models"] and newest["index_version"] == result["index_version"]:
+            newest["last_checked"] = moment.isoformat()
+            newest["rate_limit"] = result["rate_limit"]
+            _write_snapshot(existing[0], newest)
+            return existing[0]
+    path = home / SNAPSHOT_DIR / (moment.strftime("%Y%m%dT%H%M%SZ") + SNAPSHOT_SUFFIX)
+    _write_snapshot(path, {
+        "schema": SCHEMA,
+        "fetched_at": moment.isoformat(),
+        "last_checked": moment.isoformat(),
+        "index_version": result["index_version"],
+        "rate_limit": result["rate_limit"],
+        "models": result["models"],
+    })
+    for old in load_snapshots(home)[KEEP:]:
+        old.unlink()
+    return path
+
+
+# ---------------------------------------------------------------------------
+# Changes
+# ---------------------------------------------------------------------------
+
+
+def diff_rows(old: dict | None, new: dict) -> dict | None:
+    """What changed between two snapshots, by slug. Raw values, no rounding."""
+    if old is None:
+        return None
+    before = {row["slug"]: row for row in classify(old["models"])}
+    after = {row["slug"]: row for row in classify(new["models"])}
+    changed = []
+    for slug, row in after.items():
+        prior = before.get(slug)
+        if prior and (prior["index"] != row["index"] or prior["cost"] != row["cost"]):
+            changed.append({"slug": slug, "name": row["name"],
+                            "index": [prior["index"], row["index"]],
+                            "cost": [prior["cost"], row["cost"]]})
+    return {
+        "from": old["fetched_at"],
+        "to": new["fetched_at"],
+        "version": None if old["index_version"] == new["index_version"]
+        else [old["index_version"], new["index_version"]],
+        "added": [row["name"] for slug, row in after.items() if slug not in before],
+        "removed": [row["name"] for slug, row in before.items() if slug not in after],
+        "changed": changed,
+    }
+
+
+# ---------------------------------------------------------------------------
+# Page build (filled in by a later task)
+# ---------------------------------------------------------------------------
+
+
+def build_page(home: Path, output: Path) -> None:
+    raise NotImplementedError("page build is not implemented yet")
+
+
+# ---------------------------------------------------------------------------
 # CLI
 # ---------------------------------------------------------------------------
+
+
+def testing_mode_enabled() -> bool:
+    return os.environ.get("UTILITIES_TESTING", "").lower() not in {"", "0", "false", "no"}
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -318,12 +464,89 @@ def build_parser() -> argparse.ArgumentParser:
         description="Compare model effort levels by Intelligence Index and cost per task.",
         epilog="Runtime home: ~/.model_ladder/ (override with MODEL_LADDER_HOME).",
     )
+    parser.add_argument("command", nargs="?", choices=("refresh", "build"),
+                        help="refresh: always fetch first; build: never fetch")
+    parser.add_argument("--no-refresh", action="store_true", help="never fetch, even if the data is old")
+    parser.add_argument("--no-open", action="store_true", help="do not open the page in a browser")
+    parser.add_argument("--output", type=Path, help="write the page here instead of the runtime home")
     parser.add_argument("--version", action="version", version=f"Model Ladder {VERSION}")
     return parser
 
 
-def main(argv: list[str] | None = None) -> int:
-    build_parser().parse_args(argv)
+def _quota_line(result: dict) -> str:
+    models = result["models"]
+    scored = len(classify(models))
+    text = f"Fetched {len(models)} models ({scored} scored)."
+    limits = result.get("rate_limit") or {}
+    if limits.get("remaining") is not None and limits.get("limit") is not None:
+        text += f" {limits['remaining']} of {limits['limit']} requests left today"
+        reset = _local_time(limits.get("reset"), "%H:%M")
+        text += f"; resets {reset}." if reset else "."
+    return text
+
+
+def _is_stale(snapshot: dict, config: dict, now: datetime) -> bool:
+    checked = _utc(datetime.fromisoformat(snapshot["last_checked"]))
+    return _utc(now) - checked > timedelta(hours=config["max_age_hours"])
+
+
+def _complain(message: str) -> None:
+    print(f"Model Ladder: {message}", file=sys.stderr)
+
+
+def main(argv: list[str] | None = None, *, now: datetime | None = None, fetch=fetch_all,
+         get_key=get_api_key, open_page=webbrowser.open) -> int:
+    args = build_parser().parse_args(argv)
+    now = now or datetime.now(timezone.utc)
+    try:
+        config = load_config()
+    except ValueError as error:
+        _complain(str(error))
+        return 1
+    home = runtime_home()
+    try:
+        paths = load_snapshots(home)
+        newest = read_snapshot(paths[0]) if paths else None
+    except StoreError as error:
+        _complain(str(error))
+        return 1
+
+    if args.command == "build" or args.no_refresh:
+        should_fetch = False
+    elif args.command == "refresh" or newest is None:
+        should_fetch = True
+    else:
+        should_fetch = _is_stale(newest, config, now)
+
+    if should_fetch:
+        try:
+            result = fetch(get_key(config))
+            save_snapshot(home, result, now)
+            print(_quota_line(result))
+        except (KeyUnavailable, FetchError, StoreError) as error:
+            _complain(str(error))
+            if newest is None:
+                return 1
+        except OSError as error:
+            _complain(f"cannot save snapshot: {error}")
+            if newest is None:
+                return 1
+    elif newest is None:
+        _complain("no snapshot yet; run model_ladder refresh to fetch one")
+        return 1
+
+    output = args.output.expanduser() if args.output else home / "model_ladder.html"
+    try:
+        build_page(home, output)
+    except (OSError, StoreError) as error:
+        _complain(f"cannot build the page: {error}")
+        return 1
+    print(output)
+    if not args.no_open and not testing_mode_enabled():
+        try:
+            open_page(output.resolve().as_uri())
+        except Exception:
+            _complain("could not open a browser; open the page manually")
     return 0
 
 
