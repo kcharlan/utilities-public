@@ -189,11 +189,33 @@ def test_picker_keyboard(open_page):
     expect(page.locator("#add-model")).to_be_focused()
 
 
+def test_picker_focuses_search_on_open(open_page):
+    """Opening the picker must put the cursor in the search box so typing works at once."""
+    page = open_page()
+    compare(page)
+    page.click("#add-model")
+    expect(page.locator("#model-search")).to_be_focused()
+    page.keyboard.type("beta")
+    page.keyboard.press("Enter")
+    assert texts(page, "#chips .chip .fam") == ["Beta Test 1"]
+
+
+def test_pareto_opens_highest_score_first(open_page):
+    """Capability descending is the default order; cost breaks ties, so a dominated tie follows its frontier row."""
+    page = open_page()
+    alpha_and_beta(page)
+    labels = [r["label"] for r in pareto_rows(page)]
+    assert labels[0] == "Alpha Test 1 Max"
+    assert labels.index("Alpha Test 1 High") + 1 == labels.index("Alpha Test 1 XHigh")
+    assert labels[-1] == "Beta Test 1 Medium"
+
+
 def test_whole_point_pareto(open_page):
     page = open_page()
     alpha_and_beta(page)
     rows = pareto_rows(page)
-    assert [r["label"] for r in rows if r["status"] == "Frontier"] == FRONTIER
+    # The table opens highest score first; FRONTIER is listed in cost order, which is the reverse.
+    assert [r["label"] for r in rows if r["status"] == "Frontier"] == FRONTIER[::-1]
     reasons = {r["label"]: r["reason"] for r in rows if r["status"] == "Dominated"}
     assert reasons == {
         "Beta Test 1 Max": "Alpha Test 1 High scores 3 higher for $0.50 less per task",

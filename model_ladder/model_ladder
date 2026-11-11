@@ -25,7 +25,7 @@ import zlib
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-VERSION = "1.0.0"
+VERSION = "1.0.1"
 
 # ---------------------------------------------------------------------------
 # Config and atomic writes
@@ -982,7 +982,7 @@ APP_JS = r"""
     pareto: ["label", "score", "cost", "status"].concat(STEP_KEYS),
   };
   const DESC_FIRST = { effort: true, score: true };
-  const DEFAULT_SORTS = { all: { key: "score", dir: "desc" }, steps: null, pareto: { key: "cost", dir: "asc" } };
+  const DEFAULT_SORTS = { all: { key: "score", dir: "desc" }, steps: null, pareto: { key: "score", dir: "desc" } };
   const PROBLEM_TEXT = {
     "two effort words": "has two effort words",
     "more than one group": "has more than one group in parentheses",
@@ -1356,7 +1356,7 @@ APP_JS = r"""
       <button id="add-model" type="button" ref=${button} disabled=${full} aria-expanded=${String(open)}
         onClick=${() => setOpen(!open)}>${full ? "Limit of " + LIMIT + " reached" : "Add model"}</button>
       ${open ? html`<div class="pop">
-        <input id="model-search" type="search" placeholder="Search models or creators" aria-label="Search models or creators"
+        <input id="model-search" type="search" ref=${input} placeholder="Search models or creators" aria-label="Search models or creators"
           autocomplete="off" spellcheck="false" value=${query}
           onInput=${(e) => { setQuery(e.currentTarget.value); setActive(0); }} onKeyDown=${onKey} />
         <ul id="model-list">${list.map((f) => {
