@@ -35,7 +35,7 @@ private func output(_ code: Int32 = 0, _ text: String = "", _ error: String = ""
     #expect(await BrewGate(runner: invalid, log: NoEventLog(), apiCacheDirectory: nil).confirm([a]).listings.isEmpty)
 }
 @Test func processRunnerDrainsPipesAndBoundsOutput() async throws {
-    let dir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    let dir = FileManager.default.temporaryDirectory.appendingPathComponent("brew-version-gate-\(UUID())")
     try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true); defer { try? FileManager.default.removeItem(at: dir) }
     let script = dir.appendingPathComponent("synthetic-brew")
     try Data("#!/bin/sh\nprintf 'synthetic stderr' >&2\nhead -c 400000 /dev/zero\nexit 7\n".utf8).write(to: script)
@@ -45,7 +45,7 @@ private func output(_ code: Int32 = 0, _ text: String = "", _ error: String = ""
     #expect(String(decoding: result.stderr, as: UTF8.self) == "synthetic stderr")
 }
 @Test func processRunnerTimesOutEvenWhenDescendantKeepsPipeOpen() async throws {
-    let dir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    let dir = FileManager.default.temporaryDirectory.appendingPathComponent("brew-version-gate-\(UUID())")
     try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true); defer { try? FileManager.default.removeItem(at: dir) }
     let script = dir.appendingPathComponent("synthetic-brew")
     try Data("#!/bin/sh\nsleep 2 &\nwait\n".utf8).write(to: script)
@@ -84,7 +84,7 @@ final class GateEventRecorder: EventLogging, @unchecked Sendable {
     #expect(result.problem == String(repeating: "x", count: 200))
 }
 @Test func processRunnerPassesOverridesAndCapturesShortOutput() async throws {
-    let dir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    let dir = FileManager.default.temporaryDirectory.appendingPathComponent("brew-version-gate-\(UUID())")
     try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true); defer { try? FileManager.default.removeItem(at: dir) }
     let script = dir.appendingPathComponent("synthetic-brew")
     try Data("#!/bin/sh\nprintf '%s:%s:%s' \"$HOMEBREW_NO_AUTO_UPDATE\" \"$HOMEBREW_NO_COLOR\" \"$HOMEBREW_NO_ENV_HINTS\"\nprintf 'synthetic error' >&2\nexit 4\n".utf8).write(to: script)
@@ -94,7 +94,7 @@ final class GateEventRecorder: EventLogging, @unchecked Sendable {
     #expect(String(decoding: result.stderr, as: UTF8.self) == "synthetic error")
 }
 @Test func processRunnerKillsProcessThatIgnoresTerminate() async throws {
-    let dir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    let dir = FileManager.default.temporaryDirectory.appendingPathComponent("brew-version-gate-\(UUID())")
     try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true); defer { try? FileManager.default.removeItem(at: dir) }
     let script = dir.appendingPathComponent("synthetic-brew")
     try Data("#!/bin/sh\ntrap '' TERM\nwhile :; do :; done\n".utf8).write(to: script)
@@ -103,4 +103,19 @@ final class GateEventRecorder: EventLogging, @unchecked Sendable {
     do { _ = try await ProcessBrewRunner(executable: script).run([], environment: [:], timeout: 2); Issue.record("Expected timeout") }
     catch { #expect(error is BrewRunnerError) }
     #expect(Date().timeIntervalSince(start) >= 7 && Date().timeIntervalSince(start) < 12)
+}
+
+@Test func liveGateAvailabilityTracksSyntheticExecutableRemoval() throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent("brew-version-gate-\(UUID())")
+    defer { try? FileManager.default.removeItem(at: root) }
+    let bin = root.appendingPathComponent("bin")
+    try FileManager.default.createDirectory(at: bin, withIntermediateDirectories: true)
+    let executable = bin.appendingPathComponent("brew")
+    try Data("#!/bin/sh\nexit 0\n".utf8).write(to: executable)
+    try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: executable.path)
+    let gate = try #require(BrewGate.live(prefixes: [HomebrewPrefix(root: root)], home: root, log: NoEventLog()))
+    #expect(gate.isAvailable)
+    try FileManager.default.removeItem(at: executable)
+    #expect(!gate.isAvailable)
+    #expect(BrewGate.live(prefixes: [HomebrewPrefix(root: root)], home: root, log: NoEventLog()) == nil)
 }

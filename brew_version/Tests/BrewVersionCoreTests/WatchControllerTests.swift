@@ -577,3 +577,56 @@ private final class GateDouble: BrewConfirming, @unchecked Sendable {
     #expect(await notifier.notices.count == 1)
     #expect(log.recorded.contains("release.confirmed"))
 }
+
+private actor FailedUpdateCoveredRunner: BrewRunning {
+    func run(_ arguments: [String], environment: [String: String], timeout: TimeInterval) async throws -> BrewOutput {
+        if arguments == ["update"] {
+            return BrewOutput(exitCode: 1, stdout: Data(), stderr: Data("synthetic update failure".utf8), seconds: 0)
+        }
+        return BrewOutput(exitCode: 0, stdout: Data("{\"formulae\":[{\"versions\":{\"stable\":\"2\"}}]}".utf8), stderr: Data(), seconds: 0)
+    }
+}
+@MainActor @Test func coveredInfoAfterFailedUpdateAlertsWithoutProblem() async throws {
+    let f = WatchFixture(); defer { f.clean() }
+    var state = AppState.initial; state.watched = [baseline()]; try f.store.save(state)
+    let notifier = RecordingNotifier()
+    let gate = BrewGate(runner: FailedUpdateCoveredRunner(), log: NoEventLog(), apiCacheDirectory: nil)
+    let c = WatchController(transport: StubTransport([watchURL(): [watchResponse("2")]]), installed: nil, store: f.store, notifier: notifier, brewGate: gate)
+    await c.checkNow()
+    #expect(await notifier.notices.count == 1)
+    #expect(c.amberCount == 1 && c.brewCheckProblem == nil)
+}
+
+private actor SuspendedGate: BrewConfirming {
+    private var continuation: CheckedContinuation<BrewConfirmation, Never>?
+    private var requested: [Listing] = []
+    private var released = false
+    var isWaiting: Bool { continuation != nil }
+    func confirm(_ candidates: [Listing]) async -> BrewConfirmation {
+        requested = candidates
+        if released { return BrewConfirmation() }
+        return await withCheckedContinuation { continuation = $0 }
+    }
+    func finish() {
+        released = true
+        let listings = Dictionary(uniqueKeysWithValues: requested.map { ($0.name, $0) })
+        continuation?.resume(returning: BrewConfirmation(listings: listings)); continuation = nil
+    }
+}
+@MainActor @Test func removingWatchAndChangingSettingsWhileGateWaitsDoesNotRestoreOrAlert() async throws {
+    let f = WatchFixture(); defer { f.clean() }
+    var state = AppState.initial; state.watched = [baseline()]; try f.store.save(state)
+    let gate = SuspendedGate(), notifier = RecordingNotifier()
+    let c = WatchController(transport: StubTransport([watchURL(): [watchResponse("2")]]), installed: nil, store: f.store, notifier: notifier, brewGate: gate)
+    let check = Task { await c.checkNow() }
+    let deadline = ContinuousClock.now.advanced(by: .seconds(3))
+    while !(await gate.isWaiting), ContinuousClock.now < deadline { await Task.yield() }
+    let waiting = await gate.isWaiting
+    if !waiting { await gate.finish(); await check.value; Issue.record("Gate did not suspend"); return }
+    _ = c.remove(watchName)
+    c.setInterval(CheckInterval(minutes: 60)!)
+    await gate.finish(); await check.value
+    #expect(c.state.watched.isEmpty && c.state.interval.minutes == 60)
+    #expect(f.store.load().state == c.state)
+    #expect(await notifier.notices.isEmpty)
+}

@@ -108,15 +108,7 @@ public struct ProcessBrewRunner: BrewRunning {
         var data = [Data(), Data()]
         var terminatedAt: Date?, timedOut = false
         repeat {
-            for (index, handle) in handles.enumerated() {
-                var buffer = [UInt8](repeating: 0, count: 16384)
-                for _ in 0..<32 {
-                    let count = read(handle.fileDescriptor, &buffer, buffer.count)
-                    guard count > 0 else { break }
-                    let keep = min(count, max(0, 256 * 1024 - data[index].count))
-                    if keep > 0 { data[index].append(contentsOf: buffer.prefix(keep)) }
-                }
-            }
+            drain(handles, into: &data)
             if process.isRunning && !timedOut && Date().timeIntervalSince(start) >= timeout {
                 timedOut = true; terminatedAt = Date(); process.terminate()
             }
@@ -125,6 +117,12 @@ public struct ProcessBrewRunner: BrewRunning {
         } while process.isRunning
         // A fast process may exit between the last drain and isRunning check.
         // Read only currently available bytes; descendants may retain the pipes.
+        drain(handles, into: &data)
+        process.waitUntilExit()
+        if timedOut { throw BrewRunnerError.timeout }
+        return BrewOutput(exitCode: process.terminationStatus, stdout: data[0], stderr: data[1], seconds: Date().timeIntervalSince(start))
+    }
+    private func drain(_ handles: [FileHandle], into data: inout [Data]) {
         for (index, handle) in handles.enumerated() {
             var buffer = [UInt8](repeating: 0, count: 16384)
             for _ in 0..<32 {
@@ -134,9 +132,6 @@ public struct ProcessBrewRunner: BrewRunning {
                 if keep > 0 { data[index].append(contentsOf: buffer.prefix(keep)) }
             }
         }
-        process.waitUntilExit()
-        if timedOut { throw BrewRunnerError.timeout }
-        return BrewOutput(exitCode: process.terminationStatus, stdout: data[0], stderr: data[1], seconds: Date().timeIntervalSince(start))
     }
 }
 public enum BrewRunnerError: LocalizedError {
