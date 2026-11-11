@@ -1947,6 +1947,7 @@ def collect_scan_report(scan_id: int) -> Dict[str, Any]:
             "providers": lambda: probe_providers(scan_id, {slug: future.result() for slug, future in probe_futures.items()}),
             "caches": lambda: discover_cache_candidates(scan_id),
             "installed_ids": collect_installed_bundle_ids,
+            "running_apps": collect_running_apps,
         })
     providers = intelligence["providers"]
     discovered = intelligence["caches"]
@@ -1958,7 +1959,7 @@ def collect_scan_report(scan_id: int) -> Dict[str, Any]:
     progress("Cleanup intelligence", 1, "Cleanup analysis complete")
     watchlist = scan_watchlist(scan_id)["items"]
     breakdowns = build_breakdowns_from_db(scan_id)
-    findings = build_findings_section(watchlist, scan_id, discovered)
+    findings = build_findings_section(watchlist, scan_id, discovered, intelligence["running_apps"])
     large_files = fetch_large_files_from_db(scan_id)
     for key, breakdown in breakdowns.items():
         publish_event("breakdown_ready", {"root": key, **breakdown})
@@ -1993,6 +1994,8 @@ def persist_report(report: Dict[str, Any]) -> None:
     timestamp = report["generated_at"].replace(":", "-")
     history_path = RUNTIME_PATHS.history_dir / f"scan-{timestamp}.json"
     atomic_write_json(history_path, report)
+    for old_path in sorted(RUNTIME_PATHS.history_dir.glob("scan-*.json"), reverse=True)[60:]:
+        old_path.unlink()
 
 
 def run_scan_thread(scan_id: int) -> None:
@@ -2751,6 +2754,21 @@ def cleanup_protection_reason(path: Path) -> Optional[str]:
     return None
 
 
+def collect_running_apps() -> Optional[Dict[str, str]]:
+    result = run_command(["lsappinfo", "list"], timeout=30)
+    if not result["ok"]:
+        return None
+    blocks = re.split(r'(?m)^\s*\d+\) ', result["stdout"])
+    apps: Dict[str, str] = {}
+    for block in blocks[1:]:
+        name = re.match(r'"([^"\n]+)"', block)
+        identifier = re.search(r'(?m)^\s*bundleID\s*=\s*(?:"([^"\n]+)"|(\[ NULL \]))', block)
+        if not name or not identifier:
+            return None
+        apps[identifier.group(1) or "@no-id:" + name.group(1)] = name.group(1)
+    return apps or None
+
+
 def collect_installed_bundle_ids() -> Set[str]:
     app_paths: Set[Path] = set()
     for root, nested in [
@@ -2825,7 +2843,8 @@ def collect_orphan_candidates(scan_id: int, installed_ids: Set[str]) -> Dict[str
             item["actions"] = [{"label": "Reveal in Finder", "kind": "reveal", "target_path": str(path), "risk": "none", "estimated_reclaim_bytes": None}]
             items.append(item)
     items.sort(key=lambda item: bytes_or_zero(item["allocated_bytes"]), reverse=True)
-    return {"items": items[:40], "updated_at": iso_now()}
+    omitted = items[40:]
+    return {"items": items[:40], "truncated": {"count": len(omitted), "bytes": sum(bytes_or_zero(item["allocated_bytes"]) for item in omitted)}, "updated_at": iso_now()}
 
 
 def path_is_ignored(path: Path, roots: List[Path], *, protect_ancestors: bool = False) -> bool:
@@ -2842,6 +2861,7 @@ def build_findings_section(
     watchlist: List[Dict[str, Any]],
     scan_id: Optional[int] = None,
     discovered: Optional[List[Dict[str, Any]]] = None,
+    running_apps: Optional[Dict[str, str]] = None,
 ) -> Dict[str, Any]:
     findings: List[Dict[str, Any]] = []
     for item in watchlist:
@@ -2875,6 +2895,34 @@ def build_findings_section(
     if scan_id is not None:
         findings.extend(temp_findings(scan_id))
         findings.extend(additional_findings(scan_id))
+    for item in findings:
+        if not item.get("path"):
+            continue
+        path = Path(item["path"])
+        owner = None
+        is_cache = False
+        for relative in ("Library/Caches", "Library/Containers", "Library/Application Support"):
+            try:
+                parts = path.relative_to(HOME_DIR / relative).parts
+            except ValueError:
+                continue
+            if not parts:
+                break
+            is_cache = relative == "Library/Caches"
+            if running_apps is not None:
+                for identifier, name in running_apps.items():
+                    if (relative == "Library/Application Support" and parts[0].casefold() == name.casefold()) or (relative != "Library/Application Support" and parts[0].casefold() == identifier.casefold()):
+                        owner = name
+                        break
+            break
+        if owner:
+            item["owner_running"] = True
+            item["owner_name"] = owner
+        if is_cache and (owner or running_apps is None):
+            item["actionable"] = False
+            item["action_token"] = None
+            item["estimated_reclaim_bytes"] = None
+            item["actions"] = [action for action in item.get("actions", []) if action.get("kind") != "execute"]
     ignore_roots = [Path(path) for path in load_config()["ignore_paths"]]
     def ignored(item: Dict[str, Any]) -> bool:
         path = item.get("path")
@@ -2941,7 +2989,7 @@ def build_updated_report(
 ) -> Dict[str, Any]:
     breakdowns = build_breakdowns_from_db(scan_id)
     large_files = fetch_large_files_from_db(scan_id)
-    findings = build_findings_section(watchlist, scan_id)
+    findings = build_findings_section(watchlist, scan_id, None, collect_running_apps())
     visible_data_bytes = breakdowns["data_root"]["total_bytes"]
     hidden_delta_bytes = None
     if metadata["data_volume_used_bytes"] is not None and visible_data_bytes is not None:
@@ -4653,7 +4701,7 @@ const html = htm.bind(preact.h);
                     background: `${CATEGORY_COLORS[item.category] || '#666'}22`,
                     color: CATEGORY_COLORS[item.category] || 'var(--text-secondary)',
                   }}>${(item.category || '').replace(/_/g, ' ')}</span><span style=${{ padding: '1px 6px', borderRadius: 4, fontSize: 11, textAlign: 'center', background: risk.bg, color: risk.color }}>${risk.label}</span><span>${item.age_days == null ? '—' : item.age_days <= 0 ? 'today' : `${item.age_days} d`}</span><span class=${"mono"} style=${{ textAlign: 'right' }}>${formatBytes(item.estimated_reclaim_bytes || item.allocated_bytes)}</span><span style=${{ display: 'flex', gap: 3, justifyContent: 'flex-end' }}>${item.actions?.filter(a => a.kind === 'execute').map(a => (
-                      html`<button key=${a.label} disabled=${busyToken === a.action_token} onClick=${() => window.confirm(item.cleanup_kind === 'trash_group' ? `Move ${item.count} entries older than 3 days to Trash?\n\n${item.path}\n\nEntries are checked again before moving. Space is freed only when you empty the Trash.` : `${a.label}?\n\n${item.path}\n${formatBytes(item.estimated_reclaim_bytes || item.allocated_bytes)}\n\nQuit the app that owns it first. Space is freed only when you empty the Trash.`) && onExecute(a.action_token)} style=${{ padding: '2px 7px', borderRadius: 4, fontSize: 11, border: 'none', cursor: 'pointer', background: 'var(--accent)', color: '#fff' }}>${busyToken === a.action_token ? '...' : (a.label === 'Move to Trash' ? 'Trash' : a.label)}</button>`
+                      html`<button key=${a.label} disabled=${busyToken === a.action_token} onClick=${() => window.confirm(item.cleanup_kind === 'trash_group' ? `Move ${item.count} entries older than 3 days to Trash?\n\n${item.path}\n\nEntries are checked again before moving. Space is freed only when you empty the Trash.` : `${a.label}?\n\n${item.path}\n${formatBytes(item.estimated_reclaim_bytes || item.allocated_bytes)}\n\n${item.owner_running ? `Quit ${item.owner_name} first. ` : 'Quit the app that owns it first. '}Space is freed only when you empty the Trash.`) && onExecute(a.action_token)} style=${{ padding: '2px 7px', borderRadius: 4, fontSize: 11, border: 'none', cursor: 'pointer', background: 'var(--accent)', color: '#fff' }}>${busyToken === a.action_token ? '...' : (a.label === 'Move to Trash' ? 'Trash' : a.label)}</button>`
                     ))}${item.path && html`<button onClick=${() => onReveal(item.path)} style=${{ padding: '2px 7px', borderRadius: 4, fontSize: 11, border: '1px solid var(--border)', cursor: 'pointer', background: 'transparent', color: 'var(--text-secondary)' }}>Reveal</button>`}</span>${item.group && expanded[groupKey] && html`<div style=${{ gridColumn: '1 / -1', paddingLeft: 20 }}>${(item.items || []).map(child => html`<div key=${child.path}>${child.label} · ${formatBytes(child.allocated_bytes)} <button onClick=${() => onReveal(child.path)}>Reveal</button></div>`)}</div>`}</div>`
               );
             })}${omitted.map(([category, value]) => html`<div key=${category} style=${{ padding: '4px 12px' }}>${value.count} more not shown (${formatBytes(value.bytes)})</div>`)}</section>`;
@@ -4780,7 +4828,7 @@ const html = htm.bind(preact.h);
     }
 
     function OrphansTab({ orphans, onReveal }) {
-      return html`<div style=${{ fontSize: 13 }}><div style=${{ padding: 10, background: 'var(--warning-bg)', color: 'var(--warning)' }}>Heuristic only: apps outside standard Applications folders or background-only tools may appear here. Verify before deleting manually.</div><div style=${{ maxHeight: 360, overflowY: 'auto' }}>${(orphans?.items || []).map(item =>
+      return html`<div style=${{ fontSize: 13 }}><div style=${{ padding: 10, background: 'var(--warning-bg)', color: 'var(--warning)' }}>Heuristic only: apps outside standard Applications folders or background-only tools may appear here. Verify before deleting manually.</div>${orphans?.truncated?.count > 0 && html`<div style=${{ padding: 10 }}>${orphans.truncated.count} more not shown (${formatBytes(orphans.truncated.bytes)})</div>`}<div style=${{ maxHeight: 360, overflowY: 'auto' }}>${(orphans?.items || []).map(item =>
           html`<div key=${item.path} class=${"surface-hover"} style=${{ display: 'grid', gridTemplateColumns: '2fr 100px 80px 70px', gap: 8, padding: '6px 12px', borderBottom: '1px solid var(--border)' }}><span title=${item.path} style=${{ overflow: 'hidden', textOverflow: 'ellipsis' }}>${item.name}</span><span>${item.source === 'group_containers' ? 'Group' : 'Container'}</span><span class=${"mono"} style=${{ textAlign: 'right' }}>${formatBytes(item.allocated_bytes)}</span><button onClick=${() => onReveal(item.path)} style=${{ border: '1px solid var(--border)', background: 'transparent', color: 'var(--text-secondary)', borderRadius: 4 }}>Reveal</button></div>`)}</div></div>`;
     }
 

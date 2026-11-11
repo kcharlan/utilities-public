@@ -1079,3 +1079,60 @@ def test_additive_report_handles_old_base_and_preserves_new_sections(monkeypatch
     report = module.build_updated_report(1, base, metadata, [], {"items": [], "updated_at": None})
     assert report["providers"] == base["providers"]
     assert report["orphans"] == base["orphans"]
+
+
+def test_history_keeps_newest_sixty_reports(monkeypatch, tmp_path):
+    module = load(monkeypatch, tmp_path)
+    for index in range(62):
+        module.persist_report({"generated_at": f"2026-01-01T00:00:{index:02d}"})
+    names = sorted(path.name for path in module.RUNTIME_PATHS.history_dir.glob("scan-*.json"))
+    assert len(names) == 60
+    assert names[0].endswith("02.json")
+    assert names[-1].endswith("61.json")
+
+
+def test_orphans_report_omitted_count_and_bytes(monkeypatch, tmp_path):
+    module = load(monkeypatch, tmp_path)
+    home = _discovery_home(module, monkeypatch, tmp_path)
+    root = home / "Library/Containers"
+    root.mkdir(parents=True, exist_ok=True)
+    for index in range(42):
+        (root / f"synthetic.app{index:02d}").mkdir()
+    monkeypatch.setattr(module, "indexed_path_bytes", lambda scan, path: int(path.name[-2:]) + 1)
+    result = module.collect_orphan_candidates(1, set())
+    assert len(result["items"]) == 40
+    assert result["truncated"] == {"count": 2, "bytes": 3}
+
+
+def test_running_owner_and_unknown_cache_are_safe(monkeypatch, tmp_path):
+    module = load(monkeypatch, tmp_path)
+    home = _discovery_home(module, monkeypatch, tmp_path)
+    def item(path):
+        return {"path": str(home / path), "label": "Synthetic", "category": "cache", "allocated_bytes": 7, "actionable": True, "action_token": "token", "cleanup_kind": "trash_path", "actions": [{"kind": "execute"}]}
+    running = {"org.example.app": "Synthetic App"}
+    result = module.build_findings_section([], discovered=[item("Library/Caches/org.example.app/cache"), item("Library/Application Support/Synthetic App/cache")], running_apps=running)
+    assert all(entry["owner_running"] for entry in result["items"])
+    assert all(entry["owner_name"] == "Synthetic App" for entry in result["items"])
+    assert not next(entry for entry in result["items"] if "/Caches/" in entry["path"])["actionable"]
+    assert next(entry for entry in result["items"] if "/Application Support/" in entry["path"])["actionable"]
+    unknown = module.build_findings_section([], discovered=[item("Library/Caches/org.example.app/cache")], running_apps=None)
+    assert not unknown["items"][0]["actionable"]
+
+
+def test_running_app_probe_parses_and_fails_closed(monkeypatch, tmp_path):
+    module = load(monkeypatch, tmp_path)
+    monkeypatch.setattr(module, "run_command", lambda args, timeout=120: {"ok": True, "stdout": '1) "Synthetic App" ASN:0x0-0x1:\n    bundleID="org.example.app"\n'})
+    assert module.collect_running_apps() == {"org.example.app": "Synthetic App"}
+    monkeypatch.setattr(module, "run_command", lambda args, timeout=120: {"ok": True, "stdout": "malformed"})
+    assert module.collect_running_apps() is None
+    monkeypatch.setattr(module, "run_command", lambda args, timeout=120: {"ok": False, "stdout": ""})
+    assert module.collect_running_apps() is None
+
+
+def test_running_app_probe_accepts_entries_without_bundle_id(monkeypatch, tmp_path):
+    module = load(monkeypatch, tmp_path)
+    monkeypatch.setattr(module, "run_command", lambda args, timeout=120: {"ok": True, "stdout": '1) "Synthetic daemon" ASN:0x0-0x1:\n    bundleID=[ NULL ]\n2) "Synthetic App" ASN:0x0-0x2:\n    bundleID="org.example.app"\n'})
+    apps = module.collect_running_apps()
+    assert apps is not None
+    assert apps["org.example.app"] == "Synthetic App"
+    assert "Synthetic daemon" in apps.values()

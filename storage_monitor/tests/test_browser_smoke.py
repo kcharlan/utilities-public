@@ -500,3 +500,24 @@ def test_growth_baseline_select_never_renders_blank(monkeypatch, tmp_path):
             assert select.evaluate("element => element.selectedIndex") == 0
             assert select.input_value() == "3"
         browser.close()
+
+
+def test_running_owner_confirmation_and_orphan_omissions(monkeypatch, tmp_path):
+    monkeypatch.setenv("STORAGE_MONITOR_HOME", str(tmp_path / "runtime"))
+    module = load_launcher(PROJECT_ROOT / "storage_monitor")
+    row = {"path": "/synthetic/support", "label": "Synthetic support", "category": "cache", "risk": "low", "allocated_bytes": 1024, "owner_running": True, "owner_name": "Synthetic App", "actions": [{"kind": "execute", "label": "Move to Trash", "action_token": "synthetic"}]}
+    report = {**SYNTHETIC_REPORT_ROWS, "findings": {"items": [row]}, "orphans": {"items": [], "truncated": {"count": 2, "bytes": 3072}}}
+    with live_server(module.app) as url, sync_playwright() as playwright:
+        browser = playwright.chromium.launch(headless=True)
+        page = browser.new_page()
+        route_dashboard_api(page)
+        page.route("**/api/state", lambda route: route.fulfill(json={"scan_status": {"running": False}, "report": report}))
+        dialogs = []
+        page.on("dialog", lambda dialog: (dialogs.append(dialog.message), dialog.dismiss()))
+        with guard_browser_errors(page):
+            page.goto(url, wait_until="networkidle")
+            page.get_by_role("button", name="Trash", exact=True).click()
+            assert "Quit Synthetic App first" in dialogs[0]
+            page.locator(".tab").filter(has_text="App Leftovers").click()
+            assert page.get_by_text("2 more not shown (3.0 KB)").is_visible()
+        browser.close()

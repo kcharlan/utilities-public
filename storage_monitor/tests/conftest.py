@@ -90,3 +90,14 @@ interpose[] __attribute__((section("__DATA,__interpose"))) = {
     result = subprocess.run(["clang", "-std=c17", "-Wall", "-Wextra", "-Werror", "-D_DARWIN_C_SOURCE", "-dynamiclib", str(source), "-o", str(library)], capture_output=True, text=True)
     assert result.returncode == 0, result.stdout + result.stderr
     return library
+
+
+@pytest.fixture(autouse=True)
+def synthetic_running_apps(monkeypatch):
+    """Prevent report tests from inspecting host application identity."""
+    original_run = subprocess.run
+    def run(args, *positional, **kwargs):
+        if isinstance(args, (list, tuple)) and args[:2] == ["lsappinfo", "list"]:
+            return subprocess.CompletedProcess(args, 0, '1) "Synthetic App" ASN:0x0-0x1:\n    bundleID="org.example.app"\n', "")
+        return original_run(args, *positional, **kwargs)
+    monkeypatch.setattr(subprocess, "run", run)

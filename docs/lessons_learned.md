@@ -2475,3 +2475,7 @@ A Storage Monitor report test enumerated host temporary directories when a new c
 ## 2026-11-11: Recheck descendants and protected containers before moving a directory
 
 An indexed newest time cannot prove a directory stayed stale: an in-place file edit does not update its parent directory timestamp. Before a cleanup rename, enumerate the directory again with the native walker and refuse incomplete results. Protect both a managed worktree and any cleanup target enclosing it; check indexed markers for report-time eligibility and current markers again at execution.
+
+### Storage Monitor report boundaries
+
+A cleanup report can outlive the state it describes, and a missing running-app probe is not evidence that a cache owner has quit. Treat an unknown probe as review-only for Library cache entries, and keep reports bounded while exposing counts and bytes omitted from a truncated list.
