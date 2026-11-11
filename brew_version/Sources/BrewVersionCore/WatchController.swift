@@ -81,6 +81,7 @@ public enum AutomaticCheckSchedule: Equatable, Sendable {
     private var installationRevision = 0
     private let store: WatchStore
     private let brewGate: (any BrewConfirming)?
+    public var brewGateAvailable: Bool { brewGate?.isAvailable ?? false }
     private var gateActive: Bool { state.confirmWithBrew && (brewGate?.isAvailable ?? false) }
     public private(set) var brewCheckProblem: String?
     private let log: any EventLogging

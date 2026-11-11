@@ -47,7 +47,7 @@ Projects are grouped by purpose rather than source-directory layout. Each linked
 | --- | --- | --- |
 | [Anduril 2 Step Calculator](../anduril_steps/README.md) | Python CLI | Calculates stepped flashlight brightness levels and searches for floor/ceiling/step combinations. |
 | [Anker Charge Monitor](../anker_charge_monitor/README.md) | Native macOS app | Displays charger-reported power, voltage, and current for the A2345 six-port charger, with credentials supplied through 1Password. |
-| [Brew Version](../brew_version/README.md) | Native macOS app + CLI | Watches Homebrew formula and cask versions, including third-party taps, without upgrading packages. |
+| [Brew Version](../brew_version/README.md) | Native macOS app + CLI | Watches Homebrew formula and cask versions, including third-party taps; app alerts can wait until brew lists the release. |
 | [Docker Disk Compact](../docker/docker-disk-compact/README.md) | macOS shell CLI | Prunes Docker data and measures the physical size of Docker.raw. Offers dry-run and separately selected cleanup options. |
 | [launchmaster](../launchmaster/README.md) | Local macOS web app | Inspects and manages launchd jobs, with runtime state and backups kept outside the checkout. |
 | [Router Log Analyzer](../router-log-analyzer/README.md) | CLI | Analyzes supported NETGEAR and TP-Link Archer logs, with persistent learning where stable router identity is available and text, Markdown, HTML, or JSON reports. |

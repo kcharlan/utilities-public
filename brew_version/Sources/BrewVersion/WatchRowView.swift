@@ -6,8 +6,9 @@ func copyText(_ value: String) { NSPasteboard.general.clearContents(); NSPastebo
 func packageCommand(_ listing: Listing, installed: InstalledVersion?) -> String {
     "brew \(installed == nil ? "install" : "upgrade") " + (listing.kind == .cask ? "--cask " : "") + listing.name.rawValue
 }
-func statusText(_ listing: Listing, installed: InstalledVersion?) -> String {
-    switch updateStatus(listing: listing, installed: installed) {
+func statusText(_ listing: Listing, installed: InstalledVersion?, announced: Bool = false) -> String {
+    if announced { return installed.map { "You have \($0.version) · not in brew yet" } ?? "Not installed · not in brew yet" }
+    return switch updateStatus(listing: listing, installed: installed) {
     case .upToDate, .ahead: "Installed"
     case .updateAvailable(let value): "You have \(value)"
     case .notInstalled: "Not installed"
@@ -23,6 +24,7 @@ struct PackageRow: View {
     var installed: InstalledVersion?
     var previousVersion: String?
     var amber = false
+    var announced = false
     var error: String?
     var compact = false
     var suggestionInstalled = false
@@ -41,7 +43,7 @@ struct PackageRow: View {
     private var commandTitle: String { installed == nil ? "Copy install command" : "Copy upgrade command" }
     var body: some View {
         HStack(alignment: .top, spacing: 7) {
-            Circle().fill(amber ? Color(nsColor: .systemOrange) : .clear).frame(width: 7, height: 7).padding(.top, 5).accessibilityHidden(true)
+            Circle().fill(amber ? Color(nsColor: .systemOrange) : .clear).overlay(Circle().strokeBorder(announced ? Color.secondary : .clear, lineWidth: 1)).frame(width: 7, height: 7).padding(.top, 5).accessibilityHidden(true)
             Image(systemName: kind == .cask ? "macwindow" : "terminal").foregroundStyle(.secondary)
                 .frame(width: 15).padding(.top, 2).accessibilityLabel(kind?.rawValue ?? "Package")
             VStack(alignment: .leading, spacing: 3) {
@@ -52,12 +54,12 @@ struct PackageRow: View {
                     Spacer(minLength: 2)
                     if !compact, let listing {
                         HStack(spacing: 3) {
-                            if amber, let old = installed?.version ?? previousVersion {
+                            if (amber || announced), let old = installed?.version ?? previousVersion {
                                 Text(old).foregroundStyle(.secondary)
                                 Text("→").foregroundStyle(.secondary)
                             }
                             Text(ReleaseID(listing).displayVersion).fontWeight(amber ? .semibold : .regular)
-                                .foregroundStyle(amber ? Color(nsColor: .systemOrange) : Color.primary)
+                                .foregroundStyle(amber ? Color(nsColor: .systemOrange) : (announced ? Color.secondary : Color.primary))
                         }.font(.system(size: 11)).monospacedDigit().lineLimit(1).minimumScaleFactor(0.8)
                             .help(ReleaseID(listing).displayVersion)
                     }
@@ -66,7 +68,7 @@ struct PackageRow: View {
                     VStack(alignment: .leading, spacing: 2) {
                         if let error { Text(error).foregroundStyle(.red).fixedSize(horizontal: false, vertical: true) }
                         else if compact { Text((kind?.rawValue ?? "Package") + (suggestionInstalled ? " · Installed" : "")).foregroundStyle(.secondary) }
-                        else if let listing { Text(statusText(listing, installed: installed)).foregroundStyle(.secondary) }
+                        else if let listing { Text(statusText(listing, installed: installed, announced: announced)).foregroundStyle(.secondary) }
                         if let note = installedSourceNote(installed), !compact { Text(note).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true) }
                     }.font(.system(size: 11)).frame(maxWidth: .infinity, alignment: .leading)
                     if let watched {
@@ -77,8 +79,8 @@ struct PackageRow: View {
                             if let listing, amber {
                                 Button { copyText(packageCommand(listing, installed: installed)) } label: { Image(systemName: "doc.on.doc") }
                                     .help(commandTitle).accessibilityLabel(commandTitle)
-                                if let skip { Button(action: skip) { Image(systemName: "forward.end") }.help("Skip this version").accessibilityLabel("Skip this version").disabled(!canSave) }
                             }
+                            if (amber || announced), let skip { Button(action: skip) { Image(systemName: "forward.end") }.help("Skip this version").accessibilityLabel("Skip this version").disabled(!canSave) }
                             if remove != nil {
                                 Menu { actions } label: { Image(systemName: "ellipsis") }
                                     .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize()
@@ -99,9 +101,9 @@ struct PackageRow: View {
     }
     @ViewBuilder private var actions: some View {
         if let listing {
-            Button(commandTitle) { copyText(packageCommand(listing, installed: installed)) }
+            if !announced { Button(commandTitle) { copyText(packageCommand(listing, installed: installed)) } }
             if let homepage = listing.homepage, HomepageAction.isAvailable(homepage) { Button("Open homepage") { HomepageAction().open(homepage) } }
-            if amber, let skip { Button("Skip this version", action: skip).disabled(!canSave) }
+            if (amber || announced), let skip { Button("Skip this version", action: skip).disabled(!canSave) }
         }
         if let remove { Button("Stop watching \(name.rawValue)", action: remove).disabled(!canSave || !canRemove) }
     }
@@ -115,7 +117,7 @@ struct WatchRowView: View {
     let remove: () -> Void
     var body: some View {
         PackageRow(name: entry.name, kind: entry.kind, listing: entry.lastListing, installed: entry.installed,
-                   previousVersion: entry.lastSeenRelease?.displayVersion, amber: entry.isAmber, error: entry.lastError,
+                   previousVersion: entry.lastSeenRelease?.displayVersion, amber: entry.isAmber, announced: entry.isAnnounced, error: entry.lastError,
                    selected: selected, canSave: controller.canSave, canRemove: canRemove,
                    skip: { controller.skip(entry.name) }, remove: remove)
     }

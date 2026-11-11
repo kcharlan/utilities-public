@@ -526,6 +526,7 @@ private final class GateDouble: BrewConfirming, @unchecked Sendable {
     var state = AppState.initial; state.watched = [baseline()]; try f.store.save(state)
     let gate = GateDouble(), notifier = RecordingNotifier(store: f.store), stamp = Date(timeIntervalSince1970: 1000)
     let controller = WatchController(transport: StubTransport([watchURL(): [watchResponse("2"), watchResponse("2")]]), installed: nil, store: f.store, notifier: notifier, now: { stamp }, brewGate: gate)
+    #expect(controller.brewGateAvailable)
     await controller.checkNow()
     #expect(await notifier.notices.isEmpty && controller.amberCount == 0 && controller.state.watched[0].isAnnounced)
     #expect(f.store.load().state.watched[0].isAnnounced && controller.brewCheckProblem != nil)
@@ -548,6 +549,7 @@ private final class GateDouble: BrewConfirming, @unchecked Sendable {
         let c = WatchController(transport: StubTransport([watchURL(): [watchResponse("2"), watchResponse("2")]]), installed: nil, store: f.store, notifier: notifier, brewGate: gate)
         await c.checkNow()
         if skip { c.skip(watchName) } else { gate.disappear() }
+        #expect(c.brewGateAvailable == skip)
         await c.checkNow()
         #expect(await notifier.notices.count == (skip ? 0 : 1))
         #expect(!c.state.watched[0].isAnnounced && c.state.watched[0].pendingRelease == nil)

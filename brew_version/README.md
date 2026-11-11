@@ -4,8 +4,8 @@ Brew Version reads current formula and cask versions from Homebrew's public API
 and packages in your taps from their GitHub repositories.
 The Swift `brew-version` command supports one-time lookups and watching until a
 version changes. The shared core also supports the native menu bar app,
-which watches chosen packages and notifies about their updates without running
-`brew` or upgrading packages.
+which watches chosen packages and can wait until local Homebrew can install a
+release before notifying. It never upgrades packages.
 
 This native macOS app is a deliberate exception to the UI Shapes defaults in
 the repository's `agents.md`.
@@ -174,10 +174,10 @@ source and kind, including the final Watch lookup. If the official package
 disappears, that choice never falls back to a tap.
 
 The local index reads tapped directories and Git origin configuration as text;
-the app and CLI never execute brew, git, Ruby or tap code. Only GitHub origins
-can be checked. Versions come from HTTPS files at
-`raw.githubusercontent.com/owner/repository/HEAD/path`, without waiting for
-`brew update`. Conditional requests use ETags; freshness remains subject to
+tap discovery executes no git, Ruby or tap code. Only GitHub origins can be
+checked. Versions come from HTTPS files at
+`raw.githubusercontent.com/owner/repository/HEAD/path`. Alerts can wait for
+`brew update` to make the release installable. Conditional requests use ETags; freshness remains subject to
 GitHub's HTTP caching. The app rescans taps on catalog refresh and manual
 refresh. Removing a tap leaves its watches with an explicit error and stops
 admitting its installed receipts; it never turns them into official installs.
@@ -334,6 +334,24 @@ state-save boundary as watches, retaining committed values when saving fails.
 
 ## Menu bar app
 
+### Alerts wait for brew
+
+By default a new watched release appears as an announced row with a hollow ring
+while the app waits for Homebrew to list it. It has no amber count, notification,
+or copy command yet; Skip remains available. The app runs `brew update`, then
+asks `brew info` for candidates. Once brew lists the same or a newer release,
+the usual update and notification rules apply. A confirmation problem appears
+under the last check and the app keeps waiting.
+
+In Settings, **Alert only when brew can install** controls this gate. If
+Homebrew is not found, the control is disabled and alerts use website data.
+**While waiting, check every** sets the recheck interval, default and minimum
+10 minutes; the regular check interval is used if it is faster. Other updates
+continues to show website data. The command-line tool also uses website data.
+
+Rolling back to 1.2.4 discards the new pending-release fields, so an announced
+release may alert under the older website-only behavior.
+
 Build the signed app and CLI with `make -C brew_version release` from the
 repository root. Products are `brew_version/build/release/Brew Version.app`
 and `brew_version/build/release/brew-version`. Signing is local ad hoc signing;
@@ -362,7 +380,7 @@ the suggestion choice. Suggestions and results share a content-sized scrolling
 region bounded by the popover height, keeping the search field and footer
 reachable. Arrow selection scrolls the selected result into view.
 
-Watching sorts updates first, then names. Amber rows offer an upgrade command
+Watching sorts installable updates first, then announced releases, then names. Amber rows offer an upgrade command
 for installed packages or an install command for packages not installed, plus a
 skip action. The app only copies commands. A row's context
 menu and its hover ellipsis menu contain **Stop watching NAME**. Selecting a row
@@ -382,7 +400,7 @@ package from search or Other updates retries the saved restoration, preserving
 its acknowledgements and skipped version. The recovery line stays visible
 while searching too. The usual five-second expiry applies before a failure.
 
-**Other updates** lists installed, unwatched updates on this Mac and never alerts.
+**Other updates** lists installed, unwatched updates on this Mac using website data and never alerts.
 Use Watch to move an item to Watching. Click its header to collapse the list,
 or turn it off in Settings. Below the header, the section shows when the list
 was last updated; set how often it refreshes in Settings. The footer's watch
@@ -506,6 +524,9 @@ It also runs a synthetic service test without launching a GUI. The harness
 uses no owner state, inventory, application folders or live HTTP requests.
 The harness immediately opens the maintained popover. Search for
 `synthetic-formula` and press Return to establish its baseline.
+Use **Brew holds releases**, then **Advance release and check**, to see an
+announced row; **Brew lists releases** advances the clock and checks again so
+the release becomes installable. The default is that brew lists releases.
 **Advance release and check** changes its listing and checks again; click the
 delivered notification and require the popover to open. **Other updates**
 contains `synthetic-installed`, from a private invented Homebrew receipt, and

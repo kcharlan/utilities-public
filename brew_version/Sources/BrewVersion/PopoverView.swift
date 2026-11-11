@@ -1,6 +1,21 @@
 import SwiftUI
 import BrewVersionCore
 
+func sortedWatches(_ watches: [WatchEntry]) -> [WatchEntry] {
+    watches.sorted { a, b in
+        let ar = a.isAmber ? 0 : (a.isAnnounced ? 1 : 2)
+        let br = b.isAmber ? 0 : (b.isAnnounced ? 1 : 2)
+        return ar == br ? a.name.rawValue < b.name.rawValue : ar < br
+    }
+}
+func watchTitle(_ watches: [WatchEntry]) -> String {
+    let updates = watches.filter(\.isAmber).count
+    if updates > 0 { return updates == 1 ? "1 update" : "\(updates) updates" }
+    let announced = watches.filter(\.isAnnounced).count
+    if announced > 0 { return announced == 1 ? "1 announced" : "\(announced) announced" }
+    return watches.isEmpty ? "Nothing watched yet" : "All up to date"
+}
+
 struct PopoverView: View {
     let controller: WatchController
     let notifier: UserNotifier
@@ -11,14 +26,8 @@ struct PopoverView: View {
     @State var selection = WatchRowSelection()
     @State private var undo = WatchUndoAction()
     @State private var warningHeight: CGFloat = 0
-    private var watches: [WatchEntry] {
-        controller.state.watched.sorted { $0.isAmber != $1.isAmber ? $0.isAmber : $0.name.rawValue < $1.name.rawValue }
-    }
-    private var title: String {
-        let count = controller.amberCount
-        if count > 0 { return count == 1 ? "1 update" : "\(count) updates" }
-        return watches.isEmpty ? "Nothing watched yet" : "All up to date"
-    }
+    private var watches: [WatchEntry] { sortedWatches(controller.state.watched) }
+    private var title: String { watchTitle(watches) }
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
             HStack {
@@ -26,6 +35,7 @@ struct PopoverView: View {
                     Text(title).font(.system(size: 13, weight: .semibold))
                     Text(controller.state.lastCheck.map { "Checked \($0.formatted(date: .omitted, time: .shortened))" } ?? "Not checked yet")
                         .font(.system(size: 11)).foregroundStyle(.secondary)
+                    if let problem = controller.brewCheckProblem { Text("Couldn't confirm with brew: \(problem)").font(.system(size: 11)).foregroundStyle(.secondary).lineLimit(1) }
                 }
                 Spacer()
                 Button { Task { await controller.refreshNow() } } label: {
@@ -70,7 +80,7 @@ struct PopoverView: View {
                                 WatchRowView(entry: entry, controller: controller, canRemove: undo.canRemove, selected: selection.name == entry.name) { remove(entry.name) }
                                     .background(WatchRowKeyboard(focusRequest: selection.name == entry.name ? selection.focusRequest : nil) { remove(entry.name) })
                                     .contentShape(Rectangle()).onTapGesture { selection.select(entry.name) }
-                                    .accessibilityElement(children: .contain).accessibilityLabel("Watching \(entry.name.rawValue)")
+                                    .accessibilityElement(children: .contain).accessibilityLabel("Watching \(entry.name.rawValue)\(entry.isAnnounced ? ", announced" : "")")
                                     .accessibilityAddTraits(selection.name == entry.name ? .isSelected : [])
                                     .accessibilityAction { selection.select(entry.name) }
                             }
