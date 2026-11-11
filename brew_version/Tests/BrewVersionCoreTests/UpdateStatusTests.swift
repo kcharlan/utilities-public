@@ -66,3 +66,16 @@ struct UpdateStatusTests {
         #expect(updateStatus(listing: latest, installed: nil) == .notInstalled)
     }
 }
+
+@Test func brewListingMustCoverAnnouncedVersionRevisionAndScheme() {
+    let name = PackageName("synthetic-package")!
+    let announced = Listing(name: name, kind: .formula, version: "2", revision: 1, versionScheme: 1)
+    #expect(brewCovers(announced, announced: announced))
+    #expect(!brewCovers(Listing(name: name, kind: .formula, version: "2", revision: 0, versionScheme: 1), announced: announced))
+    #expect(brewCovers(Listing(name: name, kind: .formula, version: "3", versionScheme: 1), announced: announced))
+    #expect(brewCovers(Listing(name: name, kind: .formula, version: "1", versionScheme: 2), announced: announced))
+    #expect(!brewCovers(Listing(name: name, kind: .formula, version: "9", versionScheme: 0), announced: announced))
+    let cask = Listing(name: name, kind: .cask, version: "2")
+    #expect(!brewCovers(Listing(name: name, kind: .cask, version: "1"), announced: cask))
+    #expect(brewCovers(Listing(name: name, kind: .cask, version: "3"), announced: cask))
+}

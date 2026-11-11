@@ -166,3 +166,20 @@ struct WatchStoreTests {
         #expect(cask.revision == 0)
     }
 }
+
+@Test func announcementSettingsAndPendingReleasePersistAndValidate() throws {
+    let fixture = try #require(Bundle.module.url(forResource: "state-1.0.2", withExtension: "json", subdirectory: "Fixtures"))
+    let old = try JSONDecoder().decode(AppState.self, from: Data(contentsOf: fixture))
+    #expect(old.confirmWithBrew && old.announcedInterval.minutes == 10)
+    let f = WatchFixture(); defer { f.clean() }
+    var state = old
+    state.confirmWithBrew = false; state.announcedInterval = CheckInterval(minutes: 15)!
+    state.watched[0].pendingRelease = state.watched[0].lastListing.map(ReleaseID.init)
+    state.watched[0].announcedSince = Date(timeIntervalSince1970: 100)
+    try f.store.save(state)
+    #expect(f.store.load().state == state)
+    var object = try #require(JSONSerialization.jsonObject(with: JSONEncoder().encode(state)) as? [String: Any])
+    object["announcedInterval"] = ["minutes": 9]
+    try JSONSerialization.data(withJSONObject: object).write(to: f.file)
+    #expect(f.store.load().problem != nil)
+}

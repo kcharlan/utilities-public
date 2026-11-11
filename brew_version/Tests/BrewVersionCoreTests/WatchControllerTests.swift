@@ -504,3 +504,76 @@ private final class ControllerEventRecorder: EventLogging, @unchecked Sendable {
         #expect(log.events.last == "watch.add")
     }
 }
+
+private final class GateDouble: BrewConfirming, @unchecked Sendable {
+    private let lock = NSLock()
+    private var currentVersion = "1"
+    private var available = true
+    private var count = 0
+    var isAvailable: Bool { lock.withLock { available } }
+    var calls: Int { lock.withLock { count } }
+    func setVersion(_ version: String) { lock.withLock { currentVersion = version } }
+    func disappear() { lock.withLock { available = false } }
+    func confirm(_ candidates: [Listing]) async -> BrewConfirmation {
+        lock.withLock {
+            count += 1
+            return BrewConfirmation(listings: Dictionary(uniqueKeysWithValues: candidates.map { ($0.name, Listing(name: $0.name, kind: $0.kind, version: currentVersion)) }), problem: "synthetic update problem")
+        }
+    }
+}
+@MainActor @Test func announcedReleaseDoesNotAlertUntilBrewListsIt() async throws {
+    let f = WatchFixture(); defer { f.clean() }
+    var state = AppState.initial; state.watched = [baseline()]; try f.store.save(state)
+    let gate = GateDouble(), notifier = RecordingNotifier(store: f.store), stamp = Date(timeIntervalSince1970: 1000)
+    let controller = WatchController(transport: StubTransport([watchURL(): [watchResponse("2"), watchResponse("2")]]), installed: nil, store: f.store, notifier: notifier, now: { stamp }, brewGate: gate)
+    await controller.checkNow()
+    #expect(await notifier.notices.isEmpty && controller.amberCount == 0 && controller.state.watched[0].isAnnounced)
+    #expect(f.store.load().state.watched[0].isAnnounced && controller.brewCheckProblem != nil)
+    #expect(controller.nextAutomaticCheck == .scheduled(stamp.addingTimeInterval(600)))
+    controller.setAnnouncedInterval(CheckInterval(minutes: 15)!)
+    #expect(controller.nextAutomaticCheck == .scheduled(stamp.addingTimeInterval(900)))
+    controller.setAnnouncedInterval(CheckInterval(minutes: 60)!)
+    #expect(controller.nextAutomaticCheck == .scheduled(stamp.addingTimeInterval(1800)))
+    controller.popoverClosed(); gate.setVersion("2"); await controller.checkNow()
+    #expect(await notifier.notices.count == 1)
+    #expect(await notifier.deliveries == [.withSound])
+    #expect(controller.amberCount == 1 && controller.brewCheckProblem == nil)
+    #expect(await notifier.persisted.first?.watched[0].isAmber == true)
+}
+@MainActor @Test func skipAndUnavailableGateReleasePendingSafely() async throws {
+    for skip in [true, false] {
+        let f = WatchFixture(); defer { f.clean() }
+        var state = AppState.initial; state.watched = [baseline()]; try f.store.save(state)
+        let gate = GateDouble(), notifier = RecordingNotifier()
+        let c = WatchController(transport: StubTransport([watchURL(): [watchResponse("2"), watchResponse("2")]]), installed: nil, store: f.store, notifier: notifier, brewGate: gate)
+        await c.checkNow()
+        if skip { c.skip(watchName) } else { gate.disappear() }
+        await c.checkNow()
+        #expect(await notifier.notices.count == (skip ? 0 : 1))
+        #expect(!c.state.watched[0].isAnnounced && c.state.watched[0].pendingRelease == nil)
+    }
+}
+@MainActor @Test func gateIsNotCalledForUnchangedOrDisabledWatches() async throws {
+    for enabled in [true, false] {
+        let f = WatchFixture(); defer { f.clean() }
+        var state = AppState.initial; state.watched = [baseline()]; state.confirmWithBrew = enabled; try f.store.save(state)
+        let gate = GateDouble(), notifier = RecordingNotifier()
+        let c = WatchController(transport: StubTransport([watchURL(): [watchResponse(enabled ? "1.0" : "2")]]), installed: nil, store: f.store, notifier: notifier, brewGate: gate)
+        await c.checkNow()
+        #expect(gate.calls == 0)
+        #expect(await notifier.notices.count == (enabled ? 0 : 1))
+    }
+}
+
+@MainActor @Test func installedAnnouncementEmitsConfirmedEventAfterBrewCatchesUp() async throws {
+    let f = WatchFixture(); defer { f.clean() }
+    var state = AppState.initial; state.watched = [baseline()]; try f.store.save(state)
+    let gate = GateDouble(), notifier = RecordingNotifier(), log = GateEventRecorder()
+    let c = WatchController(transport: StubTransport([watchURL(): [watchResponse("2"), watchResponse("2")]]), installed: RollingInstallation(), store: f.store, notifier: notifier, brewGate: gate, log: log)
+    await c.checkNow()
+    #expect(c.state.watched[0].isAnnounced && c.amberCount == 0)
+    #expect(await notifier.notices.isEmpty)
+    gate.setVersion("2"); await c.checkNow()
+    #expect(await notifier.notices.count == 1)
+    #expect(log.recorded.contains("release.confirmed"))
+}

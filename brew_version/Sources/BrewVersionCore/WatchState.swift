@@ -37,6 +37,8 @@ public struct WatchEntry: Codable, Equatable, Sendable {
     public var skippedRelease: ReleaseID?
     public var unseenRelease: Bool
     public var lastError: String?
+    public var pendingRelease: ReleaseID?
+    public var announcedSince: Date?
     public var alertPendingSince: Date?
 
     public init(name: PackageName, kind: PackageKind? = nil, lastListing: Listing? = nil,
@@ -49,8 +51,16 @@ public struct WatchEntry: Codable, Equatable, Sendable {
         self.unseenRelease = unseenRelease; self.lastError = lastError
         self.alertPendingSince = alertPendingSince
     }
+    public var isAnnounced: Bool {
+        guard let listing = lastListing, let pending = pendingRelease,
+              pending == ReleaseID(listing), skippedRelease != pending else { return false }
+        switch updateStatus(listing: listing, installed: installed) {
+        case .updateAvailable, .notInstalled: return true
+        default: return false
+        }
+    }
     public var isAmber: Bool {
-        guard let listing = lastListing, skippedRelease != ReleaseID(listing),
+        guard let listing = lastListing, skippedRelease != ReleaseID(listing), pendingRelease != ReleaseID(listing),
               !(listing.kind == .cask && listing.version == "latest") else { return false }
         switch updateStatus(listing: listing, installed: installed) {
         case .updateAvailable: return true
@@ -113,8 +123,9 @@ public func alertDigest(for watched: [WatchEntry]) -> AlertDigest? {
     return AlertDigest(names: names, title: "\(entries.count) updates on Homebrew", body: body)
 }
 
-public func evaluate(_ entry: WatchEntry, listing: Listing, installed: InstalledVersion?) -> (WatchEntry, Notice?) {
+public func evaluate(_ entry: WatchEntry, listing: Listing, installed: InstalledVersion?, confirmed: Bool = true, now: Date? = nil) -> (WatchEntry, Notice?) {
     var next = entry
+    next.pendingRelease = nil; next.announcedSince = nil
     next.lastListing = listing; next.installed = installed; next.kind = listing.kind; next.lastError = nil
     let release = ReleaseID(listing)
     let unversioned = listing.kind == .cask && listing.version == "latest"
@@ -140,6 +151,11 @@ public func evaluate(_ entry: WatchEntry, listing: Listing, installed: Installed
         return (next, nil)
     }
     guard entry.notifiedRelease != release else { return (next, nil) }
+    if !confirmed {
+        next.pendingRelease = release
+        next.announcedSince = entry.pendingRelease == release ? entry.announcedSince : now
+        return (next, nil)
+    }
     next.notifiedRelease = release
     return (next, notice(for: next))
 }
@@ -158,6 +174,8 @@ public struct AppState: Codable, Equatable, Sendable {
     /// Like `brew outdated --greedy`: also list self-updating casks whose
     /// installed version can't be read from their app.
     public var includeSelfUpdating = false
+    public var confirmWithBrew = true
+    public var announcedInterval: CheckInterval = .announcedStandard
     public static let currentSchema = 1
     public static let initial = AppState(schema: currentSchema, watched: [], interval: .standard,
                                         showOtherUpdates: true, otherUpdatesCollapsed: false,
@@ -167,7 +185,7 @@ public struct AppState: Codable, Equatable, Sendable {
 extension AppState {
     private enum CodingKeys: String, CodingKey {
         case schema, watched, interval, showOtherUpdates, otherUpdatesCollapsed, lastCheck, lastCatalogFetch,
-             listingCache, catalogInterval, includeSelfUpdating, tapWatched, tapListingCache
+             listingCache, catalogInterval, includeSelfUpdating, tapWatched, tapListingCache, confirmWithBrew, announcedInterval
     }
     // Settings added after 1.0.1 default when absent, so earlier saved state
     // loads normally instead of being set aside as unreadable.
@@ -183,6 +201,8 @@ extension AppState {
                   listingCache: try c.decode([URL: CachedListing].self, forKey: .listingCache))
         catalogInterval = try c.decodeIfPresent(CheckInterval.self, forKey: .catalogInterval) ?? .catalogStandard
         includeSelfUpdating = try c.decodeIfPresent(Bool.self, forKey: .includeSelfUpdating) ?? false
+        confirmWithBrew = try c.decodeIfPresent(Bool.self, forKey: .confirmWithBrew) ?? true
+        announcedInterval = try c.decodeIfPresent(CheckInterval.self, forKey: .announcedInterval) ?? .announcedStandard
         watched += try c.decodeIfPresent([WatchEntry].self, forKey: .tapWatched) ?? []
         listingCache.merge(try c.decodeIfPresent([URL: CachedListing].self, forKey: .tapListingCache) ?? [:]) { _, tap in tap }
     }
@@ -201,6 +221,8 @@ extension AppState {
         try c.encode(listingCache.filter { $0.value.listing.name.tap != nil }, forKey: .tapListingCache)
         try c.encode(catalogInterval, forKey: .catalogInterval)
         try c.encode(includeSelfUpdating, forKey: .includeSelfUpdating)
+        try c.encode(confirmWithBrew, forKey: .confirmWithBrew)
+        try c.encode(announcedInterval, forKey: .announcedInterval)
     }
 }
 

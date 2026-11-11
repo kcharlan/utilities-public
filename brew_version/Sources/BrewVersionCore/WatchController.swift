@@ -80,6 +80,9 @@ public enum AutomaticCheckSchedule: Equatable, Sendable {
     private var targetedVersions: [PackageKind: [PackageName: TargetedInstallation]] = [:]
     private var installationRevision = 0
     private let store: WatchStore
+    private let brewGate: (any BrewConfirming)?
+    private var gateActive: Bool { state.confirmWithBrew && (brewGate?.isAvailable ?? false) }
+    public private(set) var brewCheckProblem: String?
     private let log: any EventLogging
     private let notifier: any Notifier
     private var alertQueue: Task<Void, Never>?
@@ -107,20 +110,20 @@ public enum AutomaticCheckSchedule: Equatable, Sendable {
 
     public convenience init(transport: any HTTPTransport, installed: (any InstalledReading)?, store: WatchStore,
                 notifier: any Notifier, now: @escaping () -> Date = Date.init,
-                catalogClient: CatalogClient? = nil, networkAvailable: Bool = true, taps: @escaping @Sendable () -> TapIndex = { .empty }, log: any EventLogging = NoEventLog()) {
+                catalogClient: CatalogClient? = nil, networkAvailable: Bool = true, taps: @escaping @Sendable () -> TapIndex = { .empty }, brewGate: (any BrewConfirming)? = nil, log: any EventLogging = NoEventLog()) {
         self.init(transport: transport, installed: installed, store: store, notifier: notifier, now: now,
-                  catalogClient: catalogClient, networkAvailable: networkAvailable, initialCache: nil, taps: taps, log: log)
+                  catalogClient: catalogClient, networkAvailable: networkAvailable, initialCache: nil, taps: taps, brewGate: brewGate, log: log)
     }
 
     init(transport: any HTTPTransport, installed: (any InstalledReading)?, store: WatchStore,
          notifier: any Notifier, now: @escaping () -> Date = Date.init,
-         catalogClient: CatalogClient? = nil, networkAvailable: Bool = true, initialCache: ListingCache?, taps: @escaping @Sendable () -> TapIndex = { .empty }, log: any EventLogging = NoEventLog()) {
+         catalogClient: CatalogClient? = nil, networkAvailable: Bool = true, initialCache: ListingCache?, taps: @escaping @Sendable () -> TapIndex = { .empty }, brewGate: (any BrewConfirming)? = nil, log: any EventLogging = NoEventLog()) {
         let load = store.load()
         state = load.state; persistenceError = load.problem; canSave = load.canSave
         persistenceIssue = load.problem == nil ? nil : (load.canSave ? .recoveryWarning : .loadFailure)
         self.networkAvailable = networkAvailable
         self.transport = transport; self.installed = installed; self.store = store
-        self.notifier = notifier; self.now = now; self.log = log
+        self.notifier = notifier; self.now = now; self.brewGate = brewGate; self.log = log
         self.catalogClient = catalogClient
         self.taps = taps; tapIndex = taps()
         let cache = initialCache ?? ListingCache(entries: load.state.listingCache)
@@ -264,6 +267,7 @@ public enum AutomaticCheckSchedule: Equatable, Sendable {
               let listing = state.watched[index].lastListing else { return }
         var candidate = state
         let wasPending = candidate.watched[index].alertPendingSince != nil
+        candidate.watched[index].pendingRelease = nil; candidate.watched[index].announcedSince = nil
         candidate.watched[index].skippedRelease = ReleaseID(listing)
         candidate.watched[index].unseenRelease = false
         candidate.watched[index].alertPendingSince = nil
@@ -277,7 +281,7 @@ public enum AutomaticCheckSchedule: Equatable, Sendable {
         var candidate = state
         let wasPending = candidate.watched.contains { $0.alertPendingSince != nil }
         for index in candidate.watched.indices { candidate.watched[index].alertPendingSince = nil }
-        for index in candidate.watched.indices where candidate.watched[index].installed == nil {
+        for index in candidate.watched.indices where candidate.watched[index].installed == nil && !candidate.watched[index].isAnnounced {
             if let listing = candidate.watched[index].lastListing {
                 candidate.watched[index].lastSeenRelease = ReleaseID(listing)
             }
@@ -293,6 +297,16 @@ public enum AutomaticCheckSchedule: Equatable, Sendable {
         guard canSave else { return }
         var candidate = state; candidate.catalogInterval = interval; if commit(candidate) { log.record("setting", ["key": "catalogInterval", "value": .int(interval.minutes)]) }
     }
+    public func setConfirmWithBrew(_ on: Bool) {
+        guard canSave else { return }
+        var candidate = state; candidate.confirmWithBrew = on
+        if commit(candidate) { log.record("setting", ["key": "confirmWithBrew", "value": .bool(on)]) }
+    }
+    public func setAnnouncedInterval(_ interval: CheckInterval) {
+        guard canSave else { return }
+        var candidate = state; candidate.announcedInterval = interval
+        if commit(candidate) { log.record("setting", ["key": "announcedInterval", "value": .int(interval.minutes)]) }
+    }
     public func setIncludeSelfUpdating(_ on: Bool) {
         guard canSave else { return }
         var candidate = state; candidate.includeSelfUpdating = on; if commit(candidate) { log.record("setting", ["key": "includeSelfUpdating", "value": .bool(on)]) }
@@ -305,10 +319,11 @@ public enum AutomaticCheckSchedule: Equatable, Sendable {
 
     /// All watch retry gates share this deadline, including its reconnect preview.
     private func watchCheckDeadline(reconnecting: Bool = false) -> Date? {
-        [lastFailedSave,
+        let interval = gateActive && state.watched.contains(where: \.isAnnounced) && state.announcedInterval.minutes < state.interval.minutes ? state.announcedInterval : state.interval
+        return [lastFailedSave,
          reconnecting && retryWatchesOnReconnect ? nil : lastCheckAttempt,
          retryWatchesOnReconnect ? nil : state.lastCheck]
-            .compactMap { CheckSchedule.nextDue(lastCheck: $0, interval: state.interval, now: now()) }.max()
+            .compactMap { CheckSchedule.nextDue(lastCheck: $0, interval: interval, now: now()) }.max()
     }
 
     private var automaticRequestsAllowed: Bool {
@@ -710,6 +725,13 @@ public enum AutomaticCheckSchedule: Equatable, Sendable {
         }
         let listings = results.compactMap { try? $0.result.get() }
         let installation = await refreshInstalled(extraListings: listings)
+        let requestedByName = Dictionary(uniqueKeysWithValues: requested.map { ($0.0.name, $0.0) })
+        let candidates = listings.filter { listing in
+            guard let entry = requestedByName[listing.name] else { return false }
+            return evaluate(entry, listing: listing, installed: installation.installed(listing.name, kind: listing.kind)).1 != nil
+        }
+        var confirmation = BrewConfirmation()
+        if gateActive, !candidates.isEmpty, let brewGate { confirmation = await brewGate.confirm(candidates) }
         await alertQueue?.value
         let alertCleared = state.watched.contains { $0.alertPendingSince != nil } ? await notifier.alertWasCleared() : false
         let snapshot = cache.snapshot()
@@ -733,7 +755,9 @@ public enum AutomaticCheckSchedule: Equatable, Sendable {
                     log.record("release.seen", ["name": .string(result.name.rawValue), "kind": .string(listing.kind.rawValue), "from": .string(previous.lastListing.map { ReleaseID($0).displayVersion } ?? "none"), "to": .string(ReleaseID(listing).displayVersion), "installed": .string(local?.version ?? "none")])
                 }
                 if previous.installed?.version != local?.version { log.record("installed.changed", ["name": .string(result.name.rawValue), "from": .string(previous.installed?.version ?? "none"), "to": .string(local?.version ?? "none")]) }
-                var (entry, notice) = evaluate(candidate.watched[index], listing: listing, installed: local)
+                let confirmed = !gateActive || (confirmation.listings[result.name].map { brewCovers($0, announced: listing) } ?? false)
+                var (entry, notice) = evaluate(candidate.watched[index], listing: listing, installed: local, confirmed: confirmed, now: stamp)
+                if notice != nil && gateActive { log.record("release.confirmed", ["name": .string(result.name.rawValue), "version": .string(ReleaseID(listing).displayVersion)]) }
                 if notice != nil { entry.alertPendingSince = stamp; hasNotices = true; alerted += 1 }
                 else if !entry.isAmber { entry.alertPendingSince = nil }
                 candidate.watched[index] = entry
@@ -749,6 +773,7 @@ public enum AutomaticCheckSchedule: Equatable, Sendable {
         candidate.listingCache = snapshot
         guard commit(candidate) else { return }
         saved = true
+        brewCheckProblem = state.watched.contains(where: \.isAnnounced) ? confirmation.problem : nil
         if alertCleared { log.record("alert.ack", ["how": "cleared"]) }
         let currentDigest = alertDigest(for: state.watched)
         if hasNotices { await enqueueAlert(listWasEmpty ? .withSound : .silent).value }
