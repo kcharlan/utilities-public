@@ -166,6 +166,7 @@ public enum AutomaticCheckSchedule: Equatable, Sendable {
         do {
             try store.save(candidate)
             state = candidate; persistenceError = nil; persistenceIssue = nil
+            if !state.watched.contains(where: \.isAnnounced) { brewCheckProblem = nil }
             refreshSearchWatchState()
             recomputeOthers()
             return true
@@ -313,18 +314,22 @@ public enum AutomaticCheckSchedule: Equatable, Sendable {
         var candidate = state; candidate.includeSelfUpdating = on; if commit(candidate) { log.record("setting", ["key": "includeSelfUpdating", "value": .bool(on)]) }
     }
     public func checkIfDue() async {
-        guard automaticRequestsAllowed,
+        guard networkAvailable,
               watchCheckDeadline().map({ $0 <= now() }) ?? true else { return }
         await checkNow(trigger: "scheduled")
     }
 
     /// All watch retry gates share this deadline, including its reconnect preview.
     private func watchCheckDeadline(reconnecting: Bool = false) -> Date? {
-        let interval = gateActive && state.watched.contains(where: \.isAnnounced) && state.announcedInterval.minutes < state.interval.minutes ? state.announcedInterval : state.interval
+        let interval = watchInterval
         return [lastFailedSave,
          reconnecting && retryWatchesOnReconnect ? nil : lastCheckAttempt,
          retryWatchesOnReconnect ? nil : state.lastCheck]
             .compactMap { CheckSchedule.nextDue(lastCheck: $0, interval: interval, now: now()) }.max()
+    }
+
+    private var watchInterval: CheckInterval {
+        gateActive && state.watched.contains(where: \.isAnnounced) && state.announcedInterval.minutes < state.interval.minutes ? state.announcedInterval : state.interval
     }
 
     private var automaticRequestsAllowed: Bool {
@@ -743,6 +748,7 @@ public enum AutomaticCheckSchedule: Equatable, Sendable {
         let listWasEmpty = previousDigest == nil
         let stamp = now()
         var hasNotices = false
+        var confirmedEvents: [[String: LogValue]] = []
         for result in results {
             guard generations[result.name] == result.generation,
                   let index = candidate.watched.firstIndex(where: { $0.name == result.name }) else { continue }
@@ -758,7 +764,9 @@ public enum AutomaticCheckSchedule: Equatable, Sendable {
                 if previous.installed?.version != local?.version { log.record("installed.changed", ["name": .string(result.name.rawValue), "from": .string(previous.installed?.version ?? "none"), "to": .string(local?.version ?? "none")]) }
                 let confirmed = !gateActive || (confirmation.listings[result.name].map { brewCovers($0, announced: listing) } ?? false)
                 var (entry, notice) = evaluate(candidate.watched[index], listing: listing, installed: local, confirmed: confirmed, now: stamp)
-                if notice != nil && gateActive { log.record("release.confirmed", ["name": .string(result.name.rawValue), "version": .string(ReleaseID(listing).displayVersion)]) }
+                if notice != nil && gateActive, let since = previous.announcedSince, previous.pendingRelease == ReleaseID(listing) {
+                    confirmedEvents.append(["name": .string(result.name.rawValue), "version": .string(ReleaseID(listing).displayVersion), "waitedSeconds": .int(max(0, Int(stamp.timeIntervalSince(since))))])
+                }
                 if notice != nil { entry.alertPendingSince = stamp; hasNotices = true; alerted += 1 }
                 else if !entry.isAmber { entry.alertPendingSince = nil }
                 candidate.watched[index] = entry
@@ -773,6 +781,7 @@ public enum AutomaticCheckSchedule: Equatable, Sendable {
         if !retryWatchesOnReconnect { candidate.lastCheck = now() }
         candidate.listingCache = snapshot
         guard commit(candidate) else { return }
+        for fields in confirmedEvents { log.record("release.confirmed", fields) }
         saved = true
         brewCheckProblem = state.watched.contains(where: \.isAnnounced) ? confirmation.problem : nil
         if alertCleared { log.record("alert.ack", ["how": "cleared"]) }

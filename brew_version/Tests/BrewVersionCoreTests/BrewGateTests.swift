@@ -119,3 +119,76 @@ final class GateEventRecorder: EventLogging, @unchecked Sendable {
     #expect(!gate.isAvailable)
     #expect(BrewGate.live(prefixes: [HomebrewPrefix(root: root)], home: root, log: NoEventLog()) == nil)
 }
+
+@Test func gateRecordsDiagnosticFieldsForOlderListing() async {
+    let log = FieldRecorder(), listing = Listing(name: PackageName("synthetic-a")!, kind: .formula, version: "2")
+    let runner = ScriptedRunner([BrewOutput(exitCode: 1, stdout: Data("first\nlast\n".utf8), stderr: Data("locked\nmore".utf8), seconds: 1.25), BrewOutput(exitCode: 0, stdout: Data("{\"formulae\":[{\"versions\":{\"stable\":\"1\"}}]}".utf8), stderr: Data(), seconds: 0.125)])
+    _ = await BrewGate(runner: runner, log: log, apiCacheDirectory: nil).confirm([listing])
+    let update = log.fields("gate.update"), info = log.fields("gate.info")
+    #expect(update["exit"] == .int(1) && update["ms"] == .int(1250) && update["timedOut"] == .bool(false))
+    #expect(update["summary"] == .string("last") && update["error"] == .string("locked"))
+    #expect(info["announced"] == .string("2") && info["brew"] == .string("1") && info["covered"] == .bool(false))
+    #expect(info["exit"] == .int(0) && info["ms"] == .int(125))
+}
+
+final class FieldRecorder: EventLogging, @unchecked Sendable {
+    private let lock = NSLock()
+    private var entries: [(String, [String: LogValue])] = []
+    func record(_ event: String, _ fields: [String: LogValue]) { lock.withLock { entries.append((event, fields)) } }
+    func fields(_ event: String) -> [String: LogValue] { lock.withLock { entries.last(where: { $0.0 == event })?.1 ?? [:] } }
+}
+
+@Test func gateRecordsSyntheticCacheMetadataWithoutBody() async throws {
+    let dir = FileManager.default.temporaryDirectory.appendingPathComponent("brew-version-cache-\(UUID())")
+    defer { try? FileManager.default.removeItem(at: dir) }
+    let internalDir = dir.appendingPathComponent("internal")
+    try FileManager.default.createDirectory(at: internalDir, withIntermediateDirectories: true)
+    let file = internalDir.appendingPathComponent("packages.synthetic.jws.json")
+    try Data("synthetic private body".utf8).write(to: file)
+    try Data("synthetic-etag\n".utf8).write(to: URL(fileURLWithPath: file.path + ".etag"))
+    let log = FieldRecorder()
+    _ = await BrewGate(runner: ScriptedRunner([output()]), log: log, apiCacheDirectory: dir).confirm([])
+    let fields = log.fields("gate.cache")
+    #expect(fields["file"] == .string("packages.synthetic.jws.json"))
+    #expect(fields["etag"] == .string("synthetic-etag") && fields["bytes"] == .int(22))
+    #expect(fields["modified"] != nil && !fields.values.contains(.string("synthetic private body")))
+}
+
+@Test func gateLogsMalformedAndNonzeroInfoEvidence() async {
+    let listing = Listing(name: PackageName("synthetic-a")!, kind: .formula, version: "2")
+    for response in [output(1, "", "synthetic failure"), output(0, "bad json")] {
+        let log = FieldRecorder()
+        _ = await BrewGate(runner: ScriptedRunner([output(), response]), log: log, apiCacheDirectory: nil).confirm([listing])
+        let info = log.fields("gate.info")
+        #expect(info["announced"] == .string("2") && info["covered"] == .bool(false))
+        #expect(info["exit"] == .int(Int(response.exitCode)) && info["ms"] == .int(0) && info["error"] != nil)
+    }
+}
+
+@Test func gateRecordsLaunchErrorAndRealTimeoutDiagnostics() async throws {
+    let dir = FileManager.default.temporaryDirectory.appendingPathComponent("brew-version-gate-\(UUID())")
+    try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true); defer { try? FileManager.default.removeItem(at: dir) }
+    let log = FieldRecorder(), missing = ProcessBrewRunner(executable: dir.appendingPathComponent("missing"))
+    _ = await BrewGate(runner: missing, log: log, apiCacheDirectory: nil).confirm([])
+    #expect(log.fields("gate.update")["timedOut"] == .bool(false) && log.fields("gate.update")["ms"] != nil && log.fields("gate.update")["error"] != nil)
+    let script = dir.appendingPathComponent("synthetic-brew")
+    try Data("#!/bin/sh\nprintf 'started\\n'\nprintf 'synthetic lock\\n' >&2\nsleep 2 &\nwait\n".utf8).write(to: script)
+    try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: script.path)
+    let timed = TimeoutRunner(base: ProcessBrewRunner(executable: script))
+    let timeoutLog = FieldRecorder()
+    _ = await BrewGate(runner: timed, log: timeoutLog, apiCacheDirectory: nil).confirm([])
+    let fields = timeoutLog.fields("gate.update")
+    #expect(fields["timedOut"] == .bool(true) && fields["summary"] == .string("started") && fields["error"] == .string("synthetic lock"))
+    if case .int(let ms) = fields["ms"] { #expect(ms >= 100 && ms < 1500) } else { Issue.record("Missing timeout duration") }
+}
+private struct TimeoutRunner: BrewRunning {
+    let base: ProcessBrewRunner
+    func run(_ arguments: [String], environment: [String: String], timeout: TimeInterval) async throws -> BrewOutput {
+        try await base.run(arguments, environment: environment, timeout: 0.1)
+    }
+}
+@Test func gateRecordsCoveredVersion() async {
+    let listing = Listing(name: PackageName("synthetic-a")!, kind: .formula, version: "2"), log = FieldRecorder()
+    _ = await BrewGate(runner: ScriptedRunner([output(), output(0, "{\"formulae\":[{\"versions\":{\"stable\":\"3\"}}]}")]), log: log, apiCacheDirectory: nil).confirm([listing])
+    #expect(log.fields("gate.info")["brew"] == .string("3") && log.fields("gate.info")["covered"] == .bool(true))
+}

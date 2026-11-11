@@ -1540,6 +1540,14 @@ no declaration timestamps; label that absence explicitly instead of claiming the
 repository was not scanned. Never substitute a quick-scan time for dependency
 evaluation history.
 
+### 2026-11-11: Keep Brew Version retry evidence and deadlines aligned
+
+The watch footer and automatic eligibility must use the same deadline, including
+failed-save backoff while an announcement is pending; reconnect must respect it
+too. Keep the independent catalog cadence separate. Diagnostic regressions must
+assert recorded values and units, not merely event names, and confirmation events
+must follow a successful state save.
+
 ### Brew Version: validate tap cache identity before conditional requests
 
 Two locally named taps can point to the same GitHub repository and file. A URL-keyed

@@ -632,3 +632,70 @@ private actor SuspendedGate: BrewConfirming {
     #expect(f.store.load().state == c.state)
     #expect(await notifier.notices.isEmpty)
 }
+
+@MainActor @Test func removingOrSkippingLastAnnouncementClearsProblemOnlyAfterSave() async throws {
+    for skip in [false, true] {
+        let f = WatchFixture(); defer { f.clean() }
+        var state = AppState.initial; state.watched = [baseline()]; try f.store.save(state)
+        let failures = IOFailures(), gate = GateDouble()
+        let c = WatchController(transport: StubTransport([watchURL(): [watchResponse("2")]]), installed: nil, store: WatchStore(fileURL: f.file, io: failures.io), notifier: RecordingNotifier(), brewGate: gate)
+        await c.checkNow(); #expect(c.brewCheckProblem != nil)
+        failures.operation = "replace"
+        if skip { c.skip(watchName) } else { _ = c.remove(watchName) }
+        #expect(c.brewCheckProblem != nil && c.state.watched[0].isAnnounced)
+        failures.operation = nil
+        if skip { c.skip(watchName) } else { _ = c.remove(watchName) }
+        #expect(c.brewCheckProblem == nil)
+    }
+}
+
+@MainActor @Test func failedSaveWithAnnouncementUsesWaitingDeadlineOnlineAndOnReconnect() async throws {
+    for reconnect in [false, true] {
+        let f = WatchFixture(); defer { f.clean() }
+        var state = AppState.initial; state.watched = [baseline()]; try f.store.save(state)
+        var time = Date(timeIntervalSince1970: 1000)
+        let failures = IOFailures(), gate = GateDouble()
+        let transport = StubTransport([watchURL(): [watchResponse("2"), watchResponse("2"), watchResponse("2")]])
+        let c = WatchController(transport: transport, installed: nil, store: WatchStore(fileURL: f.file, io: failures.io), notifier: RecordingNotifier(), now: { time }, brewGate: gate)
+        await c.checkNow(); await c.setNetworkAvailable(true)
+        failures.operation = "replace"; c.setInterval(CheckInterval(minutes: 31)!); failures.operation = nil
+        if reconnect { await c.setNetworkAvailable(false) }
+        time = time.addingTimeInterval(599)
+        #expect(c.nextAutomaticCheck == (reconnect ? .waitingForNetwork(notBefore: Date(timeIntervalSince1970: 1600)) : .scheduled(Date(timeIntervalSince1970: 1600))))
+        await c.checkIfDue(); #expect(await transport.requests.count == 1)
+        time = time.addingTimeInterval(1)
+        if reconnect { await c.setNetworkAvailable(true) } else { await c.checkIfDue() }
+        #expect(await transport.requests.count == 2)
+    }
+}
+
+@MainActor @Test func confirmedEventRecordsWaitSincePersistedAnnouncement() async throws {
+    let f = WatchFixture(); defer { f.clean() }
+    var state = AppState.initial; state.watched = [baseline()]; try f.store.save(state)
+    var time = Date(timeIntervalSince1970: 1000)
+    let gate = GateDouble(), log = FieldRecorder()
+    let c = WatchController(transport: StubTransport([watchURL(): [watchResponse("2"), watchResponse("2")]]), installed: nil, store: f.store, notifier: RecordingNotifier(), now: { time }, brewGate: gate, log: log)
+    await c.checkNow(); time = time.addingTimeInterval(123); gate.setVersion("2"); await c.checkNow()
+    #expect(log.fields("release.confirmed")["waitedSeconds"] == .int(123))
+}
+
+@MainActor @Test func failedConfirmationSaveDoesNotLogConfirmation() async throws {
+    let f = WatchFixture(); defer { f.clean() }
+    var state = AppState.initial; state.watched = [baseline()]; try f.store.save(state)
+    let failures = IOFailures(), gate = GateDouble(), log = FieldRecorder()
+    let c = WatchController(transport: StubTransport([watchURL(): [watchResponse("2"), watchResponse("2")]]), installed: nil, store: WatchStore(fileURL: f.file, io: failures.io), notifier: RecordingNotifier(), brewGate: gate, log: log)
+    await c.checkNow(); gate.setVersion("2"); failures.operation = "replace"; await c.checkNow()
+    #expect(c.state.watched[0].isAnnounced && log.fields("release.confirmed").isEmpty)
+}
+@MainActor @Test func removingOneOfTwoAnnouncementsRetainsProblem() async throws {
+    for skip in [false, true] {
+    let f = WatchFixture(); defer { f.clean() }
+    let other = PackageName("synthetic-other")!
+    var state = AppState.initial; state.watched = [baseline(), baseline(Listing(name: other, kind: .formula, version: "1"))]; try f.store.save(state)
+    let gate = GateDouble()
+    let c = WatchController(transport: StubTransport([watchURL(): [watchResponse("2")], watchURL(other): [watchResponse("2")]]), installed: nil, store: f.store, notifier: RecordingNotifier(), brewGate: gate)
+    await c.checkNow()
+    if skip { c.skip(watchName) } else { _ = c.remove(watchName) }
+    #expect(c.state.watched.contains(where: \.isAnnounced) && c.brewCheckProblem != nil)
+    }
+}
