@@ -115,7 +115,7 @@ Full-scan time depends on directory count, storage performance, permissions, and
 ### Cleanup intelligence
 
 - A fixed watchlist covers common caches, model stores, stale installers, runtime payloads, and large user-controlled data locations. Model stores, VS Code extensions, and user data are review-only.
-- The index also discovers cache-named directories of at least 100 MiB under the home directory.
+- The index also discovers known cache directory names under the home directory. Matches of at least 100 MiB are listed individually; smaller matches of at least 1 MiB are grouped for review. The findings limit applies per category, and the report records how many items and bytes were omitted.
 - Shared cache folders (`~/.cache`, `~/Library/Caches`) are never offered as one target. They and their entries of at least 100 MiB are listed for review. Inside them, only the watchlist's named caches and a cache-named directory within an entry can be moved to Trash.
 - Discovered caches are review-only when they sit in a location macOS manages or syncs: any `com.apple.*` container or cache, `~/Library/Metadata`, `Messages`, `Mail`, `Safari`, `Mobile Documents`, `CloudStorage`, `~/Documents`, `~/Desktop`, and uv's own cache.
 - Potential leftovers in `~/Library/Containers` and `~/Library/Group Containers` are heuristic, report-only results with a Reveal in Finder action.

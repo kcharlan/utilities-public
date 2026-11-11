@@ -307,6 +307,110 @@ def _index_dirs(module, scan_id, entries):
     } for path, size in entries])
 
 
+def test_rule_discovery_names_bundles_and_small_groups(monkeypatch, tmp_path):
+    module = load(monkeypatch, tmp_path)
+    home = _discovery_home(module, monkeypatch, tmp_path)
+    monkeypatch.setattr(module, "WATCHLIST_SPECS", [])
+    scan_id = _insert_scan(module)
+    _index_dirs(module, scan_id, [(home / name, size) for name, size in [
+        ("work/cAcHe", 120), ("work/Code Cache", 130), ("work/notcache", 150),
+        ("Library/Containers/synthetic.vendor.app/Data/Cache", 140),
+        ("Synthetic.app/Contents/Cache", 160), ("small/GPUCache", 2),
+    ]])
+    findings = module.discover_candidates(scan_id)
+    paths = {item.get("path") for item in findings}
+    assert str(home / "work/cAcHe") in paths
+    assert str(home / "work/Code Cache") in paths
+    assert str(home / "Library/Containers/synthetic.vendor.app/Data/Cache") in paths
+    assert str(home / "work/notcache") not in paths
+    assert str(home / "Synthetic.app/Contents/Cache") not in paths
+    group = next(item for item in findings if item.get("group"))
+    assert group["count"] == 1 and group["allocated_bytes"] == 2 * 1024 * 1024
+    assert group["items"][0]["path"] == str(home / "small/GPUCache")
+
+
+def test_rule_markers_staleness_and_cross_rule_dedup(monkeypatch, tmp_path):
+    module = load(monkeypatch, tmp_path)
+    home = _discovery_home(module, monkeypatch, tmp_path)
+    monkeypatch.setattr(module, "WATCHLIST_SPECS", [])
+    rules = [
+        {"id": "outer", "category": "test", "label_prefix": "", "names": ["outer"], "scope": "home_root", "min_bytes": 1, "action": "when_stale", "stale_days": 10, "risk": "low", "review_risk": "medium", "marker": ("child", "marker")},
+        {"id": "inner", "category": "test", "label_prefix": "", "names": ["inner"], "scope": "home_root", "min_bytes": 1, "action": "always", "risk": "low"},
+    ]
+    monkeypatch.setattr(module, "DISCOVERY_RULES", rules)
+    scan_id = _insert_scan(module)
+    paths = [home / "stale/outer", home / "fresh/outer", home / "unknown/outer", home / "missing/outer", home / "stale/outer/inner"]
+    _index_dirs(module, scan_id, [(path, 120) for path in paths])
+    for path in paths[:3]:
+        path.mkdir(parents=True, exist_ok=True)
+        (path / "marker").touch()
+    now = int(module.time.time())
+    with module.open_db_connection() as connection:
+        connection.execute("UPDATE nodes SET newest_mtime=? WHERE scan_id=? AND path=?", (now - 11 * 86400, scan_id, str(paths[0])))
+        connection.execute("UPDATE nodes SET newest_mtime=? WHERE scan_id=? AND path=?", (now, scan_id, str(paths[1])))
+        connection.commit()
+    findings = {item["path"]: item for item in module.discover_candidates(scan_id)}
+    assert set(findings) == {str(path) for path in paths[:3]}
+    assert findings[str(paths[0])]["actionable"] and findings[str(paths[0])]["stale"] is True
+    assert not findings[str(paths[1])]["actionable"] and findings[str(paths[1])]["stale"] is False
+    assert not findings[str(paths[2])]["actionable"] and findings[str(paths[2])]["stale"] is None
+
+
+def test_findings_limit_is_per_category_and_reports_dropped_bytes(monkeypatch, tmp_path):
+    module = load(monkeypatch, tmp_path)
+    monkeypatch.setattr(module, "MAX_FINDINGS", 1)
+    items = [{"category": category, "allocated_bytes": size, "estimated_reclaim_bytes": None} for category, size in [("a", 10), ("a", 5), ("b", 7), ("b", 3)]]
+    result = module.build_findings_section([], discovered=items)
+    assert [item["allocated_bytes"] for item in result["items"]] == [10, 7]
+    assert result["truncated"] == {"a": {"count": 1, "bytes": 5}, "b": {"count": 1, "bytes": 3}}
+
+
+def test_watchlist_findings_preserve_indexed_metadata(monkeypatch, tmp_path):
+    module = load(monkeypatch, tmp_path)
+    home = _discovery_home(module, monkeypatch, tmp_path)
+    path = home / "synthetic-watch"
+    path.mkdir(parents=True)
+    scan_id = _insert_scan(module)
+    _index_dirs(module, scan_id, [(path, 120)])
+    with module.open_db_connection() as connection:
+        connection.execute("UPDATE nodes SET file_count=7, newest_mtime=? WHERE scan_id=? AND path=?", (int(module.time.time()) - 86400, scan_id, str(path)))
+        connection.commit()
+    spec = {"path": "~/synthetic-watch", "slug": "synthetic", "label": "Synthetic", "category": "test", "risk": "low", "description": "Synthetic", "actionable": False, "cleanup_kind": None}
+    item = module.scan_watchlist_entry(spec, scan_id)
+    finding = module.build_findings_section([item], discovered=[])["items"][0]
+    assert finding["file_count"] == 7
+    assert finding["age_days"] == 1
+    assert finding["stale"] is None
+
+
+def test_path_rule_requires_sibling_marker_and_remains_review_only(monkeypatch, tmp_path):
+    module = load(monkeypatch, tmp_path)
+    home = _discovery_home(module, monkeypatch, tmp_path)
+    monkeypatch.setattr(module, "WATCHLIST_SPECS", [])
+    monkeypatch.setattr(module, "DISCOVERY_RULES", [{"id": "fixed", "category": "test", "label_prefix": "", "paths": ["~/fixed"], "scope": "any", "min_bytes": 1, "marker": ("sibling", "marker"), "action": "never", "risk": "low", "review_risk": "high"}])
+    scan_id = _insert_scan(module)
+    path = home / "fixed/item"
+    _index_dirs(module, scan_id, [(path, 120)])
+    assert module.discover_candidates(scan_id) == []
+    path.parent.mkdir(parents=True)
+    (path.parent / "marker").touch()
+    finding = module.discover_candidates(scan_id)[0]
+    assert finding["path"] == str(path)
+    assert finding["actionable"] is False and finding["risk"] == "high"
+
+
+def test_small_nested_cache_does_not_hide_large_shared_entry(monkeypatch, tmp_path):
+    module = load(monkeypatch, tmp_path)
+    home = _discovery_home(module, monkeypatch, tmp_path)
+    monkeypatch.setattr(module, "WATCHLIST_SPECS", [])
+    scan_id = _insert_scan(module)
+    entry = home / ".cache/synthetic-app"
+    _index_dirs(module, scan_id, [(entry, 200), (entry / "Cache", 2)])
+    findings = module.discover_candidates(scan_id)
+    assert any(item.get("path") == str(entry) and not item["actionable"] for item in findings)
+    assert any(item.get("group") and item["count"] == 1 for item in findings)
+
+
 def test_shared_cache_folders_are_review_only_with_entries_listed(monkeypatch, tmp_path):
     module = load(monkeypatch, tmp_path)
     home = _discovery_home(module, monkeypatch, tmp_path)

@@ -212,6 +212,15 @@ CACHE_DISCOVERY_MIN_BYTES = 100 * 1024 * 1024
 CACHE_DISCOVERY_BUNDLE_SUFFIXES = (
     ".app", ".photoslibrary", ".musiclibrary", ".tvlibrary", ".aplibrary",
 )
+DISCOVERY_RULES = [{
+    "id": "cache", "category": "discovered_cache", "label_prefix": "",
+    "names": ["Cache", "Caches", ".cache", "Code Cache", "GPUCache", "DawnCache",
+              "GrShaderCache", "ShaderCache", "CachedData", "CachedExtensionVSIXs",
+              "CacheStorage", "ScriptCache"],
+    "name_suffixes": [".cache"], "case_insensitive": True,
+    "scope": "home_root", "min_bytes": CACHE_DISCOVERY_MIN_BYTES,
+    "action": "always", "risk": "medium", "review_risk": "medium",
+}]
 
 PROVIDER_SPECS = {
     "brew-cleanup": {
@@ -1658,14 +1667,17 @@ def scan_watchlist_entry(spec: Dict[str, Any], scan_id: Optional[int] = None) ->
     path = expand_path(spec["path"])
     exists = path.exists()
     allocated = None
+    file_count = newest_mtime = None
     scan_id = scan_id or fetch_active_scan_id() or fetch_running_scan_id()
     if exists and path.is_dir() and scan_id is not None:
         with open_db_connection() as connection:
             row = connection.execute(
-                "SELECT allocated_bytes FROM nodes WHERE scan_id = ? AND path = ?",
+                "SELECT allocated_bytes, file_count, newest_mtime FROM nodes WHERE scan_id = ? AND path = ?",
                 (scan_id, str(path)),
             ).fetchone()
         allocated = int(row["allocated_bytes"]) if row else None
+        if row:
+            file_count, newest_mtime = row["file_count"], row["newest_mtime"]
     if exists and path.is_dir() and allocated is None:
         _, totals, _ = walk_with_ownership(path, scan_id=-1, excluded_paths=[])
         allocated = totals.get(str(path))
@@ -1695,6 +1707,7 @@ def scan_watchlist_entry(spec: Dict[str, Any], scan_id: Optional[int] = None) ->
         "allocated_bytes": allocated,
         "estimated_reclaim_bytes": allocated if exists and spec["cleanup_kind"] else None,
         "action_token": token,
+        "file_count": file_count, "newest_mtime": newest_mtime,
     }
 
 
@@ -2256,23 +2269,37 @@ def measure_free_space_delta(operation: Callable[[], Any]) -> Tuple[Any, Optiona
     return result, observed
 
 
-def discover_cache_candidates(scan_id: int) -> List[Dict[str, Any]]:
-    with open_db_connection() as connection:
-        rows = connection.execute(
-            """
-            SELECT path, name, allocated_bytes FROM nodes
-            WHERE scan_id=? AND root_key='home_root' AND allocated_bytes>=?
-              AND (name IN ('Cache', 'Caches', '.cache') OR name LIKE '%.cache')
-            ORDER BY depth ASC, path ASC
-            """,
-            (scan_id, CACHE_DISCOVERY_MIN_BYTES),
-        ).fetchall()
+def discover_candidates(scan_id: int) -> List[Dict[str, Any]]:
     actionable_roots = [expand_path(spec["path"]) for spec in WATCHLIST_SPECS if spec["actionable"]]
     review_roots = [expand_path(spec["path"]) for spec in WATCHLIST_SPECS if not spec["actionable"]]
     buckets = shared_cache_buckets()
     trash = TRASH_DIR.resolve()
-    survivors: List[sqlite3.Row] = []
-    for row in rows:
+    candidates = []
+    with open_db_connection() as connection:
+        for order, rule in enumerate(DISCOVERY_RULES):
+            clauses, params = [], [scan_id, 1024 * 1024]
+            name_expr = "LOWER(name)" if rule.get("case_insensitive") else "name"
+            for name in rule.get("names", []):
+                clauses.append(f"{name_expr} = ?")
+                params.append(name.lower() if rule.get("case_insensitive") else name)
+            for suffix in rule.get("name_suffixes", []):
+                clauses.append(f"substr({name_expr}, -length(?)) = ?")
+                value = suffix.lower() if rule.get("case_insensitive") else suffix
+                params.extend((value, value))
+            for fixed in rule.get("paths", []):
+                clauses.append("parent_path = ?")
+                params.append(str(expand_path(fixed)))
+            if not clauses:
+                continue
+            scope = " AND root_key='home_root'" if rule.get("scope") == "home_root" else ""
+            rows = connection.execute(
+                "SELECT path, name, allocated_bytes, file_count, newest_mtime, depth FROM nodes "
+                f"WHERE scan_id=? AND allocated_bytes>=?{scope} AND ({' OR '.join(clauses)})",
+                params,
+            ).fetchall()
+            candidates.extend((row, rule, order) for row in rows)
+    survivors = []
+    for row, rule, order in sorted(candidates, key=lambda entry: (entry[0]["depth"], entry[2], entry[0]["path"])):
         path = Path(row["path"])
         if path in buckets:
             continue
@@ -2280,13 +2307,20 @@ def discover_cache_candidates(scan_id: int) -> List[Dict[str, Any]]:
             continue
         if any(path == root for root in review_roots):
             continue
-        if any(part.lower().endswith(CACHE_DISCOVERY_BUNDLE_SUFFIXES) for part in path.parts):
+        container_roots = (HOME_DIR / "Library/Containers", HOME_DIR / "Library/Group Containers")
+        if any(part.name.lower().endswith(CACHE_DISCOVERY_BUNDLE_SUFFIXES) and part.parent not in container_roots
+               for part in (path, *path.parents)):
             continue
         if path == trash or trash in path.parents:
             continue
-        if any(Path(existing["path"]) in path.parents for existing in survivors):
+        marker = rule.get("marker")
+        if marker:
+            marker_root = path.parent if marker[0] == "sibling" else path
+            if not os.path.exists(marker_root / marker[1]):
+                continue
+        if any(Path(existing[0]["path"]) == path or Path(existing[0]["path"]) in path.parents for existing in survivors):
             continue
-        survivors.append(row)
+        survivors.append((row, rule))
 
     def review_only(row: sqlite3.Row, category: str, risk: str, description: str) -> Dict[str, Any]:
         finding = {
@@ -2294,7 +2328,10 @@ def discover_cache_candidates(scan_id: int) -> List[Dict[str, Any]]:
             "risk": risk, "description": description,
             "apparent_bytes": None, "allocated_bytes": int(row["allocated_bytes"]),
             "estimated_reclaim_bytes": None, "actionable": False,
-            "cleanup_kind": None, "action_token": None,
+            "cleanup_kind": None, "action_token": None, "rule_id": None,
+            "file_count": row["file_count"], "newest_mtime": row["newest_mtime"],
+            "age_days": (int(time.time()) - row["newest_mtime"]) // 86400 if row["newest_mtime"] is not None else None,
+            "stale": None,
         }
         finding["actions"] = build_finding_actions(finding)
         return finding
@@ -2302,38 +2339,58 @@ def discover_cache_candidates(scan_id: int) -> List[Dict[str, Any]]:
     library_caches = (HOME_DIR / "Library/Caches").resolve()
     dot_cache = (HOME_DIR / ".cache").resolve()
     findings: List[Dict[str, Any]] = []
-    for row in survivors:
+    small: Dict[str, List[Dict[str, Any]]] = {}
+    now = int(time.time())
+    for row, rule in survivors:
         path = Path(row["path"])
         protection = cleanup_protection_reason(path)
-        if protection is not None:
-            findings.append(review_only(row, "discovered_cache", "high", protection))
-            continue
+        age = (now - row["newest_mtime"]) // 86400 if row["newest_mtime"] is not None else None
+        stale = (age >= rule["stale_days"] if age is not None else None) if rule["action"] == "when_stale" else None
+        actionable = protection is None and (rule["action"] == "always" or (rule["action"] == "when_stale" and stale is True))
         low_risk = library_caches in path.parents or dot_cache in path.parents
+        risk = ("low" if low_risk else "medium") if rule["id"] == "cache" else rule["risk"]
+        description = protection or "Cache-named directory discovered by index scan. Apps rebuild caches; verify the owner before trashing."
         finding = {
-            "label": path.name, "path": str(path), "category": "discovered_cache",
-            "risk": "low" if low_risk else "medium",
-            "description": "Cache-named directory discovered by index scan. Apps rebuild caches; verify the owner before trashing.",
+            "label": rule.get("label_prefix", "") + path.name, "path": str(path), "category": rule["category"],
+            "risk": "high" if protection else (risk if actionable else rule.get("review_risk", "medium")),
+            "description": description, "rule_id": rule["id"], "file_count": row["file_count"],
+            "newest_mtime": row["newest_mtime"], "age_days": age, "stale": stale,
             "apparent_bytes": None, "allocated_bytes": int(row["allocated_bytes"]),
-            "estimated_reclaim_bytes": int(row["allocated_bytes"]), "actionable": True,
-            "cleanup_kind": "trash_path",
-            "action_token": encode_action_token({"kind": "trash_path", "path": str(path)}),
+            "estimated_reclaim_bytes": int(row["allocated_bytes"]) if actionable else None, "actionable": actionable,
+            "cleanup_kind": "trash_path" if actionable else None,
+            "action_token": encode_action_token({"kind": "trash_path", "path": str(path)}) if actionable else None,
         }
         finding["actions"] = build_finding_actions(finding)
-        findings.append(finding)
+        if row["allocated_bytes"] < rule["min_bytes"]:
+            finding.update(actionable=False, cleanup_kind=None, action_token=None, estimated_reclaim_bytes=None)
+            finding["actions"] = build_finding_actions(finding)
+            small.setdefault(rule["category"], []).append(finding)
+        else:
+            findings.append(finding)
+
+    for category, items in small.items():
+        items.sort(key=lambda item: item["allocated_bytes"], reverse=True)
+        total = sum(item["allocated_bytes"] for item in items)
+        findings.append({"group": True, "count": len(items), "allocated_bytes": total,
+                         "items": items[:10], "label": f"{len(items)} smaller cache folders, {total / (1024 * 1024):.1f} MiB total",
+                         "category": category, "path": None, "risk": "medium", "description": "Smaller matches for review.",
+                         "actionable": False, "actions": [], "cleanup_kind": None, "action_token": None,
+                         "estimated_reclaim_bytes": None, "apparent_bytes": None, "rule_id": None,
+                         "file_count": None, "newest_mtime": None, "age_days": None, "stale": None})
 
     # A shared cache folder is never one target: list it and its entries for review.
-    listed = [Path(row["path"]) for row in survivors] + actionable_roots + review_roots
+    listed = [Path(row["path"]) for row, rule in survivors if row["allocated_bytes"] >= rule["min_bytes"]] + actionable_roots + review_roots
     with open_db_connection() as connection:
         for bucket in buckets:
             if bucket not in review_roots:
                 row = connection.execute(
-                    "SELECT path, allocated_bytes FROM nodes WHERE scan_id=? AND path=? AND allocated_bytes>=?",
+                    "SELECT path, allocated_bytes, file_count, newest_mtime FROM nodes WHERE scan_id=? AND path=? AND allocated_bytes>=?",
                     (scan_id, str(bucket), CACHE_DISCOVERY_MIN_BYTES),
                 ).fetchone()
                 if row is not None:
                     findings.append(review_only(row, "cache_bucket", "low", SHARED_CACHE_BUCKET_REASON))
             for row in connection.execute(
-                "SELECT path, allocated_bytes FROM nodes WHERE scan_id=? AND parent_path=? AND allocated_bytes>=? ORDER BY path ASC",
+                "SELECT path, allocated_bytes, file_count, newest_mtime FROM nodes WHERE scan_id=? AND parent_path=? AND allocated_bytes>=? ORDER BY path ASC",
                 (scan_id, str(bucket), CACHE_DISCOVERY_MIN_BYTES),
             ).fetchall():
                 child = Path(row["path"])
@@ -2344,6 +2401,10 @@ def discover_cache_candidates(scan_id: int) -> List[Dict[str, Any]]:
                     "Entry in a shared cache folder. Review-only: some tools keep data here that is slow or costly to rebuild.",
                 ))
     return findings
+
+
+def discover_cache_candidates(scan_id: int) -> List[Dict[str, Any]]:
+    return discover_candidates(scan_id)
 
 
 SHARED_CACHE_BUCKET_RELATIVE_PATHS = (".cache", "Library/Caches")
@@ -2478,6 +2539,10 @@ def build_findings_section(
             "actionable": item["actionable"],
             "cleanup_kind": item["cleanup_kind"],
             "action_token": item["action_token"],
+            "rule_id": None, "file_count": item.get("file_count"),
+            "newest_mtime": item.get("newest_mtime"),
+            "age_days": (int(time.time()) - item["newest_mtime"]) // 86400 if item.get("newest_mtime") is not None else None,
+            "stale": None,
         }
         finding["actions"] = build_finding_actions(finding)
         findings.append(finding)
@@ -2486,11 +2551,22 @@ def build_findings_section(
     findings.extend(discovered or [])
     findings.sort(
         key=lambda item: (
-            bytes_or_zero(item.get("estimated_reclaim_bytes")) or bytes_or_zero(item.get("allocated_bytes")),
+            bytes_or_zero(item.get("allocated_bytes")),
         ),
         reverse=True,
     )
-    return {"items": findings[:MAX_FINDINGS], "updated_at": iso_now()}
+    kept, counts, truncated = [], {}, {}
+    for item in findings:
+        category = item["category"]
+        if item.get("group") or counts.get(category, 0) < MAX_FINDINGS:
+            kept.append(item)
+            if not item.get("group"):
+                counts[category] = counts.get(category, 0) + 1
+        else:
+            dropped = truncated.setdefault(category, {"count": 0, "bytes": 0})
+            dropped["count"] += 1
+            dropped["bytes"] += bytes_or_zero(item.get("allocated_bytes"))
+    return {"items": kept, "truncated": truncated, "updated_at": iso_now()}
 
 
 def build_breakdowns_from_db(scan_id: int) -> Dict[str, Any]:
