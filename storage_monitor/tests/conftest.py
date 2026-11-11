@@ -3,6 +3,8 @@ from pathlib import Path
 import subprocess
 import pytest
 
+HOST_APPLICATIONS = Path.home() / "Applications"
+
 
 @pytest.fixture(scope="session")
 def walker_binary(tmp_path_factory):
@@ -18,13 +20,17 @@ def walker_binary(tmp_path_factory):
 
 
 @pytest.fixture(autouse=True)
-def native_walker_environment(monkeypatch, walker_binary):
+def native_walker_environment(monkeypatch, walker_binary, request):
+    if request.node.name == "test_real_darwin_temp_root_contract":
+        return
     monkeypatch.setenv("STORAGE_MONITOR_WALKER", str(walker_binary))
 
 
 @pytest.fixture(autouse=True)
-def synthetic_temp_roots(monkeypatch, tmp_path_factory):
+def synthetic_temp_roots(monkeypatch, tmp_path_factory, request):
     """Keep report discovery away from host temp and per-user cache roots."""
+    if request.node.name == "test_real_darwin_temp_root_contract":
+        return
     isolation = tmp_path_factory.mktemp("synthetic-system-roots")
     synthetic_temp = isolation / "synthetic-user-temp"
     synthetic_cache = isolation / "synthetic-user-cache"
@@ -35,9 +41,9 @@ def synthetic_temp_roots(monkeypatch, tmp_path_factory):
     original_scandir = os.scandir
     forbidden = {Path("/private/tmp"), Path("/private/var/tmp")}
     def confstr(key):
-        if key == "CS_DARWIN_USER_TEMP_DIR":
+        if key in ("CS_DARWIN_USER_TEMP_DIR", 65537):
             return str(synthetic_temp)
-        if key == "CS_DARWIN_USER_CACHE_DIR":
+        if key in ("CS_DARWIN_USER_CACHE_DIR", 65538):
             return str(synthetic_cache)
         return original_confstr(key)
     def is_dir(path):
@@ -49,6 +55,14 @@ def synthetic_temp_roots(monkeypatch, tmp_path_factory):
     monkeypatch.setattr(os, "confstr", confstr)
     monkeypatch.setattr(Path, "is_dir", is_dir)
     monkeypatch.setattr(os, "scandir", scandir)
+    original_run = subprocess.run
+    def run(args, *positional, **kwargs):
+        if isinstance(args, (list, tuple)) and args[:1] == ["getconf"]:
+            values = {"DARWIN_USER_TEMP_DIR": synthetic_temp, "DARWIN_USER_CACHE_DIR": synthetic_cache}
+            if len(args) == 2 and args[1] in values:
+                return subprocess.CompletedProcess(args, 0, str(values[args[1]]) + "\n", "")
+        return original_run(args, *positional, **kwargs)
+    monkeypatch.setattr(subprocess, "run", run)
 
 
 @pytest.fixture(scope="session")
@@ -93,11 +107,25 @@ interpose[] __attribute__((section("__DATA,__interpose"))) = {
 
 
 @pytest.fixture(autouse=True)
-def synthetic_running_apps(monkeypatch):
+def synthetic_running_apps(monkeypatch, request):
     """Prevent report tests from inspecting host application identity."""
+    if request.node.name == "test_real_darwin_temp_root_contract":
+        return
     original_run = subprocess.run
     def run(args, *positional, **kwargs):
         if isinstance(args, (list, tuple)) and args[:2] == ["lsappinfo", "list"]:
             return subprocess.CompletedProcess(args, 0, '1) "Synthetic App" ASN:0x0-0x1:\n    bundleID="org.example.app"\n', "")
         return original_run(args, *positional, **kwargs)
     monkeypatch.setattr(subprocess, "run", run)
+
+
+@pytest.fixture(autouse=True)
+def no_host_application_inventory(monkeypatch, request):
+    if request.node.name == "test_real_darwin_temp_root_contract":
+        return
+    original = Path.glob
+    def glob(path, pattern, *args, **kwargs):
+        if path in (Path("/Applications"), Path("/System/Applications"), HOST_APPLICATIONS):
+            return iter(())
+        return original(path, pattern, *args, **kwargs)
+    monkeypatch.setattr(Path, "glob", glob)

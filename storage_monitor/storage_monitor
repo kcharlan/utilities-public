@@ -10,7 +10,9 @@
 
 import argparse
 import base64
+import bisect
 import concurrent.futures
+import errno
 import fcntl
 import hashlib
 import hmac
@@ -194,7 +196,7 @@ def initialize_scan_db(paths: RuntimePaths) -> None:
         connection.commit()
 
 RUNTIME_PATHS = build_runtime_paths()
-VERSION = "0.5.0"
+VERSION = "0.5.1"
 DATA_VOLUME = Path("/System/Volumes/Data")
 HOME_DIR = Path.home()
 APPLICATIONS_DIR = Path("/Applications")
@@ -1320,10 +1322,13 @@ def walk_tree(
     excluded_paths: Optional[List[Path]] = None,
     registered_inodes: Optional[Set[int]] = None,
     progress_callback: Optional[Callable[[int], None]] = None,
+    inspect_ipc: bool = False,
 ) -> WalkResult:
     started = time.time()
     argv = [str(walker_path()), "walk", "--root", str(root), "--workers", str(workers),
             "--large-file-bytes", str(LARGE_FILE_THRESHOLD_BYTES), "--progress-every", "2000"]
+    if inspect_ipc:
+        argv.append("--inspect-ipc")
     for path in excluded_paths or []:
         argv.extend(["--exclude", str(path)])
     if registered_inodes:
@@ -1717,14 +1722,14 @@ def parse_snapshot_token(snapshot_name: str) -> Optional[str]:
     return None
 
 
-def scan_watchlist_entry(spec: Dict[str, Any], scan_id: Optional[int] = None) -> Dict[str, Any]:
+def scan_watchlist_entry(spec: Dict[str, Any], scan_id: Optional[int] = None, protection_snapshot=None) -> Dict[str, Any]:
     path = expand_path(spec["path"])
     protected_home = any(path == root or root in path.parents for root in size_only_homes())
     exists = not protected_home and path.exists()
     allocated = None
     file_count = newest_mtime = None
     scan_id = scan_id or fetch_active_scan_id() or fetch_running_scan_id()
-    protection = indexed_cleanup_protection(scan_id, path) if exists and path.is_dir() else None
+    protection = indexed_cleanup_protection(scan_id, path, protection_snapshot) if exists and path.is_dir() else None
     if exists and path.is_dir() and scan_id is not None:
         with open_db_connection() as connection:
             row = connection.execute(
@@ -1767,10 +1772,10 @@ def scan_watchlist_entry(spec: Dict[str, Any], scan_id: Optional[int] = None) ->
     }
 
 
-def scan_watchlist(scan_id: Optional[int] = None) -> Dict[str, Any]:
+def scan_watchlist(scan_id: Optional[int] = None, protection_snapshot=None) -> Dict[str, Any]:
     started = time.time()
     task_map = {
-        spec["slug"]: (lambda spec=spec: scan_watchlist_entry(spec, scan_id))
+        spec["slug"]: (lambda spec=spec: scan_watchlist_entry(spec, scan_id, protection_snapshot))
         for spec in [*WATCHLIST_SPECS, *load_config()["watchlist"]]
         if not any(expand_path(spec["path"]) == root or root in expand_path(spec["path"]).parents for root in size_only_homes())
     }
@@ -1942,24 +1947,25 @@ def collect_scan_report(scan_id: int) -> Dict[str, Any]:
         progress("Index persistence", 0, "Persisting volume index")
         persist_full_walk(scan_id, result, totals, translation, changes)
         progress("Index persistence", 1, "Volume index persisted")
+        protection_snapshot = load_cleanup_protection(scan_id)
         progress("Cleanup intelligence", 0, "Analyzing cleanup opportunities")
         intelligence = run_parallel_call_map({
             "providers": lambda: probe_providers(scan_id, {slug: future.result() for slug, future in probe_futures.items()}),
-            "caches": lambda: discover_cache_candidates(scan_id),
-            "installed_ids": collect_installed_bundle_ids,
+            "caches": lambda: discover_cache_candidates(scan_id, protection_snapshot),
+            "installed_ids": lambda: collect_installed_bundle_ids(include_names=True),
             "running_apps": collect_running_apps,
         })
     providers = intelligence["providers"]
     discovered = intelligence["caches"]
-    orphans = collect_orphan_candidates(scan_id, intelligence["installed_ids"])
+    orphans = collect_orphan_candidates(scan_id, set(intelligence["installed_ids"]))
     for item in providers["items"]:
         publish_event("provider_ready", item)
     for item in orphans["items"]:
         publish_event("orphan_found", item)
     progress("Cleanup intelligence", 1, "Cleanup analysis complete")
-    watchlist = scan_watchlist(scan_id)["items"]
+    watchlist = scan_watchlist(scan_id, protection_snapshot)["items"]
     breakdowns = build_breakdowns_from_db(scan_id)
-    findings = build_findings_section(watchlist, scan_id, discovered, intelligence["running_apps"])
+    findings = build_findings_section(watchlist, scan_id, discovered, intelligence["running_apps"], protection_snapshot, intelligence["installed_ids"])
     large_files = fetch_large_files_from_db(scan_id)
     for key, breakdown in breakdowns.items():
         publish_event("breakdown_ready", {"root": key, **breakdown})
@@ -2093,11 +2099,20 @@ def unique_trash_destination(path: Path) -> Path:
 
 
 def darwin_user_directory(key: str) -> Optional[Path]:
+    names = {"CS_DARWIN_USER_TEMP_DIR": (65537, "DARWIN_USER_TEMP_DIR"),
+             "CS_DARWIN_USER_CACHE_DIR": (65538, "DARWIN_USER_CACHE_DIR")}
+    number, getconf_name = names[key]
     try:
-        value = os.confstr(key)
-        return Path(value).resolve() if value else None
+        value = os.confstr(number)
     except (ValueError, OSError):
-        return None
+        value = None
+    if not value:
+        result = run_command(["getconf", getconf_name], timeout=10)
+        value = result["stdout"].strip() if result["ok"] else None
+    if value:
+        return Path(value).resolve()
+    logger.warning("Could not determine %s using confstr or getconf", getconf_name)
+    return None
 
 
 def temp_roots() -> List[Path]:
@@ -2109,8 +2124,34 @@ def worktree_marker(path: Path) -> bool:
     return path.name == ".worktrees" or (path.name == "worktrees" and path.parent.name == ".claude")
 
 
-def indexed_cleanup_protection(scan_id: Optional[int], path: Path) -> Optional[str]:
+def load_cleanup_protection(scan_id: Optional[int]):
     if scan_id is None:
+        return ([], [])
+    with open_db_connection() as connection:
+        markers = sorted(row["path"] for row in connection.execute(
+            "SELECT path FROM nodes WHERE scan_id=? AND name IN ('.worktrees', 'worktrees')", (scan_id,))
+            if worktree_marker(Path(row["path"])))
+        errors = sorted(row["path"] for row in connection.execute(
+            "SELECT path FROM scan_errors WHERE scan_id=?", (scan_id,)))
+    return markers, errors
+
+
+def indexed_cleanup_protection(scan_id: Optional[int], path: Path, snapshot=None) -> Optional[str]:
+    if scan_id is None:
+        return None
+    if snapshot is not None:
+        def contains(paths):
+            name = str(path)
+            index = bisect.bisect_left(paths, name)
+            if index < len(paths) and paths[index] == name:
+                return True
+            prefix = name.rstrip("/") + "/"
+            index = bisect.bisect_left(paths, prefix)
+            return index < len(paths) and paths[index].startswith(prefix)
+        if contains(snapshot[0]):
+            return "Contains a managed worktree; remove it through its owning manager."
+        if contains(snapshot[1]):
+            return "An indexed scan error prevents verifying this directory."
         return None
     prefix = sql_like_prefix(str(path))
     with open_db_connection() as connection:
@@ -2129,11 +2170,15 @@ def indexed_cleanup_protection(scan_id: Optional[int], path: Path) -> Optional[s
     return None
 
 
-def inspect_cleanup_directory(path: Path) -> Tuple[Optional[WalkResult], Optional[str]]:
+def inspect_cleanup_directory(path: Path, inspect_ipc: bool = False) -> Tuple[Optional[WalkResult], Optional[str]]:
     try:
-        result = walk_tree(path, excluded_paths=[])
+        result = walk_tree(path, excluded_paths=[], inspect_ipc=inspect_ipc)
     except (OSError, RuntimeError, ValueError) as exc:
         return None, f"Unable to verify directory: {exc}"
+    if inspect_ipc:
+        for _, code in result.unreadable:
+            if code in (errno.EPROTOTYPE, errno.ENXIO):
+                return None, "Contains a socket or FIFO; cannot move this directory."
     if result.error_count or result.unreadable or str(path) not in result.dir_mtime:
         return None, "Unable to verify all directory contents."
     if any(worktree_marker(Path(child)) for child in result.dir_mtime):
@@ -2141,7 +2186,25 @@ def inspect_cleanup_directory(path: Path) -> Tuple[Optional[WalkResult], Optiona
     return result, None
 
 
-def temp_entries(root: Path, scan_id: Optional[int]) -> List[Dict[str, Any]]:
+def shallow_temp_ipc(path: Path) -> bool:
+    try:
+        with os.scandir(path) as children:
+            for child in children:
+                info = child.stat(follow_symlinks=False)
+                if stat.S_ISSOCK(info.st_mode) or stat.S_ISFIFO(info.st_mode):
+                    return True
+                if stat.S_ISDIR(info.st_mode):
+                    with os.scandir(child.path) as grandchildren:
+                        for grandchild in grandchildren:
+                            mode = grandchild.stat(follow_symlinks=False).st_mode
+                            if stat.S_ISSOCK(mode) or stat.S_ISFIFO(mode):
+                                return True
+    except OSError:
+        return True
+    return False
+
+
+def temp_entries(root: Path, scan_id: Optional[int], protection_snapshot=None, preview=True) -> List[Dict[str, Any]]:
     entries = []
     try:
         with os.scandir(root) as iterator:
@@ -2167,18 +2230,19 @@ def temp_entries(root: Path, scan_id: Optional[int]) -> List[Dict[str, Any]]:
                and not child.name.startswith("com.apple.") and child.name not in ("TemporaryItems", ".", "..")
                and newest is not None and newest <= time.time() - TEMP_STALE_DAYS * 86400
                and cleanup_protection_reason(path) is None and cleanup_protection_reason(path.resolve()) is None
-               and (not stat.S_ISDIR(info.st_mode) or indexed_cleanup_protection(scan_id, indexed_path) is None))
+               and (not stat.S_ISDIR(info.st_mode) or (indexed_cleanup_protection(scan_id, indexed_path, protection_snapshot) is None
+                    and (not preview or not shallow_temp_ipc(path)))))
         entries.append({"path": str(path), "label": child.name, "allocated_bytes": size, "newest_mtime": newest, "old": old})
     return entries
 
 
-def temp_findings(scan_id: Optional[int]) -> List[Dict[str, Any]]:
+def temp_findings(scan_id: Optional[int], protection_snapshot=None) -> List[Dict[str, Any]]:
     findings = []
     ignore_roots = [Path(path) for path in load_config()["ignore_paths"]]
     for root in temp_roots():
         if not root.is_dir():
             continue
-        all_entries = temp_entries(root, scan_id)
+        all_entries = temp_entries(root, scan_id, protection_snapshot)
         entries = [item for item in all_entries if not path_is_ignored(Path(item["path"]), ignore_roots, protect_ancestors=True)]
         old = sorted((item for item in entries if item["old"]), key=lambda item: item["allocated_bytes"], reverse=True)
         other = [item for item in entries if not item["old"]]
@@ -2201,7 +2265,7 @@ def execute_trash_group(action: Dict[str, Any]) -> Dict[str, Any]:
             or root not in temp_roots() or root.is_symlink() or root.resolve() != root):
         raise HTTPException(status_code=400, detail="Invalid temporary root or rule.")
     ignore_roots = [Path(path) for path in load_config()["ignore_paths"]]
-    entries = [item for item in temp_entries(root, fetch_active_scan_id()) if not path_is_ignored(Path(item["path"]), ignore_roots, protect_ancestors=True)]
+    entries = [item for item in temp_entries(root, fetch_active_scan_id(), preview=False) if not path_is_ignored(Path(item["path"]), ignore_roots, protect_ancestors=True)]
     destination = unique_trash_destination(Path("temp"))
     destination.mkdir()
     moved_count = moved_bytes = failure_count = 0
@@ -2211,7 +2275,7 @@ def execute_trash_group(action: Dict[str, Any]) -> Dict[str, Any]:
             continue
         path = Path(entry["path"])
         if path.is_dir():
-            current, protection = inspect_cleanup_directory(path)
+            current, protection = inspect_cleanup_directory(path, inspect_ipc=True)
             if protection:
                 failure_count += 1
                 if len(failures) < 20:
@@ -2477,12 +2541,16 @@ def measure_free_space_delta(operation: Callable[[], Any]) -> Tuple[Any, Optiona
     return result, observed
 
 
-def discover_candidates(scan_id: int) -> List[Dict[str, Any]]:
+def discover_candidates(scan_id: int, protection_snapshot=None) -> List[Dict[str, Any]]:
+    if protection_snapshot is None:
+        protection_snapshot = load_cleanup_protection(scan_id)
     config = load_config()
     specs = [*WATCHLIST_SPECS, *config["watchlist"]]
     actionable_roots = [expand_path(spec["path"]) for spec in specs if spec["actionable"]]
     review_roots = [expand_path(spec["path"]) for spec in specs if not spec["actionable"]]
     buckets = shared_cache_buckets()
+    protected_homes = size_only_homes()
+    protection_context = cleanup_protection_context()
     trash = TRASH_DIR.resolve()
     candidates = []
     with open_db_connection() as connection:
@@ -2512,30 +2580,34 @@ def discover_candidates(scan_id: int) -> List[Dict[str, Any]]:
             ).fetchall()
             candidates.extend((row, rule, order) for row in rows)
     survivors = []
+    survivor_paths = set()
     for row, rule, order in sorted(candidates, key=lambda entry: (entry[0]["depth"], entry[2], entry[0]["path"])):
         path = Path(row["path"])
-        if any(path == root or root in path.parents for root in size_only_homes()):
+        parents = tuple(path.parents)
+        ancestors = set(parents)
+        if any(path == root or root in ancestors for root in protected_homes):
             continue
         if path in buckets:
             continue
-        if any(path == root or root in path.parents for root in actionable_roots):
+        if any(path == root or root in ancestors for root in actionable_roots):
             continue
         if any(path == root for root in review_roots):
             continue
         container_roots = (HOME_DIR / "Library/Containers", HOME_DIR / "Library/Group Containers")
         if any(part.name.lower().endswith(CACHE_DISCOVERY_BUNDLE_SUFFIXES) and part.parent not in container_roots
-               for part in (path, *path.parents)):
+               for part in (path, *parents)):
             continue
-        if path == trash or trash in path.parents:
+        if path == trash or trash in ancestors:
             continue
         marker = rule.get("marker")
         if marker:
             marker_root = path.parent if marker[0] == "sibling" else path
             if not os.path.exists(marker_root / marker[1]):
                 continue
-        if any(Path(existing[0]["path"]) == path or Path(existing[0]["path"]) in path.parents for existing in survivors):
+        if any(parent in survivor_paths for parent in (path, *parents)):
             continue
         survivors.append((row, rule))
+        survivor_paths.add(path)
 
     def review_only(row: sqlite3.Row, category: str, risk: str, description: str) -> Dict[str, Any]:
         finding = {
@@ -2558,7 +2630,7 @@ def discover_candidates(scan_id: int) -> List[Dict[str, Any]]:
     now = int(time.time())
     for row, rule in survivors:
         path = Path(row["path"])
-        protection = cleanup_protection_reason(path) or indexed_cleanup_protection(scan_id, path)
+        protection = cleanup_protection_reason(path, protection_context) or indexed_cleanup_protection(scan_id, path, protection_snapshot)
         age = (now - row["newest_mtime"]) // 86400 if row["newest_mtime"] is not None else None
         stale = (age >= config["stale_days"].get(rule["id"], rule["stale_days"]) if age is not None else None) if rule["action"] == "when_stale" else None
         actionable = (protection is None and row["allocated_bytes"] >= rule["min_bytes"]
@@ -2600,7 +2672,7 @@ def discover_candidates(scan_id: int) -> List[Dict[str, Any]]:
     # A shared cache folder is never one target: list its entries separately.
     listed = [Path(row["path"]) for row, rule in survivors if row["allocated_bytes"] >= rule["min_bytes"]] + actionable_roots + review_roots
     with open_db_connection() as connection:
-        for root in size_only_homes():
+        for root in protected_homes:
             row = connection.execute(
                 "SELECT path, allocated_bytes, file_count, newest_mtime FROM nodes WHERE scan_id=? AND path=?",
                 (scan_id, str(root)),
@@ -2622,7 +2694,7 @@ def discover_candidates(scan_id: int) -> List[Dict[str, Any]]:
                 (scan_id, str(bucket), CACHE_DISCOVERY_MIN_BYTES),
             ).fetchall():
                 child = Path(row["path"])
-                if any(child == root or root in child.parents for root in size_only_homes()):
+                if any(child == root or root in child.parents for root in protected_homes):
                     continue
                 if any(child == other or child in other.parents for other in listed):
                     continue
@@ -2635,8 +2707,8 @@ def discover_candidates(scan_id: int) -> List[Dict[str, Any]]:
     return findings
 
 
-def discover_cache_candidates(scan_id: int) -> List[Dict[str, Any]]:
-    return discover_candidates(scan_id)
+def discover_cache_candidates(scan_id: int, protection_snapshot=None) -> List[Dict[str, Any]]:
+    return discover_candidates(scan_id, protection_snapshot)
 
 
 def home_residue_name(name: str) -> bool:
@@ -2731,27 +2803,34 @@ def size_only_homes() -> List[Path]:
     return list(dict.fromkeys([*roots, runtime]))
 
 
-def cleanup_protection_reason(path: Path) -> Optional[str]:
-    """Return why Storage Monitor must not trash this path, or None when it may."""
+def cleanup_protection_context():
     home = HOME_DIR.resolve()
+    homes = size_only_homes()
+    return (home, TRASH_DIR.resolve(), set(homes), {parent for root in homes for parent in root.parents}, shared_cache_buckets(),
+            [(home / relative, relative) for relative in PROTECTED_HOME_RELATIVE_PATHS],
+            Path(os.environ.get("UV_CACHE_DIR") or home / ".cache/uv"))
+
+
+def cleanup_protection_reason(path: Path, context=None) -> Optional[str]:
+    """Return why Storage Monitor must not trash this path, or None when it may."""
+    home, trash, homes, home_ancestors, buckets, protected, uv_cache = context or cleanup_protection_context()
+    parents = set(path.parents)
     if path == home or path in home.parents:
         return "This is not a cleanup target."
-    if path == TRASH_DIR.resolve() or TRASH_DIR.resolve() in path.parents:
+    if path == trash or trash in parents:
         return "Empty the Trash in Finder to free this space."
-    if any(path == root or root in path.parents or path in root.parents for root in size_only_homes()):
+    if path in homes or path in home_ancestors or not homes.isdisjoint(parents):
         return "Runtime home is size-only; manage it with its owning tool."
     if any(part.name == ".worktrees" or (part.name == "worktrees" and part.parent.name == ".claude") for part in (path, *path.parents)):
         return "Remove worktrees only through the manager that created them."
-    if path in shared_cache_buckets():
+    if path in buckets:
         return SHARED_CACHE_BUCKET_REASON
-    for relative in PROTECTED_HOME_RELATIVE_PATHS:
-        root = home / relative
-        if path == root or root in path.parents:
+    for root, relative in protected:
+        if path == root or root in parents:
             return f"Inside ~/{relative}, which macOS manages or syncs. Clear it from the owning app instead."
     if any(normalize_group_container_id(part).startswith("com.apple.") for part in path.parts):
         return "Managed by macOS. Clear it from the owning app or System Settings instead."
-    uv_cache = Path(os.environ.get("UV_CACHE_DIR") or home / ".cache/uv")
-    if path == uv_cache or uv_cache in path.parents:
+    if path == uv_cache or uv_cache in parents:
         return "Part of uv's package cache, which Storage Monitor runs from. Use the uv Cache Prune provider instead."
     return None
 
@@ -2771,7 +2850,7 @@ def collect_running_apps() -> Optional[Dict[str, str]]:
     return apps or None
 
 
-def collect_installed_bundle_ids() -> Set[str]:
+def collect_installed_bundle_ids(include_names: bool = False):
     app_paths: Set[Path] = set()
     for root, nested in [
         (APPLICATIONS_DIR, True), (Path("/System/Applications"), False),
@@ -2783,16 +2862,34 @@ def collect_installed_bundle_ids() -> Set[str]:
                 app_paths.update(root.glob("*/*.app"))
         except OSError:
             continue
-    identifiers: Set[str] = set()
+    identifiers = {}
     for app_path in app_paths:
         try:
             with (app_path / "Contents/Info.plist").open("rb") as handle:
-                identifier = plistlib.load(handle).get("CFBundleIdentifier")
+                info = plistlib.load(handle)
+                identifier = info.get("CFBundleIdentifier")
             if isinstance(identifier, str) and identifier:
-                identifiers.add(identifier)
+                is_apple = identifier.casefold().startswith("com.apple.") or Path("/System/Applications") in app_path.parents
+                identifiers[identifier] = None if is_apple else app_path.stem
         except (OSError, plistlib.InvalidFileException, AttributeError):
             continue
-    return identifiers
+    return identifiers if include_names else set(identifiers)
+
+
+def app_identity_matches(component: str, identifier: str, name: str) -> bool:
+    value = component.casefold()
+    return value in {identifier.casefold(), identifier.rsplit(".", 1)[-1].casefold(), name.casefold()}
+
+
+DEVELOPER_CACHE_NAMES = {"homebrew", "pip", "npm", "yarn", "gradle", "cocoapods"}
+
+
+def library_cache_eligible(component: str, installed_apps: Dict[str, Optional[str]]) -> bool:
+    value = component.casefold()
+    return value in DEVELOPER_CACHE_NAMES or any(
+        value in (identifier.casefold(), name.casefold()) for identifier, name in installed_apps.items()
+        if name is not None and not identifier.casefold().startswith("com.apple.")
+    )
 
 
 UUID_NAME_RE = re.compile(r"^[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12}$")
@@ -2864,7 +2961,13 @@ def build_findings_section(
     scan_id: Optional[int] = None,
     discovered: Optional[List[Dict[str, Any]]] = None,
     running_apps: Optional[Dict[str, str]] = None,
+    protection_snapshot=None,
+    installed_apps=None,
 ) -> Dict[str, Any]:
+    if protection_snapshot is None and scan_id is not None:
+        protection_snapshot = load_cleanup_protection(scan_id)
+    if installed_apps is None:
+        installed_apps = collect_installed_bundle_ids(include_names=True)
     findings: List[Dict[str, Any]] = []
     for item in watchlist:
         if not item["exists"]:
@@ -2892,10 +2995,10 @@ def build_findings_section(
         finding["actions"] = build_finding_actions(finding)
         findings.append(finding)
     if discovered is None and scan_id is not None:
-        discovered = discover_cache_candidates(scan_id)
+        discovered = discover_cache_candidates(scan_id, protection_snapshot)
     findings.extend(discovered or [])
     if scan_id is not None:
-        findings.extend(temp_findings(scan_id))
+        findings.extend(temp_findings(scan_id, protection_snapshot))
         findings.extend(additional_findings(scan_id))
     for item in findings:
         library_bucket_entry = item.pop("library_cache_bucket_entry", False)
@@ -2914,21 +3017,22 @@ def build_findings_section(
             is_cache = relative == "Library/Caches"
             if running_apps is not None:
                 for identifier, name in running_apps.items():
-                    if (relative == "Library/Application Support" and parts[0].casefold() == name.casefold()) or (relative != "Library/Application Support" and parts[0].casefold() == identifier.casefold()):
+                    if app_identity_matches(parts[0], identifier, name):
                         owner = name
                         break
             break
         if owner:
             item["owner_running"] = True
             item["owner_name"] = owner
-        if (library_bucket_entry and is_cache and running_apps is not None and not owner
-                and not cleanup_protection_reason(path) and not indexed_cleanup_protection(scan_id, path)):
+        eligible = is_cache and library_cache_eligible(parts[0], installed_apps)
+        if (library_bucket_entry and eligible and running_apps is not None and not owner
+                and not cleanup_protection_reason(path) and not indexed_cleanup_protection(scan_id, path, protection_snapshot)):
             item.update(actionable=True, risk="low", cleanup_kind="trash_path",
                         estimated_reclaim_bytes=item["allocated_bytes"],
                         action_token=encode_action_token({"kind": "trash_path", "path": str(path)}),
                         description="Cache entry. Quit its owning app before moving it to Trash.")
             item["actions"] = build_finding_actions(item)
-        if is_cache and (owner or running_apps is None):
+        if is_cache and (not eligible or owner or running_apps is None):
             item["actionable"] = False
             item["action_token"] = None
             item["estimated_reclaim_bytes"] = None
@@ -2996,10 +3100,11 @@ def build_updated_report(
     metadata: Dict[str, Any],
     watchlist: List[Dict[str, Any]],
     snapshots: Dict[str, Any],
+    protection_snapshot=None,
 ) -> Dict[str, Any]:
     breakdowns = build_breakdowns_from_db(scan_id)
     large_files = fetch_large_files_from_db(scan_id)
-    findings = build_findings_section(watchlist, scan_id, None, collect_running_apps())
+    findings = build_findings_section(watchlist, scan_id, None, collect_running_apps(), protection_snapshot)
     visible_data_bytes = breakdowns["data_root"]["total_bytes"]
     hidden_delta_bytes = None
     if metadata["data_volume_used_bytes"] is not None and visible_data_bytes is not None:
@@ -3061,9 +3166,10 @@ def rebuild_and_publish_report(
         if not any(item.get("slug") == provider_slug for item in items):
             items.append(replacement)
         base_report["providers"] = {"items": items, "updated_at": iso_now()}
-    watchlist = scan_watchlist()["items"]
+    protection_snapshot = load_cleanup_protection(scan_id)
+    watchlist = scan_watchlist(scan_id, protection_snapshot)["items"]
     snapshots = collect_snapshot_section()
-    report = build_updated_report(scan_id, base_report, metadata, watchlist, snapshots)
+    report = build_updated_report(scan_id, base_report, metadata, watchlist, snapshots, protection_snapshot)
     persist_report(report)
     persist_report_json(scan_id, report)
     with STATE.lock:

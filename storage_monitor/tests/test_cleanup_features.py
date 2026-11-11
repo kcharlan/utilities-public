@@ -4,6 +4,7 @@ import plistlib
 import json
 import os
 import socket
+import signal
 import sys
 import time
 from pathlib import Path
@@ -1068,7 +1069,7 @@ def test_additive_report_handles_old_base_and_preserves_new_sections(monkeypatch
         key: dict(empty_breakdown) for key in ("data_root", "home_root", "library_root", "applications_root")
     })
     monkeypatch.setattr(module, "fetch_large_files_from_db", lambda scan_id: {"items": [], "updated_at": None})
-    monkeypatch.setattr(module, "discover_cache_candidates", lambda scan_id: [])
+    monkeypatch.setattr(module, "discover_cache_candidates", lambda scan_id, protection_snapshot=None: [])
     metadata = {key: 0 for key in (
         "container_size_bytes", "container_used_bytes", "container_free_bytes",
         "data_volume_used_bytes", "system_volume_used_bytes",
@@ -1128,6 +1129,7 @@ def test_indexed_library_bucket_entries_require_stopped_owner_and_no_protection(
     entries = [library / name for name in ("org.example.stopped", "org.example.running", "com.apple.synthetic", "org.example.protected")]
     dot_entry = home / ".cache/org.example.synthetic"
     _index_dirs(module, scan_id, [(path, 120) for path in [*entries, dot_entry, entries[3] / ".worktrees"]])
+    monkeypatch.setattr(module, "collect_installed_bundle_ids", lambda *args, **kwargs: {"org.example.stopped": "Synthetic Stopped"})
     result = module.build_findings_section([], scan_id=scan_id, running_apps={"org.example.running": "Synthetic Running"})
     items = {item["path"]: item for item in result["items"]}
     stopped = items[str(entries[0])]
@@ -1161,3 +1163,151 @@ def test_running_app_probe_accepts_entries_without_bundle_id(monkeypatch, tmp_pa
     assert apps is not None
     assert apps["org.example.app"] == "Synthetic App"
     assert "Synthetic daemon" in apps.values()
+
+
+def test_real_darwin_temp_root_contract():
+    import subprocess
+    expected = Path(subprocess.check_output(["getconf", "DARWIN_USER_TEMP_DIR"], text=True).strip()).resolve()
+    module = load_launcher(SCRIPT_PATH)
+    assert expected in module.temp_roots()
+
+
+def test_protection_snapshot_handles_similar_sibling_prefix(monkeypatch, tmp_path):
+    module = load(monkeypatch, tmp_path)
+    home = _discovery_home(module, monkeypatch, tmp_path)
+    scan_id = _insert_scan(module)
+    target = home / "foo"
+    _index_dirs(module, scan_id, [(home / "foo-bar/.worktrees", 1), (target / ".worktrees", 1)])
+    snapshot = module.load_cleanup_protection(scan_id)
+    assert module.indexed_cleanup_protection(scan_id, target, snapshot) == module.indexed_cleanup_protection(scan_id, target)
+
+
+def test_darwin_directory_falls_back_and_warns(monkeypatch, tmp_path, caplog):
+    module = load(monkeypatch, tmp_path)
+    def unsupported(_key):
+        raise ValueError("synthetic unavailable confstr")
+    monkeypatch.setattr(module.os, "confstr", unsupported)
+    expected = tmp_path / "synthetic-temp"
+    monkeypatch.setattr(module, "run_command", lambda args, timeout=120: {"ok": True, "stdout": str(expected) + "\n"})
+    assert module.darwin_user_directory("CS_DARWIN_USER_TEMP_DIR") == expected.resolve()
+    monkeypatch.setattr(module, "run_command", lambda args, timeout=120: {"ok": False, "stdout": ""})
+    assert module.darwin_user_directory("CS_DARWIN_USER_CACHE_DIR") is None
+    assert "DARWIN_USER_CACHE_DIR" in caplog.text
+
+
+def test_large_index_discovery_is_bounded(monkeypatch, tmp_path):
+    monkeypatch.setenv("STORAGE_MONITOR_HOME", str(tmp_path / "runtime"))
+    module = load_launcher(SCRIPT_PATH)
+    module.ensure_runtime_home(module.RUNTIME_PATHS)
+    module.initialize_scan_db(module.RUNTIME_PATHS)
+    home = _discovery_home(module, monkeypatch, tmp_path)
+    monkeypatch.setattr(module, "WATCHLIST_SPECS", [])
+    scan_id = _insert_scan(module)
+    now = module.iso_now()
+    def rows():
+        for i in range(400000):
+            name = "__pycache__" if i < 15000 else "Cache" if i < 16000 else "synthetic"
+            path = home / f"project-{i}" / name
+            yield (scan_id, str(path), str(path.parent), name, "home_root", len(path.parts), 120 * 1024 * 1024, 1, now)
+    with module.open_db_connection() as connection:
+        connection.executemany("INSERT INTO nodes (scan_id,path,parent_path,name,root_key,depth,allocated_bytes,children_indexed,updated_at) VALUES (?,?,?,?,?,?,?,?,?)", rows())
+    start = time.monotonic()
+    def timeout(_signum, _frame):
+        raise AssertionError("discovery exceeded 5 seconds")
+    previous_handler = signal.signal(signal.SIGALRM, timeout)
+    previous_timer = signal.setitimer(signal.ITIMER_REAL, 5)
+    try:
+        findings = module.discover_candidates(scan_id)
+    finally:
+        signal.setitimer(signal.ITIMER_REAL, *previous_timer)
+        signal.signal(signal.SIGALRM, previous_handler)
+    elapsed = time.monotonic() - start
+    print(f"synthetic 400000-node discovery: {elapsed:.3f}s")
+    group = next(item for item in findings if item.get("category") == "python_bytecode")
+    assert group["count"] == 15000
+    assert sum(item.get("category") == "discovered_cache" for item in findings) == 1000
+    assert elapsed < 5, f"discovery took {elapsed:.3f}s"
+
+
+def test_library_cache_eligibility_and_running_names(monkeypatch, tmp_path):
+    module = load(monkeypatch, tmp_path)
+    home = _discovery_home(module, monkeypatch, tmp_path)
+    monkeypatch.setattr(module, "WATCHLIST_SPECS", [])
+    scan_id = _insert_scan(module)
+    root = home / "Library/Caches"
+    paths = [root / name for name in ("Synthetic Installed", "org.example.installed", "Synthetic Unknown", "AppleUnknown", "Synthetic Running", "runningid")]
+    nested = root / "Synthetic Nested Unknown" / "Cache"
+    _index_dirs(module, scan_id, [(path, 120) for path in [*paths, nested]])
+    monkeypatch.setattr(module, "collect_installed_bundle_ids", lambda *args, **kwargs: {"org.example.installed": "Synthetic Installed"})
+    result = module.build_findings_section([], scan_id=scan_id, running_apps={"org.example.runningid": "Synthetic Running"})
+    items = {item["path"]: item for item in result["items"]}
+    assert items[str(paths[0])]["actionable"] and items[str(paths[1])]["actionable"]
+    for path in paths[2:]:
+        assert not items[str(path)]["actionable"]
+    assert not items[str(nested)]["actionable"]
+
+
+def test_installed_cache_identity_comes_from_synthetic_apps(monkeypatch, tmp_path):
+    module = load(monkeypatch, tmp_path)
+    home = _discovery_home(module, monkeypatch, tmp_path)
+    apps = tmp_path / "synthetic-applications"
+    monkeypatch.setattr(module, "APPLICATIONS_DIR", apps)
+    for name, identifier in [("Synthetic Tool", "org.example.tool"), ("Synthetic Apple", "com.apple.synthetic")]:
+        info = apps / f"{name}.app/Contents/Info.plist"
+        info.parent.mkdir(parents=True)
+        info.write_bytes(plistlib.dumps({"CFBundleIdentifier": identifier}))
+    assert module.collect_installed_bundle_ids(include_names=True) == {"org.example.tool": "Synthetic Tool", "com.apple.synthetic": None}
+    assert module.library_cache_eligible("synthetic tool", module.collect_installed_bundle_ids(include_names=True))
+    assert not module.library_cache_eligible("Synthetic Apple", module.collect_installed_bundle_ids(include_names=True))
+
+
+def test_running_name_and_identifier_suffix_protect_nested_cache(monkeypatch, tmp_path):
+    module = load(monkeypatch, tmp_path)
+    home = _discovery_home(module, monkeypatch, tmp_path)
+    paths = [home / "Library/Caches/Synthetic Running/Cache", home / "Library/Caches/runningid/Cache",
+             home / "Library/Application Support/runningid/Cache", home / "Library/Containers/org.example.runningid/Cache"]
+    items = [{"path": str(path), "label": "Synthetic", "category": "cache", "allocated_bytes": 1,
+              "actionable": True, "action_token": "token", "cleanup_kind": "trash_path", "actions": [{"kind": "execute"}]} for path in paths]
+    monkeypatch.setattr(module, "collect_installed_bundle_ids", lambda *args, **kwargs: {})
+    findings = module.build_findings_section([], discovered=items, running_apps={"org.example.runningid": "Synthetic Running"})["items"]
+    assert all(item.get("owner_running") and item.get("owner_name") == "Synthetic Running" for item in findings)
+    assert all(not item["actionable"] for item in findings if "/Library/Caches/" in item["path"])
+
+
+@pytest.mark.parametrize("kind,depth", [("fifo", 1), ("socket", 2), ("fifo", 3), ("socket", 3)])
+def test_temp_directory_refuses_nested_ipc(monkeypatch, tmp_path, kind, depth):
+    module = load(monkeypatch, tmp_path)
+    root = tmp_path / "synthetic-temp"
+    target = root / "candidate"
+    parent = target
+    for _ in range(depth - 1):
+        parent /= "nested"
+    parent.mkdir(parents=True)
+    ipc = parent / "ipc"
+    sock = None
+    if kind == "fifo":
+        os.mkfifo(ipc)
+    else:
+        sock = socket.socket(socket.AF_UNIX)
+        monkeypatch.chdir(parent)
+        sock.bind("ipc")
+    try:
+        old = int(time.time()) - 4 * 86400
+        for path in [target, *[p for p in ipc.parents if target in p.parents], ipc]:
+            os.utime(path, (old, old))
+        monkeypatch.setattr(module, "temp_roots", lambda: [root])
+        monkeypatch.setattr(module, "TRASH_DIR", tmp_path / "synthetic-trash")
+        monkeypatch.setattr(module, "DATA_VOLUME", tmp_path)
+        scan_id = _insert_scan(module, active=True)
+        _index_dirs(module, scan_id, [(tmp_path / str(target).lstrip("/"), 120)])
+        with module.open_db_connection() as connection:
+            connection.execute("UPDATE nodes SET newest_mtime=?", (old,))
+        preview = module.temp_findings(scan_id)[0]
+        assert preview["count"] == (0 if depth <= 2 else 1)
+        result = module.execute_trash_group({"kind": "trash_group", "rule": "temp_old", "root": str(root), "min_age_days": 3})
+        assert target.exists() and result["moved_count"] == 0
+        assert result["failure_count"] == 1
+        assert kind in result["failures"][0]["error"].lower()
+    finally:
+        if sock:
+            sock.close()
