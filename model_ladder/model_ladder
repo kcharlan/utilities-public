@@ -2014,7 +2014,7 @@ def testing_mode_enabled() -> bool:
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="model_ladder",
-        description="Compare model effort levels by Intelligence Index and cost per task.",
+        description="Compare model effort levels by available Artificial Analysis indexes and cost per task.",
         epilog="Runtime home: ~/.model_ladder/ (override with MODEL_LADDER_HOME).",
     )
     parser.add_argument("command", nargs="?", choices=("refresh", "build"),

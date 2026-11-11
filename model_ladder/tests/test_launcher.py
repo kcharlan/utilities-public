@@ -9,7 +9,8 @@ LAUNCHER = PROJECT / "model_ladder"
 
 
 def test_help_has_no_side_effects(tmp_path):
-    assert_launcher_help(LAUNCHER)
+    result = assert_launcher_help(LAUNCHER)
+    assert "available Artificial Analysis indexes" in " ".join(result.stdout.split())
     assert not (tmp_path / "ml-home").exists()
 
 
