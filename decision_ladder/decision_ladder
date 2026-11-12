@@ -350,7 +350,12 @@ a { color:var(--accent) } footer { margin-top:40px; color:var(--muted); border-t
 input, select, button { font:inherit; color:var(--ink); background:var(--panel); border:1px solid var(--line); border-radius:5px; padding:6px; max-width:100% } button { cursor:pointer }
 .inline { flex-direction:row; align-items:center } .table-wrap { overflow-x:auto; max-width:100% } table { border-collapse:collapse; width:100%; min-width:900px } th,td { border-bottom:1px solid var(--line); padding:8px; text-align:left; vertical-align:top } th { cursor:pointer } tbody tr:nth-child(even) { background:var(--bg) } tbody tr.outside { opacity:.55 } .tier-band { border-left:4px solid var(--accent) } .raw,.detail { color:var(--muted); font-size:.85em } .detail { display:block; overflow-wrap:anywhere } .pill { background:var(--front-bg); color:var(--front); border-radius:999px; padding:2px 6px; overflow-wrap:anywhere } .name { overflow-wrap:anywhere; max-width:240px } .chart { width:100%; height:auto; max-height:400px } .chart text { fill:var(--muted); font-size:11px } .chart .grid { stroke:var(--line) } .chart .cap-line { stroke:var(--warn); stroke-width:2 } .chart .shade { fill:var(--warn); opacity:.08 } .chart .edge { fill:none; stroke:var(--front); stroke-width:2 } .chart .mark { stroke:var(--accent); stroke-width:2; fill:var(--panel) } .chart .mark.frontier { fill:var(--accent) } .chart .mark.modelled { stroke-dasharray:3 2 } .legend { color:var(--muted); overflow-wrap:anywhere }
 .tier-even .tier-band { border-color:var(--s2) }
-.picker { max-height:240px; overflow-y:auto; margin:8px 0; border:1px solid var(--line); padding:8px } .compare progress { display:block; width:100%; max-width:150px; accent-color:var(--accent) }
+.selection { display:flex; flex-wrap:wrap; align-items:center; gap:8px; margin:12px 0 }
+.chip { border:1px solid var(--ink); border-radius:999px; display:inline-flex; gap:7px; align-items:center; padding:3px 4px 3px 11px; overflow-wrap:anywhere }
+.chip small { color:var(--muted) } .chip button { border:0; background:none; padding:0 6px }
+.picker { position:relative; display:inline-block } .pop { position:absolute; z-index:5; top:calc(100% + 6px); left:0; width:min(430px, calc(100vw - 80px)); background:var(--panel); border:1px solid var(--ink); border-radius:8px; padding:8px }
+.pop input { width:100% } .pop ul { list-style:none; margin:0; padding:0; max-height:300px; overflow-y:auto } .pop li button { width:100%; border:0; display:grid; grid-template-columns:minmax(0,1fr) auto; gap:2px 12px; text-align:left; overflow-wrap:anywhere } .pop li button.first:not(:disabled), .pop li button:hover:not(:disabled) { background:var(--dom-bg) } .pop small { color:var(--muted) } .pop p { margin:4px; color:var(--muted) }
+.compare { max-height:70vh; overflow:auto } .compare table { table-layout:fixed; border-collapse:separate; border-spacing:0 } .compare th, .compare td { min-width:150px; overflow-wrap:anywhere } .compare thead th { position:sticky; top:0; z-index:2; background:var(--panel) } .compare tr > :first-child { position:sticky; left:0; z-index:1; width:150px; background:var(--panel) } .compare thead tr > :first-child { z-index:3 } .compare progress { display:block; width:100%; max-width:150px; accent-color:var(--accent) } .compare-details p { max-width:75ch }
 """
 DECISION_MATH_JS = r"""
 // decision-math:begin
@@ -400,6 +405,13 @@ function findings(rows, caps, mode, axis='price') {
   return out;
 }
 function searchRows(rows, query) { const q=query.toLowerCase(); return rows.filter(r=>r.name.toLowerCase().includes(q)); }
+function pickerRows(rows) { return rows.slice().sort((a,b)=> (a.ranked===b.ranked ? 0 : a.ranked ? -1 : 1) || (finite(b.capability)?b.capability:-Infinity)-(finite(a.capability)?a.capability:-Infinity) || ladderCore.compareText(a.name,b.name)); }
+function bestIn(rows,key,direction) {
+  const values=rows.map(r=>r[key]).filter(finite);
+  if (rows.length<2 || !values.length) return rows.map(()=>false);
+  const best=direction==='max'?Math.max(...values):Math.min(...values);
+  return rows.map(r=>finite(r[key]) && r[key]===best);
+}
 function changesToShow(changes, mode) {
   if (!changes || changes.method) return [];
   const fields=['listing','capability_rank','composite_rank'];
@@ -411,7 +423,7 @@ function changesToShow(changes, mode) {
 function visibleHistory(history, mode) {
   return history.find(c=>c.revision || c.method || c.caps || c.added.length || c.removed.length || changesToShow(c,mode).length) || null;
 }
-const api={withinCaps,capReasons,prepare,tiers,boardFrontier,priceText,latencyText,secondsText,scoreText,capText,label,whenText,findings,searchRows,changesToShow,visibleHistory};
+const api={withinCaps,capReasons,prepare,tiers,boardFrontier,priceText,latencyText,secondsText,scoreText,capText,label,whenText,findings,searchRows,pickerRows,bestIn,changesToShow,visibleHistory};
 if (typeof module !== 'undefined') module.exports=api; else window.decisionMath=api;
 }());
 // decision-math:end
@@ -420,7 +432,7 @@ APP_JS = r"""
 (function () {
 const data = JSON.parse(document.getElementById('payload').textContent);
 const { h, render } = preact;
-const { useState, useLayoutEffect } = preactHooks;
+const { useState, useLayoutEffect, useEffect, useRef } = preactHooks;
 const html = htm.bind(h);
 const M = decisionMath;
 const age = ladderCore.dataAge(data.last_checked, Date.now(), data.max_age_hours);
@@ -452,26 +464,32 @@ function Changes({changes,mode}) {
     ${M.changesToShow(changes,mode).map(r=>html`<p>Changed: ${r.name} ${['capability','price','latency','listing','capability_rank','composite_rank'].filter(k=>r[k] && r[k][0]!==r[k][1]).map(k=>`${k}: ${pair(k==='capability'?r[k].map(v=>v==null?v:M.scoreText(v)):r[k])}`).join('; ')}</p>`)}
   </details>`;
 }
+function Picker({picks,onAdd}) {
+  const [open,setOpen]=useState(false), [query,setQuery]=useState(''), [active,setActive]=useState(0);
+  const wrap=useRef(null), button=useRef(null), input=useRef(null), full=picks.length>=8;
+  const sorted=M.pickerRows(data.rows);
+  const list=M.searchRows(sorted,query), choosable=list.filter(r=>!picks.includes(r.key)), current=choosable[Math.min(active,choosable.length-1)];
+  useEffect(()=>{if(open && input.current) input.current.focus();},[open]);
+  useEffect(()=>{if(full) setOpen(false);},[full]);
+  useEffect(()=>{if(!open)return; const away=e=>{if(wrap.current && !wrap.current.contains(e.target))setOpen(false);}; document.addEventListener('mousedown',away); return ()=>document.removeEventListener('mousedown',away);},[open]);
+  const pick=r=>{if(r){onAdd(r.key);setActive(0);}};
+  const onKey=e=>{if(e.key==='ArrowDown'){e.preventDefault();setActive(a=>Math.min(a+1,Math.max(choosable.length-1,0)));} else if(e.key==='ArrowUp'){e.preventDefault();setActive(a=>Math.max(a-1,0));} else if(e.key==='Enter'){e.preventDefault();pick(current);} else if(e.key==='Escape'){e.preventDefault();setOpen(false);button.current?.focus();}};
+  return html`<div class="picker" ref=${wrap}><button type="button" ref=${button} disabled=${full} aria-expanded=${String(open)} onClick=${()=>setOpen(!open)}>${full?'Limit of 8 reached':'Add system'}</button>
+    ${open && html`<div class="pop"><input type="search" aria-label="Search systems" placeholder="Search systems" ref=${input} value=${query} onInput=${e=>{setQuery(e.currentTarget.value);setActive(0);}} onKeyDown=${onKey}/><ul>${list.map(r=>html`<li key=${r.key}><button type="button" disabled=${picks.includes(r.key)} class=${r===current?'first':''} onClick=${()=>pick(r)}><span>${r.short}</span><span>${picks.includes(r.key)?'Added':M.scoreText(r.capability)||'Not measured'}</span><small>${r.detail}</small><small>${boardLabel(r.board)}</small></button></li>`)}</ul><p>${list.length?`${list.length} of ${data.rows.length} systems.`:'No system matches that search.'}</p></div>`}</div>`;
+}
 function Compare({picks,setPicks}) {
-  const [query,setQuery]=useState('');
   const rows=picks.map(key=>data.rows.find(r=>r.key===key)).filter(Boolean);
-  const axes=[['intelligence','Intelligence'],['calibration','Calibration'],['speed','Speed'],['cost_axis','Cost']];
-  const value=v=>v==null?'Not measured':v;
-  const score=v=>M.scoreText(v)||'Not measured';
-  return html`<section class="panel"><h2>Compare systems</h2><p>Choose up to 8 systems.</p>
-    <label>Search systems<input aria-label="Search systems" value=${query} onInput=${e=>setQuery(e.target.value)}/></label>
-    <div class="picker">${M.searchRows(data.rows,query).map(r=>html`<label class="inline"><input type="checkbox" checked=${picks.includes(r.key)} disabled=${picks.length>=8&&!picks.includes(r.key)} onChange=${e=>setPicks(e.target.checked?[...picks,r.key]:picks.filter(k=>k!==r.key))}/>${r.name}</label>`)}</div>
-    <div class="table-wrap compare"><table><thead><tr><th>Measure</th>${rows.map(r=>html`<th>${r.name}</th>`)}</tr></thead><tbody>
-      ${axes.map(([key,label])=>html`<tr><th>${label}</th>${rows.map(r=>html`<td>${score(r[key])} ${Number.isFinite(r[key])&&html`<progress value=${r[key]} max="100">${score(r[key])}</progress>`}</td>`)}</tr>`)}
-      <tr><th>Capability</th>${rows.map(r=>html`<td>${score(r.capability)}</td>`)}</tr>
-      ${[['capability_rank','Capability rank'],['composite_rank','Composite rank']].map(([key,label])=>html`<tr><th>${label}</th>${rows.map(r=>html`<td>${value(r[key])}</td>`)}</tr>`)}
-      <tr><th>Price / 1,000 decisions</th>${rows.map(r=>html`<td>${r.price==null?'No price':'$'+M.priceText(r.price)} ${M.label('price',r.price_kind)}</td>`)}</tr>
-      <tr><th>Median latency</th>${rows.map(r=>html`<td>${M.latencyText(r.latency)||'Not measured'} ${M.label('latency',r.latency_basis)}</td>`)}</tr>
-      <tr><th>p95 latency</th>${rows.map(r=>html`<td>${M.latencyText(r.latency_p95)||'Not measured'} ${M.label('latency',r.latency_basis)}</td>`)}</tr>
-      <tr><th>Measurement date</th>${rows.map(r=>html`<td>${value(r.measured_on)}</td>`)}</tr>
-      <tr><th>Source</th>${rows.map(r=>html`<td>${safeLink(r.source_url)?html`<a href=${safeLink(r.source_url)} rel="noopener noreferrer">Source</a>`:'Not available'}</td>`)}</tr>
-      <tr><th>Basis and adjustment</th>${rows.map(r=>html`<td><details><summary>Details</summary><p>Price basis: ${value(r.price_basis)}</p><p>Latency adjustment: ${value(r.latency_adjustment)}</p></details></td>`)}</tr>
-    </tbody></table></div></section>`;
+  const value=v=>v==null?'Not measured':v, score=v=>M.scoreText(v)||'Not measured';
+  const remove=key=>setPicks(picks.filter(k=>k!==key));
+  const rank=(r,key)=>!r.ranked ? `Not ranked: ${r.not_ranked_because || 'Not available'}` : !M.withinCaps(r,data.caps) ? `Not ranked: ${M.capReasons(r,data.caps).join(', ')}` : value(r[key]);
+  const specs=[['intelligence','Intelligence','max',r=>score(r.intelligence),true],['calibration','Calibration','max',r=>score(r.calibration),true],['speed','Speed','max',r=>score(r.speed),true],['cost_axis','Cost','max',r=>score(r.cost_axis),true],['capability','Capability','max',r=>score(r.capability)],['capability_rank','Capability rank','min',r=>rank(r,'capability_rank')],['composite_rank','Composite rank','min',r=>rank(r,'composite_rank')],['price','Price / 1,000 decisions','min',r=>`${r.price==null?'No price':'$'+M.priceText(r.price)} ${M.label('price',r.price_kind)}`],['latency','Median latency','min',r=>`${M.latencyText(r.latency)||'Not measured'} ${M.label('latency',r.latency_basis)}`],['latency_p95','p95 latency','min',r=>`${M.latencyText(r.latency_p95)||'Not measured'} ${M.label('latency',r.latency_basis)}`]];
+  return html`<section class="panel"><h2>Compare systems</h2><div class="selection">${rows.map(r=>html`<span class="chip">${r.short} <small>${boardLabel(r.board)}</small><button type="button" aria-label=${'Remove '+r.name} onClick=${()=>remove(r.key)}>×</button></span>`)}${rows.length>0 && html`<button type="button" onClick=${()=>setPicks([])}>Clear all</button>`}<span>${rows.length} of 8 selected</span></div>
+    <${Picker} picks=${picks} onAdd=${key=>setPicks([...picks,key])}/>
+    ${!rows.length ? html`<p>No systems selected. Add up to 8 to compare them side by side.</p>` : html`<div class="table-wrap compare"><table style=${{minWidth:(rows.length+1)*150+'px'}}><colgroup><col style="width:150px"/>${rows.map(()=>html`<col/>`)}</colgroup><thead><tr><th>Measure</th>${rows.map(r=>html`<th>${r.short}<span class="detail">${r.detail}</span><button type="button" aria-label=${'Remove '+r.name} onClick=${()=>remove(r.key)}>×</button></th>`)}</tr></thead><tbody>
+      ${specs.map(([key,title,direction,display,progress])=>{const comparable=key.endsWith('_rank')?rows.map(r=>({...r,[key]:r.ranked && M.withinCaps(r,data.caps)?r[key]:null})):rows, best=M.bestIn(comparable,key,direction); return html`<tr><th>${title}</th>${rows.map((r,i)=>html`<td><span class=${best[i]?'pill':''}>${display(r)}</span>${progress && Number.isFinite(r[key]) && html`<progress value=${r[key]} max="100">${score(r[key])}</progress>`}</td>`)}</tr>`;})}
+      <tr><th>Measurement date</th>${rows.map(r=>html`<td>${r.measured_on ?? 'Not given'}</td>`)}</tr><tr><th>Source</th>${rows.map(r=>html`<td>${safeLink(r.source_url)?html`<a href=${safeLink(r.source_url)} rel="noopener noreferrer">Source</a>`:'Not available'}</td>`)}</tr>
+    </tbody></table></div>`}
+    ${rows.length>0 && html`<details class="compare-details"><summary>Price basis and latency adjustment</summary>${rows.map(r=>html`<article><h3>${r.name}</h3><p>Price basis: ${value(r.price_basis)}</p><p>Latency adjustment: ${value(r.latency_adjustment)}</p></article>`)}</details>`}</section>`;
 }
 function Chart({rows, caps, axis, edge}) {
   const positive=rows.map(r=>r.cost).filter(v=>Number.isFinite(v) && v>0), cap=axis==='price'?caps.cost:caps.latency;

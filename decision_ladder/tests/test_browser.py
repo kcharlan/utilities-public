@@ -278,9 +278,9 @@ def test_compare_not_ranked_and_changes_offline(dl, tmp_path):
                 'source_url': 'javascript:alert(1)' if i == 1 else 'https://example.com/synthetic',
                 'axes': {'intelligence': 45.123456789 if i == 0 else None, 'calibration': None, 'speed': 20, 'cost': 0},
                 'capability': {'score': 8.123456789, 'rank': 2, 'eligible': True, 'within_caps': True},
-                'rank': 3, 'price': {'kind': 'estimate', 'usd_per_1000_decisions': None if i == 1 else 2, 'basis': 'Synthetic price basis'},
+                'rank': 3, 'price': {'kind': 'estimate', 'usd_per_1000_decisions': None if i == 1 else 2, 'basis': 'Synthetic price basis ' + 'x' * 1300},
                 'latency': {'p50_s_adjusted': 3, 'p95_s_adjusted': 4, 'latency_basis': 'synthetic', 'adjustment': 'Synthetic adjustment'},
-                'draw': {'measured_on': '2026-01-01'}} for i in range(10)]
+                'draw': {'measured_on': None if i == 9 else '2026-01-01'}} for i in range(10)]
     feed = {'revision': 'new synthetic', 'method': {'label': 'Synthetic method'}, 'capability_policy': {'cost_cap_usd_per_1000': 5, 'median_latency_cap_s': 10}, 'systems': systems}
     old = deepcopy(feed); old['revision'] = 'old synthetic'; old['systems'][0]['capability']['score'] = 8.2
     snap = {'fetched_at': '2026-01-02', 'last_checked': '2026-01-02', 'feed': feed}
@@ -297,17 +297,41 @@ def test_compare_not_ranked_and_changes_offline(dl, tmp_path):
             page.get_by_label('Scoring').select_option('decimal')
             expect(page.locator('.changes')).to_contain_text('Synthetic system 0')
             page.get_by_role('tab', name='Compare', exact=True).click()
+            page.get_by_role('button', name='Add system').click()
+            assert page.locator('.pop li button').all_text_contents()[-1].startswith('Synthetic system 9')
             page.get_by_label('Search systems').fill('system 0')
-            expect(page.locator('.picker label')).to_have_count(1)
-            page.get_by_label('Synthetic system 0', exact=True).check()
+            page.locator('.pop li button').click()
+            expect(page.locator('.pop li button')).to_be_disabled()
+            expect(page.locator('.pop li button')).to_contain_text('Added')
             page.get_by_label('Search systems').fill('')
-            for i in range(1, 8): page.get_by_label(f'Synthetic system {i}', exact=True).check()
-            expect(page.get_by_label('Synthetic system 8', exact=True)).to_be_disabled()
+            for i in range(1, 3): page.locator('.pop li button').filter(has_text=f'Synthetic system {i}').click()
+            page.locator('.chip').get_by_role('button', name='Remove Synthetic system 1').click()
+            expect(page.get_by_text('2 of 8 selected')).to_be_visible()
+            page.reload()
+            expect(page.get_by_text('2 of 8 selected')).to_be_visible()
+            page.get_by_role('button', name='Add system').click()
+            for i in range(1, 8):
+                if i != 2: page.locator('.pop li button').filter(has_text=f'Synthetic system {i}').click()
+            expect(page.get_by_role('button', name='Limit of 8 reached')).to_be_disabled()
+            expect(page.locator('.chip')).to_have_count(8)
+            widths = page.locator('.compare thead th').evaluate_all('(xs) => xs.map(x => x.getBoundingClientRect().width)')
+            page.get_by_text('Price basis and latency adjustment', exact=True).click()
+            assert page.locator('.compare thead th').evaluate_all('(xs) => xs.map(x => x.getBoundingClientRect().width)') == widths
+            assert widths[0] >= 150 and min(widths[1:]) >= 150 and max(widths[1:]) - min(widths[1:]) < 1
+            page.locator('.compare').evaluate('(el) => { el.scrollTop = el.scrollHeight; }')
+            assert page.locator('.compare').evaluate('(el) => el.scrollTop > 0')
+            assert page.locator('.compare').evaluate('(el) => Math.abs(el.querySelector("thead th").getBoundingClientRect().top - el.getBoundingClientRect().top) < 2')
+            expect(page.locator('.compare tbody tr').filter(has=page.get_by_text('Intelligence', exact=True)).locator('.pill')).to_have_count(1)
+            expect(page.locator('.compare tbody tr').filter(has=page.get_by_text('Capability', exact=True)).locator('.pill')).to_have_count(8)
+            expect(page.locator('.compare tbody tr').filter(has=page.get_by_text('Price / 1,000 decisions', exact=True)).locator('.pill')).to_have_count(7)
+            expect(page.locator('.compare tbody tr').filter(has=page.get_by_text('Capability rank', exact=True)).locator('.pill')).to_have_count(7)
+            expect(page.locator('.compare tbody tr').filter(has=page.get_by_text('Capability rank', exact=True))).to_contain_text('Not ranked: no price')
+            expect(page.locator('.compare tbody tr').filter(has=page.get_by_text('Composite rank', exact=True))).to_contain_text('Not ranked: no price')
             expect(page.locator('.compare')).to_contain_text('45')
             expect(page.locator('.compare')).to_contain_text('Not measured')
             expect(page.locator('.compare')).to_contain_text('No price')
-            expect(page.locator('.compare')).to_contain_text('Synthetic price basis')
-            expect(page.locator('.compare')).to_contain_text('Synthetic adjustment')
+            expect(page.locator('.compare-details')).to_contain_text('Synthetic price basis')
+            expect(page.locator('.compare-details')).to_contain_text('Synthetic adjustment')
             expect(page.locator('.compare')).to_contain_text('45.1')
             expect(page.locator('.compare')).not_to_contain_text('45.123456789')
             expect(page.locator('.compare')).not_to_contain_text('8.123456789')
@@ -320,9 +344,23 @@ def test_compare_not_ranked_and_changes_offline(dl, tmp_path):
             expect(page.locator('.compare')).to_contain_text('2026-01-01')
             expect(page.locator('.compare a[href="https://example.com/synthetic"]')).to_have_count(7)
             expect(page.locator('.compare a[href^="javascript:"]')).to_have_count(0)
-            page.reload()
-            expect(page.get_by_label('Synthetic system 0', exact=True)).to_be_checked()
-            expect(page.get_by_label('Synthetic system 8', exact=True)).to_be_disabled()
+            page.set_viewport_size({'width': 390, 'height': 844})
+            assert page.evaluate('document.documentElement.scrollWidth <= innerWidth')
+            assert page.locator('.compare').evaluate('(el) => el.scrollWidth > el.clientWidth')
+            page.get_by_role('button', name='Clear all').click()
+            expect(page.locator('.compare table')).to_have_count(0)
+            expect(page.get_by_text('No systems selected. Add up to 8 to compare them side by side.')).to_be_visible()
+            page.get_by_role('button', name='Add system').click()
+            page.get_by_label('Search systems').fill('system 9')
+            page.get_by_label('Search systems').press('ArrowDown')
+            page.get_by_label('Search systems').press('ArrowUp')
+            page.get_by_label('Search systems').press('Enter')
+            page.get_by_label('Search systems').press('Escape')
+            expect(page.get_by_role('button', name='Add system')).to_be_focused()
+            for rank in ['Capability rank', 'Composite rank']:
+                expect(page.locator('.compare tbody tr').filter(has=page.get_by_text(rank, exact=True))).to_contain_text('Not ranked: Synthetic full reason')
+            expect(page.locator('.compare')).to_contain_text('Not given')
+            expect(page.locator('.compare .pill')).to_have_count(0)
             page.get_by_role('tab', name='Not ranked', exact=True).click()
             expect(page.locator('.not-ranked')).to_contain_text('Synthetic listing')
             expect(page.locator('.not-ranked')).to_contain_text('Synthetic full reason')

@@ -9,6 +9,17 @@ new Function('module', 'ladderCore', code)(module, createRequire(import.meta.url
 const m = module.exports;
 const row = (name, capability, price, latency, extra={}) => ({key:name, name, ranked:true, board:'api', capability, price, latency, ...extra});
 const caps = {cost:5, latency:10};
+test('bestIn identifies ties and ignores missing values in either direction', () => {
+  const rows=[{v:3},{v:1},{v:3},{v:null}];
+  assert.deepEqual(m.bestIn(rows,'v','max'),[true,false,true,false]);
+  assert.deepEqual(m.bestIn(rows,'v','min'),[false,true,false,false]);
+  assert.deepEqual(m.bestIn([{v:1}],'v','min'),[false]);
+  assert.deepEqual(m.bestIn([{v:null},{v:null}],'v','max'),[false,false]);
+});
+test('picker order ranks capability descending, then name, with unranked last', () => {
+  const rows=[row('Synthetic Z',2,1,1),row('Synthetic A',2,1,1),row('Synthetic high',9,1,1,{ranked:false}),row('Synthetic low',1,1,1)];
+  assert.deepEqual(m.pickerRows(rows).map(r=>r.name),['Synthetic A','Synthetic Z','Synthetic low','Synthetic high']);
+});
 test('display formatters retain precision and translate feed tokens', () => {
   assert.equal(m.scoreText(4.123), '4.1'); assert.equal(m.scoreText(null), '');
   assert.equal(m.capText(0.0000646123456789, 'price'), '$0.0001');

@@ -2539,3 +2539,10 @@ values in every display mode; keep unrounded values for calculations and meters.
 A guarded Findings preference could not prevent a blocked-storage error from the
 separate theme initializer. Guard each storage read and write, preserve an OS
 preference fallback, and test the dashboard with storage methods throwing.
+
+## 2026-11-12: Keep comparison details outside fixed-width tables
+
+Long explanatory text inside a comparison table can force one column wider and
+crush the others. Place the details outside the table, set explicit minimum
+column widths, and test the open details state with long synthetic text and a
+narrow viewport.
