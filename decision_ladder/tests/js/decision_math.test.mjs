@@ -17,6 +17,25 @@ test('tier numbers remain stable when searching ranked rows', () => {
   assert.deepEqual(m.visibleTierRows(m.tierGroups(m.tiers(rows)),[1],false).map(r=>r.heading?'heading':r.name),['heading','Synthetic top','heading']);
   assert.deepEqual(m.chartMarks([{key:'a',name:'Synthetic A',cost:1},{key:'b',name:'Synthetic B',cost:1}],'A','b').map(r=>r.key),['a','b']);
 });
+test('chart marks describe axis provenance, match, highlight and size', () => {
+  const rows=[{key:'a',name:'Synthetic A',cost:1,price_published:true,latency_assumed:true},
+    {key:'b',name:'Synthetic B',cost:2,price_published:false,latency_assumed:false},
+    {key:'zero',name:'Synthetic zero',cost:0}];
+  const edge=[{key:'a',status:'frontier'},{key:'b',status:'dominated'}];
+  const price=m.chartMarks(rows,'Synthetic A','b',edge,'price');
+  assert.deepEqual(price.map(({key,frontier,published,dim,highlighted,size})=>({key,frontier,published,dim,highlighted,size})),[
+    {key:'a',frontier:true,published:true,dim:false,highlighted:false,size:5},
+    {key:'b',frontier:false,published:false,dim:true,highlighted:true,size:5.5}]);
+  const latency=m.chartMarks(rows,'',null,edge,'latency');
+  assert.deepEqual(latency.map(({published,dim,size})=>({published,dim,size})),[
+    {published:false,dim:false,size:5},{published:true,dim:false,size:3.5}]);
+});
+test('frontier-only filtering excludes dominated and outside rows', () => {
+  const rows=[{key:'a',inCaps:true,status:'frontier'},{key:'b',inCaps:true,status:'dominated'},
+    {key:'c',inCaps:false,status:''}];
+  assert.deepEqual(m.boardPartitions(rows,false),{inside:rows.slice(0,2),outside:rows.slice(2)});
+  assert.deepEqual(m.boardPartitions(rows,true),{inside:rows.slice(0,1),outside:[]});
+});
 test('bestIn identifies ties and ignores missing values in either direction', () => {
   const rows=[{v:3},{v:1},{v:3},{v:null}];
   assert.deepEqual(m.bestIn(rows,'v','max'),[true,false,true,false]);
