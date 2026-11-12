@@ -1,5 +1,14 @@
 # Lessons learned
 
+## Preserve exact limits behind rounded controls
+
+An official threshold displayed at rounded precision can change classification if
+the display value is fed back into comparisons. Represent the official selection
+separately from custom input and compare with the original value. Exercise a
+synthetic row between the displayed and exact thresholds, including restoration
+of saved settings. JavaScript object lookups for external tokens must also avoid
+inherited properties so unknown tokens remain visible.
+
 ## Display-aware history and board fallbacks
 
 Choose a history baseline using the same formatting and scoring mode as the

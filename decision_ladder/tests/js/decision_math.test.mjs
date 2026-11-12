@@ -9,6 +9,15 @@ new Function('module', 'ladderCore', code)(module, createRequire(import.meta.url
 const m = module.exports;
 const row = (name, capability, price, latency, extra={}) => ({key:name, name, ranked:true, board:'api', capability, price, latency, ...extra});
 const caps = {cost:5, latency:10};
+test('display formatters retain precision and translate feed tokens', () => {
+  assert.equal(m.scoreText(4.123), '4.1'); assert.equal(m.scoreText(null), '');
+  assert.equal(m.capText(0.0000646123456789, 'price'), '$0.0001');
+  assert.equal(m.capText(1.2345, 'latency'), '1.23 s');
+  for (const [kind, token, expected] of [['price','tariff','published tariff'],['price','listed','listed price'],['price','estimate','estimate'],['price','estimated','estimate'],['price','mixed','part estimate'],['price','unpriced','no price'],['latency','api-end-to-end','measured end to end'],['latency','measured-loopback','loopback, adjusted'],['latency','demo-endpoint-x2','demo endpoint, adjusted'],['listing','synthetic-other','synthetic other'],['price','unknown-token','unknown token']]) assert.equal(m.label(kind,token),expected);
+  assert.equal(m.label('price','toString'), 'toString');
+  assert.equal(m.whenText('2026-01-02T03:04:55.123Z'), '2026-01-02 03:04 UTC');
+  assert.equal(m.whenText('synthetic'), 'synthetic');
+});
 test('official cap boundaries and unavailable values', () => {
   for (const [price, latency, expected] of [[4,9,true],[5,10,true],[5.1,10,false],[5,10.1,false],[null,1,false],[1,null,false]]) {
     const r = row('Synthetic',1,price,latency,{within_caps:expected});

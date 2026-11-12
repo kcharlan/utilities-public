@@ -97,10 +97,10 @@ def test_board_controls_and_responsive_layout(dl, tmp_path, scheme):
             page.reload(); expect(page.get_by_label('Board')).to_have_value('open')
             page.get_by_label('Board').select_option('all')
             price_line = page.locator('.cap-line').get_attribute('x1')
-            expect(page.locator('.cap-label')).to_have_text('Cap 5')
+            expect(page.locator('.cap-label')).to_have_text('Cap $5.00')
             page.get_by_label('Chart x-axis').select_option('latency')
             expect(page.locator('.cap-line')).to_have_count(1)
-            expect(page.locator('.cap-label')).to_have_text('Cap 10')
+            expect(page.locator('.cap-label')).to_have_text('Cap 10.00 s')
             assert page.locator('.cap-line').get_attribute('x1') != price_line
             expect(page.locator('.mark.modelled')).to_have_count(1)
             page.get_by_label('Scoring').select_option('decimal')
@@ -123,13 +123,16 @@ def test_board_controls_and_responsive_layout(dl, tmp_path, scheme):
             for axis, label in [('price', 'Cost cap'), ('latency', 'Latency cap')]:
                 page.get_by_label('Chart x-axis').select_option(axis)
                 page.get_by_label(label).fill('0')
-                expect(page.locator('.cap-label')).to_have_text('Cap 0')
+                expect(page.locator('.cap-label')).to_have_text('Cap ' + ('$0.0000' if axis == 'price' else '0 ms'))
                 assert page.locator('.cap-line').get_attribute('x1') == '40'
                 assert page.locator('.shade').get_attribute('width') == '500'
                 page.get_by_role('button', name='Use official caps').click()
-                for invalid in ['-1', '', '1e999']:
+                page.get_by_label(label).fill('')
+                expect(page.get_by_role('status')).to_have_count(0)
+                expect(page.get_by_role('button', name='Use official caps')).to_be_disabled()
+                for invalid in ['-1', '1e999']:
                     page.get_by_label(label).fill(invalid)
-                    expect(page.locator('.cap-label')).to_have_text('Cap ' + ('5' if axis == 'price' else '10'))
+                    expect(page.locator('.cap-label')).to_have_text('Cap ' + ('$5.00' if axis == 'price' else '10.00 s'))
                     expect(page.get_by_role('status')).to_contain_text('official cap is used')
                     assert 'NaN' not in page.locator('.cap-line').get_attribute('x1')
                     assert 'NaN' not in page.locator('.shade').get_attribute('width')
@@ -141,6 +144,42 @@ def test_board_controls_and_responsive_layout(dl, tmp_path, scheme):
             assert page.evaluate('document.documentElement.scrollWidth <= innerWidth')
             assert page.locator('tbody b').count() == 0
             assert_no_external_resources(page, blocked)
+        context.close(); browser.close()
+
+
+def test_exact_official_caps_and_tab_state(dl, tmp_path):
+    from helpers import feed, system, snapshot
+    data = feed(systems=[system(name='Synthetic boundary', capability={'score': 8.123, 'eligible': True, 'within_caps': True}, price={'usd_per_1000_decisions': 0.00008}, latency={'p50_s_adjusted': 1}, axes={'intelligence': 34.567, 'calibration': 45.678})])
+    data['capability_policy'] = {'cost_cap_usd_per_1000': 0.00007345678912345678, 'median_latency_cap_s': 2}
+    payload = dl.build_payload(snapshot(data), None, {'max_age_hours': 24}); payload['built_at'] = '2026-01-02T03:04:05Z'
+    path = tmp_path / 'caps.html'; path.write_bytes(dl.render_page(payload))
+    with sync_playwright() as playwright:
+        browser = playwright.chromium.launch(); context = browser.new_context(service_workers='block'); context.set_offline(True); block_external_requests(context)
+        page = context.new_page()
+        with guard_browser_errors(page):
+            page.goto(path.as_uri())
+            expect(page.locator('.status')).to_contain_text('$0.0001')
+            expect(page.locator('tbody tr')).to_have_count(0)
+            page.get_by_label('Show systems outside the caps').check()
+            expect(page.locator('tbody tr.outside')).to_have_count(1)
+            expect(page.locator('tbody tr td').nth(2)).to_have_text('34.6')
+            expect(page.locator('tbody tr td').nth(3)).to_have_text('45.7')
+            expect(page.get_by_role('tab', name='Board')).to_have_attribute('aria-selected', 'true')
+            expect(page.get_by_role('tab', name='Compare')).to_have_attribute('aria-selected', 'false')
+            expect(page.get_by_role('tab', name='Not ranked')).to_have_attribute('aria-selected', 'false')
+            expect(page.get_by_label('Cost cap')).to_have_value('')
+            page.get_by_label('Cost cap').fill('0.0001')
+            expect(page.get_by_text('Custom caps')).to_be_visible()
+            expect(page.locator('tbody tr.outside')).to_have_count(0)
+            page.get_by_role('button', name='Use official caps').click()
+            expect(page.get_by_text('Custom caps')).to_have_count(0)
+            expect(page.locator('tbody tr.outside')).to_have_count(1)
+            expect(page.locator('footer')).to_contain_text('2026-01-02 03:04 UTC')
+            page.goto(path.as_uri() + '#' + quote('{"cost":0.00007345678912345678,"latency":2}'))
+            page.reload()
+            expect(page.get_by_label('Cost cap')).to_have_value('')
+            expect(page.get_by_label('Latency cap')).to_have_value('')
+            expect(page.get_by_role('button', name='Use official caps')).to_be_disabled()
         context.close(); browser.close()
 
 
@@ -161,8 +200,8 @@ def test_invalid_state_and_blocked_storage(dl, tmp_path):
             expect(page.get_by_label('Scoring')).to_have_value('whole')
             expect(page.get_by_label('Chart x-axis')).to_have_value('price')
             expect(page.get_by_label('Filter')).to_have_value('')
-            expect(page.get_by_label('Cost cap')).to_have_value('5')
-            expect(page.get_by_label('Latency cap')).to_have_value('10')
+            expect(page.get_by_label('Cost cap')).to_have_value('')
+            expect(page.get_by_label('Latency cap')).to_have_value('')
             expect(page.get_by_label('Show systems outside the caps')).not_to_be_checked()
             page.get_by_label('Board').select_option('open')
             expect(page.get_by_label('Board')).to_have_value('open')
@@ -194,7 +233,7 @@ def test_offline_status_and_untrusted_text(dl, tmp_path, scheme):
             expect(page.locator(".status")).to_contain_text("Synthetic method")
             expect(page.locator(".status")).to_contain_text("1 measured")
             expect(page.locator(".status")).to_contain_text("synthetic </script><img src=x>")
-            expect(page.locator(".status")).to_contain_text("$5 / 1,000 decisions; 10s")
+            expect(page.locator(".status")).to_contain_text("$5.00 / 1,000 decisions; 10.00 s")
             expect(page.locator(".status")).to_contain_text("1 ranked")
             expect(page.locator(".status")).to_contain_text("decision_ladder refresh")
             expect(page.get_by_role("link", name="JevBench by Benchmark Heaven")).to_have_attribute("href", "https://benchmarkheaven.com/")
@@ -231,7 +270,7 @@ def test_compare_not_ranked_and_changes_offline(dl, tmp_path):
             expect(page.locator('.changes')).not_to_contain_text('Synthetic system 0')
             page.get_by_label('Scoring').select_option('decimal')
             expect(page.locator('.changes')).to_contain_text('Synthetic system 0')
-            page.get_by_role('button', name='Compare', exact=True).click()
+            page.get_by_role('tab', name='Compare', exact=True).click()
             page.get_by_label('Search systems').fill('system 0')
             expect(page.locator('.picker label')).to_have_count(1)
             page.get_by_label('Synthetic system 0', exact=True).check()
@@ -258,7 +297,7 @@ def test_compare_not_ranked_and_changes_offline(dl, tmp_path):
             page.reload()
             expect(page.get_by_label('Synthetic system 0', exact=True)).to_be_checked()
             expect(page.get_by_label('Synthetic system 8', exact=True)).to_be_disabled()
-            page.get_by_role('button', name='Not ranked', exact=True).click()
+            page.get_by_role('tab', name='Not ranked', exact=True).click()
             expect(page.locator('.not-ranked')).to_contain_text('Synthetic listing')
             expect(page.locator('.not-ranked')).to_contain_text('Synthetic full reason')
             assert_no_external_resources(page, blocked)
