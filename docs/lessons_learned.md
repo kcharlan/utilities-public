@@ -2493,3 +2493,9 @@ When eligibility depends on a later report-wide probe, carry that eligibility fr
 ### Storage Monitor system-root contracts and index scale
 
 Synthetic root replacement concealed an unsupported macOS `confstr` key, silently dropping the per-user temporary and cache roots. Keep report and action tests synthetic, but separately check the read-only system lookup against `getconf` without enumerating the real directory. Small synthetic indexes also concealed repeated full-table protection queries and quadratic candidate deduplication; retain a representative large-index timing regression alongside correctness checks.
+
+## 2026-11-12: Guard every browser storage consumer
+
+A guarded Findings preference could not prevent a blocked-storage error from the
+separate theme initializer. Guard each storage read and write, preserve an OS
+preference fallback, and test the dashboard with storage methods throwing.

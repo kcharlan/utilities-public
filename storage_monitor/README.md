@@ -108,6 +108,7 @@ UV_PYTHON_DOWNLOADS=never ./storage_monitor --no-browser --port 8500
 - The summary compares indexed Data-volume usage with APFS-reported usage.
 - Files with an apparent size of at least 1 GiB are listed in a dedicated tab; `/private/var/vm` is excluded.
 - Completed scans can be compared in the Growth tab after at least two scans.
+- Findings can be filtered by category: Developer, Caches, Temp, Agent leftovers, Installers, Models, User data, and Trash. The last chosen category is stored in browser local storage.
 - The dashboard follows the OS light/dark preference until manually overridden; the override is stored in browser local storage.
 
 Full-scan time depends on directory count, storage performance, permissions, and concurrent disk activity.

@@ -196,7 +196,7 @@ def initialize_scan_db(paths: RuntimePaths) -> None:
         connection.commit()
 
 RUNTIME_PATHS = build_runtime_paths()
-VERSION = "0.5.1"
+VERSION = "0.6.0"
 DATA_VOLUME = Path("/System/Volumes/Data")
 HOME_DIR = Path.home()
 APPLICATIONS_DIR = Path("/Applications")
@@ -4133,12 +4133,15 @@ HTML_TEMPLATE = """<!DOCTYPE html>
   <script>
     // Theme initialization runs before the dashboard renders.
     (function() {
-      var stored = localStorage.getItem('sm-theme');
+      var stored = null;
+      try { stored = localStorage.getItem('sm-theme'); } catch (_) {}
       var prefersDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
       var theme = stored || (prefersDark ? 'dark' : 'light');
       document.documentElement.setAttribute('data-theme', theme);
       window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', function(e) {
-        if (!localStorage.getItem('sm-theme')) {
+        var saved = null;
+        try { saved = localStorage.getItem('sm-theme'); } catch (_) {}
+        if (!saved) {
           document.documentElement.setAttribute('data-theme', e.matches ? 'dark' : 'light');
         }
       });
@@ -4241,7 +4244,7 @@ const html = htm.bind(preact.h);
       const current = document.documentElement.getAttribute('data-theme');
       const next = current === 'dark' ? 'light' : 'dark';
       document.documentElement.setAttribute('data-theme', next);
-      localStorage.setItem('sm-theme', next);
+      try { localStorage.setItem('sm-theme', next); } catch (_) {}
     }
 
     const dedupeBy = (items, keyFn) => {
@@ -4732,8 +4735,27 @@ const html = htm.bind(preact.h);
       );
     }
 
-    function FindingsTab({ findings, busyToken, onExecute, onReveal, isScanning }) {
+    const FINDING_GROUPS = [
+      ['Developer', ['dev_artifact', 'python_bytecode']],
+      ['Caches', ['cache', 'cache_bucket', 'app_cache', 'discovered_cache']],
+      ['Temp', ['temp']],
+      ['Agent leftovers', ['agent_residue']],
+      ['Installers', ['stale_installer', 'runtime_payload']],
+      ['Models', ['model_cache', 'model_store']],
+      ['User data', []],
+      ['Trash', ['trash']],
+    ];
+    const findingGroup = category => FINDING_GROUPS.find(([, categories]) => categories.includes(category))?.[0] || 'User data';
+    const reclaimableBytes = item => item.actionable && ['low', 'medium'].includes(item.risk) ? (item.estimated_reclaim_bytes || 0) : 0;
+
+    function FindingsTab({ findings, busyToken, onExecute, onReveal, isScanning, orphansCount, onOpenOrphans }) {
       const [riskFilter, setRiskFilter] = useState('all');
+      const [selectedGroup, setSelectedGroup] = useState(() => {
+        try {
+          const saved = localStorage.getItem('sm-findings-group');
+          return FINDING_GROUPS.some(([name]) => name === saved) ? saved : 'All';
+        } catch (_) { return 'All'; }
+      });
       const [staleOnly, setStaleOnly] = useState(false);
       const [expanded, setExpanded] = useState({});
       const [sortCol, setSortCol] = useState('size');
@@ -4764,17 +4786,11 @@ const html = htm.bind(preact.h);
         return sorted;
       }, [findings, riskFilter, staleOnly, sortCol, sortAsc]);
 
-      const classOf = category => {
-        if (['cache', 'cache_bucket', 'app_cache', 'model_cache', 'discovered_cache'].includes(category)) return 'Caches';
-        if (['dev_artifact', 'python_bytecode'].includes(category)) return 'Developer';
-        if (category === 'temp') return 'Temp';
-        if (category === 'agent_residue') return 'Agent leftovers';
-        if (category === 'trash') return 'Trash';
-        return 'Review-only user data';
-      };
-      const groups = ['Caches', 'Developer', 'Temp', 'Agent leftovers', 'Trash', 'Review-only user data'];
       const allItems = findings?.items || [];
-      const trashable = allItems.reduce((n, item) => n + (item.actionable && ['low', 'medium'].includes(item.risk) ? (item.estimated_reclaim_bytes || 0) : 0), 0);
+      const available = new Set([...allItems.map(item => findingGroup(item.category)), ...Object.keys(findings?.truncated || {}).map(findingGroup)]);
+      const visibleGroup = available.has(selectedGroup) ? selectedGroup : 'All';
+      const visibleItems = visibleGroup === 'All' ? items : items.filter(item => findingGroup(item.category) === visibleGroup);
+      const trashable = allItems.reduce((n, item) => n + reclaimableBytes(item), 0);
       const inTrash = allItems.reduce((n, item) => n + (item.category === 'trash' ? (item.allocated_bytes || 0) : 0), 0);
       const review = allItems.reduce((n, item) => n + (item.category !== 'trash' && !(item.actionable && ['low', 'medium'].includes(item.risk)) ? (item.allocated_bytes || 0) : 0), 0);
 
@@ -4791,17 +4807,22 @@ const html = htm.bind(preact.h);
       }, [findings]);
 
       return (
-        html`<div style=${{ fontSize: 13 }}><div style=${{ display: 'flex', gap: 20, padding: '8px 12px' }}><span>Trashable now: ${formatBytes(trashable)}</span><span>In Trash: ${formatBytes(inTrash)}</span><span>Review: ${formatBytes(review)}</span></div><div style=${{ display: 'flex', alignItems: 'center', gap: 6, padding: '8px 12px', borderBottom: '1px solid var(--border)' }}><span style=${{ fontSize: 11, color: 'var(--text-secondary)' }}>Filter:</span>${['all', 'low', 'medium', 'high'].map(r => (
+        html`<div style=${{ fontSize: 13 }}><div style=${{ display: 'flex', gap: 20, padding: '8px 12px' }}><span>Trashable now: ${formatBytes(trashable)}</span><span>In Trash: ${formatBytes(inTrash)}</span><span>Review: ${formatBytes(review)}</span></div><div style=${{ display: 'flex', flexWrap: 'wrap', gap: 6, padding: '8px 12px' }}>${['All', ...FINDING_GROUPS.map(([name]) => name).filter(name => available.has(name))].map(name => {
+              const groupItems = items.filter(item => findingGroup(item.category) === name);
+              const bytes = groupItems.reduce((sum, item) => sum + reclaimableBytes(item), 0);
+              return html`<button key=${name} aria-pressed=${visibleGroup === name} onClick=${() => { setSelectedGroup(name); try { localStorage.setItem('sm-findings-group', name); } catch (_) {} }} style=${{ padding: '2px 8px', borderRadius: 4, fontSize: 11, cursor: 'pointer', border: 'none', background: visibleGroup === name ? 'var(--accent)' : 'var(--surface-hover)', color: visibleGroup === name ? '#fff' : 'var(--text-secondary)' }}>${name}${name === 'All' ? '' : ` ${groupItems.length}${bytes ? ` · ${formatBytes(bytes)}` : ''}`}</button>`;
+            })}${orphansCount > 0 ? html`<button onClick=${onOpenOrphans} style=${{ padding: '2px 8px', borderRadius: 4, fontSize: 11, cursor: 'pointer', border: '1px solid var(--accent)', background: 'transparent', color: 'var(--text-primary)' }}>App leftovers → ${orphansCount}</button>` : null}</div><div style=${{ display: 'flex', alignItems: 'center', gap: 6, padding: '8px 12px', borderBottom: '1px solid var(--border)' }}><span style=${{ fontSize: 11, color: 'var(--text-secondary)' }}>Filter:</span>${['all', 'low', 'medium', 'high'].map(r => (
               html`<button key=${r} onClick=${() => setRiskFilter(r)} style=${{
                 padding: '2px 8px', borderRadius: 4, fontSize: 11, cursor: 'pointer', border: 'none',
                 background: riskFilter === r ? 'var(--accent)' : 'var(--surface-hover)',
                 color: riskFilter === r ? '#fff' : 'var(--text-secondary)',
               }}>${r}</button>`
-            ))}<label><input type=${"checkbox"} checked=${staleOnly} onChange=${e => setStaleOnly(e.target.checked)} /> Stale only</label><div style=${{ flex: 1 }} /><span style=${{ fontSize: 11, color: 'var(--text-secondary)' }}>${items.length} items${findings?.updated_at && ` · ${formatRelativeTime(findings.updated_at)}`}</span></div><div style=${{ display: 'grid', gridTemplateColumns: '2fr 80px 55px 60px 75px 100px', gap: 4, padding: '6px 12px', borderBottom: '1px solid var(--border)', fontSize: 11, textTransform: 'uppercase', color: 'var(--text-secondary)' }}><button onClick=${() => handleSort('name')}>Finding</button><span>Category</span><button onClick=${() => handleSort('risk')} title=${"Low = safe to delete (caches). Medium = review first. High = manual review."}>Risk ⓘ</button><button onClick=${() => handleSort('age')}>Age</button><button onClick=${() => handleSort('size')}>Size</button><span style=${{ textAlign: 'right' }}>Actions</span></div><div style=${{ maxHeight: 400, overflowY: 'auto' }}>${isScanning && items.length === 0 && (
+            ))}<label><input type=${"checkbox"} checked=${staleOnly} onChange=${e => setStaleOnly(e.target.checked)} /> Stale only</label><div style=${{ flex: 1 }} /><span style=${{ fontSize: 11, color: 'var(--text-secondary)' }}>${visibleItems.length} items${findings?.updated_at && ` · ${formatRelativeTime(findings.updated_at)}`}</span></div><div style=${{ display: 'grid', gridTemplateColumns: '2fr 80px 55px 60px 75px 100px', gap: 4, padding: '6px 12px', borderBottom: '1px solid var(--border)', fontSize: 11, textTransform: 'uppercase', color: 'var(--text-secondary)' }}><button onClick=${() => handleSort('name')}>Finding</button><span>Category</span><button onClick=${() => handleSort('risk')} title=${"Low = safe to delete (caches). Medium = review first. High = manual review."}>Risk ⓘ</button><button onClick=${() => handleSort('age')}>Age</button><button onClick=${() => handleSort('size')}>Size</button><span style=${{ textAlign: 'right' }}>Actions</span></div><div style=${{ maxHeight: 400, overflowY: 'auto' }}>${isScanning && items.length === 0 && (
               html`<div style=${{ padding: 12 }}><div class=${"shimmer"} style=${{ height: 14, marginBottom: 8 }} /><div class=${"shimmer"} style=${{ height: 14, marginBottom: 8 }} /><div class=${"shimmer"} style=${{ height: 14 }} /></div>`
-            )}${groups.map(group => {
-              const rows = items.filter(item => classOf(item.category) === group);
-              const omitted = Object.entries(findings?.truncated || {}).filter(([category]) => classOf(category) === group);
+            )}${visibleGroup !== 'All' && visibleItems.length === 0 ? html`<div style=${{ padding: '6px 12px' }}>Nothing left in ${visibleGroup} with these filters.</div>` : null}${FINDING_GROUPS.map(([group]) => {
+              if (visibleGroup !== 'All' && visibleGroup !== group) return null;
+              const rows = visibleItems.filter(item => findingGroup(item.category) === group);
+              const omitted = Object.entries(findings?.truncated || {}).filter(([category]) => findingGroup(category) === group);
               if (!rows.length && !omitted.length) return null;
               return html`<section key=${group}><strong style=${{ display: 'block', padding: '6px 12px' }}>${group} · ${formatBytes(rows.reduce((n, item) => n + (item.allocated_bytes || 0), 0))}</strong>${rows.map((item) => {
               const risk = RISK_STYLES[item.risk] || {};
@@ -4981,7 +5002,7 @@ const html = htm.bind(preact.h);
             ].map(t => (
               html`<button key=${t.key} class=${`tab ${activeTab === t.key ? 'active' : ''}`} onClick=${() => setActiveTab(t.key)} style=${{ background: 'none', border: 'none', borderBottom: undefined }}>${t.label}<span style=${{ marginLeft: 4, padding: '1px 6px', borderRadius: 8, fontSize: 11, background: activeTab === t.key ? 'var(--accent)' : 'var(--surface-hover)', color: activeTab === t.key ? '#fff' : 'var(--text-secondary)' }}>${t.count}</span></button>`
             ))}</div>${activeTab === 'findings' && (
-            html`<${FindingsTab} findings=${findings} busyToken=${busyToken} onExecute=${onExecute} onReveal=${onReveal} isScanning=${isScanning} />`
+            html`<${FindingsTab} findings=${findings} busyToken=${busyToken} onExecute=${onExecute} onReveal=${onReveal} isScanning=${isScanning} orphansCount=${orphansCount} onOpenOrphans=${() => setActiveTab('orphans')} />`
           )}${activeTab === 'snapshots' && (
             html`<${SnapshotsTab} snapshots=${snapshots} busyToken=${busyToken} onExecute=${onExecute} isScanning=${isScanning} />`
           )}${activeTab === 'large_files' && (
