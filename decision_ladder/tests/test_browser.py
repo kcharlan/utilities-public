@@ -6,6 +6,52 @@ from playwright.sync_api import expect, sync_playwright
 from tools.testkit import assert_fonts_loaded, assert_no_external_resources, block_external_requests, guard_browser_errors
 
 
+@pytest.mark.parametrize('scheme', ['light', 'dark'])
+def test_large_board_navigation_and_chart(dl, tmp_path, scheme):
+    from helpers import feed, many_systems, snapshot
+    payload = dl.build_payload(snapshot(feed(systems=many_systems(300))), None, {'max_age_hours': 24})
+    path = tmp_path / 'many.html'; path.write_bytes(dl.render_page(payload))
+    with sync_playwright() as playwright:
+        browser = playwright.chromium.launch(); context = browser.new_context(viewport={'width': 1280, 'height': 900}, color_scheme=scheme, service_workers='block')
+        context.set_offline(True); blocked = block_external_requests(context); page = context.new_page()
+        with guard_browser_errors(page):
+            page.goto(path.as_uri())
+            assert 25 <= page.locator('tr.system-row').count() <= 60
+            assert page.evaluate('document.documentElement.scrollHeight') < 6000
+            assert page.locator('.chart').bounding_box()['width'] >= 800
+            row = page.locator('tr.system-row').first
+            row.hover(); expect(page.locator('.mark.highlight')).to_have_count(1)
+            row.focus(); expect(page.locator('.mark.highlight')).to_have_count(1)
+            page.locator('.mark.highlight').click(force=True)
+            expect(page.get_by_label('Filter')).to_have_value(row.locator('.name').get_attribute('title'))
+            page.get_by_label('Filter').fill('')
+            page.get_by_role('button', name='Collapse all').click()
+            expect(page.locator('tr.system-row')).to_have_count(0)
+            expect(page.locator('tr.tier-heading button').first).to_have_attribute('aria-expanded', 'false')
+            page.locator('tr.tier-heading button').first.click()
+            expect(page.locator('tr.tier-heading button').first).to_have_attribute('aria-expanded', 'true')
+            page.get_by_role('button', name='Expand all').click()
+            expect(page.locator('tr.system-row')).to_have_count(300)
+            page.locator('.board-table').evaluate('(el) => { el.scrollTop = 400; }')
+            assert page.locator('.board-table').evaluate('(el) => Math.abs(el.querySelector("thead th").getBoundingClientRect().top - el.getBoundingClientRect().top) < 2')
+            page.get_by_role('columnheader', name='Price / 1,000').press('Space')
+            expect(page.get_by_role('columnheader', name='Price / 1,000')).to_have_attribute('aria-sort', 'ascending')
+            assert page.get_by_role('columnheader', name='Price / 1,000').evaluate('(el) => { const e = new KeyboardEvent("keydown", {key:" ", bubbles:true, cancelable:true}); el.dispatchEvent(e); return e.defaultPrevented; }')
+            expect(page.locator('tr.tier-heading')).to_have_count(0)
+            page.get_by_label('Filter').fill('no synthetic match')
+            expect(page.get_by_text('No system matches “no synthetic match”.')).to_be_visible()
+            expect(page.locator('.mark.dim')).to_have_count(300)
+            page.get_by_role('button', name='Clear filter').click()
+            expect(page.locator('tr.system-row')).to_have_count(300)
+            page.get_by_label('Frontier only').check()
+            assert 0 < page.locator('tr.system-row').count() < 300
+            page.set_viewport_size({'width': 375, 'height': 844})
+            expect(page.locator('.chart')).to_have_attribute('viewBox', '0 0 480 360')
+            assert page.locator('.chart text').evaluate_all('(xs) => Math.min(...xs.map(x => x.getBoundingClientRect().height))') >= 10
+            assert_no_external_resources(page, blocked)
+        context.close(); browser.close()
+
+
 @pytest.mark.parametrize('scores,decimal_expected', [
     ([8.0, 8.0, 8.0], 'price: 2 → 3.001'),
     ([7.9, 8.1, 8.2], 'capability: 8.1 → 8.2'),
@@ -46,16 +92,16 @@ def test_reference_and_unknown_boards_are_truthful(dl, tmp_path):
         blocked = block_external_requests(context); page = context.new_page()
         with guard_browser_errors(page):
             page.goto(path.as_uri())
-            expect(page.locator('tbody tr')).to_have_count(4)
-            expect(page.locator('tbody tr').filter(has_text='Synthetic reference')).to_contain_text('Reference')
-            expect(page.locator('tbody tr').filter(has_text='Synthetic synthetic-unknown')).to_contain_text('synthetic-unknown')
+            expect(page.locator('tbody tr.system-row')).to_have_count(4)
+            expect(page.locator('tbody tr.system-row').filter(has_text='Synthetic reference')).to_contain_text('Reference')
+            expect(page.locator('tbody tr.system-row').filter(has_text='Synthetic synthetic-unknown')).to_contain_text('synthetic-unknown')
             expect(page.locator('circle.mark')).to_have_count(1)
             expect(page.locator('rect.mark')).to_have_count(1)
             expect(page.locator('polygon.mark')).to_have_count(2)
             expect(page.locator('.legend')).to_contain_text('Reference and other boards')
             page.get_by_label('Board').select_option('api')
-            expect(page.locator('tbody tr')).to_have_count(1)
-            expect(page.locator('tbody tr')).to_contain_text('Synthetic api')
+            expect(page.locator('tbody tr.system-row')).to_have_count(1)
+            expect(page.locator('tbody tr.system-row')).to_contain_text('Synthetic api')
             assert_no_external_resources(page, blocked)
         context.close(); browser.close()
 
@@ -79,31 +125,36 @@ def test_board_controls_and_responsive_layout(dl, tmp_path, scheme):
         context.set_offline(True); blocked = block_external_requests(context); page = context.new_page()
         with guard_browser_errors(page):
             page.goto(path.as_uri())
-            expect(page.locator('tbody tr')).to_have_count(3)
+            expect(page.locator('tbody tr.system-row')).to_have_count(3)
+            expect(page.locator('tbody tr.tier-heading')).to_have_count(1)
+            page.set_viewport_size({'width': 1280, 'height': 900})
+            assert page.locator('tr.system-row').first.bounding_box()['height'] <= 56
+            page.set_viewport_size({'width': 390, 'height': 844})
             expect(page.locator('tbody tr.tier-1')).to_have_count(3)
             names = page.locator('tbody .name')
             assert names.all_text_contents()[0].startswith('Synthetic ' + 'x' * 150)
             assert names.all_text_contents()[1].startswith('Synthetic b')
             assert names.all_text_contents()[2].startswith('Synthetic c')
             page.get_by_label('Cost cap').fill('1.5')
-            expect(page.locator('tbody tr')).to_have_count(1)
+            expect(page.locator('tbody tr.system-row')).to_have_count(1)
             expect(page.locator('.mark.frontier')).to_have_count(1)
             page.get_by_label('Show systems outside the caps').check()
             expect(page.locator('tbody tr.outside')).to_have_count(2)
             page.get_by_label('Show systems outside the caps').uncheck()
             page.get_by_role('button', name='Use official caps').click()
-            expect(page.locator('tbody tr')).to_have_count(3)
+            expect(page.locator('tbody tr.system-row')).to_have_count(3)
             page.get_by_label('Board').select_option('open')
-            expect(page.locator('tbody tr')).to_have_count(1)
+            expect(page.locator('tbody tr.system-row')).to_have_count(1)
             page.reload(); expect(page.get_by_label('Board')).to_have_value('open')
             page.get_by_label('Board').select_option('all')
-            price_line = page.locator('.cap-line').get_attribute('x1')
+            expect(page.locator('.mark')).to_have_count(3)
+            price_mark = page.locator('rect.mark').first.get_attribute('x')
             expect(page.locator('.cap-label')).to_have_text('Cap $5.00')
             page.get_by_label('Chart x-axis').select_option('latency')
             expect(page.locator('.cap-line')).to_have_count(1)
             expect(page.locator('.cap-label')).to_have_text('Cap 10.00 s')
-            assert page.locator('.cap-line').get_attribute('x1') != price_line
-            expect(page.locator('.mark.modelled')).to_have_count(1)
+            assert page.locator('rect.mark').first.get_attribute('x') != price_mark
+            expect(page.locator('.mark.published')).to_have_count(2)
             page.get_by_label('Scoring').select_option('decimal')
             expect(page.locator('tbody tr.tier-1')).to_have_count(1)
             copied = page.url
@@ -113,11 +164,11 @@ def test_board_controls_and_responsive_layout(dl, tmp_path, scheme):
             expect(other.get_by_label('Scoring')).to_have_value('decimal')
             other_context.close()
             page.get_by_label('Filter').fill('synthetic b')
-            expect(page.locator('tbody tr')).to_have_count(1)
+            expect(page.locator('tbody tr.system-row')).to_have_count(1)
             page.get_by_label('Filter').fill('')
             page.get_by_label('Scoring').select_option('whole')
-            page.get_by_text('Price / 1,000', exact=True).click()
-            page.get_by_text('Price / 1,000', exact=True).click()
+            page.get_by_role('columnheader', name='Price / 1,000').click()
+            page.get_by_role('columnheader', name='Price / 1,000').click()
             assert page.locator('tbody .name').all_text_contents()[0].startswith('Synthetic c')
             page.get_by_role('button', name='Tier order').click()
             assert page.locator('tbody .name').all_text_contents()[0].startswith('Synthetic ' + 'x' * 150)
@@ -126,7 +177,7 @@ def test_board_controls_and_responsive_layout(dl, tmp_path, scheme):
                 page.get_by_label(label).fill('0')
                 expect(page.locator('.cap-label')).to_have_text('Cap ' + ('$0.0000' if axis == 'price' else '0 ms'))
                 assert page.locator('.cap-line').get_attribute('x1') == '40'
-                assert page.locator('.shade').get_attribute('width') == '500'
+                assert page.locator('.shade').get_attribute('width') == '420'
                 page.get_by_role('button', name='Use official caps').click()
                 page.get_by_label(label).fill('')
                 expect(page.get_by_role('status')).to_have_count(0)
@@ -163,8 +214,8 @@ def test_exact_official_caps_and_tab_state(dl, tmp_path):
             expect(page.locator('tbody tr')).to_have_count(0)
             page.get_by_label('Show systems outside the caps').check()
             expect(page.locator('tbody tr.outside')).to_have_count(1)
-            expect(page.locator('tbody tr td').nth(2)).to_have_text('34.6')
-            expect(page.locator('tbody tr td').nth(3)).to_have_text('45.7')
+            expect(page.locator('tbody tr.system-row td').nth(2)).to_have_text('34.6')
+            expect(page.locator('tbody tr.system-row td').nth(3)).to_have_text('45.7')
             expect(page.get_by_role('tab', name='Board')).to_have_attribute('aria-selected', 'true')
             expect(page.get_by_role('tab', name='Compare')).to_have_attribute('aria-selected', 'false')
             expect(page.get_by_role('tab', name='Not ranked')).to_have_attribute('aria-selected', 'false')
@@ -205,7 +256,7 @@ def test_subsecond_placeholder_and_sequential_cap_entry(dl, tmp_path, check):
                     expect(field).to_have_value('0.125')
                     expect(page.locator('tbody tr')).to_have_count(0)
                     page.get_by_role('button', name='Use official caps').click()
-                    expect(page.locator('tbody tr')).to_have_count(1)
+                    expect(page.locator('tbody tr.system-row')).to_have_count(1)
         context.close(); browser.close()
 
 

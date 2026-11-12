@@ -53,8 +53,8 @@ mode changes, the comparison uses the newest visible difference in that mode.
 Reference and other boards appear in All with diamond chart markers; their board
 labels retain their identity. When the scoring method changes, earlier and later
 scores are not comparable. Price estimates
-are marked `est.` and assumed latency is marked `assumed`; dashed chart markers
-indicate modelled values.
+are marked `est.` and assumed latency is marked `assumed`; dark chart outlines
+indicate published prices or end-to-end measured latency.
 
 ## Deploy
 

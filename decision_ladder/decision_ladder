@@ -348,8 +348,10 @@ a { color:var(--accent) } footer { margin-top:40px; color:var(--muted); border-t
 .panel { background:var(--panel); border:1px solid var(--line); border-radius:10px; margin-top:18px; padding:16px; min-width:0 }
 .controls { display:flex; flex-wrap:wrap; gap:12px; align-items:end } label { display:flex; flex-direction:column; gap:3px; color:var(--muted) }
 input, select, button { font:inherit; color:var(--ink); background:var(--panel); border:1px solid var(--line); border-radius:5px; padding:6px; max-width:100% } button { cursor:pointer }
-.inline { flex-direction:row; align-items:center } .table-wrap { overflow-x:auto; max-width:100% } table { border-collapse:collapse; width:100%; min-width:900px } th,td { border-bottom:1px solid var(--line); padding:8px; text-align:left; vertical-align:top } th { cursor:pointer } tbody tr:nth-child(even) { background:var(--bg) } tbody tr.outside { opacity:.55 } .tier-band { border-left:4px solid var(--accent) } .raw,.detail { color:var(--muted); font-size:.85em } .detail { display:block; overflow-wrap:anywhere } .pill { background:var(--front-bg); color:var(--front); border-radius:999px; padding:2px 6px; overflow-wrap:anywhere } .name { overflow-wrap:anywhere; max-width:240px } .chart { width:100%; height:auto; max-height:400px } .chart text { fill:var(--muted); font-size:11px } .chart .grid { stroke:var(--line) } .chart .cap-line { stroke:var(--warn); stroke-width:2 } .chart .shade { fill:var(--warn); opacity:.08 } .chart .edge { fill:none; stroke:var(--front); stroke-width:2 } .chart .mark { stroke:var(--accent); stroke-width:2; fill:var(--panel) } .chart .mark.frontier { fill:var(--accent) } .chart .mark.modelled { stroke-dasharray:3 2 } .legend { color:var(--muted); overflow-wrap:anywhere }
-.tier-even .tier-band { border-color:var(--s2) }
+.inline { flex-direction:row; align-items:center } .table-wrap { overflow-x:auto; max-width:100% } table { border-collapse:collapse; width:100%; min-width:900px } th,td { border-bottom:1px solid var(--line); padding:8px; text-align:left; vertical-align:top } th { cursor:pointer } tbody tr.outside { opacity:.55 } .raw,.detail { color:var(--muted); font-size:.85em } .detail { display:block; overflow-wrap:anywhere } .pill { background:var(--front-bg); color:var(--front); border-radius:999px; padding:2px 6px; overflow-wrap:anywhere } .name { overflow-wrap:anywhere; max-width:240px } .chart { width:100%; height:auto } .chart text { fill:var(--muted) } .chart .grid { stroke:var(--line) } .chart .cap-line { stroke:var(--warn); stroke-width:2 } .chart .shade { fill:var(--warn); opacity:.08 } .chart .edge { fill:none; stroke:var(--front); stroke-width:2 } .chart .mark { fill:var(--panel) } .chart .mark.frontier { fill:var(--accent) } .legend { color:var(--muted); overflow-wrap:anywhere }
+.board-table { max-height:65vh; overflow:auto } .board-table thead th { position:sticky; top:0; z-index:2; background:var(--panel) }
+.board-table td { padding:5px 8px } .board-table .name { width:240px; max-width:240px } .board-table .name .detail { overflow:hidden; text-overflow:ellipsis; white-space:nowrap } .board-table .name-line { display:flex; gap:5px; align-items:center; white-space:nowrap; overflow:hidden } .board-table .short { overflow:hidden; text-overflow:ellipsis; font-weight:600 } .board-tag { color:var(--muted); border:1px solid var(--line); border-radius:4px; padding:0 4px; font-size:.8em; flex:none } .tier-heading td { background:var(--bg); padding:0 } .tier-heading button { width:100%; text-align:left; border:0; background:none; font-weight:600 } .dominated { color:var(--muted) }
+.chart { max-height:none } .chart text { font-size:inherit } .chart .mark { stroke:var(--accent); stroke-width:1; opacity:.7; cursor:pointer } .chart .mark.published { stroke:var(--ink); stroke-width:2 } .chart .mark.dim { opacity:.15 } .chart .mark.highlight { opacity:1; stroke-width:3 }
 .selection { display:flex; flex-wrap:wrap; align-items:center; gap:8px; margin:12px 0 }
 .chip { border:1px solid var(--ink); border-radius:999px; display:inline-flex; gap:7px; align-items:center; padding:3px 4px 3px 11px; overflow-wrap:anywhere }
 .chip small { color:var(--muted) } .chip button { border:0; background:none; padding:0 6px }
@@ -379,6 +381,20 @@ function tiers(rows) {
   let tier = 0, previous, size = 0;
   list.forEach((r,i) => { if (i === 0 || r.score !== previous) { tier++; previous=r.score; size=list.filter(x => x.score === r.score).length; } list[i]={...r,tier,tierSize:size}; });
   return list;
+}
+function defaultExpanded(rows, limit=25) {
+  const expanded=[]; let count=0;
+  for (const row of rows) { if (count>=limit) break; if (!expanded.includes(row.tier)) expanded.push(row.tier); count++; }
+  return expanded;
+}
+function tierGroups(rows) {
+  const groups=[]; for (const r of rows) { let group=groups.find(g=>g.tier===r.tier); if (!group) { group={tier:r.tier,score:r.score,rows:[]}; groups.push(group); } group.rows.push(r); }
+  return groups;
+}
+function visibleTierRows(groups, opened, filtering) { return groups.flatMap(g=>[{heading:true,...g},...((filtering || opened.includes(g.tier))?g.rows:[])]); }
+function chartMarks(rows, query, highlight) {
+  const matches=new Set(searchRows(rows,query).map(r=>r.key));
+  return rows.filter(r=>r.cost>0).slice().sort((a,b)=>(a.key===highlight?2:matches.has(a.key)?1:0)-(b.key===highlight?2:matches.has(b.key)?1:0));
 }
 function boardFrontier(rows) { return ladderCore.paretoRows(rows.filter(r => r.inCaps)); }
 function priceText(v) { return finite(v) ? v.toFixed(v < .01 ? 4 : v < 1 ? 3 : 2) : ''; }
@@ -429,7 +445,7 @@ function changesToShow(changes, mode) {
 function visibleHistory(history, mode) {
   return history.find(c=>c.revision || c.method || c.caps || c.added.length || c.removed.length || changesToShow(c,mode).length) || null;
 }
-const api={withinCaps,capReasons,prepare,tiers,boardFrontier,priceText,latencyText,secondsText,scoreText,capText,label,whenText,findings,searchRows,pickerRows,bestIn,rankText,rankBestIn,changesToShow,visibleHistory};
+const api={withinCaps,capReasons,prepare,tiers,defaultExpanded,tierGroups,visibleTierRows,chartMarks,boardFrontier,priceText,latencyText,secondsText,scoreText,capText,label,whenText,findings,searchRows,pickerRows,bestIn,rankText,rankBestIn,changesToShow,visibleHistory};
 if (typeof module !== 'undefined') module.exports=api; else window.decisionMath=api;
 }());
 // decision-math:end
@@ -497,35 +513,49 @@ function Compare({picks,setPicks}) {
     </tbody></table></div>`}
     ${rows.length>0 && html`<details class="compare-details"><summary>Price basis and latency adjustment</summary>${rows.map(r=>html`<article><h3>${r.name}</h3><p>Price basis: ${value(r.price_basis)}</p><p>Latency adjustment: ${value(r.latency_adjustment)}</p></article>`)}</details>`}</section>`;
 }
-function Chart({rows, caps, axis, edge}) {
+function Th({k, label, active, dir, onSort}) {
+  const onKey=e=>{if(e.key==='Enter'||e.key===' '){e.preventDefault();onSort(k);}};
+  return html`<th tabindex="0" aria-sort=${active?(dir===1?'ascending':'descending'):'none'} onClick=${()=>onSort(k)} onKeyDown=${onKey}>${label}${active?(dir===1?' ▲':' ▼'):''}</th>`;
+}
+function Chart({rows, caps, axis, edge, query, highlight, onSelect}) {
+  const [narrow,setNarrow]=useState(()=>window.innerWidth<600);
+  useEffect(()=>{const resize=()=>setNarrow(window.innerWidth<600);window.addEventListener('resize',resize);return ()=>window.removeEventListener('resize',resize);},[]);
   const positive=rows.map(r=>r.cost).filter(v=>Number.isFinite(v) && v>0), cap=axis==='price'?caps.cost:caps.latency;
   if (cap>0) positive.push(cap);
   if (!positive.length) return html`<p>No positive values are available for the logarithmic chart.</p>`;
   const logLo=Math.log(Math.min(...positive))-Math.log(1.4), logHi=Math.log(Math.max(...positive))+Math.log(1.4);
   const lo=Math.max(Number.MIN_VALUE,Math.exp(logLo)), hi=Math.min(Number.MAX_VALUE,Math.exp(logHi));
   const scores=rows.map(r=>r.score), min=Math.min(...scores,0)-1, max=Math.max(...scores,1)+1;
-  const x=v=>40+(Math.log(v)-logLo)/(logHi-logLo)*500, y=v=>245-(v-min)/(max-min)*220;
-  const marks=rows.filter(r=>r.cost>0), ids=new Set(edge.filter(r=>r.status==='frontier').map(r=>r.key));
+  const width=narrow?480:960, height=narrow?360:420, left=40, right=width-20, top=24, bottom=height-55;
+  const x=v=>left+(Math.log(v)-logLo)/(logHi-logLo)*(right-left), y=v=>bottom-(v-min)/(max-min)*(bottom-top);
+  const matches=new Set(M.searchRows(rows,query).map(r=>r.key));
+  const marks=M.chartMarks(rows,query,highlight), ids=new Set(edge.filter(r=>r.status==='frontier').map(r=>r.key));
   const path=edge.filter(r=>r.status==='frontier' && r.cost>0).map((r,i)=>(i?' H':'M')+x(r.cost)+(i?' V':',')+y(r.score)).join('');
-  const capX=cap===0?40:x(cap);
-  return html`<div><svg class="chart" viewBox="0 0 560 285" role="img" aria-label=${'Capability by '+axis}>
-    <rect class="shade" x=${capX} y="15" width=${540-capX} height="230"/><line class="cap-line" x1=${capX} x2=${capX} y1="15" y2="245"/><text class="cap-label" x=${capX} y="12">Cap ${M.capText(cap,axis)}</text>
-    ${ladderCore.linearTicks(min,max).map(v=>html`<g><line class="grid" x1="40" x2="540" y1=${y(v)} y2=${y(v)}/><text x="35" y=${y(v)+4} text-anchor="end">${v}</text></g>`)}
-    ${ladderCore.logTicks(lo,hi).filter(v=>v>0).map(v=>html`<g><line class="grid" x1=${x(v)} x2=${x(v)} y1="15" y2="245"/><text x=${x(v)} y="265" text-anchor="middle">${v}</text></g>`)}
-    <path class="edge" d=${path}/>${marks.map(r=>{ const cls='mark '+(ids.has(r.key)?'frontier ':'')+((axis==='price'?!r.price_published:r.latency_assumed)?'modelled':''); const title=`${r.name}: Capability ${M.scoreText(r.capability)}, $${M.priceText(r.price)}, ${M.latencyText(r.latency)}`; const px=x(r.cost), py=y(r.score); return r.board==='open' ? html`<circle class=${cls} cx=${px} cy=${py} r="5"><title>${title}</title></circle>` : r.board==='api' ? html`<rect class=${cls} x=${px-5} y=${py-5} width="10" height="10"><title>${title}</title></rect>` : html`<polygon class=${cls} points=${`${px},${py-6} ${px+6},${py} ${px},${py+6} ${px-6},${py}`}><title>${title}</title></polygon>`; })}</svg>
-    <p class="legend">Circle: open weights; square: hosted API; diamond: Reference and other boards. Filled: frontier. Dashed outline: modelled value. Zero and unavailable values cannot be plotted on a logarithmic axis; a zero cap is shown at the left edge.</p></div>`;
+  const capX=cap===0?left:x(cap);
+  return html`<div><svg class="chart" viewBox=${`0 0 ${width} ${height}`} role="img" aria-label=${'Capability by '+axis} style=${{fontSize:narrow?'16px':'11px'}}>
+    <rect class="shade" x=${capX} y=${top} width=${right-capX} height=${bottom-top}/><line class="cap-line" x1=${capX} x2=${capX} y1=${top} y2=${bottom}/><text class="cap-label" x=${capX} y="16">Cap ${M.capText(cap,axis)}</text>
+    ${ladderCore.linearTicks(min,max).map(v=>html`<g><line class="grid" x1=${left} x2=${right} y1=${y(v)} y2=${y(v)}/><text x="35" y=${y(v)+4} text-anchor="end">${v}</text></g>`)}
+    ${ladderCore.logTicks(lo,hi).filter(v=>v>0).map(v=>html`<g><line class="grid" x1=${x(v)} x2=${x(v)} y1=${top} y2=${bottom}/><text x=${x(v)} y=${bottom+18} text-anchor="middle">${v}</text></g>`)}
+    <text x=${width/2} y=${height-5} text-anchor="middle">${axis==='price'?'Price per 1,000 decisions (USD, log scale)':'Median latency (seconds, log scale)'}</text>
+    <path class="edge" d=${path}/>${marks.map(r=>{ const cls='mark '+(ids.has(r.key)?'frontier ':'')+((axis==='price'?r.price_published:!r.latency_assumed)?'published ':'')+(query&&!matches.has(r.key)?'dim ':'')+(highlight===r.key?'highlight':''); const title=`${r.name}: Capability ${M.scoreText(r.capability)}, $${M.priceText(r.price)}, ${M.latencyText(r.latency)}`; const px=x(r.cost), py=y(r.score), size=(ids.has(r.key)?5:3.5)+(highlight===r.key?2:0); return r.board==='open' ? html`<circle class=${cls} cx=${px} cy=${py} r=${size} onClick=${()=>onSelect(r.name)}><title>${title}</title></circle>` : r.board==='api' ? html`<rect class=${cls} x=${px-size} y=${py-size} width=${size*2} height=${size*2} onClick=${()=>onSelect(r.name)}><title>${title}</title></rect>` : html`<polygon class=${cls} points=${`${px},${py-size} ${px+size},${py} ${px},${py+size} ${px-size},${py}`} onClick=${()=>onSelect(r.name)}><title>${title}</title></polygon>`; })}</svg>
+    <p class="legend">Circle: open weights; square: hosted API; diamond: Reference and other boards. Filled: frontier. Dark outline: published price or measured end-to-end latency. Zero and unavailable values cannot be plotted on a logarithmic axis; a zero cap is shown at the left edge.</p></div>`;
 }
 function App() {
 const [s,setS]=useState(initial), set=(key,value)=>setS({...s,[key]:value});
 const [capReset,setCapReset]=useState(0);
+const [expanded,setExpanded]=useState(null), [frontierOnly,setFrontierOnly]=useState(false), [highlight,setHighlight]=useState(null);
 useLayoutEffect(()=>{ const value=JSON.stringify(s); try { localStorage.setItem('decision_ladder.state',value); } catch (_) {} try { history.replaceState(null,'','#'+encodeURIComponent(value)); } catch (_) {} },[s]);
 const caps={cost:validCap(s.cost,data.caps.cost),latency:validCap(s.latency,data.caps.latency)};
 const prepared=M.prepare(data.rows,{board:s.board,mode:s.mode,axis:s.axis,caps});
 const edge=M.boardFrontier(prepared), byKey=new Map(edge.map(r=>[r.key,r]));
-let rows=M.tiers(M.searchRows(prepared,s.query)).map(r=>({...r,status:byKey.get(r.key)?.status || ''}));
+let rows=M.searchRows(M.tiers(prepared),s.query).map(r=>({...r,status:byKey.get(r.key)?.status || ''}));
 let inside=rows.filter(r=>r.inCaps), outside=rows.filter(r=>!r.inCaps);
+if (frontierOnly) { inside=inside.filter(r=>r.status==='frontier'); outside=[]; }
 if (s.sort) { const cmp=(a,b)=>{const av=a[s.sort],bv=b[s.sort]; if(av==null)return bv==null?0:1; if(bv==null)return -1; return s.dir*ladderCore.compareValues(av,bv);}; inside.sort(cmp); outside.sort(cmp); }
 rows=inside.concat(s.outside?outside:[]);
+const opened=expanded===null?M.defaultExpanded(rows):expanded;
+const groups=M.tierGroups(rows);
+const visibleRows=s.sort?rows:M.visibleTierRows(groups,opened,!!s.query);
 const heads=[['score','Capability'],['name','System'],['intelligence','Intelligence'],['calibration','Calibration'],['price','Price / 1,000'],['latency','Median latency'],['capability_rank','Capability rank'],['composite_rank','Composite rank'],['status','Frontier']];
 const sort=k=>setS({...s,sort:k,dir:s.sort===k?-s.dir:1});
 return html`<main class="wrap"><h1>Decision Ladder</h1><div class="status">
@@ -547,19 +577,21 @@ ${s.tab==='board' && html`<div role="tabpanel">
 <label>Chart x-axis<select aria-label="Chart x-axis" value=${s.axis} onChange=${e=>set('axis',e.target.value)}><option value="price">Price</option><option value="latency">Latency</option></select></label>
 <label>Filter<input aria-label="Filter" value=${s.query} onInput=${e=>set('query',e.target.value)}/></label></div>
 ${((s.cost!==null && validCap(s.cost,null)===null) || (s.latency!==null && validCap(s.latency,null)===null)) && html`<p role="status">Enter a finite, nonnegative cap. The official cap is used until the entry is valid.</p>`}</section>
-<section class="panel"><h2>Capability and ${s.axis}</h2><${Chart} rows=${prepared} caps=${caps} axis=${s.axis} edge=${edge}/>${M.findings(prepared,caps,s.mode,s.axis).map(t=>html`<p>${t}</p>`)}</section>
+<section class="panel"><h2>Capability and ${s.axis}</h2><${Chart} rows=${prepared} caps=${caps} axis=${s.axis} edge=${edge} query=${s.query} highlight=${highlight} onSelect=${name=>set('query',name)}/>${M.findings(prepared,caps,s.mode,s.axis).map(t=>html`<p>${t}</p>`)}</section>
 <section class="panel"><h2>Systems</h2>
-  <div class="controls"><button onClick=${()=>set('sort','')}>Tier order</button>
-    <label class="inline"><input type="checkbox" checked=${s.outside} onChange=${e=>set('outside',e.target.checked)}/>Show systems outside the caps</label></div>
-  <div class="table-wrap"><table><thead><tr>
-    ${heads.map(([key,label])=>html`<th tabindex="0" onClick=${()=>sort(key)} onKeyDown=${e=>{if(e.key==='Enter'||e.key===' ')sort(key)}}>${label}</th>`)}
-  </tr></thead><tbody>${rows.map(r=>{
+  <div class="controls"><button onClick=${()=>set('sort','')}>Tier order</button><button onClick=${()=>setExpanded(groups.map(g=>g.tier))}>Expand all</button><button onClick=${()=>setExpanded([])}>Collapse all</button>
+    <label class="inline"><input type="checkbox" checked=${s.outside} onChange=${e=>set('outside',e.target.checked)}/>Show systems outside the caps</label><label class="inline"><input type="checkbox" checked=${frontierOnly} onChange=${e=>setFrontierOnly(e.target.checked)}/>Frontier only</label></div>
+  <p class="raw">Within a tier: lowest price first, then lowest latency.</p>
+  <div class="table-wrap board-table"><table><thead><tr>
+    ${heads.map(([key,label])=>html`<${Th} k=${key} label=${label} active=${s.sort===key} dir=${s.dir} onSort=${sort}/>`)}
+  </tr></thead><tbody>${!rows.length && s.query ? html`<tr><td colspan=${heads.length}>No system matches “${s.query}”. <button onClick=${()=>set('query','')}>Clear filter</button></td></tr>` : visibleRows.map(r=>{
+    if (r.heading) return html`<tr class="tier-heading"><td colspan=${heads.length}><button aria-expanded=${!!(s.query || opened.includes(r.tier))} onClick=${()=>setExpanded(opened.includes(r.tier)?opened.filter(t=>t!==r.tier):[...opened,r.tier])}>${s.mode==='whole'?r.score+' points':M.scoreText(r.score)} · ${r.rows.length} ${r.rows.length===1?'system':'systems'}</button></td></tr>`;
     const result=byKey.get(r.key);
     const status=!r.inCaps?M.capReasons(r,caps).join(', '):result?.status==='frontier'
-      ?html`<span class="pill">Frontier</span>`:result?.by?'Dominated by '+result.by.label:'Unavailable';
-    return html`<tr key=${r.key} class=${'tier-'+r.tier+(r.tier%2===0?' tier-even':'')+(r.inCaps?'':' outside')}>
-      <td class="tier-band">${s.mode==='whole'?r.score:M.scoreText(r.capability)} ${s.mode==='whole'&&html`<span class="raw">(${M.scoreText(r.capability)})</span>`}</td>
-      <td class="name">${r.short}<span class="detail">${r.detail}</span><span class="pill">${boardLabel(r.board)}</span></td>
+      ?html`<span class="pill">Frontier</span>`:result?.by?html`<span class="dominated" title=${result.by.name}>Dominated</span>`:'Unavailable';
+    return html`<tr key=${r.key} tabindex="0" onMouseEnter=${()=>setHighlight(r.key)} onMouseLeave=${()=>setHighlight(null)} onFocus=${()=>setHighlight(r.key)} onBlur=${()=>setHighlight(null)} class=${'system-row tier-'+r.tier+(r.inCaps?'':' outside')}>
+      <td>${s.mode==='whole'?r.score:M.scoreText(r.capability)} ${s.mode==='whole'&&html`<span class="raw">(${M.scoreText(r.capability)})</span>`}</td>
+      <td class="name" title=${r.name}><span class="name-line"><span class="short">${r.short}</span><span class="board-tag">${boardLabel(r.board)}</span></span><span class="detail">${r.detail}</span></td>
       <td>${M.scoreText(r.intelligence)}</td><td>${M.scoreText(r.calibration)}</td>
       <td>${r.price==null?'':'$'+M.priceText(r.price)} ${r.price!=null&&!r.price_published?'est.':''}</td>
       <td>${M.latencyText(r.latency)} ${r.latency_assumed?'assumed':''}</td>

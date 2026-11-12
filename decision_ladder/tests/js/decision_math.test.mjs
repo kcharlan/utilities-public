@@ -9,6 +9,14 @@ new Function('module', 'ladderCore', code)(module, createRequire(import.meta.url
 const m = module.exports;
 const row = (name, capability, price, latency, extra={}) => ({key:name, name, ranked:true, board:'api', capability, price, latency, ...extra});
 const caps = {cost:5, latency:10};
+test('tier numbers remain stable when searching ranked rows', () => {
+  const rows=m.prepare([row('Synthetic top',9,1,1),row('Synthetic lower',7,1,1)],{board:'all',mode:'whole',axis:'price',caps});
+  assert.equal(m.searchRows(m.tiers(rows),'lower')[0].tier,2);
+  assert.deepEqual(m.defaultExpanded(m.tiers(rows),1),[1]);
+  assert.deepEqual(m.tierGroups(m.tiers(rows)).map(g=>[g.tier,g.rows.length]),[[1,1],[2,1]]);
+  assert.deepEqual(m.visibleTierRows(m.tierGroups(m.tiers(rows)),[1],false).map(r=>r.heading?'heading':r.name),['heading','Synthetic top','heading']);
+  assert.deepEqual(m.chartMarks([{key:'a',name:'Synthetic A',cost:1},{key:'b',name:'Synthetic B',cost:1}],'A','b').map(r=>r.key),['a','b']);
+});
 test('bestIn identifies ties and ignores missing values in either direction', () => {
   const rows=[{v:3},{v:1},{v:3},{v:null}];
   assert.deepEqual(m.bestIn(rows,'v','max'),[true,false,true,false]);

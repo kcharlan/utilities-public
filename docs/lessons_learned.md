@@ -1,5 +1,11 @@
 # Lessons learned
 
+## Keep tier identity ahead of search
+
+Assign tier numbers before filtering so a search does not change a system's
+ranked group. Browser tests counting data rows must distinguish tier heading
+rows, and chart resize checks must wait for the responsive viewBox to update.
+
 ## Preserve exact limits behind rounded controls
 
 An official threshold displayed at rounded precision can change classification if
