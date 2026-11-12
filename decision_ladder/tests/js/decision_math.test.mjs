@@ -13,6 +13,7 @@ test('display formatters retain precision and translate feed tokens', () => {
   assert.equal(m.scoreText(4.123), '4.1'); assert.equal(m.scoreText(null), '');
   assert.equal(m.capText(0.0000646123456789, 'price'), '$0.0001');
   assert.equal(m.capText(1.2345, 'latency'), '1.23 s');
+  assert.equal(m.secondsText(0.5), '0.5'); assert.equal(m.secondsText(1.2345), '1.23'); assert.equal(m.secondsText(0.00001234), '0.0000123');
   for (const [kind, token, expected] of [['price','tariff','published tariff'],['price','listed','listed price'],['price','estimate','estimate'],['price','estimated','estimate'],['price','mixed','part estimate'],['price','unpriced','no price'],['latency','api-end-to-end','measured end to end'],['latency','measured-loopback','loopback, adjusted'],['latency','demo-endpoint-x2','demo endpoint, adjusted'],['listing','synthetic-other','synthetic other'],['price','unknown-token','unknown token']]) assert.equal(m.label(kind,token),expected);
   assert.equal(m.label('price','toString'), 'toString');
   assert.equal(m.whenText('2026-01-02T03:04:55.123Z'), '2026-01-02 03:04 UTC');

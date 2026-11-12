@@ -9,6 +9,12 @@ synthetic row between the displayed and exact thresholds, including restoration
 of saved settings. JavaScript object lookups for external tokens must also avoid
 inherited properties so unknown tokens remain visible.
 
+When a numeric input applies values on each keystroke, converting and writing
+the value back can destroy a decimal point while the user is still typing. Keep
+the browser's editable draft separate from the applied number, and test actual
+sequential keystrokes as well as the resulting threshold. Numeric placeholders
+must use the same units as their labels.
+
 ## Display-aware history and board fallbacks
 
 Choose a history baseline using the same formatting and scoring mode as the

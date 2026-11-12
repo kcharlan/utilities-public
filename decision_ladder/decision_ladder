@@ -378,6 +378,7 @@ function tiers(rows) {
 function boardFrontier(rows) { return ladderCore.paretoRows(rows.filter(r => r.inCaps)); }
 function priceText(v) { return finite(v) ? v.toFixed(v < .01 ? 4 : v < 1 ? 3 : 2) : ''; }
 function latencyText(v) { return finite(v) ? (v < 1 ? Math.round(v*1000)+' ms' : v.toFixed(2)+' s') : ''; }
+function secondsText(v) { return finite(v) ? String(Number(v.toPrecision(3))) : ''; }
 function scoreText(v) { return finite(v) ? v.toFixed(1) : ''; }
 function capText(v,axis) { return axis==='price' ? '$'+priceText(v) : latencyText(v); }
 function label(kind,token) {
@@ -410,7 +411,7 @@ function changesToShow(changes, mode) {
 function visibleHistory(history, mode) {
   return history.find(c=>c.revision || c.method || c.caps || c.added.length || c.removed.length || changesToShow(c,mode).length) || null;
 }
-const api={withinCaps,capReasons,prepare,tiers,boardFrontier,priceText,latencyText,scoreText,capText,label,whenText,findings,searchRows,changesToShow,visibleHistory};
+const api={withinCaps,capReasons,prepare,tiers,boardFrontier,priceText,latencyText,secondsText,scoreText,capText,label,whenText,findings,searchRows,changesToShow,visibleHistory};
 if (typeof module !== 'undefined') module.exports=api; else window.decisionMath=api;
 }());
 // decision-math:end
@@ -448,7 +449,7 @@ function Changes({changes,mode}) {
     ${changes.method && html`<p>Scoring method changed from ${changes.method[0].label} to ${changes.method[1].label}; scores before and after are not comparable</p>`}
     ${changes.caps && html`<p>Caps: ${cap(changes.caps[0])} → ${cap(changes.caps[1])}</p>`}
     ${(changes.added||[]).map(name=>html`<p>Added: ${name}</p>`)}${(changes.removed||[]).map(name=>html`<p>Removed: ${name}</p>`)}
-    ${M.changesToShow(changes,mode).map(r=>html`<p>Changed: ${r.name} ${['capability','price','latency','listing','capability_rank','composite_rank'].filter(k=>r[k] && r[k][0]!==r[k][1]).map(k=>`${k}: ${pair(r[k])}`).join('; ')}</p>`)}
+    ${M.changesToShow(changes,mode).map(r=>html`<p>Changed: ${r.name} ${['capability','price','latency','listing','capability_rank','composite_rank'].filter(k=>r[k] && r[k][0]!==r[k][1]).map(k=>`${k}: ${pair(k==='capability'?r[k].map(v=>v==null?v:M.scoreText(v)):r[k])}`).join('; ')}</p>`)}
   </details>`;
 }
 function Compare({picks,setPicks}) {
@@ -492,6 +493,7 @@ function Chart({rows, caps, axis, edge}) {
 }
 function App() {
 const [s,setS]=useState(initial), set=(key,value)=>setS({...s,[key]:value});
+const [capReset,setCapReset]=useState(0);
 useLayoutEffect(()=>{ const value=JSON.stringify(s); try { localStorage.setItem('decision_ladder.state',value); } catch (_) {} try { history.replaceState(null,'','#'+encodeURIComponent(value)); } catch (_) {} },[s]);
 const caps={cost:validCap(s.cost,data.caps.cost),latency:validCap(s.latency,data.caps.latency)};
 const prepared=M.prepare(data.rows,{board:s.board,mode:s.mode,axis:s.axis,caps});
@@ -514,9 +516,9 @@ ${s.tab==='not-ranked' && html`<section role="tabpanel" class="panel not-ranked"
 ${s.tab==='board' && html`<div role="tabpanel">
 <section class="panel"><div class="controls">
 <label>Board<select aria-label="Board" value=${s.board} onChange=${e=>set('board',e.target.value)}><option value="all">All</option><option value="open">Open weights</option><option value="api">Hosted API</option></select></label>
-<label>Cost cap ($ per 1,000 decisions)<input aria-label="Cost cap ($ per 1,000 decisions)" type="number" min="0" step="any" value=${s.cost ?? ''} placeholder=${M.priceText(data.caps.cost)} onInput=${e=>set('cost',e.target.validity.badInput?'invalid':e.target.value===''?null:validCap(e.target.value,e.target.value))}/></label>
-<label>Latency cap (seconds)<input aria-label="Latency cap (seconds)" type="number" min="0" step="any" value=${s.latency ?? ''} placeholder=${M.latencyText(data.caps.latency)} onInput=${e=>set('latency',e.target.validity.badInput?'invalid':e.target.value===''?null:validCap(e.target.value,e.target.value))}/></label>
-<button disabled=${s.cost===null && s.latency===null} onClick=${()=>setS({...s,cost:null,latency:null})}>Use official caps</button>${(s.cost!==null || s.latency!==null) && html`<span>Custom caps</span>`}
+<label>Cost cap ($ per 1,000 decisions)<input key=${'cost'+capReset} aria-label="Cost cap ($ per 1,000 decisions)" type="number" min="0" step="any" defaultValue=${s.cost ?? ''} placeholder=${M.priceText(data.caps.cost)} onInput=${e=>set('cost',e.target.validity.badInput?'invalid':e.target.value===''?null:validCap(e.target.value,e.target.value))}/></label>
+<label>Latency cap (seconds)<input key=${'latency'+capReset} aria-label="Latency cap (seconds)" type="number" min="0" step="any" defaultValue=${s.latency ?? ''} placeholder=${M.secondsText(data.caps.latency)} onInput=${e=>set('latency',e.target.validity.badInput?'invalid':e.target.value===''?null:validCap(e.target.value,e.target.value))}/></label>
+<button disabled=${s.cost===null && s.latency===null} onClick=${()=>{setCapReset(capReset+1);setS({...s,cost:null,latency:null});}}>Use official caps</button>${(s.cost!==null || s.latency!==null) && html`<span>Custom caps</span>`}
 <label>Scoring<select aria-label="Scoring" value=${s.mode} onChange=${e=>set('mode',e.target.value)}><option value="whole">Whole points</option><option value="decimal">Decimals</option></select></label>
 <label>Chart x-axis<select aria-label="Chart x-axis" value=${s.axis} onChange=${e=>set('axis',e.target.value)}><option value="price">Price</option><option value="latency">Latency</option></select></label>
 <label>Filter<input aria-label="Filter" value=${s.query} onInput=${e=>set('query',e.target.value)}/></label></div>

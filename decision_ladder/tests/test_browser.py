@@ -9,6 +9,7 @@ from tools.testkit import assert_fonts_loaded, assert_no_external_resources, blo
 @pytest.mark.parametrize('scores,decimal_expected', [
     ([8.0, 8.0, 8.0], 'price: 2 → 3.001'),
     ([7.9, 8.1, 8.2], 'capability: 8.1 → 8.2'),
+    ([7.9, 8.123, 8.456], 'capability: 8.1 → 8.5'),
 ])
 def test_history_uses_displayed_changes_for_each_mode(dl, tmp_path, scores, decimal_expected):
     from datetime import timedelta
@@ -25,7 +26,7 @@ def test_history_uses_displayed_changes_for_each_mode(dl, tmp_path, scores, deci
         blocked = block_external_requests(context); page = context.new_page()
         with guard_browser_errors(page):
             page.goto(path.as_uri()); page.get_by_text('Changes', exact=True).click()
-            expect(page.locator('.changes')).to_contain_text('price: 2 → 3.001')
+            expect(page.locator('.changes')).to_contain_text('price: 3 → 3.001' if scores[-1] == 8.456 else 'price: 2 → 3.001')
             page.get_by_label('Scoring').select_option('decimal')
             expect(page.locator('.changes')).to_contain_text(decimal_expected)
             assert_no_external_resources(page, blocked)
@@ -180,6 +181,31 @@ def test_exact_official_caps_and_tab_state(dl, tmp_path):
             expect(page.get_by_label('Cost cap')).to_have_value('')
             expect(page.get_by_label('Latency cap')).to_have_value('')
             expect(page.get_by_role('button', name='Use official caps')).to_be_disabled()
+        context.close(); browser.close()
+
+
+@pytest.mark.parametrize('check', ['placeholder', 'typing'])
+def test_subsecond_placeholder_and_sequential_cap_entry(dl, tmp_path, check):
+    from helpers import feed, system, snapshot
+    data = feed(systems=[system(name='Synthetic fractional', capability={'score': 8, 'eligible': True, 'within_caps': True}, price={'usd_per_1000_decisions': 0.2}, latency={'p50_s_adjusted': 0.2})])
+    data['capability_policy'] = {'cost_cap_usd_per_1000': 1, 'median_latency_cap_s': 0.5}
+    payload = dl.build_payload(snapshot(data), None, {'max_age_hours': 24}); payload['built_at'] = 'synthetic'
+    path = tmp_path / 'fractions.html'; path.write_bytes(dl.render_page(payload))
+    with sync_playwright() as playwright:
+        browser = playwright.chromium.launch(); context = browser.new_context(service_workers='block'); context.set_offline(True); block_external_requests(context)
+        page = context.new_page()
+        with guard_browser_errors(page):
+            page.goto(path.as_uri())
+            if check == 'placeholder':
+                expect(page.get_by_label('Latency cap')).to_have_attribute('placeholder', '0.5')
+            else:
+                for label in ['Cost cap', 'Latency cap']:
+                    field = page.get_by_label(label)
+                    field.press_sequentially('0.125')
+                    expect(field).to_have_value('0.125')
+                    expect(page.locator('tbody tr')).to_have_count(0)
+                    page.get_by_role('button', name='Use official caps').click()
+                    expect(page.locator('tbody tr')).to_have_count(1)
         context.close(); browser.close()
 
 
