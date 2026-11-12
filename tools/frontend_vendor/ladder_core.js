@@ -95,6 +95,50 @@ function compareValues(a, b) {
   return typeof a === "string" || typeof b === "string" ? compareText(String(a), String(b)) : a - b;
 }
 
+function clickSort(list, key, first) {
+  first = first === "d" ? "d" : "a";
+  var result = list.slice(), index = result.findIndex(function (entry) { return entry.slice(2) === key; });
+  if (index < 0) result.push(first + ":" + key);
+  else if (result[index].charAt(0) === first) result[index] = (first === "a" ? "d:" : "a:") + key;
+  else result.splice(index, 1);
+  return result;
+}
+function normalizeSort(list, keys) {
+  var seen = new Set();
+  return Array.isArray(list) ? list.filter(function (entry) {
+    if (typeof entry !== "string" || !/^[ad]:.+$/.test(entry)) return false;
+    var key = entry.slice(2);
+    if (keys.indexOf(key) < 0 || seen.has(key)) return false;
+    seen.add(key); return true;
+  }) : [];
+}
+function compareNullable(a, b) {
+  return a == null ? (b == null ? 0 : 1) : b == null ? -1 : compareValues(a, b);
+}
+function stackSort(items, list, valueOf, fallback) {
+  return items.map(function (item, index) { return {item: item, index: index}; }).sort(function (a, b) {
+    for (var i = 0; i < list.length; i += 1) {
+      var entry = list[i], av = valueOf(a.item, entry.slice(2)), bv = valueOf(b.item, entry.slice(2));
+      var result = compareNullable(av, bv);
+      if (result) return entry.charAt(0) === "d" && av != null && bv != null ? -result : result;
+    }
+    return (fallback ? fallback(a.item, b.item) : 0) || a.index - b.index;
+  }).map(function (entry) { return entry.item; });
+}
+function sortRuns(rows, valueOf, key) {
+  var runs = [];
+  rows.forEach(function (row) {
+    var value = valueOf(row, key), last = runs[runs.length - 1];
+    if (!last || compareNullable(last.value, value) !== 0) runs.push({value: value, rows: [row]});
+    else last.rows.push(row);
+  });
+  return runs;
+}
+function sortRunMode(runs) {
+  if (runs.every(function (run) { return run.rows.length === 1; })) return "singletons";
+  return runs.reduce(function (sum, run) { return sum + run.rows.length; }, 0) / runs.length >= 3 ? "headings" : "bands";
+}
+
 function dataAge(lastCheckedIso, nowMs, maxAgeHours) {
   var then = Date.parse(lastCheckedIso);
   if (isNaN(then)) return { text: "Data age is unknown", stale: true };
@@ -126,6 +170,6 @@ function logTicks(lo, hi) {
   return out;
 }
 
-var api = { FLOAT_NOISE: FLOAT_NOISE, wholePoints: wholePoints, priced: priced, dominates: dominates, compareText: compareText, frontier: frontier, makeStep: makeStep, paretoRows: paretoRows, pathValue: pathValue, compareValues: compareValues, dataAge: dataAge, linearTicks: linearTicks, logTicks: logTicks };
+var api = { FLOAT_NOISE: FLOAT_NOISE, wholePoints: wholePoints, priced: priced, dominates: dominates, compareText: compareText, frontier: frontier, makeStep: makeStep, paretoRows: paretoRows, pathValue: pathValue, compareValues: compareValues, clickSort: clickSort, normalizeSort: normalizeSort, compareNullable: compareNullable, stackSort: stackSort, sortRuns: sortRuns, sortRunMode: sortRunMode, dataAge: dataAge, linearTicks: linearTicks, logTicks: logTicks };
 if (typeof module !== "undefined") module.exports = api; else window.ladderCore = api;
 }());

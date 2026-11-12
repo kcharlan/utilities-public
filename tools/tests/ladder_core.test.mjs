@@ -43,3 +43,31 @@ test("data age uses hour, day and stale thresholds", () => {
     assert.deepEqual(core.dataAge(then, start + hours * 3.6e6, 1), {text, stale});
   }
 });
+
+test('sort keys cycle and normalize without duplicates', () => {
+  assert.deepEqual(core.clickSort([], 'score', 'd'), ['d:score']);
+  assert.deepEqual(core.clickSort(['d:score'], 'price'), ['d:score','a:price']);
+  assert.deepEqual(core.clickSort(['d:score'], 'score', 'd'), ['a:score']);
+  assert.deepEqual(core.clickSort(['a:score'], 'score', 'd'), []);
+  assert.deepEqual(core.clickSort(['a:price'], 'price'), ['d:price']);
+  assert.deepEqual(core.clickSort(['d:price'], 'price'), []);
+  assert.deepEqual(core.normalizeSort(['a:price','d:price','x:score',42,'d:score','a:other'], ['price','score']), ['a:price','d:score']);
+  assert.deepEqual(core.normalizeSort(null, ['price']), []);
+});
+
+test('stack sort keeps nulls last and uses fallback and stable ties', () => {
+  const rows=[{id:'a',s:2,p:3},{id:'b',s:2,p:null},{id:'c',s:2,p:1},{id:'d',s:1,p:1},{id:'e',s:2,p:1}];
+  const value=(r,k)=>r[k];
+  assert.deepEqual(core.stackSort(rows,['d:s','a:p'],value,(a,b)=>b.id.localeCompare(a.id)).map(r=>r.id),['e','c','a','b','d']);
+  assert.deepEqual(core.stackSort(rows,['d:p'],value).map(r=>r.id),['a','c','d','e','b']);
+  assert.equal(core.compareNullable(undefined,1),1);
+});
+
+test('adjacent equal values form runs and choose grouping density', () => {
+  const rows=[1,1,2,3,3].map(v=>({v}));
+  const runs=core.sortRuns(rows,(r,k)=>r[k],'v');
+  assert.deepEqual(runs.map(r=>r.rows.length),[2,1,2]);
+  assert.equal(core.sortRunMode(runs),'bands');
+  assert.equal(core.sortRunMode(core.sortRuns([{v:1},{v:2}],r=>r.v,'v')),'singletons');
+  assert.equal(core.sortRunMode(core.sortRuns(Array(6).fill({v:1}),r=>r.v,'v')),'headings');
+});

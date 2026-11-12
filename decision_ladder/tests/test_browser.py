@@ -623,3 +623,49 @@ def test_changes_rounds_high_precision_caps_and_prices(dl, tmp_path):
             assert not re.search(r'\d+\.\d{6,}', changes.inner_text())
             assert_no_external_resources(page, blocked)
         context.close(); browser.close()
+
+
+def test_multi_sort_groups_persistence_and_legacy_state(dl, tmp_path):
+    from helpers import feed, many_systems, snapshot
+    systems = many_systems(300)
+    systems[-1]['price']['usd_per_1000_decisions'] = None
+    systems[-2]['price']['usd_per_1000_decisions'] = 6
+    payload = dl.build_payload(snapshot(feed(systems=systems)), None, {'max_age_hours': 24})
+    path = tmp_path / 'sorting.html'; path.write_bytes(dl.render_page(payload))
+    with sync_playwright() as playwright:
+        browser = playwright.chromium.launch(); context = browser.new_context(service_workers='block'); context.set_offline(True)
+        blocked = block_external_requests(context); page = context.new_page()
+        with guard_browser_errors(page):
+            page.goto(path.as_uri())
+            capability = page.locator('.board-table thead th').nth(0)
+            price = page.locator('.board-table thead th').nth(4)
+            capability.click(); price.click()
+            expect(capability).to_have_attribute('aria-sort', 'descending')
+            expect(price).not_to_have_attribute('aria-sort', re.compile('.+'))
+            expect(capability.locator('.sort-number')).to_have_text('1')
+            expect(price.locator('.sort-number')).to_have_text('2')
+            expect(page.locator('.sort-heading')).not_to_have_count(0)
+            assert page.locator('.board-table tbody').evaluate('''body => {
+              let prices = [];
+              for (const row of body.rows) {
+                if (row.classList.contains('sort-heading')) { if (prices.some((x,i)=>i && x<prices[i-1])) return false; prices=[]; }
+                else if (row.classList.contains('system-row')) prices.push(Number(row.cells[4].innerText.match(/[\\d.]+/)[0]));
+              }
+              return !prices.some((x,i)=>i && x<prices[i-1]);
+            }''')
+            page.reload(); expect(capability).to_have_attribute('aria-sort', 'descending')
+            capability.click(); capability.click()
+            expect(price).to_have_attribute('aria-sort', 'ascending')
+            expect(page.locator('.sort-heading, .sort-band-start')).to_have_count(0)
+            page.get_by_label('Show systems outside the caps').check()
+            expect(page.locator('.sort-heading')).to_contain_text('Outside the caps · 2 systems')
+            expect(page.locator('tr.system-row').last.locator('.name')).to_have_attribute('title', 'Synthetic system 300')
+            price.click()
+            expect(page.locator('tr.system-row').last.locator('.name')).to_have_attribute('title', 'Synthetic system 300')
+            page.get_by_role('button', name='Tier order').click()
+            assert 25 <= page.locator('tr.system-row').count() <= 60
+            expect(page.locator('tr.tier-heading button').first).to_have_attribute('aria-expanded', 'true')
+            page.goto(path.as_uri() + '#' + quote('{"sort":"price","dir":-1}')); page.reload()
+            expect(price).to_have_attribute('aria-sort', 'descending')
+            assert_no_external_resources(page, blocked)
+        context.close(); browser.close()

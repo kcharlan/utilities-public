@@ -157,3 +157,7 @@ test('change fields format each endpoint and omit differences hidden by formatti
     assert.deepEqual(m.changeFields({price:[2.001,2.002],latency:[3.001,3.002]},mode),[]);
   }
 });
+
+test('group labels format each sort value and missing values', () => {
+  for (const [key,value,mode,expected] of [['score',85,'whole','85 points'],['score',85.24,'decimal','85.2 points'],['intelligence',4.25,'whole','4.3'],['calibration',4.25,'whole','4.3'],['price',1,'whole','$1.00'],['latency',1,'whole','1.00 s'],['status','frontier','whole','Frontier'],['status','dominated','whole','Dominated'],['status','other','whole','other'],['name','Synthetic A','whole','Synthetic A'],['capability_rank',2,'whole','2'],['composite_rank',3,'whole','3'],['price',null,'whole','No value']]) assert.equal(m.groupValueText(key,value,mode),expected);
+});
