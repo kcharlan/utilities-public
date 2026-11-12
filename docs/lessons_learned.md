@@ -2485,3 +2485,7 @@ When eligibility depends on a later report-wide probe, carry that eligibility fr
 ### Storage Monitor system-root contracts and index scale
 
 Synthetic root replacement concealed an unsupported macOS `confstr` key, silently dropping the per-user temporary and cache roots. Keep report and action tests synthetic, but separately check the read-only system lookup against `getconf` without enumerating the real directory. Small synthetic indexes also concealed repeated full-table protection queries and quadratic candidate deduplication; retain a representative large-index timing regression alongside correctness checks.
+
+## 2026-11-12: Preserve snapshot order within a timestamp
+
+A seconds-only snapshot filename silently overwrote distinct fetches made in the same second. Allocate an ordered suffix for collisions, including identical clock values, and test retention when more snapshots share that timestamp than the store keeps.

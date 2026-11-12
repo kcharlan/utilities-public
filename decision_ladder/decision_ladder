@@ -264,7 +264,13 @@ def save_snapshot(home, result, now):
             newest["last_checked"] = moment.isoformat()
             _write_snapshot(existing[0], newest)
             return existing[0]
-    path = home / SNAPSHOT_DIR / (moment.strftime("%Y%m%dT%H%M%SZ") + SNAPSHOT_SUFFIX)
+    stem = moment.strftime("%Y%m%dT%H%M%SZ")
+    path = home / SNAPSHOT_DIR / (stem + SNAPSHOT_SUFFIX)
+    siblings = [p.name.removesuffix(SNAPSHOT_SUFFIX) for p in existing
+                if p.name.startswith(stem + "_") and p.name.endswith(SNAPSHOT_SUFFIX)]
+    sequences = [int(name[len(stem) + 1:]) for name in siblings if name[len(stem) + 1:].isdigit()]
+    if path.exists() or sequences:
+        path = home / SNAPSHOT_DIR / (f"{stem}_{max(sequences, default=0) + 1:012d}" + SNAPSHOT_SUFFIX)
     _write_snapshot(path, {"schema": SCHEMA, "fetched_at": moment.isoformat(),
                            "last_checked": moment.isoformat(), "sha256": result["sha256"], "feed": result["feed"]})
     for old in load_snapshots(home)[KEEP:]:

@@ -14,6 +14,30 @@ def test_unchanged_feed_only_refreshes_last_checked(dl, tmp_path):
     assert len(dl.load_snapshots(tmp_path)) == 1
 
 
+def test_distinct_fetches_within_same_second_preserve_all_history(dl, tmp_path):
+    now = datetime(2026, 1, 1, tzinfo=timezone.utc)
+    paths = []
+    for index, moment in enumerate((now, now + timedelta(microseconds=10), now + timedelta(microseconds=10))):
+        data = feed(revision=f"synthetic {index}")
+        paths.append(dl.save_snapshot(tmp_path, {"feed": data, "sha256": "synthetic"}, moment))
+    assert len(set(paths)) == 3
+    assert dl.load_snapshots(tmp_path) == list(reversed(paths))
+    assert [dl.read_snapshot(path)["feed"]["revision"] for path in paths] == [
+        "synthetic 0", "synthetic 1", "synthetic 2"
+    ]
+
+
+def test_same_second_retention_keeps_latest_snapshot(dl, tmp_path):
+    now = datetime(2026, 1, 1, tzinfo=timezone.utc)
+    for index in range(62):
+        data = feed(revision=f"synthetic {index}")
+        last = dl.save_snapshot(tmp_path, {"feed": data, "sha256": "synthetic"}, now)
+    paths = dl.load_snapshots(tmp_path)
+    assert len(paths) == 60
+    assert paths[0] == last
+    assert dl.read_snapshot(paths[0])["feed"]["revision"] == "synthetic 61"
+
+
 def test_store_private_modes_retention_and_bad_snapshot(dl, tmp_path):
     now = datetime(2026, 1, 1, tzinfo=timezone.utc)
     for i in range(61):

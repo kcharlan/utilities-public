@@ -28,6 +28,11 @@ def test_offline_status_and_untrusted_text(dl, tmp_path, scheme):
             expect(page.locator("#status-age")).to_have_class("age stale")
             expect(page.locator(".status")).to_contain_text("Synthetic method")
             expect(page.locator(".status")).to_contain_text("1 measured")
+            expect(page.locator(".status")).to_contain_text("synthetic </script><img src=x>")
+            expect(page.locator(".status")).to_contain_text("$5 / 1,000 decisions; 10s")
+            expect(page.locator(".status")).to_contain_text("1 ranked")
+            expect(page.locator(".status")).to_contain_text("decision_ladder refresh")
+            expect(page.get_by_role("link", name="JevBench by Benchmark Heaven")).to_have_attribute("href", "https://benchmarkheaven.com/")
             expect(page.locator(".status img")).to_have_count(0)
             assert page.evaluate("JSON.parse(document.getElementById('payload').textContent).rows[0].name") == "Synthetic </script><img src=x>"
             assert_fonts_loaded(page, ["Hanken Grotesk"])
