@@ -2563,3 +2563,7 @@ narrow viewport.
 Keyboard navigation through a long picker must expose the active item to
 assistive technology and keep it visible. Move focus to the actual option,
 scroll it into view, and test navigation beyond the list's visible height.
+
+Pointer hover and keyboard focus can coexist on different rows. Track their
+ownership separately so leaving one row or blurring another does not clear an
+active chart highlight; test transitions between both inputs in a browser.

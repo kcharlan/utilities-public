@@ -549,7 +549,7 @@ function Chart({rows, caps, axis, edge, query, highlight, onSelect}) {
   const marks=M.chartMarks(rows,query,highlight,edge,axis);
   const path=edge.filter(r=>r.status==='frontier' && r.cost>0).map((r,i)=>(i?' H':'M')+x(r.cost)+(i?' V':',')+y(r.score)).join('');
   const capX=cap===0?left:x(cap);
-  return html`<div><svg class="chart" viewBox=${`0 0 ${width} ${height}`} role="img" aria-label=${'Capability by '+axis} style=${{fontSize:narrow?'16px':'11px'}}>
+  return html`<div><svg class="chart" viewBox=${`0 0 ${width} ${height}`} role="img" aria-label=${'Capability by '+axis} style=${{fontSize:narrow?'16px':'11px'}} onMouseDown=${e=>{if(e.target.classList.contains('mark')) e.preventDefault();}}>
     <rect class="shade" x=${capX} y=${top} width=${right-capX} height=${bottom-top}/><line class="cap-line" x1=${capX} x2=${capX} y1=${top} y2=${bottom}/><text class="cap-label" x=${capX} y="16">Cap ${M.capText(cap,axis)}</text>
     ${ladderCore.linearTicks(min,max).map(v=>html`<g><line class="grid" x1=${left} x2=${right} y1=${y(v)} y2=${y(v)}/><text x="35" y=${y(v)+4} text-anchor="end">${v}</text></g>`)}
     ${ladderCore.logTicks(lo,hi).filter(v=>v>0).map(v=>html`<g><line class="grid" x1=${x(v)} x2=${x(v)} y1=${top} y2=${bottom}/><text x=${x(v)} y=${bottom+18} text-anchor="middle">${v}</text></g>`)}
@@ -560,7 +560,7 @@ function Chart({rows, caps, axis, edge, query, highlight, onSelect}) {
 function App() {
 const [s,setS]=useState(initial), set=(key,value)=>setS({...s,[key]:value});
 const [capReset,setCapReset]=useState(0);
-const [expanded,setExpanded]=useState(null), [frontierOnly,setFrontierOnly]=useState(false), [highlight,setHighlight]=useState(null);
+const [expanded,setExpanded]=useState(null), [frontierOnly,setFrontierOnly]=useState(false), [hovered,setHovered]=useState(null), [focused,setFocused]=useState(null);
 useLayoutEffect(()=>{ const value=JSON.stringify(s); try { localStorage.setItem('decision_ladder.state',value); } catch (_) {} try { history.replaceState(null,'','#'+encodeURIComponent(value)); } catch (_) {} },[s]);
 const caps={cost:validCap(s.cost,data.caps.cost),latency:validCap(s.latency,data.caps.latency)};
 const prepared=M.prepare(data.rows,{board:s.board,mode:s.mode,axis:s.axis,caps});
@@ -593,7 +593,7 @@ ${s.tab==='board' && html`<div role="tabpanel">
 <label>Chart x-axis<select aria-label="Chart x-axis" value=${s.axis} onChange=${e=>set('axis',e.target.value)}><option value="price">Price</option><option value="latency">Latency</option></select></label>
 <label>Filter<input aria-label="Filter" value=${s.query} onInput=${e=>set('query',e.target.value)}/></label></div>
 ${((s.cost!==null && validCap(s.cost,null)===null) || (s.latency!==null && validCap(s.latency,null)===null)) && html`<p role="status">Enter a finite, nonnegative cap. The official cap is used until the entry is valid.</p>`}</section>
-<section class="panel"><h2>Capability and ${s.axis}</h2><${Chart} rows=${prepared} caps=${caps} axis=${s.axis} edge=${edge} query=${s.query} highlight=${highlight} onSelect=${name=>set('query',name)}/>${M.findings(prepared,caps,s.mode,s.axis).map(t=>html`<p>${t}</p>`)}</section>
+<section class="panel"><h2>Capability and ${s.axis}</h2><${Chart} rows=${prepared} caps=${caps} axis=${s.axis} edge=${edge} query=${s.query} highlight=${hovered ?? focused} onSelect=${name=>set('query',name)}/>${M.findings(prepared,caps,s.mode,s.axis).map(t=>html`<p>${t}</p>`)}</section>
 <section class="panel"><h2>Systems</h2>
   <div class="controls"><button onClick=${()=>set('sort','')}>Tier order</button><button onClick=${()=>setExpanded(groups.map(g=>g.tier))}>Expand all</button><button onClick=${()=>setExpanded([])}>Collapse all</button>
     <label class="inline"><input type="checkbox" checked=${s.outside} onChange=${e=>set('outside',e.target.checked)}/>Show systems outside the caps</label><label class="inline"><input type="checkbox" checked=${frontierOnly} onChange=${e=>setFrontierOnly(e.target.checked)}/>Frontier only</label></div>
@@ -605,7 +605,7 @@ ${((s.cost!==null && validCap(s.cost,null)===null) || (s.latency!==null && valid
     const result=byKey.get(r.key);
     const status=!r.inCaps?M.capReasons(r,caps).join(', '):result?.status==='frontier'
       ?html`<span class="pill">Frontier</span>`:result?.by?html`<span class="dominated" title=${result.by.name}>Dominated</span>`:'Unavailable';
-    return html`<tr key=${r.key} tabindex="0" onMouseEnter=${()=>setHighlight(r.key)} onMouseLeave=${()=>setHighlight(null)} onFocus=${()=>setHighlight(r.key)} onBlur=${()=>setHighlight(null)} class=${'system-row tier-'+r.tier+(r.inCaps?'':' outside')}>
+    return html`<tr key=${r.key} tabindex="0" onMouseEnter=${()=>setHovered(r.key)} onMouseLeave=${()=>setHovered(null)} onFocus=${()=>setFocused(r.key)} onBlur=${()=>setFocused(null)} class=${'system-row tier-'+r.tier+(r.inCaps?'':' outside')}>
       <td>${s.mode==='whole'?r.score:M.scoreText(r.capability)} ${s.mode==='whole'&&html`<span class="raw">(${M.scoreText(r.capability)})</span>`}</td>
       <td class="name" title=${r.name}><span class="name-line"><span class="short">${r.short}</span><span class="board-tag">${boardLabel(r.board)}</span></span><span class="detail">${r.detail}</span></td>
       <td>${M.scoreText(r.intelligence)}</td><td>${M.scoreText(r.calibration)}</td>

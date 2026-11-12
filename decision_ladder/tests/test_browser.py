@@ -6,6 +6,32 @@ from playwright.sync_api import expect, sync_playwright
 from tools.testkit import assert_fonts_loaded, assert_no_external_resources, block_external_requests, guard_browser_errors
 
 
+def test_chart_highlight_tracks_hover_and_focus_independently(dl, tmp_path):
+    from helpers import feed, many_systems, snapshot
+    payload = dl.build_payload(snapshot(feed(systems=many_systems(10))), None, {'max_age_hours': 24})
+    path = tmp_path / 'highlight.html'; path.write_bytes(dl.render_page(payload))
+    with sync_playwright() as playwright:
+        browser = playwright.chromium.launch(); context = browser.new_context(service_workers='block'); context.set_offline(True)
+        blocked = block_external_requests(context); page = context.new_page()
+        with guard_browser_errors(page):
+            page.goto(path.as_uri())
+            first, second = page.locator('tr.system-row').nth(0), page.locator('tr.system-row').nth(1)
+            first_name = first.locator('.name').get_attribute('title')
+            second_name = second.locator('.name').get_attribute('title')
+            first.focus(); second.hover()
+            expect(page.locator('.mark.highlight title')).to_contain_text(second_name)
+            page.mouse.move(0, 0)
+            expect(page.locator('.mark.highlight title')).to_contain_text(first_name)
+            first.hover(); page.mouse.move(0, 0)
+            expect(page.locator('.mark.highlight title')).to_contain_text(first_name)
+            second.hover(); page.get_by_label('Filter').focus()
+            expect(page.locator('.mark.highlight title')).to_contain_text(second_name)
+            page.mouse.move(0, 0)
+            expect(page.locator('.mark.highlight')).to_have_count(0)
+            assert_no_external_resources(page, blocked)
+        context.close(); browser.close()
+
+
 @pytest.mark.parametrize('scheme', ['light', 'dark'])
 def test_large_board_navigation_and_chart(dl, tmp_path, scheme):
     from helpers import feed, many_systems, snapshot
