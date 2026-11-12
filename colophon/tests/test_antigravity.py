@@ -103,8 +103,11 @@ def test_antigravity_trajectory_key_types_preserve_workspace_creation_and_parent
     assert child["start_ms"] == 1767355200000
     assert payload["diagnostics"]["antigravity_malformed_rows"] == 0
 
-@pytest.mark.parametrize("timestamp", [b"\x80", proto_field(1,b"Synthetic wrong wire")])
-def test_antigravity_malformed_chat_start_timestamp_isolates_generator(native, timestamp):
+@pytest.mark.parametrize("timestamp, mismatch", [
+    (b"\x80", ".exa.cortex_pb.ChatStartMetadata.4"),
+    (proto_field(1,b"Synthetic wrong wire"), ".google.protobuf.Timestamp.1"),
+])
+def test_antigravity_malformed_chat_start_timestamp_is_ignored(native, timestamp, mismatch):
     path = database(native)
     bad_chat = proto_field(4,proto_field(2,5)) + proto_field(9,proto_field(4,timestamp))
     valid_chat = proto_field(4,proto_field(2,7)) + proto_field(9,proto_field(4,proto_field(1,1767355200)))
@@ -115,12 +118,47 @@ def test_antigravity_malformed_chat_start_timestamp_isolates_generator(native, t
     assert result.returncode == 0, result.stderr
     payload = native.payload()
     row, = payload["sessions"]
-    assert payload["diagnostics"]["antigravity_malformed_blobs"] == 1
-    assert payload["diagnostics"]["antigravity_unknown_clocks"] == 0
-    assert row["own_usage"]["input"] == 7
+    assert payload["diagnostics"]["antigravity_malformed_blobs"] == 0
+    assert payload["diagnostics"]["antigravity_unknown_clocks"] == 1
+    assert payload["diagnostics"]["antigravity_field_mismatches"] == {mismatch: 1}
+    assert row["own_usage"]["input"] == 12
     assert len(row["buckets"]) == 1
     assert row["buckets"][0][0] == 1963728
-    assert row["buckets"][0][3] == 7
+    assert row["buckets"][0][3] == 12
+
+def test_antigravity_unused_fields_do_not_reject_sessions(native):
+    first = database(native)
+    second = database(native, identity=ID[:-1] + "2")
+    usage = proto_field(2, 12) + proto_field(3, 7)
+    with sqlite3.connect(first) as db:
+        # Field 5 was known to the old schema but is not read by Colophon.
+        db.execute("INSERT INTO gen_metadata VALUES(1,?)", (proto_field(1, proto_field(4, usage)) + proto_field(5, 9),))
+    with sqlite3.connect(second) as db:
+        # Step metadata field 21 is also unused; its expected wire is varint.
+        metadata = proto_field(9, usage) + proto_field(21, b"synthetic unused")
+        db.execute("INSERT INTO steps VALUES(1,1,3,?,?,0)", (metadata, b""))
+    result = native.build("--no-claude", "--no-opencode")
+    assert result.returncode == 0, result.stderr
+    payload = native.payload()
+    assert len(payload["sessions"]) == 2
+    assert all(row["own_usage"]["input"] == 12 for row in payload["sessions"])
+    assert all(row["own_usage"]["output"] == 7 for row in payload["sessions"])
+    assert payload["diagnostics"]["antigravity_malformed_blobs"] == 0
+    assert payload["diagnostics"]["antigravity_field_mismatches"] == {}
+
+def test_antigravity_mistyped_usage_field_preserves_other_counts(native):
+    path = database(native)
+    usage = proto_field(2, b"synthetic wrong wire") + proto_field(3, 7) + proto_field(5, 3)
+    with sqlite3.connect(path) as db:
+        db.execute("INSERT INTO gen_metadata VALUES(1,?)", (proto_field(1, proto_field(4, usage)),))
+    result = native.build("--no-claude", "--no-opencode")
+    assert result.returncode == 0, result.stderr
+    payload = native.payload()
+    row, = payload["sessions"]
+    assert row["own_usage"]["input"] == 3
+    assert row["own_usage"]["output"] == 7
+    assert payload["diagnostics"]["antigravity_malformed_blobs"] == 0
+    assert payload["diagnostics"]["antigravity_field_mismatches"] == {".exa.codeium_common_pb.ModelUsageStats.2": 1}
 
 @pytest.mark.parametrize("created, bucket", [(proto_field(4,b""),0),
     (proto_field(4,proto_field(1,0)+proto_field(2,0)),0),
@@ -618,6 +656,40 @@ def test_antigravity_ledger_is_private_and_root_scoped(native):
     other.mkdir()
     assert native.build("--no-claude", "--no-opencode", "--antigravity-home", str(other)).returncode == 0
     assert native.payload()["sessions"] == []
+
+
+@pytest.mark.parametrize("field", [11, 12, 7])
+@pytest.mark.parametrize("raw_id", [b"SYNTHETIC\x00RAW-IDENTITY", b"SYNTHETIC\xffRAW-IDENTITY"])
+def test_antigravity_binary_usage_identity_survives_live_capture_and_retention(native, field, raw_id):
+    first = database(native)
+    second = database(native, identity=ID[:-1] + "2")
+    usage = proto_field(2, 5) + proto_field(field, raw_id)
+    for path in (first, second):
+        with sqlite3.connect(path) as db:
+            db.execute("INSERT INTO gen_metadata VALUES(1,?)", (proto_field(1, proto_field(4, usage)),))
+    result = native.build("--no-claude", "--no-opencode")
+    assert result.returncode == 0, result.stderr
+    payload = native.payload()
+    assert sum(row["own_usage"]["input"] for row in payload["sessions"]) == 5
+    assert payload["diagnostics"]["antigravity_cross_session_duplicates"] == 1
+    assert payload["diagnostics"]["antigravity_field_mismatches"] == {}
+    ledger = [json.loads(path.read_text()) for path in (native.runtime / "antigravity-ledger").rglob("*.json")]
+    assert len(ledger) == 2
+    assert all(record["events"][0]["ids"] == [[field, raw_id.hex()]] for record in ledger)
+
+    first.unlink()
+    result = native.build("--no-claude", "--no-opencode")
+    assert result.returncode == 0, result.stderr
+    payload = native.payload()
+    by_id = {row["id"]: row for row in payload["sessions"]}
+    assert len(by_id) == 2
+    assert by_id[ID]["own_usage"]["input"] == 0
+    assert by_id[ID[:-1] + "2"]["own_usage"]["input"] == 5
+    assert payload["diagnostics"]["antigravity_cross_session_duplicates"] == 1
+    assert payload["diagnostics"]["antigravity_field_mismatches"] == {}
+    reloaded = [json.loads(path.read_text()) for path in (native.runtime / "antigravity-ledger").rglob("*.json")]
+    assert len(reloaded) == 2
+    assert all(record["events"][0]["ids"] == [[field, raw_id.hex()]] for record in reloaded)
 
 
 def test_antigravity_retained_duplicate_yields_to_live_request(native):

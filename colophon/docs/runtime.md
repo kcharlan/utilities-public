@@ -69,10 +69,11 @@ Every existing SQLite sidecar must be a regular file before SQLite opens either
 a conversation or summary database; FIFOs, directories and symlinks are rejected
 with a source diagnostic so they cannot block later readable siblings.
 
-The bounded wire decoder validates the pinned public schema projection,
-retains unknown fields and raw blobs only in memory, and distinguishes absent,
-found and malformed fields. Malformed blobs lose their staged record, with
-contextual diagnostics; SQL/read failures lose the staged database. Archive
+The bounded wire decoder validates top-level protobuf structure and reads only
+used fields. Wrong wire types, invalid text and malformed nested messages are
+treated as absent and counted by message and field in `antigravity_field_mismatches`;
+unused fields remain opaque. Malformed top-level blobs lose their staged record,
+with contextual diagnostics; SQL/read failures lose the staged database. Archive
 annotations accept text protobuf whitespace, escaped strings and balanced
 unknown nested messages. A valid annotation wins over its own surface's summary,
 including absent `archived` meaning false. Unusable annotations diagnose and
@@ -169,7 +170,7 @@ reader. Missing legacy provider fields mean Codex. Source filtering applies
 to overview totals, session lists, descendants and direct subagent links.
 The snapshot log count always includes Codex and Claude logs, regardless of the
 switch; accepted OpenCode and Antigravity database counts are shown separately. The footer
-displays the embedded payload's release version (`colophon 0.7.0`).
+displays the embedded payload's release version (`colophon 0.7.1`).
 
 Codex uses green, Claude blue, OpenCode violet and Antigravity pink. In All, KPI share rules and workspace
 bars split by provider; calendar cells use the provider with the greater
@@ -259,7 +260,7 @@ An empty value selects the default `~/.claude` config root. Its
 `COLOPHON_HOME` selects the private runtime home (default `~/.colophon`);
 tilde expansion is supported. `COLOPHON_PRICING_URL` defaults to
 `https://models.dev/api.json`. Help and version exit without initializing
-runtime state. Version is currently `colophon 0.7.0`.
+runtime state. Version is currently `colophon 0.7.1`.
 
 | Flag | Behavior |
 | --- | --- |
@@ -289,8 +290,8 @@ win duplicate IDs, and successful siblings remain usable after a source failure.
 owns that preview database. Desktop-specific discovery is not verified.
 
 Only structurally compatible v2 databases are read; legacy JSON, v1-only
-schemas and incomplete/unfamiliar migrations are unsupported. A newer known-shape
-migration produces an untested-schema warning. A message's id and type come
+schemas and incomplete/unfamiliar migrations are unsupported. The latest migration
+is reported without a date-based compatibility warning. A message's id and type come
 from its `session_message` columns; OpenCode 2.1 payloads omit them, and older
 payloads that embed them must carry a non-empty id and the column's type.
 Database status and reasons

@@ -39,7 +39,8 @@ TEST(antigravity_db_retains_valid_blob_siblings_and_raw_generators){
     AntigravityFixture f;antigravity_fixture_open(&f);AntigravityStore s={0};
     antigravity_fixture_sql(&f,"INSERT INTO trajectory_metadata_blob VALUES(1,x'0a020a00'); INSERT INTO trajectory_metadata_blob VALUES(2,x'0a0180'); INSERT INTO steps VALUES(1,1,1,x'',x'9a01030a0178',0); INSERT INTO steps VALUES(2,1,1,x'80',x'',0); INSERT INTO gen_metadata VALUES(7,x'120201020a0422021009')");
     antigravity_fixture_read(&f,&s);ASSERT_EQ(1,s.session_count);AntigravitySession *r=s.sessions[0];
-    ASSERT_EQ(1,r->metadata_count);ASSERT_EQ(1,r->step_count);ASSERT_EQ(1,r->generator_count);ASSERT_EQ(7,r->generators[0].idx);ASSERT_EQ(2,s.malformed_blobs);
+    /* The malformed nested workspace no longer rejects its structurally valid row. */
+    ASSERT_EQ(2,r->metadata_count);ASSERT_EQ(1,r->step_count);ASSERT_EQ(1,r->generator_count);ASSERT_EQ(7,r->generators[0].idx);ASSERT_EQ(1,s.malformed_blobs);
     AgField chat={0},usage={0},input={0};ASSERT_EQ(AG_FOUND,ag_wire_last(r->generators[0].data,1,&chat));ASSERT_EQ(AG_FOUND,ag_wire_last(chat.bytes,4,&usage));ASSERT_EQ(AG_FOUND,ag_wire_last(usage.bytes,2,&input));ASSERT_EQ(9,input.integer);
     antigravity_store_destroy(&s);antigravity_fixture_close(&f);
 }
@@ -93,10 +94,10 @@ TEST(antigravity_db_summary_annotations_merge_before_last_scalar_wins){
         antigravity_store_destroy(&s);antigravity_fixture_close(&f);
     }
 }
-TEST(antigravity_db_malformed_summary_loses_only_its_record){
+TEST(antigravity_db_malformed_summary_field_preserves_title){
     AntigravityFixture f;antigravity_fixture_open(&f);
     antigravity_fixture_summary(&f,"CREATE TABLE conversation_summaries(conversation_id,title,raw_summary);INSERT INTO conversation_summaries VALUES('" AG_SYNTHETIC_ID "','Synthetic rejected summary',x'7a0180')");
-    AntigravityStore s={0};antigravity_fixture_read(&f,&s);ASSERT_EQ(1,s.session_count);ASSERT_FALSE(s.sessions[0]->summary_valid);ASSERT_FALSE(s.sessions[0]->archived);ASSERT_EQ(0,s.sessions[0]->title.n);ASSERT_EQ(1,s.diagnostic_count);antigravity_store_destroy(&s);antigravity_fixture_close(&f);
+    AntigravityStore s={0};antigravity_fixture_read(&f,&s);ASSERT_EQ(1,s.session_count);ASSERT_TRUE(s.sessions[0]->summary_valid);ASSERT_FALSE(s.sessions[0]->archived);ASSERT_TRUE(str_equal(s.sessions[0]->title,STR_LIT("Synthetic rejected summary")));ASSERT_EQ(1,s.field_mismatches.counts[AG_SUMMARY][15]);ASSERT_EQ(0,s.diagnostic_count);antigravity_store_destroy(&s);antigravity_fixture_close(&f);
 }
 TEST(antigravity_db_failed_snapshot_does_not_consume_identity){
     AntigravityFixture f;antigravity_fixture_open(&f);

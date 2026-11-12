@@ -43,8 +43,9 @@ tools and their private workflow are not included here.
 
 ## Antigravity evidence and acceptance
 
-The [public schema fixture](../tests/fixtures/antigravity/README.md) records
-the producing language-server hashes and qualified descriptor provenance.
+The [public enum and model-oracle fixtures](../tests/fixtures/antigravity/README.md)
+record the retained reference data and its provenance. The wire reader validates
+structure and checks consumed fields independently.
 [Token rules](token_rules.md#antigravity-accounting-and-oracle-provenance-050)
 record synthetic native ccusage 20.0.42 probes, binary hash and accounting
 adaptations. The proposed [ccusage v20.0.42 Rust source](https://github.com/ccusage/ccusage/tree/v20.0.42/rust/adapters/antigravity)

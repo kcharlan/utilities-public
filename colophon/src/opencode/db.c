@@ -275,7 +275,7 @@ static Err schema_guard(sqlite3 *db,OpencodeDatabase *info,Table *tables,size_t 
         if(rc==SQLITE_ROW){
             Str id={0};e=sql_text(st,0,&id);
             if(!e.code&&!id.n)e=err_make(ERR_INVALID,"invalid OpenCode migration id");
-            if(!e.code){e=str_copy(&info->arena,id,&info->latest_migration);info->untested=str_compare(id,STR_LIT("20261010180456_project_time_archived"))>0;}
+            if(!e.code){e=str_copy(&info->arena,id,&info->latest_migration);}
         }else if(rc!=SQLITE_DONE)e=sql_error(db);
     }
     sqlite3_finalize(st);st=NULL;
@@ -500,7 +500,7 @@ Err opencode_store_read(OpencodeStore *store,volatile sig_atomic_t *stop) {
         if(!S_ISREG(st.st_mode)){info->status=OC_DB_SKIPPED;TRY(str_copy(&store->arena,STR_LIT("database is not a regular file"),&info->reason));continue;}
         OpencodeStore stage={0};Err e=read_database(&stage,info,i,stop);
         if(e.code){
-            stage_destroy(&stage);arena_destroy(&info->arena);info->latest_migration=(Str){0};info->untested=false;
+            stage_destroy(&stage);arena_destroy(&info->arena);info->latest_migration=(Str){0};
             if(e.code==ERR_NOMEM||(stop&&*stop))return e;
             info->status=e.code==ERR_INVALID?OC_DB_UNSUPPORTED:OC_DB_UNREADABLE;
             TRY(str_copy(&store->arena,text(e.message),&info->reason));continue;

@@ -68,6 +68,10 @@ database disappears or cannot be read. Live databases replace retained records;
 the ledger stores no transcript turns, though a fallback title may come from
 the first request.
 
+Version 0.7.1 keeps structurally valid Antigravity records when individual
+used fields are malformed, reports field mismatches, and reads structurally
+compatible OpenCode databases without a migration-date warning.
+
 The page's All/Codex/Claude/OpenCode/Antigravity switch preserves filters and uses green/blue/violet/pink
 provider marks, split overview bars and metric-based calendar colors.
 Claude continuation commands are offered only for supported primary CLI

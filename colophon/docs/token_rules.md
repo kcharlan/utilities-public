@@ -48,15 +48,9 @@ are explicit Colophon adaptations. TTFT uses the turn's first generator row.
 Attribution prefers generator response_model, meaningful mapped usage enum,
 step ModelInfo.chat_model_name then model_name, latest attributed conversation
 model, then antigravity/unattributed. Display/Vertex/URL strings are excluded.
-Public fully qualified Model descriptors from Antigravity 2.26.0 binary SHA-256
-`6f7e5004629070ac0c4651a1dc29030eaadcd5dc68fa9edf170047d7f8424f4d`
-match all 1,691 earlier candidates from the pinned public binary SHA-256
-`060ebf79719024f1b3acb52a21c7a182cb6466b2ac4ac25e93391169b1c1bb46`.
-`models.inc` retains those values and native-oracle slugs; the self-contained
+`models.inc` retains model enum values and native-oracle slugs; the self-contained
 model-oracle fixture retains public names and observed expectations. Generic
 oracle labels deliberately yield empty attribution so meaningful fallbacks win.
-Schema provenance remains tied to its producing binary, not reassigned to the
-earlier hash after the app updated.
 
 Normalization adapts CodexBar commit
 `e5d6977ba547aa7046eed3865f8ee1cdd5d58731`, AntigravityLocalReader.swift

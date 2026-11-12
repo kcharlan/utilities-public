@@ -9,7 +9,7 @@
 typedef enum { OC_DB_OK, OC_DB_ABSENT, OC_DB_UNREADABLE, OC_DB_UNSUPPORTED, OC_DB_SKIPPED } OpencodeDatabaseStatus;
 typedef struct {
     Str path, reason, latest_migration;
-    bool primary, untested;
+    bool primary;
     OpencodeDatabaseStatus status;
     size_t accepted_sessions, accepted_messages;
     Arena arena; /* Successful database facts; private staging until COMMIT. */

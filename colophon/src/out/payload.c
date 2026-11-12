@@ -5,6 +5,7 @@
 #include "antigravity/scan.h"
 #include "opencode/compose.h"
 #include <stdlib.h>
+#include <stdio.h>
 #include <string.h>
 static void text(JsonWriter *w,const char *s){jsonw_string(w,(Str){s,(uint32_t)strlen(s)});}
 static void antigravity_source(JsonWriter *w,const PayloadInputs *in){
@@ -42,6 +43,13 @@ static void antigravity_diagnostics(JsonWriter *w,const AntigravityStore *s){
     jsonw_raw(w,",\"antigravity_requests_without_usage\":");jsonw_i128(w,s?s->requests_without_usage:0);
     jsonw_raw(w,",\"antigravity_invalid_numbers\":");jsonw_i128(w,s?s->invalid_numbers:0);
     jsonw_raw(w,",\"antigravity_unknown_clocks\":");jsonw_i128(w,s?s->unknown_clocks:0);
+    jsonw_raw(w,",\"antigravity_field_mismatches\":{");bool first_mismatch=true;
+    if(s)for(unsigned t=0;t<20;t++)for(unsigned n=0;n<256;n++)if(s->field_mismatches.counts[t][n]){
+        if(!first_mismatch)jsonw_raw(w,",");first_mismatch=false;
+        char key[256];int len=snprintf(key,sizeof key,"%s.%u",ag_wire_type_name((AgMessageType)t),n);
+        jsonw_string(w,(Str){key,(uint32_t)len});jsonw_raw(w,":");jsonw_i128(w,s->field_mismatches.counts[t][n]);
+    }
+    jsonw_raw(w,"}");
     jsonw_raw(w,",\"antigravity_ledger_unreadable\":");payload_corpus_strings(w,s?&s->ledger_unreadable:&(CorpusStrings){0});
     jsonw_raw(w,",\"antigravity_retained_sessions\":");jsonw_i128(w,s?s->ledger_retained:0);
     jsonw_raw(w,",\"antigravity_ledger_shrunk\":");jsonw_i128(w,s?s->ledger_shrunk:0);
@@ -63,7 +71,6 @@ static void opencode_source(JsonWriter *w,const PayloadInputs *in){
         jsonw_raw(w,"{\"path\":");jsonw_string(w,d->path);jsonw_raw(w,",\"status\":");text(w,opencode_database_status(d->status));
         jsonw_raw(w,",\"reason\":");if(d->reason.p)jsonw_string(w,d->reason);else jsonw_raw(w,"null");
         jsonw_raw(w,d->primary?",\"primary\":true":",\"primary\":false");
-        jsonw_raw(w,d->untested?",\"untested\":true":",\"untested\":false");
         jsonw_raw(w,",\"latest_migration\":");if(d->latest_migration.p)jsonw_string(w,d->latest_migration);else jsonw_raw(w,"null");
         jsonw_raw(w,",\"accepted_sessions\":");jsonw_i128(w,d->accepted_sessions);
         jsonw_raw(w,",\"accepted_messages\":");jsonw_i128(w,d->accepted_messages);jsonw_raw(w,"}");
@@ -103,11 +110,11 @@ static void oc_difference(JsonWriter *w,const OpencodeUsageDifference *d,const c
 }
 static void opencode_diagnostics(JsonWriter *w,const OpencodeStore *s){
     const OpencodeUsageReport *u=s?s->usage:NULL;
-    const char *keys[]={"opencode_schema_errors","opencode_unreadable_databases","opencode_untested_schema"};
-    for(int k=0;k<3;k++){
+    const char *keys[]={"opencode_schema_errors","opencode_unreadable_databases"};
+    for(int k=0;k<2;k++){
         jsonw_raw(w,",");text(w,keys[k]);jsonw_raw(w,":[");bool first=true;
-        if(s)for(size_t i=0;i<s->database_count;i++){const OpencodeDatabase *d=&s->databases[i];if(!(k==0?d->status==OC_DB_UNSUPPORTED:k==1?d->status==OC_DB_UNREADABLE:d->untested))continue;
-            if(!first)jsonw_raw(w,",");first=false;jsonw_raw(w,"{\"path\":");jsonw_string(w,d->path);jsonw_raw(w,k==2?",\"latest_migration\":":",\"reason\":");jsonw_string(w,k==2?d->latest_migration:d->reason);jsonw_raw(w,"}");}
+        if(s)for(size_t i=0;i<s->database_count;i++){const OpencodeDatabase *d=&s->databases[i];if(!(k==0?d->status==OC_DB_UNSUPPORTED:d->status==OC_DB_UNREADABLE))continue;
+            if(!first)jsonw_raw(w,",");first=false;jsonw_raw(w,"{\"path\":");jsonw_string(w,d->path);jsonw_raw(w,",\"reason\":");jsonw_string(w,d->reason);jsonw_raw(w,"}");}
         jsonw_raw(w,"]");
     }
     jsonw_raw(w,",\"opencode_session_id_collisions\":");oc_contexts(w,s,s?&s->corpus_collisions:NULL,"session id belongs to another provider");
@@ -150,7 +157,7 @@ static void claude_diagnostics(JsonWriter *w,const ClaudeScan *c){
 void payload_empty(JsonWriter *w,const PayloadInputs *in){
     PayloadIds ids={0};Err identity_error=payload_ids_init(in->corpus,in->source_codex_home,&ids);
     if(identity_error.code){w->error=identity_error;payload_ids_destroy(&ids);return;}
-    jsonw_raw(w,"{\"schema\":1,\"meta\":{\"version\":\"0.7.0\",\"generated_at_ms\":");jsonw_i64(w,in->snapshot_ms);
+    jsonw_raw(w,"{\"schema\":1,\"meta\":{\"version\":\"0.7.1\",\"generated_at_ms\":");jsonw_i64(w,in->snapshot_ms);
     jsonw_raw(w,",\"generated_tz\":");text(w,in->timezone);jsonw_raw(w,",\"codex_home\":");text(w,in->codex_home);
     jsonw_raw(w,",\"counts\":{\"logs\":");jsonw_i64(w,(int64_t)in->logs);
     jsonw_raw(w,",\"parsed\":");jsonw_i64(w,(int64_t)in->parsed);

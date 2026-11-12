@@ -548,7 +548,7 @@
       el("button", {class: "fchip", type: "button", text: label + ": " + currentState[key] + " ×", "aria-label": "Remove " + label + " filter", onclick: () => act({[key]: undefined})})));
   }
   const lineDiagnosticCategories = new Set(["malformed_lines", "truncated_lines", "recovered_lines"]);
-  const countMapDiagnostics = new Set(["unknown_record_types", "claude_unknown_record_types", "opencode_unknown_message_types", "opencode_unknown_content_types", "opencode_requests_without_usage"]);
+  const countMapDiagnostics = new Set(["unknown_record_types", "claude_unknown_record_types", "opencode_unknown_message_types", "opencode_unknown_content_types", "opencode_requests_without_usage", "antigravity_field_mismatches"]);
   function diagnosticCount(key, value) {
     if (lineDiagnosticCategories.has(key)) return value.total;
     if (countMapDiagnostics.has(key)) return Object.values(value).reduce((sum, count) => sum + count, 0);
@@ -613,6 +613,7 @@
         antigravity_cross_session_duplicates: "Usage copies in later Antigravity sessions merge into the first discovered owner by component maximum.",
         antigravity_requests_without_usage: "Generator rows contain no eligible token usage. This cannot detect missing individual fields or changed meanings.",
         antigravity_invalid_numbers: "Invalid token components or sums were excluded; valid sibling events remain included.",
+        antigravity_field_mismatches: "Malformed used fields were ignored; other fields in their records remain included.",
         antigravity_unknown_clocks: "Usage without a usable step or chat-start clock falls back to the session start, if known.",
         antigravity_ledger_unreadable: "These retained usage records could not be read and were left unchanged.",
         antigravity_retained_sessions: "These sessions retain their last observed usage and metadata after their databases became unavailable.",
@@ -621,7 +622,6 @@
         antigravity_orphaned_subagents: "Antigravity subagent sessions have no admitted parent; their sessions remain included.",
         antigravity_session_id_collisions: "Antigravity sessions conflicting with another provider's public session ID were excluded.",
         opencode_schema_errors: "OpenCode database schema is unsupported; these databases were skipped.",
-        opencode_untested_schema: "OpenCode schema is newer than the tested version; structural checks passed, but the format is untested.",
         opencode_unknown_message_types: "OpenCode's message format may have changed; unknown messages are not interpreted.",
         opencode_unknown_content_types: "OpenCode's content format may have changed; unknown parts are not interpreted.",
         opencode_requests_without_usage: "Requests without usable token usage, including explicit zero usage. No tokens are inferred from session totals.",

@@ -365,3 +365,11 @@ Preserve source metadata for reconciliation, but limit displayed scalar and fall
 strings with a UTF-8-safe suffix. Bound file and network readers while reading,
 not after allocating their complete input, and compare cache contents before
 replacing an unchanged record.
+
+## Used protobuf fields need independent validation
+
+A schema-wide Antigravity validator dropped whole usage records when an unused
+field changed or a nested timestamp was malformed. Validate the outer wire
+structure, then check each consumed field and preserve unrelated facts; keep
+malformed clock tests that prevent accidental epoch defaults. Diagnostics must
+identify the used message and field without inspecting unknown fields.

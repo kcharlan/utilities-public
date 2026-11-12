@@ -235,9 +235,8 @@ def test_opencode_partial_failure_and_newer_schema_details_remain_visible(native
     payload = native.payload()
     assert source(payload)["status"] == "ok"
     assert len(payload["sessions"]) == 1
-    assert payload["diagnostics"]["opencode_untested_schema"] == [{"path": str(good), "latest_migration": "99999999999999_synthetic_future"}]
+    assert source(payload)["databases"][0]["latest_migration"] == "99999999999999_synthetic_future"
     assert "opencode_unreadable_databases=1" in result.stderr
-    assert "opencode_untested_schema=1" in result.stderr
     assert "opencode-bad.db" in result.stderr
 
 
@@ -498,7 +497,7 @@ def test_opencode_missing_explicit_file_is_absent_and_never_created(native):
     assert source(payload)["status"] == "absent"
     assert source(payload)["databases"][0]["status"] == "absent"
     assert not missing.exists()
-    assert payload["meta"]["version"] == "0.7.0"
+    assert payload["meta"]["version"] == "0.7.1"
 
 
 def test_opencode_status_prefers_structural_rejection_over_unreadable(native):

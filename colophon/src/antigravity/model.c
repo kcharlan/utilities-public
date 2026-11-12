@@ -12,7 +12,7 @@ Str antigravity_model_enum(int64_t value) {
     if(lo==sizeof models/sizeof *models||models[lo].value!=value)return (Str){0};
     const char *s=models[lo].slug;return (Str){s,(uint32_t)strlen(s)};
 }
-static Str text(Str input,uint32_t n) {AgField f={0};return ag_wire_last(input,n,&f)==AG_FOUND?token_model_trim(f.bytes):(Str){0};}
+static Str text(AgMismatches *m,Str input,uint32_t n) {Str v={0};ag_wire_text(m,AG_MODEL_INFO,input,n,&v);return token_model_trim(v);}
 static Str pricing_alias(Str lower) {
     const char *aliases[][2]={{"gemini-pro-default","gemini-3.1-pro-preview"},{"gemini-pro-agent","gemini-3.1-pro-preview"},{"gemini-3.1-pro","gemini-3.1-pro-preview"},{"gemini-3.1-pro-high","gemini-3.1-pro-preview"},{"gemini-3.1-pro-low","gemini-3.1-pro-preview"},{"gemini-3.7-flash-safety-le","gemini-3.7-flash"}};
     for(size_t i=0;i<sizeof aliases/sizeof *aliases;i++)if(str_equal(lower,(Str){aliases[i][0],(uint32_t)strlen(aliases[i][0])}))return (Str){aliases[i][1],(uint32_t)strlen(aliases[i][1])};
@@ -27,10 +27,11 @@ Err antigravity_normalize_model(Arena *arena,Str raw,Str *out) {
     alias=pricing_alias(lower);if(alias.n)s=alias;
     return str_copy(arena,s,out);
 }
-Err antigravity_model(Arena *arena,Str response,Str usage,Str metadata,Str previous,Str *raw,Str *normalized) {
-    Str value=token_model_trim(response);AgField f={0};
-    if(!value.n&&ag_wire_last(usage,1,&f)==AG_FOUND)value=antigravity_model_enum((int64_t)f.integer);
-    if(!value.n){Str info={0};TRY(antigravity_message_merge(arena,metadata,24,&info));value=text(info,12);if(!value.n)value=text(info,8);}
+Err antigravity_model_typed(AgMismatches *m,Arena *arena,Str response,Str usage,Str metadata,Str previous,Str *raw,Str *normalized) {
+    Str value=token_model_trim(response);uint64_t model=0;
+    if(!value.n&&ag_wire_uint(m,AG_USAGE,usage,1,&model)==AG_FOUND)value=antigravity_model_enum((int64_t)model);
+    if(!value.n){Str info={0};TRY(antigravity_message_merge_typed(m,AG_STEP_METADATA,arena,metadata,24,&info));value=text(m,info,12);if(!value.n)value=text(m,info,8);}
     if(!value.n)value=previous.n?previous:STR_LIT("antigravity/unattributed");
     *raw=value;return antigravity_normalize_model(arena,value,normalized);
 }
+Err antigravity_model(Arena *arena,Str response,Str usage,Str metadata,Str previous,Str *raw,Str *normalized){return antigravity_model_typed(NULL,arena,response,usage,metadata,previous,raw,normalized);}

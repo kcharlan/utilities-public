@@ -1,4 +1,5 @@
 #include "antigravity/wire.h"
+#include "antigravity/corpus.h"
 #include "runner.h"
 #include <stdlib.h>
 
@@ -22,14 +23,14 @@ TEST(antigravity_summary_archive_descriptor) {
     ASSERT_EQ(AG_FOUND,ag_wire_last(summary,15,&annotations));
     ASSERT_EQ(AG_FOUND,ag_wire_last(annotations.bytes,4,&archived));
     ASSERT_EQ(0,archived.integer);
-    ASSERT_EQ(AG_FOUND,ag_wire_validate(summary,AG_SUMMARY));
+    ASSERT_EQ(AG_FOUND,ag_wire_validate(summary));
 }
 TEST(antigravity_wire_typed_nested_and_limits) {
-    ASSERT_EQ(AG_MALFORMED,ag_wire_validate(STR_LIT("\12\1\200"),AG_TRAJECTORY));
-    ASSERT_EQ(AG_FOUND,ag_wire_validate(STR_LIT("\12\2\12\0"),AG_TRAJECTORY));
-    ASSERT_EQ(AG_MALFORMED,ag_wire_validate(STR_LIT("\12\1\200"),AG_GENERATOR));
+    ASSERT_EQ(AG_FOUND,ag_wire_validate(STR_LIT("\12\1\200")));
+    ASSERT_EQ(AG_FOUND,ag_wire_validate(STR_LIT("\12\2\12\0")));
+    ASSERT_EQ(AG_FOUND,ag_wire_validate(STR_LIT("\12\1\200")));
     Str oversized={"",AG_WIRE_MAX_BYTES+1};
-    ASSERT_EQ(AG_MALFORMED,ag_wire_validate(oversized,AG_STEP));
+    ASSERT_EQ(AG_MALFORMED,ag_wire_validate(oversized));
     AgCursor c={.input=STR_LIT("\10\1\22\2\2\3\10\4")}; uint64_t v=0;
     ASSERT_EQ(AG_FOUND,ag_wire_integer_next(&c,1,&v));ASSERT_EQ(1,v);
     ASSERT_EQ(AG_FOUND,ag_wire_integer_next(&c,1,&v));ASSERT_EQ(4,v);
@@ -38,27 +39,53 @@ TEST(antigravity_wire_typed_nested_and_limits) {
     ASSERT_EQ(AG_FOUND,ag_wire_integer_next(&c,2,&v));ASSERT_EQ(2,v);
     ASSERT_EQ(AG_FOUND,ag_wire_integer_next(&c,2,&v));ASSERT_EQ(3,v);
 }
-TEST(antigravity_wire_rejects_known_field_wire_mismatch_and_bad_packed_tail) {
-    ASSERT_EQ(AG_MALFORMED,ag_wire_validate(STR_LIT("\42\1x"),AG_ANNOTATIONS));
-    ASSERT_EQ(AG_MALFORMED,ag_wire_validate(STR_LIT("\12\1\377"),AG_ANNOTATIONS));
-    ASSERT_EQ(AG_MALFORMED,ag_wire_validate(STR_LIT("\22\1\200"),AG_GENERATOR));
-    ASSERT_EQ(AG_FOUND,ag_wire_validate(STR_LIT("\22\2\1\2\20\3"),AG_GENERATOR));
-    ASSERT_EQ(AG_FOUND,ag_wire_validate(STR_LIT("\241\6abcdefgh\255\6abcd\260\6\1\272\6\3xyz"),AG_ANNOTATIONS));
+TEST(antigravity_wire_structure_ignores_nested_types_and_packed_tail) {
+    ASSERT_EQ(AG_FOUND,ag_wire_validate(STR_LIT("\42\1x")));
+    ASSERT_EQ(AG_FOUND,ag_wire_validate(STR_LIT("\12\1\377")));
+    ASSERT_EQ(AG_FOUND,ag_wire_validate(STR_LIT("\22\1\200")));
+    ASSERT_EQ(AG_FOUND,ag_wire_validate(STR_LIT("\22\2\1\2\20\3")));
+    ASSERT_EQ(AG_FOUND,ag_wire_validate(STR_LIT("\241\6abcdefgh\255\6abcd\260\6\1\272\6\3xyz")));
+}
+TEST(antigravity_wire_typed_fields_ignore_mismatches) {
+    AgMismatches m={0};uint64_t v=0;Str text={0};
+    Str input=STR_LIT("\12\1x\20\7\32\1\377\42\1\0");
+    ASSERT_EQ(AG_ABSENT,ag_wire_uint(&m,AG_USAGE,input,1,&v));
+    ASSERT_EQ(AG_FOUND,ag_wire_uint(&m,AG_USAGE,input,2,&v));ASSERT_EQ(7,v);
+    ASSERT_EQ(AG_ABSENT,ag_wire_text(&m,AG_USAGE,input,3,&text));
+    ASSERT_EQ(AG_ABSENT,ag_wire_text(&m,AG_USAGE,input,4,&text));
+    ASSERT_EQ(AG_FOUND,ag_wire_bytes(&m,AG_USAGE,input,3,&text));
+    ASSERT_EQ(1,m.counts[AG_USAGE][1]);ASSERT_EQ(1,m.counts[AG_USAGE][3]);ASSERT_EQ(1,m.counts[AG_USAGE][4]);
+    ASSERT_EQ(AG_ABSENT,ag_wire_uint(&m,AG_USAGE,input,1,&v));ASSERT_EQ(1,m.counts[AG_USAGE][1]);
+    ag_wire_mismatches_destroy(&m);
+}
+TEST(antigravity_wire_mismatches_keep_identity_across_merges) {
+    AgMismatches m={0};Arena a={0};uint64_t value=0;Str merged={0};
+    Str input=STR_LIT("\112\3\12\1x\112\2\20\1");
+    for(size_t i=0;i<2;i++){
+        ASSERT_EQ(ERR_OK,antigravity_message_merge_typed(&m,AG_CHAT_MODEL,&a,input,9,&merged).code);
+        ASSERT_EQ(AG_ABSENT,ag_wire_uint(&m,AG_TIMESTAMP,merged,1,&value));
+        ASSERT_EQ(AG_FOUND,ag_wire_uint(&m,AG_TIMESTAMP,merged,2,&value));ASSERT_EQ(1,value);
+    }
+    ASSERT_EQ(1,m.counts[AG_TIMESTAMP][1]);
+    AgCursor c={.input=STR_LIT("\22\2\1\200")};
+    ASSERT_EQ(AG_ABSENT,ag_wire_integer_next_typed(&m,AG_GENERATOR,&c,2,&value));
+    ASSERT_EQ(1,m.counts[AG_GENERATOR][2]);
+    ag_wire_mismatches_destroy(&m);arena_destroy(&a);
 }
 TEST(antigravity_wire_field_budget_overflow_and_fixed_truncation){
     size_t n=2*(AG_WIRE_MAX_FIELDS+1);char *data=malloc(n);ASSERT_TRUE(data);
     for(size_t i=0;i<n;i+=2){data[i]=8;data[i+1]=0;}
-    ASSERT_EQ(AG_MALFORMED,ag_wire_validate((Str){data,(uint32_t)n},AG_OPAQUE));free(data);
+    ASSERT_EQ(AG_MALFORMED,ag_wire_validate((Str){data,(uint32_t)n}));free(data);
     const unsigned char overflow[]={8,255,255,255,255,255,255,255,255,255,2};
-    ASSERT_EQ(AG_MALFORMED,ag_wire_validate((Str){(const char *)overflow,sizeof overflow},AG_OPAQUE));
-    ASSERT_EQ(AG_MALFORMED,ag_wire_validate(STR_LIT("\11short"),AG_OPAQUE));
-    ASSERT_EQ(AG_MALFORMED,ag_wire_validate(STR_LIT("\15xx"),AG_OPAQUE));
+    ASSERT_EQ(AG_MALFORMED,ag_wire_validate((Str){(const char *)overflow,sizeof overflow}));
+    ASSERT_EQ(AG_MALFORMED,ag_wire_validate(STR_LIT("\11short")));
+    ASSERT_EQ(AG_MALFORMED,ag_wire_validate(STR_LIT("\15xx")));
 }
 TEST(antigravity_wire_chat_start_timestamp_is_typed) {
-    ASSERT_EQ(AG_MALFORMED,ag_wire_validate(STR_LIT("\12\5\112\3\42\1\200"),AG_GENERATOR));
-    ASSERT_EQ(AG_MALFORMED,ag_wire_validate(STR_LIT("\12\7\112\5\42\3\12\1x"),AG_GENERATOR));
-    ASSERT_EQ(AG_FOUND,ag_wire_validate(STR_LIT("\12\4\112\2\42\0"),AG_GENERATOR));
-    ASSERT_EQ(AG_FOUND,ag_wire_validate(STR_LIT("\12\6\112\4\42\2\10\0"),AG_GENERATOR));
+    ASSERT_EQ(AG_FOUND,ag_wire_validate(STR_LIT("\12\5\112\3\42\1\200")));
+    ASSERT_EQ(AG_FOUND,ag_wire_validate(STR_LIT("\12\7\112\5\42\3\12\1x")));
+    ASSERT_EQ(AG_FOUND,ag_wire_validate(STR_LIT("\12\4\112\2\42\0")));
+    ASSERT_EQ(AG_FOUND,ag_wire_validate(STR_LIT("\12\6\112\4\42\2\10\0")));
     /* Unknown field99 bytes are opaque, even when not themselves a message. */
-    ASSERT_EQ(AG_FOUND,ag_wire_validate(STR_LIT("\12\6\112\4\232\6\1\200"),AG_GENERATOR));
+    ASSERT_EQ(AG_FOUND,ag_wire_validate(STR_LIT("\12\6\112\4\232\6\1\200")));
 }

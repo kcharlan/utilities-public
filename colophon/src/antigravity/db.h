@@ -37,6 +37,7 @@ typedef struct {
     AntigravityDatabase *databases;size_t database_count,database_capacity;
     AntigravitySession **sessions;size_t session_count,session_capacity;
     Omap session_ids;
+    AgMismatches field_mismatches;
     AntigravityDiagnostic *diagnostics;size_t diagnostic_count,diagnostic_capacity;
     Str *ignored_environment;size_t ignored_environment_count,ignored_environment_capacity;
     uint64_t legacy_encrypted,duplicate_sessions,archive_disagreements,malformed_blobs,malformed_rows,annotation_errors;

@@ -14,7 +14,7 @@ struct Event {
     bool reasoning,step_clock;
 };
 typedef struct {Arena arena;Omap aliases;Event *first,*last;size_t count;AntigravityStore *store;AntigravityLedger *ledger;} Collection;
-static Str scalar(Str s,uint32_t n) {AgField f={0};return ag_wire_last(s,n,&f)==AG_FOUND?f.bytes:(Str){0};}
+static Str scalar(AgMismatches *m,AgMessageType type,Str s,uint32_t n) {Str v={0};ag_wire_text(m,type,s,n,&v);return v;}
 static Event *root(Event *e) {Event *r=e;while(r->parent)r=r->parent;while(e->parent){Event *p=e->parent;e->parent=r;e=p;}return r;}
 static void merge(Event *a,Event *b) {
     for(size_t i=0;i<6;i++)if(b->tokens[i]>a->tokens[i])a->tokens[i]=b->tokens[i];
@@ -41,8 +41,8 @@ static Err identify(Collection *c,Event *event,const Str ids[3]) {
 }
 static Err emit(Collection *c,SessionModel *s,Str usage,Str response,const AntigravityStep *step,Str chat,Str *previous,bool *eligible) {
     const uint32_t fields[]={2,5,4,3,9,10};uint64_t tokens[6]={0};bool positive=false,reasoning=false;
-    for(size_t i=0;i<6;i++){AgField f={0};bool present=ag_wire_last(usage,fields[i],&f)==AG_FOUND;
-        if(present){tokens[i]=f.integer;if(tokens[i]>INT64_MAX){c->store->invalid_numbers++;return ERR_SUCCESS;}}
+    for(size_t i=0;i<6;i++){bool present=ag_wire_uint(&c->store->field_mismatches,AG_USAGE,usage,fields[i],&tokens[i])==AG_FOUND;
+        if(present){if(tokens[i]>INT64_MAX){c->store->invalid_numbers++;return ERR_SUCCESS;}}
         positive|=tokens[i]!=0;if(i==4)reasoning=present;
     }
     /* Reconcile each observation before merging copies. A smaller thinking
@@ -58,23 +58,23 @@ static Err emit(Collection *c,SessionModel *s,Str usage,Str response,const Antig
     Event *e;TRY(arena_alloc(&c->arena,sizeof *e,alignof(Event),(void**)&e));
     *e=(Event){.order=c->count++,.session=s,.reasoning=reasoning};memcpy(e->tokens,tokens,sizeof tokens);
     e->unit=(UsageUnit){.session_id=s->id,.source=STR_LIT("antigravity"),.display_turn=step?step->turn:(Str){0}};
-    TRY(antigravity_model(&c->arena,response,usage,step?step->metadata:(Str){0},*previous,&e->unit.model_raw,&e->unit.model));
+    TRY(antigravity_model_typed(&c->store->field_mismatches,&c->arena,response,usage,step?step->metadata:(Str){0},*previous,&e->unit.model_raw,&e->unit.model));
     if(!str_equal(e->unit.model_raw,STR_LIT("antigravity/unattributed")))*previous=e->unit.model_raw;
-    MaybeMs at={0};if(step){const uint32_t clocks[]={8,7,1};for(size_t i=0;i<3&&!at.present;i++)TRY(antigravity_clock(&c->arena,step->metadata,clocks[i],&at));e->step_clock=at.present;}
-    if(!at.present){Str start={0};TRY(antigravity_message_merge(&c->arena,chat,9,&start));TRY(antigravity_clock(&c->arena,start,4,&at));}
+    MaybeMs at={0};if(step){const uint32_t clocks[]={8,7,1};for(size_t i=0;i<3&&!at.present;i++)TRY(antigravity_clock_typed(&c->store->field_mismatches,AG_STEP_METADATA,&c->arena,step->metadata,clocks[i],&at));e->step_clock=at.present;}
+    if(!at.present){Str start={0};TRY(antigravity_message_merge_typed(&c->store->field_mismatches,AG_CHAT_MODEL,&c->arena,chat,9,&start));TRY(antigravity_clock_typed(&c->store->field_mismatches,AG_CHAT_START,&c->arena,start,4,&at));}
     if(!at.present){at=s->start_ms;c->store->unknown_clocks++;}
     e->unit.at_ms=e->unit.timestamp_ms=at;
     if(c->last)c->last->next=e;else c->first=e;c->last=e;
     AntigravityLedgerEvent saved={.order=e->order,.reasoning=e->reasoning,.step_clock=e->step_clock,.at_ms=e->unit.at_ms,.model_raw=e->unit.model_raw};memcpy(saved.tokens,e->tokens,sizeof saved.tokens);
-    const uint32_t id_fields[]={11,12,7};for(size_t i=0;i<3;i++)saved.ids[i]=scalar(usage,id_fields[i]);
-    AgField model={0};saved.has_model_number=ag_wire_last(usage,1,&model)==AG_FOUND;if(saved.has_model_number)saved.model_number=(int64_t)model.integer;
+    const uint32_t id_fields[]={11,12,7};for(size_t i=0;i<3;i++)ag_wire_bytes(&c->store->field_mismatches,AG_USAGE,usage,id_fields[i],&saved.ids[i]);
+    uint64_t model=0;saved.has_model_number=ag_wire_uint(&c->store->field_mismatches,AG_USAGE,usage,1,&model)==AG_FOUND;if(saved.has_model_number)saved.model_number=(int64_t)model;
     TRY(antigravity_ledger_capture(c->ledger,s,saved));return identify(c,e,saved.ids);
 }
 static Err collect_location(Collection *c,SessionModel *s,Str message,uint32_t direct,uint32_t retries,Str response,const AntigravityStep *step,Str chat,Str *previous,bool *eligible) {
-    Str u={0};TRY(antigravity_message_merge(&c->arena,message,direct,&u));
+    Str u={0};TRY(antigravity_message_merge_typed(&c->store->field_mismatches,direct==4?AG_CHAT_MODEL:AG_STEP_METADATA,&c->arena,message,direct,&u));
     if(u.p)TRY(emit(c,s,u,response,step,chat,previous,eligible));
     AgCursor cursor={.input=message};AgField f;
-    while(ag_wire_next(&cursor,&f)==AG_FOUND)if(f.number==retries){TRY(antigravity_message_merge(&c->arena,f.bytes,2,&u));if(u.p)TRY(emit(c,s,u,response,step,chat,previous,eligible));}
+    while(ag_wire_next(&cursor,&f)==AG_FOUND)if(f.number==retries){if(!ag_wire_message_field(&c->store->field_mismatches,direct==4?AG_CHAT_MODEL:AG_STEP_METADATA,&f))continue;TRY(antigravity_message_merge_typed(&c->store->field_mismatches,AG_RETRY,&c->arena,f.bytes,2,&u));if(u.p)TRY(emit(c,s,u,response,step,chat,previous,eligible));}
     return ERR_SUCCESS;
 }
 static Str index_key(int64_t index,char buffer[32]) {int n=snprintf(buffer,32,"%lld",(long long)index);return (Str){buffer,(uint32_t)n};}
@@ -82,20 +82,20 @@ static Err session(Collection *c,AntigravitySession *r,SessionModel *s) {
     Omap executions={0},indices={0},turns={0},first_generators={0};Err e=ERR_SUCCESS;Str previous={0};
     for(size_t i=0;!e.code&&i<r->step_count;i++){
         AntigravityStep *step=&r->steps[i];char key[32];e=omap_put(&indices,index_key(step->idx,key),step);
-        Str id=scalar(step->metadata,12);if(!e.code&&id.n&&!omap_get(&executions,id))e=omap_put(&executions,id,step);
+        Str id=scalar(&c->store->field_mismatches,AG_STEP_METADATA,step->metadata,12);if(!e.code&&id.n&&!omap_get(&executions,id))e=omap_put(&executions,id,step);
     }
     for(size_t i=0;!e.code&&i<s->turn_count;i++){s->turns[i].ttft_ms=(MaybeNum){0};e=omap_put(&turns,s->turns[i].id,&s->turns[i]);}
     for(size_t i=0;!e.code&&i<r->generator_count;i++){
-        Str gen=r->generators[i].data,chat={0};e=antigravity_message_merge(&c->arena,gen,1,&chat);if(e.code)break;
-        AntigravityStep *step=omap_get(&executions,scalar(gen,4));
+        Str gen=r->generators[i].data,chat={0};e=antigravity_message_merge_typed(&c->store->field_mismatches,AG_GENERATOR,&c->arena,gen,1,&chat);if(e.code)break;
+        AntigravityStep *step=omap_get(&executions,scalar(&c->store->field_mismatches,AG_GENERATOR,gen,4));
         if(!step){AgCursor cursor={.input=gen};uint64_t n=0;
-            if(ag_wire_integer_next(&cursor,2,&n)==AG_FOUND){char key[32];step=omap_get(&indices,index_key((int64_t)n,key));}}
+            if(ag_wire_integer_next_typed(&c->store->field_mismatches,AG_GENERATOR,&cursor,2,&n)==AG_FOUND){char key[32];step=omap_get(&indices,index_key((int64_t)n,key));}}
         if(step&&step->turn.n&&!omap_get(&first_generators,step->turn)){
             e=omap_put(&first_generators,step->turn,step);TurnModel *turn=omap_get(&turns,step->turn);
-            MaybeMs duration={0};if(!e.code)e=antigravity_clock(&c->arena,chat,11,&duration);
+            MaybeMs duration={0};if(!e.code)e=antigravity_clock_typed(&c->store->field_mismatches,AG_CHAT_MODEL,&c->arena,chat,11,&duration);
             if(turn&&duration.present&&duration.value>=0)turn->ttft_ms=(MaybeNum){true,{.i=duration.value}};
         }
-        bool eligible=false;if(!e.code)e=collect_location(c,s,chat,4,17,scalar(chat,19),step,chat,&previous,&eligible);
+        bool eligible=false;if(!e.code)e=collect_location(c,s,chat,4,17,scalar(&c->store->field_mismatches,AG_CHAT_MODEL,chat,19),step,chat,&previous,&eligible);
         if(!eligible)c->store->requests_without_usage++;
     }
     for(size_t i=0;!e.code&&i<r->step_count;i++){bool eligible=false;e=collect_location(c,s,r->steps[i].metadata,9,28,(Str){0},&r->steps[i],(Str){0},&previous,&eligible);}
@@ -131,5 +131,5 @@ Err antigravity_compose(AntigravityStore *store,Corpus *corpus,ModelsDevIndex *i
         error=catalog_price_usage_units(s->units,s->unit_count,index,report,STR_LIT("antigravity:"),true);
         if(!error.code)error=compose_aggregate_session(corpus,s);
     }
-    omap_destroy(&c.aliases);arena_destroy(&c.arena);if(local)pricing_report_destroy(&scratch);return error;
+    if(!error.code)error=store->field_mismatches.error;omap_destroy(&c.aliases);arena_destroy(&c.arena);if(local)pricing_report_destroy(&scratch);return error;
 }
