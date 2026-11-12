@@ -380,9 +380,13 @@ function prepare(rows, opts) {
     label:r.name, score:opts.mode === 'whole' ? ladderCore.wholePoints(r.capability) : r.capability,
     cost:finite(r[opts.axis]) ? r[opts.axis] : null, inCaps:withinCaps(r,opts.caps)}));
 }
-function tiers(rows) {
+function tierCompare(axis='price') {
   const compareNullable = (a,b) => a == null ? (b == null ? 0 : 1) : b == null ? -1 : a-b;
-  const list = rows.slice().sort((a,b) => b.score-a.score || compareNullable(a.price,b.price) || compareNullable(a.latency,b.latency) || ladderCore.compareText(a.label,b.label));
+  const [first,second]=axis==='latency'?['latency','price']:['price','latency'];
+  return (a,b) => b.score-a.score || compareNullable(a[first],b[first]) || compareNullable(a[second],b[second]) || ladderCore.compareText(a.label,b.label);
+}
+function tiers(rows, axis='price') {
+  const list = rows.slice().sort(tierCompare(axis));
   let tier = 0, previous, size = 0;
   list.forEach((r,i) => { if (i === 0 || r.score !== previous) { tier++; previous=r.score; size=list.filter(x => x.score === r.score).length; } list[i]={...r,tier,tierSize:size}; });
   return list;
@@ -422,7 +426,7 @@ function label(kind,token) {
 }
 function whenText(iso) { const date=new Date(iso); return Number.isNaN(date.getTime()) ? iso : date.toISOString().slice(0,16).replace('T',' ')+' UTC'; }
 function findings(rows, caps, mode, axis='price') {
-  const inside=rows.filter(r=>r.inCaps), ranked=tiers(inside), front=boardFrontier(rows).filter(r=>r.status==='frontier');
+  const inside=rows.filter(r=>r.inCaps), ranked=tiers(inside,axis), front=boardFrontier(rows).filter(r=>r.status==='frontier');
   const out=[`${inside.length} ranked systems are inside the caps; ${front.length} are on the frontier.`];
   if (ranked.length) { const top=ranked.filter(r=>r.tier===1); out.push(`The top tier scores ${mode === 'whole' ? top[0].score : top[0].score.toFixed(1)}: ${top.map(r=>r.label).join(', ')}.`); }
   const steps=front.filter(r=>r.up && r.up.perPoint !== null).map(r=>({from:r.label, ...r.up})).sort((a,b)=>a.perPoint-b.perPoint);
@@ -482,7 +486,7 @@ function changesToShow(changes, mode) {
 function visibleHistory(history, mode) {
   return history.find(c=>c.revision || c.method || c.caps || c.added.length || c.removed.length || changesToShow(c,mode).length) || null;
 }
-const api={withinCaps,capReasons,prepare,tiers,defaultExpanded,tierGroups,visibleTierRows,chartMarks,boardPartitions,boardFrontier,priceText,latencyText,secondsText,scoreText,capText,label,listingText,whenText,findings,searchRows,notRankedRows,pickerRows,movePick,shiftPick,bestIn,rankText,rankBestIn,changeText,changeFields,changesToShow,visibleHistory};
+const api={withinCaps,capReasons,prepare,tierCompare,tiers,defaultExpanded,tierGroups,visibleTierRows,chartMarks,boardPartitions,boardFrontier,priceText,latencyText,secondsText,scoreText,capText,label,listingText,whenText,findings,searchRows,notRankedRows,pickerRows,movePick,shiftPick,bestIn,rankText,rankBestIn,changeText,changeFields,changesToShow,visibleHistory};
 if (typeof module !== 'undefined') module.exports=api; else window.decisionMath=api;
 }());
 // decision-math:end
@@ -595,7 +599,7 @@ useLayoutEffect(()=>{ const value=JSON.stringify(s); try { localStorage.setItem(
 const caps={cost:validCap(s.cost,data.caps.cost),latency:validCap(s.latency,data.caps.latency)};
 const prepared=M.prepare(data.rows,{board:s.board,mode:s.mode,axis:s.axis,caps});
 const edge=M.boardFrontier(prepared), byKey=new Map(edge.map(r=>[r.key,r]));
-let rows=M.searchRows(M.tiers(prepared),s.query).map(r=>({...r,status:byKey.get(r.key)?.status || ''}));
+let rows=M.searchRows(M.tiers(prepared,s.axis),s.query).map(r=>({...r,status:byKey.get(r.key)?.status || ''}));
 let {inside,outside}=M.boardPartitions(rows,frontierOnly);
 if (s.sort) { const cmp=(a,b)=>{const av=a[s.sort],bv=b[s.sort]; if(av==null)return bv==null?0:1; if(bv==null)return -1; return s.dir*ladderCore.compareValues(av,bv);}; inside.sort(cmp); outside.sort(cmp); }
 rows=inside.concat(s.outside?outside:[]);
@@ -627,7 +631,7 @@ ${((s.cost!==null && validCap(s.cost,null)===null) || (s.latency!==null && valid
 <section class="panel"><h2>Systems</h2>
   <div class="controls"><button onClick=${()=>set('sort','')}>Tier order</button><button onClick=${()=>setExpanded(groups.map(g=>g.tier))}>Expand all</button><button onClick=${()=>setExpanded([])}>Collapse all</button>
     <label class="inline"><input type="checkbox" checked=${s.outside} onChange=${e=>set('outside',e.target.checked)}/>Show systems outside the caps</label><label class="inline"><input type="checkbox" checked=${frontierOnly} onChange=${e=>setFrontierOnly(e.target.checked)}/>Frontier only</label></div>
-  <p class="raw">Within a tier: lowest price first, then lowest latency.</p>
+  <p class="raw">${s.axis==='latency'?'Within a tier: lowest latency first, then lowest price.':'Within a tier: lowest price first, then lowest latency.'}</p>
   <div class="table-wrap board-table"><table><thead><tr>
     ${heads.map(([key,label])=>html`<${Th} k=${key} label=${label} active=${s.sort===key} dir=${s.dir} onSort=${sort}/>`)}
   </tr></thead><tbody>${!rows.length && s.query ? html`<tr><td colspan=${heads.length}>No system matches “${s.query}”. <button onClick=${()=>set('query','')}>Clear filter</button></td></tr>` : visibleRows.map(r=>{

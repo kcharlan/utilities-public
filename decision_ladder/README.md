@@ -36,10 +36,11 @@ snapshot is used when available.
 ## Tiers and caps
 
 The board groups ranked systems into Capability tiers, rounding to whole points
-by default; decimal mode uses the feed's scores. Within a tier, price, latency,
-and name determine order. Tiers expand until at least 25 systems are shown;
-later tiers start collapsed. Adjustable cost and median latency caps default to
-the feed's official limits. Systems missing either value are outside the caps.
+by default; decimal mode uses the feed's scores. Within a tier, the selected
+chart axis sorts first, followed by the other measure and then name. Tiers expand
+until at least 25 systems are shown; later tiers start collapsed. Adjustable cost
+and median latency caps default to the feed's official limits. Systems missing
+either value are outside the caps.
 The frontier shows systems not dominated on Capability and the selected price
 or latency axis; it is descriptive and does not create a weighted score.
 Frontier-only filtering is off by default.

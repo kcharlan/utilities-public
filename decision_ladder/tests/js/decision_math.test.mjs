@@ -33,6 +33,13 @@ test('tier numbers remain stable when searching ranked rows', () => {
   assert.deepEqual(m.visibleTierRows(m.tierGroups(m.tiers(rows)),[1],false).map(r=>r.heading?'heading':r.name),['heading','Synthetic top','heading']);
   assert.deepEqual(m.chartMarks([{key:'a',name:'Synthetic A',cost:1},{key:'b',name:'Synthetic B',cost:1}],'A','b').map(r=>r.key),['a','b']);
 });
+test('tier order follows the selected axis without changing tier identity', () => {
+  const rows=m.prepare([row('Synthetic cheap',9,1,4),row('Synthetic fast',9,3,1),row('Synthetic lower',8,2,2)],{board:'all',mode:'whole',axis:'price',caps});
+  assert.deepEqual(m.tiers(rows,'price').map(r=>[r.name,r.tier]),[['Synthetic cheap',1],['Synthetic fast',1],['Synthetic lower',2]]);
+  assert.deepEqual(m.tiers(rows,'latency').map(r=>[r.name,r.tier]),[['Synthetic fast',1],['Synthetic cheap',1],['Synthetic lower',2]]);
+  assert.deepEqual(rows.slice(0,2).sort(m.tierCompare('latency')).map(r=>r.name),['Synthetic fast','Synthetic cheap']);
+  assert.match(m.findings(rows,caps,'whole','latency')[1],/Synthetic fast, Synthetic cheap/);
+});
 test('chart marks describe axis provenance, match, highlight and size', () => {
   const rows=[{key:'a',name:'Synthetic A',cost:1,price_published:true,latency_assumed:true},
     {key:'b',name:'Synthetic B',cost:2,price_published:false,latency_assumed:false},

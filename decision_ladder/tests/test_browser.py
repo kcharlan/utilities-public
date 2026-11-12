@@ -7,6 +7,27 @@ from playwright.sync_api import expect, sync_playwright
 from tools.testkit import assert_fonts_loaded, assert_no_external_resources, block_external_requests, guard_browser_errors
 
 
+def test_axis_changes_tied_tier_order_and_caption(dl, tmp_path):
+    from helpers import feed, system, snapshot
+    systems = [system(key=key, name=name, capability={'score': 8, 'eligible': True, 'within_caps': True},
+                      price={'usd_per_1000_decisions': price}, latency={'p50_s_adjusted': latency})
+               for key, name, price, latency in [('cheap', 'Synthetic cheap', 1, 4), ('fast', 'Synthetic fast', 3, 1)]]
+    payload = dl.build_payload(snapshot(feed(systems=systems)), None, {'max_age_hours': 24})
+    path = tmp_path / 'axis.html'; path.write_bytes(dl.render_page(payload))
+    with sync_playwright() as playwright:
+        browser = playwright.chromium.launch(); context = browser.new_context(service_workers='block'); context.set_offline(True)
+        blocked = block_external_requests(context); page = context.new_page()
+        with guard_browser_errors(page):
+            page.goto(path.as_uri())
+            expect(page.locator('tr.system-row').first.locator('.name')).to_have_attribute('title', 'Synthetic cheap')
+            expect(page.locator('.board-table').locator('..')).to_contain_text('Within a tier: lowest price first, then lowest latency.')
+            page.get_by_label('Chart x-axis').select_option('latency')
+            expect(page.locator('tr.system-row').first.locator('.name')).to_have_attribute('title', 'Synthetic fast')
+            expect(page.locator('.board-table').locator('..')).to_contain_text('Within a tier: lowest latency first, then lowest price.')
+            assert_no_external_resources(page, blocked)
+        context.close(); browser.close()
+
+
 def test_filters_clear_and_restore_results_and_focus(dl, tmp_path):
     from helpers import feed, many_systems, snapshot
     systems = many_systems(4)
