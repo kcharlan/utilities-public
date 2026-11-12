@@ -35,3 +35,37 @@ UV_PYTHON_DOWNLOADS=never tools/run_project_tests.py decision_ladder
 node tools/sync_frontend_vendor.mjs --check decision_ladder/decision_ladder
 UV_PYTHON_DOWNLOADS=never ./decision_ladder/decision_ladder --help
 ```
+
+## Board and comparisons
+
+The board groups ranked systems into Capability tiers, rounding to whole points
+by default; decimal mode uses the feed's scores. Within a tier, price, latency,
+and name determine order. Adjustable cost and median latency caps default to the
+feed's official limits. Systems missing either value are outside the caps. The
+frontier shows systems not dominated on Capability and the selected price or
+latency axis; it is descriptive and does not create a weighted score.
+
+The Compare tab shows up to eight chosen systems and their axis scores, official
+ranks, prices, latency, sources and measurement details. Not ranked lists the
+feed's excluded systems and reasons. The Changes panel compares the newest
+snapshot with the last snapshot that differs in displayed data. When the scoring
+method changes, earlier and later scores are not comparable. Price estimates
+are marked `est.` and assumed latency is marked `assumed`; dashed chart markers
+indicate modelled values.
+
+## Deploy
+
+From merged `main`, preview and install the direct copy:
+
+```
+node tools/deploy_copies.mjs --only decision_ladder --dry-run
+node tools/deploy_copies.mjs --only decision_ladder
+```
+
+The installed command is `~/Library/Scripts/decision_ladder`; repository updates
+do not update that copy. Deployment requires separate authorization.
+
+The JavaScript math tests are also run with
+`node --test "decision_ladder/tests/js/*.test.mjs"`. JevBench data is provided
+by Benchmark Heaven; the feed's terms and data licence have not been verified.
+The page reports the published data and its limits, not recommendations.

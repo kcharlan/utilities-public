@@ -49,3 +49,10 @@ test('findings preserve small positive steps and identify axis units', () => {
     assert.ok(text.includes(unit));
   }
 });
+test('changes respect displayed score precision and method changes suppress rows', () => {
+  const change={changed:[{name:'Synthetic A',capability:[8.1,8.2],price:[1,1],latency:[2,2],listing:['a','a'],capability_rank:[1,1],composite_rank:[2,2],composite:[3,4]}]};
+  assert.equal(m.changesToShow(change,'whole').length,0);
+  assert.equal(m.changesToShow(change,'decimal').length,1);
+  assert.equal(m.changesToShow({changed:[{capability:[8.21,8.24]}]},'decimal').length,0);
+  assert.equal(m.changesToShow({...change,method:[{label:'A'},{label:'B'}]},'decimal').length,0);
+});

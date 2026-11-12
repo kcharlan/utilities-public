@@ -151,3 +151,76 @@ def test_offline_status_and_untrusted_text(dl, tmp_path, scheme):
             assert_no_external_resources(page, blocked)
         context.close()
         browser.close()
+
+
+def test_compare_not_ranked_and_changes_offline(dl, tmp_path):
+    from copy import deepcopy
+    systems = [{'key': str(i), 'name': f'Synthetic system {i}', 'board': 'api', 'ranked': i != 9,
+                'listing': 'Synthetic listing', 'not_ranked_because': 'Synthetic full reason',
+                'source_url': 'javascript:alert(1)' if i == 1 else 'https://example.com/synthetic',
+                'axes': {'intelligence': 45 if i == 0 else None, 'calibration': None, 'speed': 20, 'cost': 0},
+                'capability': {'score': 8.1, 'rank': 2, 'eligible': True, 'within_caps': True},
+                'rank': 3, 'price': {'kind': 'estimate', 'usd_per_1000_decisions': None if i == 1 else 2, 'basis': 'Synthetic price basis'},
+                'latency': {'p50_s_adjusted': 3, 'p95_s_adjusted': 4, 'latency_basis': 'synthetic', 'adjustment': 'Synthetic adjustment'},
+                'draw': {'measured_on': '2026-01-01'}} for i in range(10)]
+    feed = {'revision': 'new synthetic', 'method': {'label': 'Synthetic method'}, 'capability_policy': {'cost_cap_usd_per_1000': 5, 'median_latency_cap_s': 10}, 'systems': systems}
+    old = deepcopy(feed); old['revision'] = 'old synthetic'; old['systems'][0]['capability']['score'] = 8.2
+    snap = {'fetched_at': '2026-01-02', 'last_checked': '2026-01-02', 'feed': feed}
+    prior = {'fetched_at': '2026-01-01', 'feed': old}
+    payload = dl.build_payload(snap, prior, {'max_age_hours': 24}); payload['built_at'] = 'synthetic'
+    path = tmp_path / 'compare.html'; path.write_bytes(dl.render_page(payload))
+    with sync_playwright() as playwright:
+        browser = playwright.chromium.launch(); context = browser.new_context(service_workers='block'); context.set_offline(True)
+        blocked = block_external_requests(context); page = context.new_page()
+        with guard_browser_errors(page):
+            page.goto(path.as_uri()); page.get_by_text('Changes', exact=True).click()
+            expect(page.locator('.changes')).to_contain_text('old synthetic')
+            expect(page.locator('.changes')).not_to_contain_text('Synthetic system 0')
+            page.get_by_label('Scoring').select_option('decimal')
+            expect(page.locator('.changes')).to_contain_text('Synthetic system 0')
+            page.get_by_role('button', name='Compare', exact=True).click()
+            page.get_by_label('Search systems').fill('system 0')
+            expect(page.locator('.picker label')).to_have_count(1)
+            page.get_by_label('Synthetic system 0', exact=True).check()
+            page.get_by_label('Search systems').fill('')
+            for i in range(1, 8): page.get_by_label(f'Synthetic system {i}', exact=True).check()
+            expect(page.get_by_label('Synthetic system 8', exact=True)).to_be_disabled()
+            expect(page.locator('.compare')).to_contain_text('45')
+            expect(page.locator('.compare')).to_contain_text('Not measured')
+            expect(page.locator('.compare')).to_contain_text('No price')
+            expect(page.locator('.compare')).to_contain_text('Synthetic price basis')
+            expect(page.locator('.compare')).to_contain_text('Synthetic adjustment')
+            expect(page.locator('.compare progress[value="45"][max="100"]')).to_have_count(1)
+            expect(page.locator('.compare progress[value="0"][max="100"]')).to_have_count(8)
+            expect(page.locator('.compare')).to_contain_text('8.1')
+            expect(page.locator('.compare')).to_contain_text('$2.00 estimate')
+            expect(page.locator('.compare')).to_contain_text('3.00 s synthetic')
+            expect(page.locator('.compare')).to_contain_text('4.00 s synthetic')
+            expect(page.locator('.compare')).to_contain_text('2026-01-01')
+            expect(page.locator('.compare a[href="https://example.com/synthetic"]')).to_have_count(7)
+            expect(page.locator('.compare a[href^="javascript:"]')).to_have_count(0)
+            page.reload()
+            expect(page.get_by_label('Synthetic system 0', exact=True)).to_be_checked()
+            expect(page.get_by_label('Synthetic system 8', exact=True)).to_be_disabled()
+            page.get_by_role('button', name='Not ranked', exact=True).click()
+            expect(page.locator('.not-ranked')).to_contain_text('Synthetic listing')
+            expect(page.locator('.not-ranked')).to_contain_text('Synthetic full reason')
+            assert_no_external_resources(page, blocked)
+        context.close(); browser.close()
+
+
+def test_changes_method_and_caps_notices(dl, tmp_path):
+    from copy import deepcopy
+    feed = {'revision': 'new', 'method': {'label': 'New synthetic method'}, 'capability_policy': {'cost_cap_usd_per_1000': 5, 'median_latency_cap_s': 10}, 'systems': [{'key': 'a', 'name': 'Synthetic changed', 'board': 'api', 'ranked': True, 'capability': {'score': 9, 'eligible': True, 'within_caps': True}}]}
+    old = deepcopy(feed); old['method']['label'] = 'Old synthetic method'; old['capability_policy']['cost_cap_usd_per_1000'] = 3; old['systems'][0]['capability']['score'] = 2
+    payload = dl.build_payload({'fetched_at': 'new', 'last_checked': 'new', 'feed': feed}, {'fetched_at': 'old', 'feed': old}, {'max_age_hours': 24}); payload['built_at'] = 'synthetic'
+    path = tmp_path / 'method.html'; path.write_bytes(dl.render_page(payload))
+    with sync_playwright() as playwright:
+        browser = playwright.chromium.launch(); context = browser.new_context(service_workers='block'); context.set_offline(True); block_external_requests(context)
+        page = context.new_page()
+        with guard_browser_errors(page):
+            page.goto(path.as_uri()); page.get_by_text('Changes', exact=True).click()
+            expect(page.locator('.changes')).to_contain_text('Scoring method changed from Old synthetic method to New synthetic method; scores before and after are not comparable')
+            expect(page.locator('.changes')).to_contain_text('$3 / 1,000 decisions; 10s → $5 / 1,000 decisions; 10s')
+            expect(page.locator('.changes')).not_to_contain_text('Synthetic changed')
+        context.close(); browser.close()
