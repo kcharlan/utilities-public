@@ -21,7 +21,7 @@ import zlib
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-VERSION = "1.1.0"
+VERSION = "1.2.0"
 DEFAULT_CONFIG = {"max_age_hours": 24}
 MAX_AGE_LIMIT = 87600
 FEED_URL = "https://benchmarkheaven.com/api/jevbench/latest"
