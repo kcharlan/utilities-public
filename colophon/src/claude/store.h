@@ -4,6 +4,7 @@
 typedef struct ClaudeStored ClaudeStored;
 typedef struct ClaudeStore {
   Arena arena;
+  Omap path_index;
   Str home;
   ClaudeStored *entries;
   size_t count, capacity;

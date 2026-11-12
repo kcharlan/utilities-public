@@ -3,8 +3,12 @@
 #include "claude/codec.h"
 #include "cli/run.h"
 #include "runner.h"
+#include "testing/hooks.h"
 #include "util/fileio.h"
+#include "util/events.h"
 #include "cache/cache.h"
+#include <dirent.h>
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <sys/stat.h>
@@ -47,6 +51,106 @@ static bool recovery_bytes(Fixture *f,const char *source_path,const char *before
 }
 static void fault(const char *point){ASSERT_EQ(0,setenv("COLOPHON_TEST_FAULT",point,1));}
 static void clear_fault(void){ASSERT_EQ(0,unsetenv("COLOPHON_TEST_FAULT"));}
+TEST(claude_pool_preserves_order_and_mixed_cache_counts){
+  Fixture f;fixture(&f);
+  for (size_t i=0;i<32;i++) { char path[1600]; snprintf(path,sizeof path,"%s/synthetic-%02zu.jsonl",f.root,i); source(path); }
+  setenv("COLOPHON_TEST_WORKERS","1",1);
+  ClaudeScan s={0};ClaudeStore store={0};snapshot(&f,false,&s,&store);
+  ASSERT_EQ(34,s.count); ASSERT_EQ(34,s.parsed); ASSERT_EQ(0,s.cached);
+  char *paths[34];
+  for(size_t i=0;i<34;i++){paths[i]=strdup(s.records[i].key.path.p);ASSERT_TRUE(paths[i]);}
+  ASSERT_EQ(ERR_OK,claude_store_commit(&store,&s,NULL).code);close_snapshot(&s,&store);
+  char changed[1600];snprintf(changed,sizeof changed,"%s/synthetic-10.jsonl",f.root);
+  write_text(changed,"{\"type\":\"user\",\"message\":{\"content\":\"Synthetic changed request\"}}\n");
+  setenv("COLOPHON_TEST_WORKERS","8",1);snapshot(&f,false,&s,&store);
+  ASSERT_EQ(34,s.count);ASSERT_EQ(33,s.cached);ASSERT_EQ(1,s.parsed);
+  for(size_t i=0;i<34;i++){ASSERT_STREQ(paths[i],s.records[i].key.path.p);free(paths[i]);}
+  close_snapshot(&s,&store);unsetenv("COLOPHON_TEST_WORKERS");
+}
+TEST(claude_pool_interleaves_unreadable_transcripts_and_directories){
+  Fixture f;fixture(&f);char first[1600],dir[1600],last[1600];
+  snprintf(first,sizeof first,"%s/a.jsonl",f.root);source(first);
+  snprintf(dir,sizeof dir,"%s/b",f.root);ASSERT_EQ(0,mkdir(dir,0700));
+  snprintf(last,sizeof last,"%s/c.jsonl",f.root);source(last);
+  const char *workers[]={"1","8"};
+  for(size_t i=0;i<2;i++) {
+    setenv("COLOPHON_TEST_WORKERS",workers[i],1);
+    fault("claude_directory_io:2,claude_log_io_first,claude_log_io_third");
+    ClaudeScan s={0};ClaudeStore store={0};snapshot(&f,false,&s,&store);
+    ASSERT_EQ(2,s.count);ASSERT_EQ(3,s.skipped_count);ASSERT_FALSE(s.roots[0].complete);
+    ASSERT_STREQ(first,s.skipped[0].path.p);ASSERT_STREQ(dir,s.skipped[1].path.p);ASSERT_STREQ(last,s.skipped[2].path.p);
+    close_snapshot(&s,&store);clear_fault();(void)cp_fault("reset");
+  }
+  unsetenv("COLOPHON_TEST_WORKERS");
+}
+TEST(claude_pool_prioritizes_earlier_work_error_over_discovery_error){
+  Fixture f;fixture(&f);
+  ClaudeScan s={0};ClaudeRoot *r=NULL;
+  ASSERT_EQ(ERR_OK,arena_alloc(&s.arena,sizeof *r,_Alignof(ClaudeRoot),(void **)&r).code);
+  Str root;ASSERT_EQ(ERR_OK,str_copy(&s.arena,str(f.root),&root).code);
+  *r=(ClaudeRoot){.path=root,.present=true,.complete=true};s.roots=r;s.root_count=1;
+  fault("claude_discovery:2,claude_turn_alloc");
+  Err e=claude_scan(&s,NULL);clear_fault();
+  ASSERT_EQ(ERR_NOMEM,e.code);ASSERT_STREQ("Claude turn allocation failed",e.message);
+  ASSERT_EQ(1,s.logs);ASSERT_EQ(0,s.count);claude_scan_destroy(&s);
+  s=(ClaudeScan){0};ASSERT_EQ(ERR_OK,arena_alloc(&s.arena,sizeof *r,_Alignof(ClaudeRoot),(void **)&r).code);
+  ASSERT_EQ(ERR_OK,str_copy(&s.arena,str(f.root),&root).code);
+  *r=(ClaudeRoot){.path=root,.present=true,.complete=true};s.roots=r;s.root_count=1;
+  fault("claude_discovery:2");e=claude_scan(&s,NULL);clear_fault();(void)cp_fault("reset");
+  ASSERT_EQ(ERR_NOMEM,e.code);ASSERT_STREQ("Claude discovery failure",e.message);
+  ASSERT_EQ(1,s.count);claude_scan_destroy(&s);
+  s=(ClaudeScan){0};
+  ASSERT_EQ(ERR_OK,arena_alloc(&s.arena,sizeof *r,_Alignof(ClaudeRoot),(void **)&r).code);
+  ASSERT_EQ(ERR_OK,str_copy(&s.arena,str(f.root),&root).code);
+  *r=(ClaudeRoot){.path=root,.present=true,.complete=true};s.roots=r;s.root_count=1;
+  fault("claude_discovery:2,claude_log_io_first");e=claude_scan(&s,NULL);clear_fault();
+  ASSERT_EQ(ERR_NOMEM,e.code);ASSERT_STREQ("Claude discovery failure",e.message);
+  ASSERT_EQ(0,s.count);ASSERT_EQ(1,s.skipped_count);ASSERT_FALSE(r->complete);
+  ASSERT_STREQ(f.one,s.skipped[0].path.p);claude_scan_destroy(&s);
+}
+TEST(claude_pool_replays_failing_job_events_without_later_job_events){
+  Fixture f;fixture(&f);
+  write_text(f.one,"{\"type\":\"user\",\"message\":{\"content\":\"Synthetic request\"},\"ignored\":NaN}\n");
+  write_text(f.two,"{\"synthetic\":\"\\ud800\"}\n");
+  ClaudeScan s={0};ClaudeRoot *r=NULL;
+  ASSERT_EQ(ERR_OK,arena_alloc(&s.arena,sizeof *r,_Alignof(ClaudeRoot),(void **)&r).code);
+  Str root;ASSERT_EQ(ERR_OK,str_copy(&s.arena,str(f.root),&root).code);
+  *r=(ClaudeRoot){.path=root,.present=true,.complete=true};s.roots=r;s.root_count=1;
+  event_flush(NULL);fault("claude_turn_alloc");setenv("COLOPHON_TEST_WORKERS","8",1);
+  Err e=claude_scan(&s,NULL);clear_fault();unsetenv("COLOPHON_TEST_WORKERS");
+  ASSERT_EQ(ERR_NOMEM,e.code);event_flush(f.base);
+  char path[1600];snprintf(path,sizeof path,"%s/native-events.jsonl",f.base);
+  size_t size;char *bytes=read_bytes(path,&size);
+  ASSERT_TRUE(strstr(bytes,"json_nonstandard"));ASSERT_FALSE(strstr(bytes,"lone_surrogate_escape"));
+  free(bytes);claude_scan_destroy(&s);
+}
+TEST(claude_pool_preserves_event_order_and_counts_across_workers){
+  Fixture f;fixture(&f);
+  write_text(f.one,"{\"type\":\"user\",\"message\":{\"content\":\"Synthetic request\"},\"ignored\":NaN}\n");
+  write_text(f.two,"{\"synthetic\":\"\\ud800\"}\n");
+  char path[1600];snprintf(path,sizeof path,"%s/native-events.jsonl",f.base);
+  char *baseline=NULL;size_t baseline_size=0;
+  const char *workers[]={"1","8"};setenv("COLOPHON_TEST_WALL_MS","123",1);
+  for(size_t i=0;i<2;i++) {
+    event_flush(NULL);setenv("COLOPHON_TEST_WORKERS",workers[i],1);
+    ClaudeScan s={0};ClaudeStore store={0};snapshot(&f,false,&s,&store);
+    event_flush(f.base);size_t size;char *bytes=read_bytes(path,&size);
+    ASSERT_TRUE(strstr(bytes,"json_nonstandard"));ASSERT_TRUE(strstr(bytes,"lone_surrogate_escape"));
+    ASSERT_TRUE(strstr(bytes,"json_nonstandard")<strstr(bytes,"lone_surrogate_escape"));
+    if (!i) {baseline=bytes;baseline_size=size;} else {ASSERT_EQ(baseline_size,size);ASSERT_TRUE(!memcmp(baseline,bytes,size));free(bytes);}
+    ASSERT_EQ(0,unlink(path));close_snapshot(&s,&store);
+  }
+  free(baseline);unsetenv("COLOPHON_TEST_WALL_MS");unsetenv("COLOPHON_TEST_WORKERS");
+}
+TEST(claude_pool_interrupt_does_not_publish_records){
+  Fixture f;fixture(&f);ClaudeScan s={0};ClaudeRoot *r=NULL;
+  ASSERT_EQ(ERR_OK,arena_alloc(&s.arena,sizeof *r,_Alignof(ClaudeRoot),(void **)&r).code);
+  Str root;ASSERT_EQ(ERR_OK,str_copy(&s.arena,str(f.root),&root).code);
+  *r=(ClaudeRoot){.path=root,.present=true,.complete=true};s.roots=r;s.root_count=1;
+  volatile sig_atomic_t flag=1;Err e=claude_scan(&s,&flag);
+  ASSERT_EQ(ERR_IO,e.code);ASSERT_STREQ("interrupted",e.message);ASSERT_EQ(0,s.count);
+  claude_scan_destroy(&s);
+}
 TEST(claude_store_all_candidate_rechecks_precede_root_mutations){
   Fixture f;fixture(&f);seed(&f);char one[1600],two[1600];installed(&f,f.one,one);installed(&f,f.two,two);
   size_t n1,n2;char *b1=read_bytes(one,&n1),*b2=read_bytes(two,&n2);
@@ -165,4 +269,96 @@ TEST(claude_store_newly_corrupt_retained_copy_is_not_removed_at_live_commit){
   char root[69],key[69],retained[1600];cache_entry_name(str(f.root),root);root[64]=0;cache_entry_name(str(f.one),key);snprintf(retained,sizeof retained,"%s/claude-retained/%s/%s",f.runtime,root,key);
   source(f.one);snapshot(&f,false,&s,&store);const char *bad="synthetic corruption after reconciliation";write_text(retained,bad);
   ASSERT_EQ(ERR_OK,claude_store_commit(&store,&s,NULL).code);same_bytes(retained,bad,strlen(bad));close_snapshot(&s,&store);
+}
+
+/* A path index must retain all entries, not overwrite earlier same-path copies. */
+TEST(claude_store_path_index_covers_large_inventory){
+  Fixture f;fixture(&f);
+  char path[1400];
+  for(int i=0;i<240;i++){snprintf(path,sizeof path,"%s/synthetic-%03d.jsonl",f.root,i);source(path);}
+  seed(&f);
+  ClaudeScan s={0};ClaudeStore store={0};snapshot(&f,false,&s,&store);
+  ASSERT_EQ(242,store.path_index.size);
+  for(size_t i=0;i<s.count;i++){
+    ClaudeRecord out={0};bool hit=false;DiscoveredLog key=s.records[i].key;
+    ASSERT_EQ(ERR_OK,claude_store_get(&store,&key,&out,&hit).code);ASSERT_TRUE(hit);claude_record_destroy(&out);
+    key.size++;ASSERT_EQ(ERR_OK,claude_store_get(&store,&key,&out,&hit).code);ASSERT_FALSE(hit);
+    key=s.records[i].key;key.mtime_ns++;ASSERT_EQ(ERR_OK,claude_store_get(&store,&key,&out,&hit).code);ASSERT_FALSE(hit);
+  }
+  DiscoveredLog original=s.records[0].key;size_t n;char *bytes=read_bytes(original.path.p,&n);
+  ASSERT_TRUE(n>0);bytes[n-1]^=1;FILE *changed=fopen(original.path.p,"wb");ASSERT_TRUE(changed);
+  ASSERT_EQ(n,fwrite(bytes,1,n,changed));ASSERT_EQ(0,fclose(changed));
+  ClaudeRecord out={0};bool hit=true;ASSERT_EQ(ERR_OK,claude_store_get(&store,&original,&out,&hit).code);ASSERT_FALSE(hit);
+  free(bytes);
+  close_snapshot(&s,&store);
+}
+
+typedef struct { ClaudeRecord record; bool retained, candidate; char location[1800]; } RefEntry;
+static void ref_inventory(const char *dir,bool retained,RefEntry *entries,size_t *count){
+  struct dirent **names=NULL;int n=scandir(dir,&names,NULL,alphasort);ASSERT_TRUE(n>=0);
+  for(int i=0;i<n;i++){
+    const char *name=names[i]->d_name;size_t len=strlen(name);
+    if(len>=4&&!strcmp(name+len-4,".rec")){
+      RefEntry *e=&entries[(*count)++];snprintf(e->location,sizeof e->location,"%s/%s",dir,name);
+      size_t size;char *bytes=read_bytes(e->location,&size);e->retained=retained;e->candidate=false;
+      ASSERT_EQ(ERR_OK,claude_codec_decode(bytes,size,&e->record).code);free(bytes);
+    }
+    free(names[i]);
+  }
+  free(names);
+}
+static bool ref_live(const ClaudeScan *s,Str path){
+  for(size_t i=0;i<s->count;i++)if(!s->records[i].retained&&str_equal(s->records[i].key.path,path))return true;
+  return false;
+}
+static void ref_write(const char *path,ClaudeRecord *record){
+  unsigned char *bytes=NULL;size_t n=0;ASSERT_EQ(ERR_OK,claude_codec_encode(record,&bytes,&n).code);
+  FILE *f=fopen(path,"wb");ASSERT_TRUE(f);ASSERT_EQ(n,fwrite(bytes,1,n,f));ASSERT_EQ(0,fclose(f));free(bytes);
+}
+TEST(claude_store_index_matches_linear_reconciliation){
+  Fixture f;fixture(&f);char path[1800],missing[1400];
+  for(int i=0;i<240;i++){snprintf(path,sizeof path,"%s/synthetic-%03d.jsonl",f.root,i);source(path);}
+  seed(&f);
+  char live_file[1600],root_hash[69],live_dir[1600],retained_base[1600],retained_dir[1600];
+  installed(&f,f.one,live_file);cache_entry_name(str(f.root),root_hash);root_hash[64]=0;
+  snprintf(live_dir,sizeof live_dir,"%s/cache-claude/%s",f.runtime,root_hash);
+  snprintf(retained_base,sizeof retained_base,"%s/claude-retained",f.runtime);ASSERT_EQ(0,mkdir(retained_base,0700));
+  snprintf(retained_dir,sizeof retained_dir,"%s/claude-retained/%s",f.runtime,root_hash);ASSERT_EQ(0,mkdir(retained_dir,0700));
+  size_t size;char *bytes=read_bytes(live_file,&size);ClaudeRecord duplicate={0};
+  ASSERT_EQ(ERR_OK,claude_codec_decode(bytes,size,&duplicate).code);free(bytes);
+  duplicate.key.mtime_ns-=2;snprintf(path,sizeof path,"%s/first.rec",retained_dir);ref_write(path,&duplicate);
+  duplicate.key.mtime_ns++;snprintf(path,sizeof path,"%s/second.rec",retained_dir);ref_write(path,&duplicate);
+  snprintf(missing,sizeof missing,"%s/synthetic-retained-only.jsonl",f.root);duplicate.key.path=str(missing);
+  duplicate.key.mtime_ns-=2;snprintf(path,sizeof path,"%s/third.rec",retained_dir);ref_write(path,&duplicate);
+  duplicate.key.mtime_ns++;snprintf(path,sizeof path,"%s/fourth.rec",retained_dir);ref_write(path,&duplicate);claude_record_destroy(&duplicate);
+  RefEntry *entries=calloc(300,sizeof *entries);ASSERT_TRUE(entries);size_t count=0;
+  ref_inventory(live_dir,false,entries,&count);ref_inventory(retained_dir,true,entries,&count);ASSERT_EQ(246,count);
+  ASSERT_EQ(0,unlink(f.one));
+  for(int i=0;i<12;i++){snprintf(path,sizeof path,"%s/synthetic-%03d.jsonl",f.root,i);ASSERT_EQ(0,unlink(path));}
+  ClaudeScan s={0};ClaudeStore store={0};ClaudeRoot root={.path=str(f.root),.present=true,.complete=true};s.roots=&root;s.root_count=1;
+  ASSERT_EQ(ERR_OK,claude_store_inspect(f.runtime,&s,false,&store).code);s.store=&store;ASSERT_EQ(ERR_OK,claude_scan(&s,NULL).code);
+  for(size_t i=0;i<s.count;i++){
+    DiscoveredLog key=s.records[i].key;bool reference=false;
+    for(size_t j=0;j<count;j++){ClaudeRecord *r=&entries[j].record;
+      if(!entries[j].retained&&r->reader_facts&&str_equal(r->key.path,key.path)&&r->key.size==key.size&&r->key.mtime_ns==key.mtime_ns){reference=true;break;}
+    }
+    ClaudeRecord output={0};bool hit=false;ASSERT_EQ(ERR_OK,claude_store_get(&store,&key,&output,&hit).code);
+    ASSERT_EQ(reference,hit);if(hit)ASSERT_TRUE(str_equal(key.path,output.key.path));claude_record_destroy(&output);
+  }
+  ClaudeRecord *expected[300];size_t expected_count=0;
+  for(unsigned pass=0;pass<2;pass++)for(size_t i=0;i<count;i++){
+    RefEntry *e=&entries[i];ClaudeRecord *r=&e->record;
+    if(e->retained!=(pass==1)||ref_live(&s,r->key.path))continue;
+    if(e->retained){
+      bool seen=false;for(size_t j=0;j<s.count;j++)seen|=str_equal(s.records[j].key.path,r->key.path);
+      for(size_t j=0;j<expected_count;j++)seen|=str_equal(expected[j]->key.path,r->key.path);
+      for(size_t j=0;j<count;j++)if(entries[j].retained&&str_equal(entries[j].record.key.path,r->key.path)&&entries[j].record.key.mtime_ns>r->key.mtime_ns)seen=true;
+      if(!seen)expected[expected_count++]=r;
+    }else if(claude_path_deleted(r->key.path.p)){e->candidate=true;expected[expected_count++]=r;}
+  }
+  size_t initial=s.count;ASSERT_EQ(ERR_OK,claude_store_reconcile(&store,&s,NULL).code);ASSERT_EQ(14,expected_count);ASSERT_EQ(initial+expected_count,s.count);
+  for(size_t i=0;i<expected_count;i++){ASSERT_TRUE(s.records[initial+i].retained);ASSERT_TRUE(str_equal(expected[i]->key.path,s.records[initial+i].key.path));ASSERT_EQ(expected[i]->key.mtime_ns,s.records[initial+i].key.mtime_ns);}
+  ASSERT_EQ(ERR_OK,claude_store_commit(&store,&s,NULL).code);
+  for(size_t i=0;i<count;i++)if(!entries[i].retained)ASSERT_EQ(entries[i].candidate,access(entries[i].location,F_OK)!=0);
+  close_snapshot(&s,&store);for(size_t i=0;i<count;i++)claude_record_destroy(&entries[i].record);free(entries);
 }

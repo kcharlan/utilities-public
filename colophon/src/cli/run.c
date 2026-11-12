@@ -96,6 +96,7 @@ int cli_run(const Args *args){
     const char *url=getenv("COLOPHON_PRICING_URL");if(!url)url="https://models.dev/api.json";
     char *catalog_path=join(home,"pricing-cache.json");if(!catalog_path){failure=err_make(ERR_NOMEM,"path allocation failed");goto fail;}
     failure=catalog_fetch_start(catalog_path,(Str){url,(uint32_t)strlen(url)},args->offline,args->refresh_prices,snapshot,&fetch);free(catalog_path);if(failure.code)goto fail;
+    if(codex_present)progress_phase(&scan_display,"scanning Codex logs…");
     if(codex_present){failure=cache_open(home,args->rebuild,&cache);if(failure.code!=ERR_OK)goto fail;cache_opened=true;}
     clock_started=true;failure=progress_scan_start(&scan_display.start);if(failure.code!=ERR_OK){failure_type="RuntimeError";goto fail;}
     CP_PHASE_MARK(0);

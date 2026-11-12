@@ -16,6 +16,18 @@ typedef struct {
     char *type, *site;
     uint64_t count;
 } Event;
+struct EventCaptureItem { Event event; struct EventCaptureItem *next; };
+static _Thread_local EventCapture *capture;
+void event_capture_begin(EventCapture *c) { capture = c; }
+void event_capture_end(void) { capture = NULL; }
+void event_capture_destroy(EventCapture *c) {
+    EventCaptureItem *item = c->first;
+    while (item) {
+        EventCaptureItem *next = item->next;
+        free(item->event.type); free(item->event.site); free(item); item = next;
+    }
+    *c = (EventCapture){0};
+}
 static Omap pending;
 static pthread_mutex_t mutex = PTHREAD_MUTEX_INITIALIZER;
 static bool lost, reported;
@@ -39,6 +51,24 @@ static bool identifier(const char *s) {
 void event_note(const char *type, const char *site, uint64_t count) {
     if (!count)
         return;
+    if (capture) {
+        if (!identifier(type) || !identifier(site)) { capture->lost = true; return; }
+        for (EventCaptureItem *existing = capture->first; existing; existing = existing->next)
+            if (!strcmp(existing->event.type, type) && !strcmp(existing->event.site, site)) {
+                uint64_t old = existing->event.count;
+                existing->event.count = count > UINT64_MAX - old ? UINT64_MAX : old + count;
+                return;
+            }
+        EventCaptureItem *item = calloc(1, sizeof *item);
+        if (item) { item->event.type = strdup(type); item->event.site = strdup(site); }
+        if (!item || !item->event.type || !item->event.site) {
+            if (item) { free(item->event.type); free(item->event.site); free(item); }
+            capture->lost = true; return;
+        }
+        item->event.count = count;
+        if (capture->last) capture->last->next = item; else capture->first = item;
+        capture->last = item; return;
+    }
     pthread_mutex_lock(&mutex);
     if (!identifier(type) || !identifier(site)) {
         lost = true;
@@ -81,6 +111,12 @@ void event_note(const char *type, const char *site, uint64_t count) {
     }
     free(key);
     pthread_mutex_unlock(&mutex);
+}
+void event_capture_replay(EventCapture *c) {
+    for (EventCaptureItem *item = c->first; item; item = item->next)
+        event_note(item->event.type, item->event.site, item->event.count);
+    if (c->lost) { pthread_mutex_lock(&mutex); lost = true; pthread_mutex_unlock(&mutex); }
+    event_capture_destroy(c);
 }
 void event_flush(const char *home) {
     pthread_mutex_lock(&mutex);

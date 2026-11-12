@@ -1,5 +1,8 @@
 # Lessons learned
 
+Announce Codex scanning before opening its cache: discovery and cache checks
+can take time even when every log is warm, before parsing progress appears.
+
 OpenCode 2.1 stopped repeating a message's id and type inside its JSON payload;
 they live only in `session_message` columns. Requiring the embedded copies made
 every real message malformed, and session rollups silently stood in for request
@@ -337,6 +340,12 @@ Retain empty/default epoch timestamps and singular-message merges, and test
 malformed generator isolation with an independent valid sibling through SQLite.
 
 # Availability of mutable log inputs
+
+Pooled transcript processing must stage diagnostics as well as records: a
+traversal skip can occur between two parse skips, and speculative workers can
+produce events after the first failing record. Replay only the ordered prefix.
+Claude cache hits reload cleared sidecar fields; misses already load the sidecar
+inside parsing and must not load it a second time.
 
 Treat a frozen log size as a read contract: a short fingerprint or a later EOF
 must fail that log instead of caching partial facts. Discovery alone cannot

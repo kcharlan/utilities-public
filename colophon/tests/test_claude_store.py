@@ -140,6 +140,30 @@ def test_claude_unreadable_descendant_and_path_error_preserve_cache(tmp_path):
     assert not store_records(run, "claude-retained")
 
 
+def test_claude_skipped_payload_keeps_nested_and_locator_order(tmp_path):
+    run = NativeRun(tmp_path)
+    projects = run.home / ".claude/projects/synthetic"
+    first = run.claude_session(name="a", directory=projects)
+    blocked_dir = projects / "b"
+    blocked_dir.mkdir()
+    last = run.claude_session(name="c", directory=projects)
+    run.claude_session(name="readable", directory=projects)
+    desktop = run.home / "Library/Application Support/Claude/local-agent-mode-sessions/synthetic-session"
+    locator_file = run.claude_session(name="a", directory=desktop / ".claude/projects/synthetic")
+    locator_dir = desktop / "z"
+    locator_dir.mkdir()
+    blocked = [first, blocked_dir, last, locator_file, locator_dir]
+    for path in blocked:
+        path.chmod(0)
+    try:
+        assert run.build().returncode == 0
+        expected = [first, blocked_dir, last, locator_file, locator_dir / ".claude", locator_dir]
+        assert [item["path"] for item in run.payload()["diagnostics"]["skipped_files"]] == [str(path) for path in expected]
+    finally:
+        for path in blocked:
+            path.chmod(0o700 if path in (blocked_dir, locator_dir) else 0o600)
+
+
 def accounting_rows():
     return [{"type": "user", "sessionId": " synthetic-price-alias ",
              "timestamp": "2001-01-01T00:00:00Z", "cwd": "/synthetic/prices",
