@@ -3,6 +3,7 @@
 #include "db.h"
 #include "corpus/assemble.h"
 Err antigravity_corpus_add(AntigravityStore *store,int64_t snapshot,Corpus *corpus);
+Err antigravity_corpus_link(AntigravityStore *store,Corpus *corpus);
 /* Explicit SQL INTEGER wins; otherwise a present payload scalar may supply the
  * fact. No absent scalar is promoted to a proto3 default. */
 bool antigravity_step_enum(const AntigravityStep *step,bool status,int64_t *out);

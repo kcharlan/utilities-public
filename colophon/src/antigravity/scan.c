@@ -24,7 +24,8 @@ bool antigravity_safe_path(Str root,const char *path){
     }
     free(copy);return safe;
 }
-static bool uuid(const char *p,size_t n){
+bool antigravity_uuid(Str id){
+    const char *p=id.p;size_t n=id.n;
     if(n!=36)return false;
     for(size_t i=0;i<n;i++){if(i==8||i==13||i==18||i==23){if(p[i]!='-')return false;}else if(!((p[i]>='0'&&p[i]<='9')||(p[i]>='a'&&p[i]<='f')||(p[i]>='A'&&p[i]<='F')))return false;}
     return true;
@@ -62,7 +63,7 @@ Err antigravity_discover(const Args *args,AntigravityStore *s){
         Str *paths=NULL;size_t count=0,capacity=0;
         if(dir){struct dirent *ent;
             while(!e.code){errno=0;ent=readdir(dir);if(!ent){if(errno)e=add(s,text(directory),surface,(Str){0},"Antigravity directory enumeration failed");break;}
-                size_t len=strlen(ent->d_name);if(len!=39||!uuid(ent->d_name,36)||(!strstr(ent->d_name+36,".db")&&!strstr(ent->d_name+36,".pb")))continue;
+                size_t len=strlen(ent->d_name);if(len!=39||!antigravity_uuid((Str){ent->d_name,36})||(!strstr(ent->d_name+36,".db")&&!strstr(ent->d_name+36,".pb")))continue;
                 Str id={0};e=str_copy(&s->arena,(Str){ent->d_name,36},&id);if(e.code)break;
                 if(!strcmp(ent->d_name+36,".pb")){e=omap_put(&legacy,id,(void *)1);continue;}
                 e=omap_put(&db_ids,id,(void *)1);if(e.code)break;

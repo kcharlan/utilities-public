@@ -356,10 +356,12 @@ def test_antigravity_no_database_size_cap_and_no_summary_only_sessions(native):
     path.unlink()
     with sqlite3.connect(path.parent.parent / "conversation_summaries.db") as db:
         db.execute("CREATE TABLE conversation_summaries(conversation_id,title)")
-        db.execute("INSERT INTO conversation_summaries VALUES(?,?)", (ID, "Synthetic index only"))
+        db.execute("INSERT INTO conversation_summaries VALUES(?,?)", (ID[:-1] + "2", "Synthetic index only"))
     assert native.build().returncode == 0
     assert source(native)["status"] == "absent"
-    assert source(native)["sessions"] == 0
+    retained, = native.payload()["sessions"]
+    assert retained["id"] == ID
+    assert "transcript_deleted" in retained["flags"]
 
 def test_antigravity_symlink_database_annotation_and_sidecar_excluded(native):
     path = database(native)
@@ -446,7 +448,8 @@ def test_antigravity_annotation_and_root_symlink_excluded(native):
     root.rename(moved)
     root.symlink_to(moved)
     assert native.build().returncode == 0
-    assert source(native)["sessions"] == 0
+    assert source(native)["sessions"] == 1
+    assert "transcript_deleted" in native.payload()["sessions"][0]["flags"]
     assert source(native)["status"] == "unreadable"
 
 def test_antigravity_filename_identity_and_summary_joins_use_exact_case(native):
@@ -538,3 +541,151 @@ def test_antigravity_malformed_optional_enum_keeps_indexed_step(native, bad):
     assert result.returncode == 0, result.stderr
     assert source(native)["databases"][0]["accepted_steps"] == 1
     assert native.payload()["diagnostics"]["antigravity_malformed_rows"] == 2
+
+
+def test_antigravity_deleted_database_retains_usage_and_metadata(native):
+    path = cached_pricing(native, unknown=False)
+    workspace = proto_field(1, "file:///SYNTHETIC-LEDGER-WORKSPACE")
+    with sqlite3.connect(path) as db:
+        db.execute("INSERT INTO trajectory_metadata_blob VALUES(1,?)", (proto_field(1, workspace),))
+    result = native.build("--no-claude", "--no-opencode")
+    assert result.returncode == 0, result.stderr
+    live, = native.payload()["sessions"]
+    path.unlink()
+    result = native.build("--no-claude", "--no-opencode")
+    assert result.returncode == 0, result.stderr
+    retained, = native.payload()["sessions"]
+    assert retained["own_usage"] == live["own_usage"]
+    assert retained["title"] == live["title"]
+    assert retained["workspace"] == live["workspace"]
+    assert retained["turns"] == []
+    assert "transcript_deleted" in retained["flags"]
+
+
+def test_antigravity_unsupported_database_uses_retained_usage(native):
+    path = cached_pricing(native, unknown=False)
+    assert native.build("--no-claude", "--no-opencode").returncode == 0
+    usage = native.payload()["sessions"][0]["own_usage"]
+    path.unlink()
+    with sqlite3.connect(path) as db:
+        db.execute("CREATE TABLE synthetic_incompatible(value TEXT)")
+    result = native.build("--no-claude", "--no-opencode")
+    assert result.returncode == 0, result.stderr
+    payload = native.payload()
+    assert payload["sessions"][0]["own_usage"] == usage
+    assert "transcript_deleted" in payload["sessions"][0]["flags"]
+    assert payload["diagnostics"]["antigravity_schema_errors"]
+
+
+def test_antigravity_ledger_only_home_and_disabled_rebuild(native):
+    path = cached_pricing(native, unknown=False)
+    assert native.build("--no-claude", "--no-opencode").returncode == 0
+    ledger = native.runtime / "antigravity-ledger"
+    before = {p.relative_to(ledger): p.read_bytes() for p in ledger.rglob("*.json")}
+    assert len(before) == 1
+    path.unlink()
+    assert native.build("--no-claude", "--no-opencode", "--no-antigravity").returncode == 0
+    assert native.payload()["sessions"] == []
+    assert {p.relative_to(ledger): p.read_bytes() for p in ledger.rglob("*.json")} == before
+    native.codex.rmdir()
+    result = native.build("--no-claude", "--no-opencode", "--rebuild")
+    assert result.returncode == 0, result.stderr
+    assert len(native.payload()["sessions"]) == 1
+    assert {p.relative_to(ledger): p.read_bytes() for p in ledger.rglob("*.json")} == before
+
+
+def test_antigravity_corrupt_ledger_is_reported_unchanged(native):
+    path = cached_pricing(native, unknown=False)
+    assert native.build("--no-claude", "--no-opencode").returncode == 0
+    record, = (native.runtime / "antigravity-ledger").rglob("*.json")
+    path.unlink()
+    record.write_bytes(b"synthetic malformed ledger")
+    assert native.build("--no-claude", "--no-opencode").returncode == 0
+    assert record.read_bytes() == b"synthetic malformed ledger"
+    assert str(record) in native.payload()["diagnostics"]["antigravity_ledger_unreadable"]
+
+
+def test_antigravity_ledger_is_private_and_root_scoped(native):
+    path = cached_pricing(native, unknown=False)
+    assert native.build("--no-claude", "--no-opencode").returncode == 0
+    root = native.runtime / "antigravity-ledger"
+    record, = root.rglob("*.json")
+    assert stat.S_IMODE(root.stat().st_mode) == 0o700
+    assert stat.S_IMODE(record.parent.stat().st_mode) == 0o700
+    assert stat.S_IMODE(record.stat().st_mode) == 0o600
+    path.unlink()
+    other = native.home / "synthetic-other-gemini"
+    other.mkdir()
+    assert native.build("--no-claude", "--no-opencode", "--antigravity-home", str(other)).returncode == 0
+    assert native.payload()["sessions"] == []
+
+
+def test_antigravity_retained_duplicate_yields_to_live_request(native):
+    first = database(native)
+    second = database(native, identity=ID[:-1] + "2")
+    usage = proto_field(2, 42) + proto_field(3, 7) + proto_field(11, b"synthetic-shared-request")
+    chat = proto_field(4, usage) + proto_field(19, "gemini-3.1-pro-preview")
+    for path in (first, second):
+        with sqlite3.connect(path) as db:
+            db.execute("INSERT INTO gen_metadata VALUES(0,?)", (proto_field(1, chat),))
+    assert native.build("--no-claude", "--no-opencode").returncode == 0
+    assert sum(row["own_usage"]["input"] for row in native.payload()["sessions"]) == 42
+    first.unlink()
+    result = native.build("--no-claude", "--no-opencode")
+    assert result.returncode == 0, result.stderr
+    payload = native.payload()
+    assert len(payload["sessions"]) == 2
+    assert sum(row["own_usage"]["input"] for row in payload["sessions"]) == 42
+    by_id = {row["id"]: row for row in payload["sessions"]}
+    assert by_id[ID]["own_usage"]["input"] == 0
+    assert by_id[ID[:-1] + "2"]["own_usage"]["input"] == 42
+    assert payload["diagnostics"]["antigravity_cross_session_duplicates"] == 1
+
+
+def test_antigravity_shrinking_live_database_reports_and_replaces_ledger(native):
+    path = cached_pricing(native)
+    assert native.build("--no-claude", "--no-opencode").returncode == 0
+    assert native.payload()["sessions"][0]["own_usage"]["input"] == 52
+    with sqlite3.connect(path) as db:
+        db.execute("DELETE FROM gen_metadata WHERE idx=1")
+    assert native.build("--no-claude", "--no-opencode").returncode == 0
+    payload = native.payload()
+    assert payload["diagnostics"]["antigravity_ledger_shrunk"] == 1
+    assert payload["sessions"][0]["own_usage"]["input"] == 50
+    path.unlink()
+    assert native.build("--no-claude", "--no-opencode").returncode == 0
+    assert native.payload()["sessions"][0]["own_usage"]["input"] == 50
+
+
+def test_antigravity_retained_parent_relinks_live_child(native):
+    parent = database(native)
+    child_id = ID[:-1] + "2"
+    child = database(native, identity=child_id)
+    with sqlite3.connect(child) as db:
+        db.execute("INSERT INTO trajectory_metadata_blob VALUES(1,?)", (proto_field(5, ID),))
+    assert native.build("--no-claude", "--no-opencode").returncode == 0
+    parent.unlink()
+    result = native.build("--no-claude", "--no-opencode")
+    assert result.returncode == 0, result.stderr
+    payload = native.payload()
+    assert payload["sessions"][0]["children"] == [child_id]
+    assert payload["subagents"][child_id]["parent_id"] == ID
+    assert payload["diagnostics"]["antigravity_orphaned_subagents"] == []
+
+
+@pytest.mark.parametrize("change", ["schema", "id", "identity"])
+def test_antigravity_invalid_ledger_metadata_is_untouched_even_with_live_database(native, change):
+    cached_pricing(native, unknown=False)
+    assert native.build("--no-claude", "--no-opencode").returncode == 0
+    record, = (native.runtime / "antigravity-ledger").rglob("*.json")
+    value = json.loads(record.read_text())
+    if change == "identity":
+        value["events"][0]["ids"] = [[]]
+    else:
+        value[change] = 2 if change == "schema" else ID[:-1] + "2"
+    bad = json.dumps(value).encode()
+    record.write_bytes(bad)
+    assert native.build("--no-claude", "--no-opencode").returncode == 0
+    assert record.read_bytes() == bad
+    assert str(record) in native.payload()["diagnostics"]["antigravity_ledger_unreadable"]
+    assert "transcript_deleted" not in native.payload()["sessions"][0]["flags"]

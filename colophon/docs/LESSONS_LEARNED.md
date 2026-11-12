@@ -1,5 +1,10 @@
 # Lessons learned
 
+Retain Antigravity usage before deduplication, including raw request identity
+bytes, so deleted databases can still participate in global alias merging. Live
+events must be collected first and diagnostics for a shrinking live database
+must be computed before rendering, even though the ledger commits afterward.
+
 Announce Codex scanning before opening its cache: discovery and cache checks
 can take time even when every log is warm, before parsing progress appears.
 

@@ -42,6 +42,9 @@ static void antigravity_diagnostics(JsonWriter *w,const AntigravityStore *s){
     jsonw_raw(w,",\"antigravity_requests_without_usage\":");jsonw_i128(w,s?s->requests_without_usage:0);
     jsonw_raw(w,",\"antigravity_invalid_numbers\":");jsonw_i128(w,s?s->invalid_numbers:0);
     jsonw_raw(w,",\"antigravity_unknown_clocks\":");jsonw_i128(w,s?s->unknown_clocks:0);
+    jsonw_raw(w,",\"antigravity_ledger_unreadable\":");payload_corpus_strings(w,s?&s->ledger_unreadable:&(CorpusStrings){0});
+    jsonw_raw(w,",\"antigravity_retained_sessions\":");jsonw_i128(w,s?s->ledger_retained:0);
+    jsonw_raw(w,",\"antigravity_ledger_shrunk\":");jsonw_i128(w,s?s->ledger_shrunk:0);
     jsonw_raw(w,",\"antigravity_orphaned_subagents\":");payload_corpus_strings(w,s?&s->orphaned_subagents:&(CorpusStrings){0});
     jsonw_raw(w,",\"antigravity_session_id_collisions\":");payload_corpus_strings(w,s?&s->corpus_collisions:&(CorpusStrings){0});
     jsonw_raw(w,",\"antigravity_source_diagnostics\":[");
@@ -147,7 +150,7 @@ static void claude_diagnostics(JsonWriter *w,const ClaudeScan *c){
 void payload_empty(JsonWriter *w,const PayloadInputs *in){
     PayloadIds ids={0};Err identity_error=payload_ids_init(in->corpus,in->source_codex_home,&ids);
     if(identity_error.code){w->error=identity_error;payload_ids_destroy(&ids);return;}
-    jsonw_raw(w,"{\"schema\":1,\"meta\":{\"version\":\"0.6.0\",\"generated_at_ms\":");jsonw_i64(w,in->snapshot_ms);
+    jsonw_raw(w,"{\"schema\":1,\"meta\":{\"version\":\"0.7.0\",\"generated_at_ms\":");jsonw_i64(w,in->snapshot_ms);
     jsonw_raw(w,",\"generated_tz\":");text(w,in->timezone);jsonw_raw(w,",\"codex_home\":");text(w,in->codex_home);
     jsonw_raw(w,",\"counts\":{\"logs\":");jsonw_i64(w,(int64_t)in->logs);
     jsonw_raw(w,",\"parsed\":");jsonw_i64(w,(int64_t)in->parsed);

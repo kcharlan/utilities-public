@@ -94,6 +94,18 @@ def test_antigravity_snapshot_plural_databases(page, native):
         expect(page.locator('#snapshot-meta')).to_contain_text('2 Antigravity databases ·')
         assert requests == []
 
+
+def test_antigravity_retained_only_page_identifies_unavailable_live_data(page, native):
+    antigravity_page(native)
+    (native.home / '.gemini' / 'antigravity' / 'conversations' / (AG_ID + '.db')).unlink()
+    result = native.build('--no-claude', '--no-opencode')
+    assert result.returncode == 0, result.stderr
+    with guard_browser_errors(page):
+        requests = open_native(page, native.page)
+        expect(page.locator('#colophon-footer')).to_contain_text('No live Antigravity databases found; retained sessions are shown.')
+        expect(page.locator('#colophon-footer')).not_to_contain_text('No Antigravity data found.')
+        assert requests == []
+
 @pytest.mark.parametrize('unknown', [False, True])
 @pytest.mark.parametrize('width', [1280, 375])
 def test_antigravity_cached_tokens_cost_and_mixed_layout(page, native, unknown, width):
@@ -241,10 +253,10 @@ def test_opencode_source_hash_descendants_actions_and_version(page, native):
         row["children"] = [child["id"], foreign["id"]]
         payload["subagents"].update({child["id"]: child, foreign["id"]: foreign})
     payload = opencode_page(native, mutate)
-    assert payload["meta"]["version"] == "0.6.0"
+    assert payload["meta"]["version"] == "0.7.0"
     with guard_browser_errors(page):
         requests = open_native(page, native.page)
-        expect(page.locator('[data-version]')).to_have_text("colophon 0.6.0")
+        expect(page.locator('[data-version]')).to_have_text("colophon 0.7.0")
         page.goto(native.page.as_uri() + "#v=session&p=all&a=1&h=0&sort=cost&src=opencode&s=" + OPENCODE_SESSION)
         reader = page.locator("[data-reader]")
         expect(reader).to_have_attribute("data-provider", "opencode")

@@ -2,6 +2,13 @@
 
 ## Antigravity accounting and oracle provenance (0.5.0)
 
+The Antigravity ledger retains pre-deduplication usage events and their request
+identities. Live events are collected first and own any shared request; retained
+events then join the same alias and pricing pipeline. Retained usage has no turn
+attribution. A live database that shrinks replaces its prior ledger record and
+increments `antigravity_ledger_shrunk`; the ledger cannot recover a conversation
+created and deleted between runs.
+
 Collect ChatModelMetadata.usage and retry_infos[].usage plus
 CortexStepMetadata.model_usage and retry_infos[].usage, regardless of cleared
 or checkpoint step status. Merge repeated singular embedded messages before

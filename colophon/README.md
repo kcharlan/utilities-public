@@ -63,6 +63,11 @@ Version 0.5.7 speeds up Claude cache lookups and reconciliation.
 
 Version 0.6.0 processes Claude transcripts on the shared scan worker pool.
 
+Version 0.7.0 retains observed Antigravity usage and session headers when a
+database disappears or cannot be read. Live databases replace retained records;
+the ledger stores no transcript turns, though a fallback title may come from
+the first request.
+
 The page's All/Codex/Claude/OpenCode/Antigravity switch preserves filters and uses green/blue/violet/pink
 provider marks, split overview bars and metric-based calendar colors.
 Claude continuation commands are offered only for supported primary CLI

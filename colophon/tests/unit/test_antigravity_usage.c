@@ -24,7 +24,7 @@ static Str usage(Arena *a,int64_t input,int64_t total,int64_t thinking,int64_t v
 static Str generator(Arena *a,Str u,Str model) {JsonWriter chat={0},gen={0};msg(&chat,4,u);if(model.n)msg(&chat,19,model);msg(&gen,1,bytes(&chat));jsonw_free(&chat);return own(a,&gen);}
 static SessionModel *compose(AntigravityStore *s,Corpus *c,AntigravitySession **rows,size_t n,PricingReport *p) {
     s->sessions=rows;s->session_count=n;ASSERT_EQ(ERR_OK,antigravity_corpus_add(s,123456,c).code);
-    PriorityTurns priority={0};ASSERT_EQ(ERR_OK,compose_usage(c,&priority).code);ASSERT_EQ(ERR_OK,antigravity_compose(s,c,NULL,p).code);
+    PriorityTurns priority={0};ASSERT_EQ(ERR_OK,compose_usage(c,&priority).code);ASSERT_EQ(ERR_OK,antigravity_compose(s,c,NULL,p,NULL).code);
     return omap_get(&c->sessions,rows[0]->id);
 }
 static void destroy(AntigravityStore *s,Corpus *c,PricingReport *p) {corpus_destroy(c);antigravity_store_destroy(s);pricing_report_destroy(p);}
@@ -75,8 +75,8 @@ TEST(antigravity_usage_transitive_cross_session_and_recomposition) {
     SessionModel *second=omap_get(&c.sessions,raw[1].id);
     ASSERT_EQ(1,first->unit_count);ASSERT_EQ(30,first->units[0].input);ASSERT_EQ(0,second->unit_count);ASSERT_EQ(2,s.cross_session_duplicates);
     ASSERT_EQ(34,first->outside_usage->input+first->outside_usage->output);
-    PriorityTurns priority={0};ASSERT_EQ(ERR_OK,compose_usage(&c,&priority).code);pricing_report_destroy(&prices);
-    ASSERT_EQ(ERR_OK,antigravity_compose(&s,&c,NULL,&prices).code);ASSERT_EQ(1,first->unit_count);ASSERT_EQ(30,first->own_usage->input);ASSERT_EQ(2,s.cross_session_duplicates);
+    PriorityTurns priority={0};ASSERT_EQ(ERR_OK,compose_usage(&c,&priority).code);pricing_report_destroy(&prices);s.ledger_shrunk=1;
+    ASSERT_EQ(ERR_OK,antigravity_compose(&s,&c,NULL,&prices,NULL).code);ASSERT_EQ(1,first->unit_count);ASSERT_EQ(30,first->own_usage->input);ASSERT_EQ(2,s.cross_session_duplicates);ASSERT_EQ(0,s.ledger_shrunk);
     destroy(&s,&c,&prices);arena_destroy(&a);
 }
 TEST(antigravity_usage_all_locations_partial_merge_and_invalid_isolation) {

@@ -219,7 +219,7 @@ static Err project_session(AntigravityStore *store,AntigravitySession *r,int64_t
 }
 
 Err antigravity_corpus_add(AntigravityStore *store,int64_t snapshot,Corpus *c) {
-    Omap identified={0},public_ids={0};Err e=ERR_SUCCESS;
+    Omap public_ids={0};Err e=ERR_SUCCESS;
     for(OmapEntry *q=c->sessions.first;!e.code&&q;q=q->next){SessionModel *s=q->value;e=omap_put(&public_ids,s->id,s);}
     for(size_t i=0;!e.code&&i<store->session_count;i++) {
         AntigravitySession *r=store->sessions[i];SessionModel *s;
@@ -228,9 +228,14 @@ Err antigravity_corpus_add(AntigravityStore *store,int64_t snapshot,Corpus *c) {
         *s=(SessionModel){0};
         e=omap_put(&c->sessions,r->id,s);
         if(!e.code)e=project_session(store,r,snapshot,c,s);
-        if(!e.code)e=omap_put(&identified,r->id,s);
         if(!e.code)r->corpus_accepted=true;
     }
+    omap_destroy(&public_ids);if(!e.code)e=antigravity_corpus_link(store,c);return e;
+}
+Err antigravity_corpus_link(AntigravityStore *store,Corpus *c) {
+    Omap identified={0};Err e=ERR_SUCCESS;store->orphaned_subagents=(CorpusStrings){0};
+    for(OmapEntry *q=c->sessions.first;!e.code&&q;q=q->next){SessionModel *s=q->value;if(s->provider!=PROVIDER_ANTIGRAVITY)continue;
+        s->children=(CorpusStrings){0};s->flags&=~F_ORPHAN;s->kind=s->is_subagent?STR_LIT("subagent"):STR_LIT("session");s->has_depth=!s->is_subagent;s->depth=0;s->graph_visit=s->graph_position=0;e=omap_put(&identified,s->id,s);}
     if(!e.code)e=corpus_graph_break_cycles(&c->arena,&identified);
     for(OmapEntry *q=identified.first;!e.code&&q;q=q->next){SessionModel *s=q->value;if(!s->is_subagent)continue;
         SessionModel *parent=omap_get(&identified,s->parent_id);
@@ -241,5 +246,5 @@ Err antigravity_corpus_add(AntigravityStore *store,int64_t snapshot,Corpus *c) {
         while(p&&!p->has_depth){depth++;p=omap_get(&identified,p->parent_id);}
         if(p){s->has_depth=true;s->depth=p->depth+depth;}e=corpus_children_order(s,&identified);
     }
-    omap_destroy(&identified);omap_destroy(&public_ids);return e;
+    omap_destroy(&identified);return e;
 }

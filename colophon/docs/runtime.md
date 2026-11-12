@@ -20,6 +20,23 @@ the end-of-run summary.
 
 ## Antigravity source discovery
 
+Each successful page build saves observed Antigravity session headers and
+pre-deduplication usage events under `antigravity-ledger/<root-key>/`, where
+the key hashes the resolved Gemini root. Directories are private (0700) and
+records are private (0600); writes are atomic and happen only after the page is
+written. Transcript turns, answers and tools are not stored; when no title is
+available, the saved title can be derived from the first request. A missing or
+unreadable database falls back to its last readable record, shown as a retained
+session with usage outside turns. Live accepted databases win. Ledger-only
+homes can produce a page; `--no-antigravity` neither reads nor writes the
+ledger, and `--rebuild` does not clear it. Unreadable records remain untouched
+and are reported in `antigravity_ledger_unreadable`.
+
+The ledger cannot capture a conversation created and deleted between runs. A
+live database with fewer events replaces its previous record and increments
+`antigravity_ledger_shrunk`. As with other runtime state, avoid concurrent runs
+sharing one runtime home: ledger read and replacement are not a transaction.
+
 `--antigravity-home PATH` selects a Gemini root, defaulting to `~/.gemini`,
 with explicit-path tilde expansion and lexical relative-path resolution.
 `--no-antigravity` returns before expansion or inspection. Nonempty
@@ -152,7 +169,7 @@ reader. Missing legacy provider fields mean Codex. Source filtering applies
 to overview totals, session lists, descendants and direct subagent links.
 The snapshot log count always includes Codex and Claude logs, regardless of the
 switch; accepted OpenCode and Antigravity database counts are shown separately. The footer
-displays the embedded payload's release version (`colophon 0.6.0`).
+displays the embedded payload's release version (`colophon 0.7.0`).
 
 Codex uses green, Claude blue, OpenCode violet and Antigravity pink. In All, KPI share rules and workspace
 bars split by provider; calendar cells use the provider with the greater
@@ -242,7 +259,7 @@ An empty value selects the default `~/.claude` config root. Its
 `COLOPHON_HOME` selects the private runtime home (default `~/.colophon`);
 tilde expansion is supported. `COLOPHON_PRICING_URL` defaults to
 `https://models.dev/api.json`. Help and version exit without initializing
-runtime state. Version is currently `colophon 0.6.0`.
+runtime state. Version is currently `colophon 0.7.0`.
 
 | Flag | Behavior |
 | --- | --- |
@@ -408,6 +425,7 @@ files older than one hour are cleaned from the runtime home.
 | `colophon.html` | Generated offline page. |
 | `cache-native/` | Native per-log parse cache; changed logs reparse from the beginning. |
 | `cache-claude/` | Claude parse records, grouped by resolved search root. |
+| `antigravity-ledger/` | Last observed Antigravity session headers and usage events, grouped by the hash of the resolved Gemini root. |
 | `claude-retained/` | Claude facts retained after proved source deletion; no automatic age limit. |
 | `price-history.json` | Editable user ledger, created with schema 1 and empty entries. |
 | `pricing-cache.json` | Shared multi-provider catalog, URL, ETag and successful fetch timestamp. |

@@ -614,6 +614,9 @@
         antigravity_requests_without_usage: "Generator rows contain no eligible token usage. This cannot detect missing individual fields or changed meanings.",
         antigravity_invalid_numbers: "Invalid token components or sums were excluded; valid sibling events remain included.",
         antigravity_unknown_clocks: "Usage without a usable step or chat-start clock falls back to the session start, if known.",
+        antigravity_ledger_unreadable: "These retained usage records could not be read and were left unchanged.",
+        antigravity_retained_sessions: "These sessions retain their last observed usage and metadata after their databases became unavailable.",
+        antigravity_ledger_shrunk: "Live databases contained fewer usage events than their previous records; the live data replaced them.",
         antigravity_source_diagnostics: "Antigravity source records could not be interpreted completely; valid sibling records remain included. Context, surface and index identify each affected record.",
         antigravity_orphaned_subagents: "Antigravity subagent sessions have no admitted parent; their sessions remain included.",
         antigravity_session_id_collisions: "Antigravity sessions conflicting with another provider's public session ID were excluded.",
@@ -658,6 +661,7 @@
     if (provider === "antigravity") {
       const databases = source?.databases || [];
       if (["unsupported", "unreadable"].includes(source?.status)) return "Antigravity " + source.status + ": " + databases.filter(db => db.reason).map(db => db.path + ": " + db.reason).join(" · ");
+      if (data.diagnostics?.antigravity_retained_sessions) return "No live Antigravity databases found; retained sessions are shown.";
       return "No Antigravity data found. Checked " + ["antigravity", "antigravity-cli", "antigravity-ide"].map(surface => (source?.home || "~/.gemini") + "/" + surface + "/conversations").join(", ") + "; use --antigravity-home PATH";
     }
     if (provider === "opencode") {

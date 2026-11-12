@@ -100,6 +100,7 @@ Err summary_run(const char *output,size_t size,const PayloadInputs *in) {
         diagnostic("antigravity_requests_without_usage",s->requests_without_usage,&first);
         diagnostic("antigravity_invalid_numbers",s->invalid_numbers,&first);
         diagnostic("antigravity_unknown_clocks",s->unknown_clocks,&first);
+        diagnostic("antigravity_ledger_unreadable",s->ledger_unreadable.count,&first);diagnostic("antigravity_retained_sessions",s->ledger_retained,&first);diagnostic("antigravity_ledger_shrunk",s->ledger_shrunk,&first);
         diagnostic("antigravity_orphaned_subagents",s->orphaned_subagents.count,&first);diagnostic("antigravity_session_id_collisions",s->corpus_collisions.count,&first);
         diagnostic("antigravity_legacy_encrypted",s->legacy_encrypted,&first);diagnostic("antigravity_source_diagnostics",s->diagnostic_count,&first);
     }
