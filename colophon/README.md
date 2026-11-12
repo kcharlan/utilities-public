@@ -55,6 +55,8 @@ OpenCode primary sessions with absolute working-directory and database paths.
 
 Version 0.5.4 removes unused test hooks and expands cache failure coverage.
 
+Version 0.5.5 announces each launch phase on the terminal before it starts.
+
 The page's All/Codex/Claude/OpenCode/Antigravity switch preserves filters and uses green/blue/violet/pink
 provider marks, split overview bars and metric-based calendar colors.
 Claude continuation commands are offered only for supported primary CLI

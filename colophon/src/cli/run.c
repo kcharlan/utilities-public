@@ -69,19 +69,24 @@ int cli_run(const Args *args){
     failure=file_expand_path(args->codex_home,&codex);if(failure.code!=ERR_OK)goto fail;
     struct stat st;codex_present=!stat(codex,&st)&&S_ISDIR(st.st_mode)&&!access(codex,R_OK|X_OK);
     failure=runtime_home(&home);if(failure.code!=ERR_OK)goto fail;
+    scan_display.tty=progress_tty();
     failure=claude_inspect(args,&claude);if(failure.code)goto fail;
     action.sa_handler=interrupt_handler;sigemptyset(&action.sa_mask);interrupted=0;handler=sigaction(SIGINT,&action,&previous)==0;
+    if(!claude.disabled)progress_phase(&scan_display,"reading Claude cache…");
     failure=claude_store_inspect(home,&claude,args->rebuild,&claude_store);if(failure.code)goto fail;
     claude.store=&claude_store;
+    if(!claude.disabled)progress_phase(&scan_display,"scanning Claude transcripts…");
     failure=claude_scan(&claude,&interrupted);if(failure.code)goto fail;
     failure=claude_store_reconcile(&claude_store,&claude,&interrupted);if(failure.code)goto fail;
     failure=claude_scan_aliases(&claude);if(failure.code)goto fail;
     failure=opencode_discover(args,&opencode);if(failure.code)goto fail;
+    if(!opencode.disabled)progress_phase(&scan_display,"reading OpenCode databases…");
     failure=opencode_store_read(&opencode,&interrupted);if(failure.code)goto fail;
     failure=antigravity_discover(args,&antigravity);if(failure.code)goto fail;
+    if(!antigravity.disabled)progress_phase(&scan_display,"reading Antigravity databases…");
     failure=antigravity_store_read(&antigravity,&interrupted);if(failure.code)goto fail;
     if(!codex_present&&!claude.present&&!opencode.present&&!antigravity.present){fprintf(stderr,"colophon: no readable sources; Codex home is missing or unreadable: %s; Claude roots:",codex);for(size_t i=0;i<claude.root_count;i++)fprintf(stderr," %s",claude.roots[i].path.p);fprintf(stderr,"; history: %s%s; OpenCode:",claude.history_path.p,claude.disabled?" (--no-claude)":"");if(opencode.data_dir.p){fputc(' ',stderr);error_line(opencode.data_dir.p);}for(size_t i=0;i<opencode.database_count;i++){fputc(' ',stderr);error_line(opencode.databases[i].path.p);}fprintf(stderr,"%s; Antigravity:",opencode.disabled?" (--no-opencode)":"");if(antigravity.home.p){fputc(' ',stderr);error_line(antigravity.home.p);}fprintf(stderr,"%s\n",antigravity.disabled?" (--no-antigravity)":"");goto done;}
-    int64_t snapshot=cp_now_ms();scan_display.tty=progress_tty();
+    int64_t snapshot=cp_now_ms();
     failure=ensure_runtime_home(home);home_exists=!stat(home,&st)&&S_ISDIR(st.st_mode);if(failure.code!=ERR_OK)goto fail;
     failure=templates(home);if(failure.code!=ERR_OK)goto fail;
     ledger_path=join(home,"price-history.json");if(!ledger_path){failure=err_make(ERR_NOMEM,"path allocation failed");goto fail;}
@@ -99,6 +104,7 @@ int cli_run(const Args *args){
     if(failure.code!=ERR_OK){if(failure.code==ERR_INVALID)failure_type="ValueError";goto fail;}
     /* scan -> metadata -> corpus -> links -> workspaces -> catalog join. */
     CP_PHASE_MARK(1);
+    progress_phase(&scan_display,"assembling sessions…");
     if(codex_present){failure=metadata_load(codex,&metadata);if(failure.code)goto fail;}
     if(cp_fault("build_corpus")){failure=err_make(ERR_IO,"synthetic injected build_corpus");goto fail;}
     assembly_records=calloc(scan.count?scan.count:1,sizeof *assembly_records);if(!assembly_records){failure=err_make(ERR_NOMEM,"assembly input allocation failed");goto fail;}
@@ -114,6 +120,7 @@ int cli_run(const Args *args){
     failure=workspace_aliases_load(alias_path,&aliases);free(alias_path);if(failure.code)goto fail;
     failure=corpus_resolve_workspaces(&corpus,&aliases);if(failure.code)goto fail;
     CP_PHASE_MARK(2);
+    if(!args->offline)progress_phase(&scan_display,"waiting for the price catalog…");
     failure=catalog_fetch_finish(&fetch,&catalog);if(failure.code)goto fail;
     CP_PHASE_MARK(3);
     if(codex_present){failure=priority_load(codex,home,&priority);if(failure.code)goto fail;}
@@ -143,6 +150,7 @@ int cli_run(const Args *args){
     PayloadInputs in={.snapshot_ms=snapshot,.codex_home=display,.source_host=host,.timezone=zone,
         .logs=scan.count+scan.unreadable_count,.parsed=scan.parsed,.cached=scan.cached,.scan=&scan,.corpus=&corpus,.metadata=&metadata,.source_codex_home=codex,.workspace_errors=&aliases.errors,.pricing=&pricing,.catalog=&catalog,.ledger=&ledger,.codex_present=codex_present,.claude=&claude,.opencode=&opencode,.antigravity=&antigravity};
     CP_PHASE_MARK(4);
+    progress_phase(&scan_display,"building the page…");
     size_t max=0,limit=20u*1024u*1024u;bool converged=false;
     for(int i=0;i<3;i++){jsonw_free(&payload);jsonw_free(&page);payload_empty(&payload,&in);failure=page_render(&payload,&page);if(failure.code!=ERR_OK){if(failure.code==ERR_INVALID)failure_type="ValueError";goto fail;}
         size_t size=page.length;if(size>max)max=size;bool over=size>limit;if(in.page_size==size&&in.over_limit==over){converged=true;break;}in.page_size=size;in.over_limit=over;}

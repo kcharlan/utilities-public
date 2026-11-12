@@ -25,7 +25,7 @@ import zlib
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-VERSION = "1.1.3"
+VERSION = "1.1.4"
 
 # ---------------------------------------------------------------------------
 # Config and atomic writes
@@ -227,6 +227,7 @@ def get_api_key(config: dict, env=os.environ, op_paths=OP_PATHS, run=subprocess.
     if config.get("op_vault"):
         argv += ["--vault", config["op_vault"]]
     try:
+        _status("Reading the API key from 1Password…")
         result = run(argv, capture_output=True, text=True, timeout=20)
     except (subprocess.TimeoutExpired, OSError):
         raise KeyUnavailable("Could not read the API key from 1Password: "
@@ -318,6 +319,7 @@ def fetch_all(key: str, open_url=urllib.request.urlopen) -> dict:
     models: list = []
     version = None
     for number in range(1, MAX_PAGES + 1):
+        _status(f"Fetching Artificial Analysis data: page {number}…")
         envelope, headers = _fetch_page(key, number, open_url)
         if version is not None and envelope["intelligence_index_version"] != version:
             raise FetchError(f"Pages disagree on intelligence_index_version "
@@ -2118,6 +2120,10 @@ def _complain(message: str) -> None:
     print(f"Model Ladder: {message}", file=sys.stderr)
 
 
+def _status(message: str) -> None:
+    print(message, flush=True)
+
+
 def main(argv: list[str] | None = None, *, now: datetime | None = None, fetch=fetch_all,
          get_key=get_api_key, open_page=webbrowser.open) -> int:
     args = build_parser().parse_args(argv)
@@ -2161,6 +2167,7 @@ def main(argv: list[str] | None = None, *, now: datetime | None = None, fetch=fe
 
     output = args.output.expanduser() if args.output else home / "model_ladder.html"
     try:
+        _status("Building the page…")
         build_page(home, output)
     except (OSError, StoreError, ValueError) as error:
         _complain(f"cannot build the page: {error}")

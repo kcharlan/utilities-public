@@ -21,7 +21,7 @@ import zlib
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-VERSION = "1.2.0"
+VERSION = "1.2.1"
 DEFAULT_CONFIG = {"max_age_hours": 24}
 MAX_AGE_LIMIT = 87600
 FEED_URL = "https://benchmarkheaven.com/api/jevbench/latest"
@@ -184,6 +184,7 @@ def validate_feed(feed):
 
 def fetch_feed(open_url=urllib.request.urlopen):
     request = urllib.request.Request(FEED_URL, headers={"Accept": "application/json", "User-Agent": f"decision-ladder/{VERSION}"})
+    _status("Fetching the JevBench feed from Benchmark Heaven…")
     try:
         with open_url(request, timeout=30) as response:
             body = response.read(MAX_BYTES + 1)
@@ -1249,6 +1250,10 @@ def _complain(message):
     print(f"Decision Ladder: {message}", file=sys.stderr)
 
 
+def _status(message):
+    print(message, flush=True)
+
+
 def main(argv=None, *, now=None, fetch=fetch_feed, open_page=webbrowser.open):
     args = build_parser().parse_args(argv)
     now = now or datetime.now(timezone.utc)
@@ -1278,6 +1283,7 @@ def main(argv=None, *, now=None, fetch=fetch_feed, open_page=webbrowser.open):
         return 1
     output = args.output.expanduser() if args.output else home / "decision_ladder.html"
     try:
+        _status("Building the page…")
         build_page(home, output)
     except (OSError, StoreError, ValueError) as error:
         _complain(f"cannot build the page: {error}")

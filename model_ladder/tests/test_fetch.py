@@ -1,4 +1,5 @@
 import email.message
+import io
 import json
 import subprocess
 import urllib.error
@@ -10,6 +11,21 @@ from helpers import model
 
 SECRET = "synthetic-secret-key-123"
 CONFIG = {"op_item": "Synthetic Item", "op_vault": "", "op_field": "credential"}
+
+
+def test_status_flushes_stdout(ml, monkeypatch):
+    class Output(io.StringIO):
+        flushed = False
+
+        def flush(self):
+            self.flushed = True
+            super().flush()
+
+    output = Output()
+    monkeypatch.setattr("sys.stdout", output)
+    ml._status("Synthetic progress")
+    assert output.getvalue() == "Synthetic progress\n"
+    assert output.flushed
 
 
 class Response:
@@ -84,6 +100,19 @@ def test_key_from_env_wins(ml, op_file):
     assert run.calls == []
 
 
+def test_key_status_precedes_op_and_env_is_silent(ml, op_file, capsys):
+    def run(argv, **kwargs):
+        captured = capsys.readouterr()
+        assert captured.out == "Reading the API key from 1Password…\n"
+        assert captured.err == ""
+        return completed(SECRET)
+
+    assert ml.get_api_key(CONFIG, env={}, op_paths=(str(op_file),), run=run) == SECRET
+    assert capsys.readouterr() == ("", "")
+    assert ml.get_api_key(CONFIG, env={"MODEL_LADDER_AA_KEY": SECRET}, run=run) == SECRET
+    assert capsys.readouterr() == ("", "")
+
+
 def test_key_from_op(ml, op_file):
     run = Runner(completed(f" {SECRET}\n"))
     key = ml.get_api_key(CONFIG, env={}, op_paths=("/nonexistent/op", str(op_file)), run=run)
@@ -138,6 +167,23 @@ def test_fetch_follows_pagination(ml):
         "free?page=1", "free?page=2", "free?page=3"]
     assert all(r.get_header("X-api-key") == SECRET for r in opener.requests)
     assert set(opener.timeouts) == {30}
+
+
+def test_fetch_status_precedes_each_page_without_secret(ml, capsys):
+    opener = Opener([Response(page([], True)), Response(page([]))])
+    lines = []
+
+    def open_page(request, timeout=None):
+        captured = capsys.readouterr()
+        lines.append(captured.out)
+        assert captured.err == ""
+        return opener(request, timeout=timeout)
+
+    ml.fetch_all(SECRET, open_url=open_page)
+    assert lines == ["Fetching Artificial Analysis data: page 1…\n",
+                     "Fetching Artificial Analysis data: page 2…\n"]
+    assert not any(part in "".join(lines) for part in SECRET.split("-"))
+    assert capsys.readouterr() == ("", "")
 
 
 def test_fetch_reads_rate_limit_headers(ml):

@@ -41,4 +41,7 @@ def test_failed_fetch_falls_back_or_fails_without_snapshot(dl, capsys):
 def test_first_run_fetches_and_prints_summary(dl, capsys):
     now = datetime(2026, 1, 3, tzinfo=timezone.utc)
     assert dl.main(["--no-open"], now=now, fetch=lambda: {"feed": feed(), "sha256": "synthetic"}) == 0
-    assert "Fetched 1 systems (1 ranked), revision synthetic." in capsys.readouterr().out
+    captured = capsys.readouterr()
+    assert "Fetched 1 systems (1 ranked), revision synthetic." in captured.out
+    assert captured.out.index("Building the page…") < captured.out.index("decision_ladder.html")
+    assert captured.err == ""
