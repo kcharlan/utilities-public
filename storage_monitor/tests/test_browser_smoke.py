@@ -394,6 +394,40 @@ def test_finding_trash_requires_confirmation(monkeypatch, tmp_path):
         browser.close()
 
 
+def test_status_banner_keeps_view_state(monkeypatch, tmp_path):
+    monkeypatch.setenv("STORAGE_MONITOR_HOME", str(tmp_path / "runtime"))
+    rows = [
+        {"path": "/synthetic/trash", "label": "Synthetic trashable", "category": "dev_artifact", "stale": True, "actionable": True, "risk": "low", "actions": [{"kind": "execute", "label": "Move to Trash", "action_token": "synthetic-token"}]},
+        {"path": "/synthetic/stale", "label": "Synthetic stale", "category": "dev_artifact", "stale": True, "risk": "low", "actions": []},
+        {"path": "/synthetic/fresh", "label": "Synthetic fresh", "category": "cache", "stale": False, "risk": "low", "actions": []},
+    ]
+    report = {**SYNTHETIC_REPORT_ROWS, "findings": {"items": rows}}
+    module = load_launcher(PROJECT_ROOT / "storage_monitor")
+    with live_server(module.app) as url, sync_playwright() as playwright:
+        browser = playwright.chromium.launch(headless=True)
+        page = browser.new_page()
+        route_dashboard_api(page)
+        page.route("**/api/state", lambda route: route.fulfill(json={"scan_status": {"running": False, "phase": "complete", "progress": 1}, "report": report}))
+        page.route("**/api/actions/execute", lambda route: route.fulfill(json={"ok": True, "label": "Moved to Trash", "source_path": "/synthetic/trash"}))
+        page.route("**/api/reveal", lambda route: route.fulfill(status=400, json={"detail": "synthetic reveal error"}))
+        page.on("dialog", lambda dialog: dialog.accept())
+        with guard_browser_errors(page, expected=["Failed to load resource: the server responded with a status of 400 (Bad Request)"]):
+            page.goto(url, wait_until="networkidle")
+            page.get_by_label("Stale only").check()
+            assert not page.get_by_text("Synthetic fresh", exact=True).is_visible()
+            page.get_by_role("button", name="Trash", exact=True).click()
+            page.get_by_text("Moved to Trash", exact=False).first.wait_for()
+            assert page.get_by_label("Stale only").is_checked()
+            assert not page.get_by_text("Synthetic fresh", exact=True).is_visible()
+            assert not page.get_by_text("Synthetic trashable", exact=True).is_visible()
+            assert page.get_by_text("Synthetic stale", exact=True).is_visible()
+            page.locator(".tab").filter(has_text="Large Files").click()
+            page.get_by_role("button", name="Reveal", exact=True).click()
+            page.get_by_text("synthetic reveal error", exact=False).first.wait_for()
+            assert page.get_by_text("Synthetic large file", exact=True).is_visible()
+        browser.close()
+
+
 def test_temp_group_confirmation_shows_rule_and_only_sends_on_accept(monkeypatch, tmp_path):
     monkeypatch.setenv("STORAGE_MONITOR_HOME", str(tmp_path / "runtime"))
     monkeypatch.setitem(SYNTHETIC_REPORT_ROWS, "findings", {"items": [{
