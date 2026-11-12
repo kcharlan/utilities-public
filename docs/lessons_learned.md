@@ -1,5 +1,12 @@
 # Lessons learned
 
+## Display-aware history and board fallbacks
+
+Choose a history baseline using the same formatting and scoring mode as the
+display; a raw change can be invisible and hide an earlier visible change.
+Test consecutive snapshots in each mode. Treat unknown categories as themselves
+instead of assigning a known category's label or chart encoding by default.
+
 ## Grouped cleanup and ignored paths
 
 Apply path exclusions before a grouped result is counted or capped, and apply
@@ -2493,6 +2500,24 @@ When eligibility depends on a later report-wide probe, carry that eligibility fr
 ### Storage Monitor system-root contracts and index scale
 
 Synthetic root replacement concealed an unsupported macOS `confstr` key, silently dropping the per-user temporary and cache roots. Keep report and action tests synthetic, but separately check the read-only system lookup against `getconf` without enumerating the real directory. Small synthetic indexes also concealed repeated full-table protection queries and quadratic candidate deduplication; retain a representative large-index timing regression alongside correctness checks.
+
+## 2026-11-12: Preserve snapshot order within a timestamp
+
+A seconds-only snapshot filename silently overwrote distinct fetches made in the same second. Allocate an ordered suffix for collisions, including identical clock values, and test retention when more snapshots share that timestamp than the store keeps.
+
+## 2026-11-12: Validate persisted page state and preserve chart boundaries
+
+URL and browser storage values are untrusted even in an offline page. Validate each field before using it, and save URL state independently of storage so a blocked storage API does not disable copied links. A logarithmic chart cannot place zero on its axis: show a zero cap at the plot boundary, shade the positive range and explain the placement. Format small positive step values with enough precision to avoid reporting them as zero, including the axis units.
+
+Number input `min` attributes do not prevent users entering negative or incomplete values. Apply the same validation to live state as restored state before deriving chart coordinates, and build logarithmic domains without overflowing at finite numeric extremes.
+
+### 2026-11-12 — Filter changes using displayed precision
+
+When a change panel reports differences in displayed numbers, compare the same
+formatted values the page shows. Raw price or latency differences can otherwise
+produce a change whose two displayed endpoints look identical. Test invisible
+rounding differences, visible differences, and transitions to and from missing
+values in every display mode; keep unrounded values for calculations and meters.
 
 ## 2026-11-12: Guard every browser storage consumer
 

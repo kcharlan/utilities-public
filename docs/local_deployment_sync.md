@@ -647,6 +647,7 @@ Office Picnic is a maintained static runtime under `web_games/office_picnic/dist
 Direct script copies are listed in [`tools/deployment_copies.json`](../tools/deployment_copies.json). Deploy them with `node tools/deploy_copies.mjs` from the repository root. Use `--only NAME` to select an entry and `--dry-run` to inspect changes without writing. The deployer requires a clean committed `main` for its inputs. Each entry is its own transaction; a failure reports any earlier entries that completed. Successful forward updates retain the newest two eligible backups per entry, ordered by modification time and then name.
 
 Model Ladder is a direct copy; its runtime home `~/.model_ladder/` (config, snapshots, built page) is local state the deployer never touches.
+Decision Ladder is also a direct copy; its `~/.decision_ladder/` runtime home is local state the deployer never touches.
 
 `model-sentinel` is intentionally different: it is a generated zipapp. Rebuild
 it with `model_sentinel/install_standalone.sh`. The audit derives its exact

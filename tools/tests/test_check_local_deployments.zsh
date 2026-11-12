@@ -134,6 +134,7 @@ typeset -a COPY_MAPPINGS=(
   'moneydance backup rotation/moneydance_rotate_backups.sh|moneydance_rotate_backups.sh'
   'router-log-analyzer/router_log_analyze.py|router_log_analyze.py'
   'routerview/routerview|routerview'
+  'decision_ladder/decision_ladder|decision_ladder'
   'trim_last/trim_last|trim_last'
   'usage-monthly-csv/usage-monthly-csv|usage-monthly-csv'
   'worktree-helper/worktree|worktree'

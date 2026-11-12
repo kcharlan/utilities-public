@@ -73,6 +73,11 @@
       "source": "routerview/routerview"
     },
     {
+      "name": "decision_ladder",
+      "source": "decision_ladder/decision_ladder",
+      "smoke": ["--help"]
+    },
+    {
       "name": "trim_last",
       "source": "trim_last/trim_last"
     },

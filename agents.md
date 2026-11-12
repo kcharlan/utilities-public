@@ -63,7 +63,7 @@ Project-specific validation commands, applied with the Testing Scope above. A co
   - `uv run --no-python-downloads --script tools/check_uv_headers.py` and `uv run --no-project --no-python-downloads --with pytest pytest tools/tests/test_check_uv_headers.py tools/tests/test_run_project_tests.py -q -p no:cacheprovider`.
   - Guard code changes also require the full `tax2`, `data_format_converter`, `benchmark-llm`, and `cognitive_switchyard` suites, using the registered runner.
 - Shared frontend kit (`tools/frontend_vendor/`, `tools/sync_frontend_vendor.mjs`, and offline helpers in `tools/testkit.py`):
-  - `node tools/sync_frontend_vendor.mjs --all --check` and `node --test tools/tests/sync_frontend_vendor.test.mjs tools/tests/svg_charts.test.mjs`.
+  - `node tools/sync_frontend_vendor.mjs --all --check` and `node --test tools/tests/ladder_core.test.mjs tools/tests/sync_frontend_vendor.test.mjs tools/tests/svg_charts.test.mjs`.
   - `uv run --no-project --no-python-downloads --with pytest pytest tools/tests/test_testkit_offline.py tools/tests/test_sync_frontend_indent.py tools/tests/test_run_project_tests.py tools/tests/test_check_uv_headers.py -q -p no:cacheprovider` and `uv run --no-python-downloads --script tools/check_uv_headers.py`.
   - Run the complete suites of consumers embedding changed kit items or using changed test helpers.
 - Local server guard:
@@ -153,6 +153,11 @@ Project-specific validation commands, applied with the Testing Scope above. A co
   - `UV_PYTHON_DOWNLOADS=never ./model_ladder/model_ladder --help`. After launcher-header edits, also run the fleet header guard above.
   - A real `refresh` contacts Artificial Analysis (4 of 100 daily requests) and reads the API key; agents need Kevin's approval for each run.
   - Deployment: a direct copy listed in `tools/deployment_copies.json`. After changing that entry run `node --test tools/tests/deploy_copies.test.mjs` and `zsh tools/tests/test_check_local_deployments.zsh`. A real `node tools/deploy_copies.mjs --only model_ladder` needs separate authorization.
+- `decision_ladder`:
+  - `UV_PYTHON_DOWNLOADS=never tools/run_project_tests.py decision_ladder` (unit, launcher and offline Chromium tests).
+  - `node --test "decision_ladder/tests/js/*.test.mjs"` and `node tools/sync_frontend_vendor.mjs --check decision_ladder/decision_ladder`.
+  - `UV_PYTHON_DOWNLOADS=never ./decision_ladder/decision_ladder --help`; after launcher-header edits also run the fleet header guard.
+  - Deployment is a direct copy. Run `node --test tools/tests/deploy_copies.test.mjs` and `zsh tools/tests/test_check_local_deployments.zsh` after changing its entry. A real deployment needs separate authorization.
 - `tax2`:
   - `UV_PYTHON_DOWNLOADS=never tools/run_project_tests.py tax2` from the repository root.
   - Run `UV_PYTHON_DOWNLOADS=never ./tax2/tax2 --help`. The suite already builds through the real launcher (including a `UV_OFFLINE=1` rebuild), checks the `0700/0600` runtime-home, config and page modes, and drives offline Chromium through the calculator and all three downloads with external requests blocked, so there is no separate acceptance build.

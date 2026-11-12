@@ -328,6 +328,14 @@
       "weight": "600",
       "licenseSha256": "23b0a9d0c6d3f140a0b77e483c5cfa6bba574325ef5cb189ed9f2fec4884533f"
     },
+    "ladder-core": {
+      "kind": "first-party",
+      "file": "ladder_core.js",
+      "version": "1",
+      "url": "./ladder_core.js",
+      "sha256": "b06964e7b7c1f85a700462f7dea1a368f8b2cc5a0d22ac39544550543ab8c832",
+      "license": null
+    },
     "kit": {
       "kind": "first-party",
       "file": "kit.js",

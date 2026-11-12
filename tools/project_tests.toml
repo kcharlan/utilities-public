@@ -15,6 +15,13 @@ test_requirements = "model_ladder/requirements-dev.txt"
 test_commands = [["pytest", "-q"]]
 smoke_args = ["--help"]
 
+[projects.decision_ladder]
+project = "decision_ladder"
+launcher = "decision_ladder/decision_ladder"
+test_requirements = "decision_ladder/requirements-dev.txt"
+test_commands = [["pytest", "-q"]]
+smoke_args = ["--help"]
+
 [projects.tax2]
 project = "tax2"
 launcher = "tax2/tax2"

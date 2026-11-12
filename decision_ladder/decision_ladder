@@ -1,0 +1,1113 @@
+#!/usr/bin/env -S uv run --script
+# /// script
+# requires-python = ">=3.12,<3.16"
+# dependencies = []
+# ///
+"""Decision Ladder."""
+import hashlib
+import argparse
+import contextlib
+import gzip
+import http.client
+import json
+import math
+import os
+import sys
+import tempfile
+import urllib.error
+import urllib.request
+import webbrowser
+import zlib
+from datetime import datetime, timedelta, timezone
+from pathlib import Path
+
+VERSION = "1.0.0"
+DEFAULT_CONFIG = {"max_age_hours": 24}
+MAX_AGE_LIMIT = 87600
+FEED_URL = "https://benchmarkheaven.com/api/jevbench/latest"
+MAX_BYTES = 20 * 1024 * 1024
+SUPPORTED_SCHEMA = 2
+
+
+def runtime_home() -> Path:
+    override = os.environ.get("DECISION_LADDER_HOME")
+    return Path(override).expanduser() if override else Path.home() / ".decision_ladder"
+
+
+def ensure_runtime_home(path: Path) -> Path:
+    path.mkdir(parents=True, exist_ok=True, mode=0o700)
+    path.chmod(0o700)
+    return path
+
+
+def atomic_write_bytes(path: Path, data: bytes, mode: int = 0o600) -> None:
+    """Publish a complete same-directory private file, preserving the old file on failure."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fd, temporary = tempfile.mkstemp(prefix=f".{path.name}.", suffix=".tmp", dir=path.parent)
+    try:
+        os.fchmod(fd, mode)
+        with os.fdopen(fd, "wb") as stream:
+            stream.write(data)
+            stream.flush()
+            os.fsync(stream.fileno())
+        os.replace(temporary, path)
+    finally:
+        with contextlib.suppress(FileNotFoundError):
+            os.unlink(temporary)
+
+
+def load_config():
+    path = ensure_runtime_home(runtime_home()) / "config.json"
+    if not path.exists():
+        atomic_write_bytes(path, (json.dumps(DEFAULT_CONFIG, indent=2) + "\n").encode())
+        return dict(DEFAULT_CONFIG)
+    try:
+        loaded = json.loads(path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError as error:
+        raise ValueError(f"{path} is not valid JSON: {error}") from error
+    if not isinstance(loaded, dict):
+        raise ValueError(f"{path} must contain a JSON object")
+    config = {**DEFAULT_CONFIG, **loaded}
+    age = config["max_age_hours"]
+    if isinstance(age, bool) or not isinstance(age, (int, float)) or not 0 < age <= MAX_AGE_LIMIT:
+        raise ValueError(f"{path}: max_age_hours must be a positive number of at most {MAX_AGE_LIMIT}")
+    return config
+
+
+def split_name(name):
+    if name.endswith(")") and " (" in name:
+        short, detail = name.split(" (", 1)
+        return {"short": short, "detail": detail[:-1]}
+    return {"short": name, "detail": ""}
+
+
+def classify(feed):
+    rows = []
+    for system in feed["systems"]:
+        axes = system.get("axes") or {}
+        cap = system["capability"]
+        price = system.get("price") or {}
+        latency = system.get("latency") or {}
+        draw = system.get("draw") or {}
+        basis = latency.get("latency_basis")
+        adjusted = latency.get("p50_s_adjusted")
+        rows.append({
+            "key": system["key"], "name": system["name"], **split_name(system["name"]),
+            "board": system["board"], "listing": system.get("listing"), "ranked": system["ranked"],
+            "not_ranked_because": system.get("not_ranked_because"), "source_url": system.get("source_url"),
+            "intelligence": axes.get("intelligence"), "calibration": axes.get("calibration"),
+            "speed": axes.get("speed"), "cost_axis": axes.get("cost"),
+            "capability": cap.get("score"), "capability_rank": cap.get("rank"),
+            "composite": system.get("composite_score"), "composite_rank": system.get("rank"),
+            "eligible": cap["eligible"], "within_caps": cap["within_caps"], "cap_reasons": cap.get("reasons"),
+            "price": price.get("usd_per_1000_decisions"), "price_kind": price.get("kind"),
+            "price_published": price.get("kind") in ("tariff", "listed"), "price_basis": price.get("basis"),
+            "latency": adjusted if adjusted is not None else latency.get("p50_s_measured"),
+            "latency_measured": latency.get("p50_s_measured"), "latency_p95": latency.get("p95_s_adjusted"),
+            "latency_basis": basis, "latency_assumed": basis != "api-end-to-end",
+            "latency_adjustment": latency.get("adjustment"), "measured_on": draw.get("measured_on"),
+            "method_status": system.get("method_status"),
+        })
+    return rows
+
+
+class FetchError(Exception):
+    pass
+
+
+def _is_number(value) -> bool:
+    return isinstance(value, (int, float)) and not isinstance(value, bool)
+
+
+def _is_finite_number(value) -> bool:
+    return _is_number(value) and math.isfinite(value)
+
+
+def _valid_feed_number(value):
+    try:
+        return _is_finite_number(value)
+    except OverflowError:
+        return False
+
+
+def validate_feed(feed):
+    if not isinstance(feed, dict):
+        raise FetchError("feed is not an object")
+    if feed.get("schema_version") != SUPPORTED_SCHEMA:
+        raise FetchError(f"feed schema {feed.get('schema_version')} is not supported by this version")
+    if not isinstance(feed.get("revision"), str) or not feed["revision"].strip():
+        raise FetchError("feed revision must be a non-empty string")
+    method = feed.get("method")
+    if not isinstance(method, dict) or not isinstance(method.get("label"), str) or not method["label"].strip():
+        raise FetchError("feed method.label must be a non-empty string")
+    policy = feed.get("capability_policy")
+    if not isinstance(policy, dict):
+        raise FetchError("feed capability_policy must be an object")
+    for field in ("cost_cap_usd_per_1000", "median_latency_cap_s"):
+        if not _valid_feed_number(policy.get(field)) or policy[field] <= 0:
+            raise FetchError(f"feed {field} must be a positive finite number")
+    for obj, field in ((method, "decision_limit_s"), (policy, "factor")):
+        if obj.get(field) is not None and not _valid_feed_number(obj[field]):
+            raise FetchError(f"feed {field} must be finite or null")
+    systems = feed.get("systems")
+    if not isinstance(systems, list) or not systems:
+        raise FetchError("feed systems must be a non-empty list")
+    seen = set()
+    for row in systems:
+        if not isinstance(row, dict):
+            raise FetchError("feed system must be an object")
+        key = row.get("key")
+        if not isinstance(key, str) or not key.strip() or key in seen:
+            raise FetchError(f"system {key!r}: key must be non-empty and unique")
+        seen.add(key)
+        if not isinstance(row.get("name"), str) or not row["name"].strip():
+            raise FetchError(f"system {key}: name must be a non-empty string")
+        if not isinstance(row.get("board"), str) or not isinstance(row.get("ranked"), bool):
+            raise FetchError(f"system {key}: invalid board or ranked")
+        cap = row.get("capability")
+        if not isinstance(cap, dict) or any(not isinstance(cap.get(f), bool) for f in ("within_caps", "eligible")):
+            raise FetchError(f"system {key}: invalid capability")
+        for field in ("price", "latency", "axes", "draw"):
+            if row.get(field) is not None and not isinstance(row[field], dict):
+                raise FetchError(f"system {key}: {field} must be an object or null")
+        for obj, fields in ((row, ("composite_score", "rank")), (cap, ("score", "rank")),
+                            (row.get("axes") or {}, ("intelligence", "calibration", "speed", "cost")),
+                            (row.get("price") or {}, ("usd_per_1000_decisions",)),
+                            (row.get("latency") or {}, ("p50_s_measured", "p50_s_adjusted", "p95_s_adjusted"))):
+            if not isinstance(obj, dict):
+                raise FetchError(f"system {key}: invalid numeric fields")
+            for field in fields:
+                value = obj.get(field)
+                if value is not None and not _valid_feed_number(value):
+                    raise FetchError(f"system {key}: {field} must be finite or null")
+
+
+def fetch_feed(open_url=urllib.request.urlopen):
+    request = urllib.request.Request(FEED_URL, headers={"Accept": "application/json", "User-Agent": f"decision-ladder/{VERSION}"})
+    try:
+        with open_url(request, timeout=30) as response:
+            body = response.read(MAX_BYTES + 1)
+            headers = response.headers
+    except urllib.error.HTTPError as error:
+        raise FetchError(f"Benchmark Heaven returned HTTP {error.code}") from None
+    except urllib.error.URLError as error:
+        raise FetchError(f"Could not reach Benchmark Heaven: {' '.join(str(error.reason).splitlines())}") from None
+    except http.client.HTTPException as error:
+        raise FetchError(f"Benchmark Heaven response was incomplete or malformed ({type(error).__name__})") from None
+    except (OSError, TimeoutError) as error:
+        raise FetchError(f"Could not reach Benchmark Heaven: {' '.join(str(error).splitlines())}") from None
+    if len(body) > MAX_BYTES:
+        raise FetchError("Benchmark Heaven response is too large")
+    digest = hashlib.sha256(body).hexdigest()
+    checksum = headers.get("X-Content-SHA256")
+    if checksum is not None and checksum != digest:
+        raise FetchError("Benchmark Heaven response does not match its checksum")
+    try:
+        feed = json.loads(body)
+    except ValueError:
+        raise FetchError("Benchmark Heaven response is not valid JSON") from None
+    validate_feed(feed)
+    return {"feed": feed, "sha256": digest}
+
+KEEP = 60
+SCHEMA = 1
+SNAPSHOT_DIR = "snapshots"
+SNAPSHOT_SUFFIX = ".json.gz"
+
+
+class StoreError(Exception):
+    """A snapshot could not be read."""
+
+
+def _utc(moment: datetime) -> datetime:
+    """An aware UTC datetime; a naive one is taken to be UTC already."""
+    if moment.tzinfo is None:
+        return moment.replace(tzinfo=timezone.utc)
+    return moment.astimezone(timezone.utc)
+
+
+def _write_snapshot(path, data):
+    atomic_write_bytes(path, gzip.compress(json.dumps(data).encode("utf-8")))
+
+
+def load_snapshots(home):
+    return sorted((home / SNAPSHOT_DIR).glob("*" + SNAPSHOT_SUFFIX), key=lambda p: p.name, reverse=True)
+
+
+def read_snapshot(path):
+    try:
+        with gzip.open(path, "rb") as stream:
+            data = json.loads(stream.read().decode("utf-8"))
+    except (OSError, EOFError, ValueError, zlib.error) as error:
+        raise StoreError(f"cannot read {path}: {error or type(error).__name__}") from None
+    if not isinstance(data, dict) or data.get("schema") != SCHEMA or not isinstance(data.get("feed"), dict):
+        raise StoreError(f"cannot read {path}: not a version {SCHEMA} snapshot")
+    try:
+        validate_feed(data["feed"])
+    except FetchError as error:
+        raise StoreError(f"cannot read {path}: {error}") from None
+    for field in ("fetched_at", "last_checked"):
+        try:
+            datetime.fromisoformat(data[field])
+        except (KeyError, TypeError, ValueError):
+            raise StoreError(f"cannot read {path}: bad {field}") from None
+    return data
+
+
+def save_snapshot(home, result, now):
+    moment = _utc(now).replace(microsecond=0)
+    ensure_runtime_home(home / SNAPSHOT_DIR)
+    existing = load_snapshots(home)
+    if existing:
+        newest = read_snapshot(existing[0])
+        if newest["feed"] == result["feed"]:
+            newest["last_checked"] = moment.isoformat()
+            _write_snapshot(existing[0], newest)
+            return existing[0]
+    stem = moment.strftime("%Y%m%dT%H%M%SZ")
+    path = home / SNAPSHOT_DIR / (stem + SNAPSHOT_SUFFIX)
+    siblings = [p.name.removesuffix(SNAPSHOT_SUFFIX) for p in existing
+                if p.name.startswith(stem + "_") and p.name.endswith(SNAPSHOT_SUFFIX)]
+    sequences = [int(name[len(stem) + 1:]) for name in siblings if name[len(stem) + 1:].isdigit()]
+    if path.exists() or sequences:
+        path = home / SNAPSHOT_DIR / (f"{stem}_{max(sequences, default=0) + 1:012d}" + SNAPSHOT_SUFFIX)
+    _write_snapshot(path, {"schema": SCHEMA, "fetched_at": moment.isoformat(),
+                           "last_checked": moment.isoformat(), "sha256": result["sha256"], "feed": result["feed"]})
+    for old in load_snapshots(home)[KEEP:]:
+        old.unlink()
+    return path
+
+
+def diff_rows(old, new):
+    if old is None:
+        return None
+    before = {r["key"]: r for r in classify(old["feed"])}
+    after = {r["key"]: r for r in classify(new["feed"])}
+    fields = ("capability", "composite", "price", "latency", "listing", "capability_rank", "composite_rank")
+    changed = []
+    for key, row in after.items():
+        prior = before.get(key)
+        if prior and any(prior[f] != row[f] for f in fields):
+            changed.append({"key": key, "name": row["name"], **{f: [prior[f], row[f]] for f in fields}})
+    a, b = old["feed"], new["feed"]
+    def pair(x, y):
+        return None if x == y else [x, y]
+    return {"from": old["fetched_at"], "to": new["fetched_at"],
+            "revision": pair(a["revision"], b["revision"]), "method": pair(a["method"], b["method"]),
+            "caps": pair(a["capability_policy"], b["capability_policy"]),
+            "added": [r["name"] for k, r in after.items() if k not in before],
+            "removed": [r["name"] for k, r in before.items() if k not in after], "changed": changed}
+
+
+def _shows_a_change(diff):
+    return bool(diff["revision"] or diff["method"] or diff["caps"] or diff["added"] or diff["removed"] or diff["changed"])
+
+
+def _last_real_change(older, snapshot):
+    for path in older:
+        try:
+            candidate = read_snapshot(path)
+        except StoreError as error:
+            _complain(f"{error}; skipping it for the list of changes")
+            continue
+        if _shows_a_change(diff_rows(candidate, snapshot)):
+            return candidate
+    return None
+
+
+def build_payload(snapshot, previous, config):
+    feed = snapshot["feed"]
+    policy = feed["capability_policy"]
+    return {"schema": 1, "app": {"name": "Decision Ladder", "version": VERSION},
+            "fetched_at": snapshot["fetched_at"], "last_checked": snapshot["last_checked"],
+            "max_age_hours": config["max_age_hours"], "revision": feed["revision"], "method": feed["method"],
+            "caps": {"cost": policy["cost_cap_usd_per_1000"], "latency": policy["median_latency_cap_s"],
+                     "reference_key": policy.get("reference_key"), "factor": policy.get("factor")},
+            "rows": classify(feed), "changes": diff_rows(previous, snapshot)}
+
+
+PAGE_CSS = r"""
+:root { --bg: #f3f5f7; --panel: #ffffff; --ink: #16202b; --muted: #5b6875; --line: #d5dbe2;
+ --accent: #0f6f78; --warn: #9a5b00; --warn-bg: #fff3d6; --front: #0f6b3c; --front-bg: #dff3e7; --dom-bg: #eceff2;
+ --s1: #0b5cad; --s2: #b3401a; --s3: #6a3fa0; --s4: #0f7a70; --s5: #a0306c; --s6: #6b6f12; --s7: #3d4f9e; --s8: #8a5a1c;
+ --font: "Hanken Grotesk", "Helvetica Neue", Arial, sans-serif; color-scheme: light; }
+@media (prefers-color-scheme: dark) { :root { --bg:#10161d; --panel:#18212b; --ink:#e6ecf2; --muted:#9aa7b4;
+ --line:#2c3946; --accent:#5cc9bd; --warn:#f0c060; --warn-bg:#3a2e12; --front:#6fd39b; --front-bg:#163324; --dom-bg:#212b36;
+ --s1:#6fb1f5; --s2:#f08a63; --s3:#b697e8; --s4:#5cc9bd; --s5:#ea86bd; --s6:#c9cd5a; --s7:#9aa9f0; --s8:#e0ac68; color-scheme:dark; } }
+* { box-sizing:border-box } body { margin:0; background:var(--bg); color:var(--ink); font:15px/1.45 var(--font); padding:20px 16px 40px }
+.wrap { max-width:1180px; margin:auto; overflow-wrap:anywhere } h1 { font-size:26px; margin:0 0 12px } .status { display:flex; flex-wrap:wrap; gap:8px 18px; color:var(--muted) }
+.status b { color:var(--ink) } .age { background:var(--front-bg); color:var(--front); border-radius:999px; padding:2px 10px; font-weight:600 }
+.age.stale { background:var(--warn-bg); color:var(--warn) } code { background:var(--panel); border:1px solid var(--line); padding:2px 6px }
+a { color:var(--accent) } footer { margin-top:40px; color:var(--muted); border-top:1px solid var(--line) }
+.panel { background:var(--panel); border:1px solid var(--line); border-radius:10px; margin-top:18px; padding:16px; min-width:0 }
+.controls { display:flex; flex-wrap:wrap; gap:12px; align-items:end } label { display:flex; flex-direction:column; gap:3px; color:var(--muted) }
+input, select, button { font:inherit; color:var(--ink); background:var(--panel); border:1px solid var(--line); border-radius:5px; padding:6px; max-width:100% } button { cursor:pointer }
+.inline { flex-direction:row; align-items:center } .table-wrap { overflow-x:auto; max-width:100% } table { border-collapse:collapse; width:100%; min-width:900px } th,td { border-bottom:1px solid var(--line); padding:8px; text-align:left; vertical-align:top } th { cursor:pointer } tbody tr:nth-child(even) { background:var(--bg) } tbody tr.outside { opacity:.55 } .tier-band { border-left:4px solid var(--accent) } .raw,.detail { color:var(--muted); font-size:.85em } .detail { display:block; overflow-wrap:anywhere } .pill { background:var(--front-bg); color:var(--front); border-radius:999px; padding:2px 6px; white-space:nowrap } .name { overflow-wrap:anywhere; max-width:240px } .chart { width:100%; height:auto; max-height:400px } .chart text { fill:var(--muted); font-size:11px } .chart .grid { stroke:var(--line) } .chart .cap-line { stroke:var(--warn); stroke-width:2 } .chart .shade { fill:var(--warn); opacity:.08 } .chart .edge { fill:none; stroke:var(--front); stroke-width:2 } .chart .mark { stroke:var(--accent); stroke-width:2; fill:var(--panel) } .chart .mark.frontier { fill:var(--accent) } .chart .mark.modelled { stroke-dasharray:3 2 } .legend { color:var(--muted); overflow-wrap:anywhere }
+.tier-even .tier-band { border-color:var(--s2) }
+.picker { max-height:240px; overflow-y:auto; margin:8px 0; border:1px solid var(--line); padding:8px } .compare progress { display:block; width:100%; max-width:150px; accent-color:var(--accent) }
+"""
+DECISION_MATH_JS = r"""
+// decision-math:begin
+(function () {
+const finite = v => typeof v === 'number' && Number.isFinite(v);
+function withinCaps(row, caps) { return finite(row.price) && finite(row.latency) && row.price <= caps.cost && row.latency <= caps.latency; }
+function capReasons(row, caps) {
+  const reasons = [];
+  if (!finite(row.price)) reasons.push('no price'); else if (row.price > caps.cost) reasons.push('price above the cap');
+  if (!finite(row.latency)) reasons.push('no latency'); else if (row.latency > caps.latency) reasons.push('latency above the cap');
+  return reasons;
+}
+function prepare(rows, opts) {
+  return rows.filter(r => r.ranked && finite(r.capability) && (opts.board === 'all' || r.board === opts.board)).map(r => ({...r,
+    label:r.name, score:opts.mode === 'whole' ? ladderCore.wholePoints(r.capability) : r.capability,
+    cost:finite(r[opts.axis]) ? r[opts.axis] : null, inCaps:withinCaps(r,opts.caps)}));
+}
+function tiers(rows) {
+  const compareNullable = (a,b) => a == null ? (b == null ? 0 : 1) : b == null ? -1 : a-b;
+  const list = rows.slice().sort((a,b) => b.score-a.score || compareNullable(a.price,b.price) || compareNullable(a.latency,b.latency) || ladderCore.compareText(a.label,b.label));
+  let tier = 0, previous, size = 0;
+  list.forEach((r,i) => { if (i === 0 || r.score !== previous) { tier++; previous=r.score; size=list.filter(x => x.score === r.score).length; } list[i]={...r,tier,tierSize:size}; });
+  return list;
+}
+function boardFrontier(rows) { return ladderCore.paretoRows(rows.filter(r => r.inCaps)); }
+function priceText(v) { return finite(v) ? v.toFixed(v < .01 ? 4 : v < 1 ? 3 : 2) : ''; }
+function latencyText(v) { return finite(v) ? (v < 1 ? Math.round(v*1000)+' ms' : v.toFixed(2)+' s') : ''; }
+function findings(rows, caps, mode, axis='price') {
+  const inside=rows.filter(r=>r.inCaps), ranked=tiers(inside), front=boardFrontier(rows).filter(r=>r.status==='frontier');
+  const out=[`${inside.length} ranked systems are inside the caps; ${front.length} are on the frontier.`];
+  if (ranked.length) { const top=ranked.filter(r=>r.tier===1); out.push(`The top tier scores ${mode === 'whole' ? top[0].score : top[0].score.toFixed(1)}: ${top.map(r=>r.label).join(', ')}.`); }
+  const steps=front.filter(r=>r.up && r.up.perPoint !== null).map(r=>({from:r.label, ...r.up})).sort((a,b)=>a.perPoint-b.perPoint);
+  if (steps.length) {
+    const unit=axis==='latency'?'seconds per point':'dollars per 1,000 decisions per point';
+    const describe=s=>`${s.from} to ${s.to.label} (${Number(s.perPoint.toPrecision(4))} ${unit})`;
+    const [low, high]=axis==='latency'?['shortest','longest']:['cheapest','most expensive'];
+    out.push(`The ${low} frontier step per point is ${describe(steps[0])}; the ${high} is ${describe(steps[steps.length-1])}.`);
+  }
+  return out;
+}
+function searchRows(rows, query) { const q=query.toLowerCase(); return rows.filter(r=>r.name.toLowerCase().includes(q)); }
+function changesToShow(changes, mode) {
+  if (!changes || changes.method) return [];
+  const fields=['listing','capability_rank','composite_rank'];
+  const formattedChange=(pair,format)=>pair && format(pair[0])!==format(pair[1]);
+  return (changes.changed || []).filter(r=>fields.some(k=>r[k] && r[k][0]!==r[k][1]) ||
+    formattedChange(r.price,priceText) || formattedChange(r.latency,latencyText) ||
+    (r.capability && r.capability.map(v=>finite(v)?(mode==='whole'?ladderCore.wholePoints(v):v.toFixed(1)):v).some((v,i,a)=>v!==a[0])));
+}
+function visibleHistory(history, mode) {
+  return history.find(c=>c.revision || c.method || c.caps || c.added.length || c.removed.length || changesToShow(c,mode).length) || null;
+}
+const api={withinCaps,capReasons,prepare,tiers,boardFrontier,priceText,latencyText,findings,searchRows,changesToShow,visibleHistory};
+if (typeof module !== 'undefined') module.exports=api; else window.decisionMath=api;
+}());
+// decision-math:end
+"""
+APP_JS = r"""
+(function () {
+const data = JSON.parse(document.getElementById('payload').textContent);
+const { h, render } = preact;
+const { useState, useLayoutEffect } = preactHooks;
+const html = htm.bind(h);
+const M = decisionMath;
+const age = ladderCore.dataAge(data.last_checked, Date.now(), data.max_age_hours);
+const measured = data.rows.filter(r => r.capability !== null).length;
+const ranked = data.rows.filter(r => r.ranked).length;
+const validCap=(value,fallback)=> (typeof value==='number' || (typeof value==='string' && value.trim()!=='')) && Number.isFinite(Number(value)) && Number(value)>=0 ? Number(value) : fallback;
+function initial() {
+  let saved = {}; try { saved=JSON.parse(location.hash ? decodeURIComponent(location.hash.slice(1)) : localStorage.getItem('decision_ladder.state') || '{}'); } catch (_) {}
+  if (!saved || typeof saved !== 'object' || Array.isArray(saved)) saved={};
+  const choice=(value,allowed,fallback)=>allowed.includes(value)?value:fallback;
+  return {board:choice(saved.board,['all','open','api'],'all'), mode:choice(saved.mode,['whole','decimal'],'whole'),
+    axis:choice(saved.axis,['price','latency'],'price'), cost:validCap(saved.cost,data.caps.cost), latency:validCap(saved.latency,data.caps.latency),
+    query:typeof saved.query==='string'?saved.query:'', outside:typeof saved.outside==='boolean'?saved.outside:false,
+    sort:choice(saved.sort,['','score','name','intelligence','calibration','price','latency','capability_rank','composite_rank','status'],''),
+    dir:choice(saved.dir,[-1,1],1), tab:choice(saved.tab,['board','compare','not-ranked'],'board'),
+    picks:Array.isArray(saved.picks)?[...new Set(saved.picks.filter(k=>typeof k==='string' && data.rows.some(r=>r.key===k)))].slice(0,8):[]};
+}
+function safeLink(value) { try { const u=new URL(value); return ['http:','https:'].includes(u.protocol)?u.href:null; } catch (_) { return null; } }
+function boardLabel(board) { return board==='open'?'Open weights':board==='api'?'Hosted API':board==='reference'?'Reference':board || 'Unknown board'; }
+function Changes({changes,mode}) {
+  if (!changes) return html`<details class="changes"><summary>Changes</summary><p>No previous snapshot.</p></details>`;
+  const pair=(p)=>p ? `${p[0]} → ${p[1]}` : '';
+  const cap=p=>`$${p.cost_cap_usd_per_1000} / 1,000 decisions; ${p.median_latency_cap_s}s`;
+  return html`<details class="changes"><summary>Changes</summary>
+    ${changes.revision && html`<p>Revision: ${pair(changes.revision)}</p>`}
+    ${changes.method && html`<p>Scoring method changed from ${changes.method[0].label} to ${changes.method[1].label}; scores before and after are not comparable</p>`}
+    ${changes.caps && html`<p>Caps: ${cap(changes.caps[0])} → ${cap(changes.caps[1])}</p>`}
+    ${(changes.added||[]).map(name=>html`<p>Added: ${name}</p>`)}${(changes.removed||[]).map(name=>html`<p>Removed: ${name}</p>`)}
+    ${M.changesToShow(changes,mode).map(r=>html`<p>Changed: ${r.name} ${['capability','price','latency','listing','capability_rank','composite_rank'].filter(k=>r[k] && r[k][0]!==r[k][1]).map(k=>`${k}: ${pair(r[k])}`).join('; ')}</p>`)}
+  </details>`;
+}
+function Compare({picks,setPicks}) {
+  const [query,setQuery]=useState('');
+  const rows=picks.map(key=>data.rows.find(r=>r.key===key)).filter(Boolean);
+  const axes=[['intelligence','Intelligence'],['calibration','Calibration'],['speed','Speed'],['cost_axis','Cost']];
+  const value=v=>v==null?'Not measured':v;
+  const score=v=>Number.isFinite(v)?v.toFixed(1):'Not measured';
+  return html`<section class="panel"><h2>Compare systems</h2><p>Choose up to 8 systems.</p>
+    <label>Search systems<input aria-label="Search systems" value=${query} onInput=${e=>setQuery(e.target.value)}/></label>
+    <div class="picker">${M.searchRows(data.rows,query).map(r=>html`<label class="inline"><input type="checkbox" checked=${picks.includes(r.key)} disabled=${picks.length>=8&&!picks.includes(r.key)} onChange=${e=>setPicks(e.target.checked?[...picks,r.key]:picks.filter(k=>k!==r.key))}/>${r.name}</label>`)}</div>
+    <div class="table-wrap compare"><table><thead><tr><th>Measure</th>${rows.map(r=>html`<th>${r.name}</th>`)}</tr></thead><tbody>
+      ${axes.map(([key,label])=>html`<tr><th>${label}</th>${rows.map(r=>html`<td>${score(r[key])} ${Number.isFinite(r[key])&&html`<progress value=${r[key]} max="100">${score(r[key])}</progress>`}</td>`)}</tr>`)}
+      <tr><th>Capability</th>${rows.map(r=>html`<td>${score(r.capability)}</td>`)}</tr>
+      ${[['capability_rank','Capability rank'],['composite_rank','Composite rank']].map(([key,label])=>html`<tr><th>${label}</th>${rows.map(r=>html`<td>${value(r[key])}</td>`)}</tr>`)}
+      <tr><th>Price / 1,000 decisions</th>${rows.map(r=>html`<td>${r.price==null?'No price':'$'+M.priceText(r.price)} ${r.price_kind||''}</td>`)}</tr>
+      <tr><th>Median latency</th>${rows.map(r=>html`<td>${M.latencyText(r.latency)||'Not measured'} ${r.latency_basis||''}</td>`)}</tr>
+      <tr><th>p95 latency</th>${rows.map(r=>html`<td>${M.latencyText(r.latency_p95)||'Not measured'} ${r.latency_basis||''}</td>`)}</tr>
+      <tr><th>Measurement date</th>${rows.map(r=>html`<td>${value(r.measured_on)}</td>`)}</tr>
+      <tr><th>Source</th>${rows.map(r=>html`<td>${safeLink(r.source_url)?html`<a href=${safeLink(r.source_url)} rel="noopener noreferrer">Source</a>`:'Not available'}</td>`)}</tr>
+      <tr><th>Basis and adjustment</th>${rows.map(r=>html`<td><details><summary>Details</summary><p>Price basis: ${value(r.price_basis)}</p><p>Latency adjustment: ${value(r.latency_adjustment)}</p></details></td>`)}</tr>
+    </tbody></table></div></section>`;
+}
+function Chart({rows, caps, axis, edge}) {
+  const positive=rows.map(r=>r.cost).filter(v=>Number.isFinite(v) && v>0), cap=axis==='price'?caps.cost:caps.latency;
+  if (cap>0) positive.push(cap);
+  if (!positive.length) return html`<p>No positive values are available for the logarithmic chart.</p>`;
+  const logLo=Math.log(Math.min(...positive))-Math.log(1.4), logHi=Math.log(Math.max(...positive))+Math.log(1.4);
+  const lo=Math.max(Number.MIN_VALUE,Math.exp(logLo)), hi=Math.min(Number.MAX_VALUE,Math.exp(logHi));
+  const scores=rows.map(r=>r.score), min=Math.min(...scores,0)-1, max=Math.max(...scores,1)+1;
+  const x=v=>40+(Math.log(v)-logLo)/(logHi-logLo)*500, y=v=>245-(v-min)/(max-min)*220;
+  const marks=rows.filter(r=>r.cost>0), ids=new Set(edge.filter(r=>r.status==='frontier').map(r=>r.key));
+  const path=edge.filter(r=>r.status==='frontier' && r.cost>0).map((r,i)=>(i?' H':'M')+x(r.cost)+(i?' V':',')+y(r.score)).join('');
+  const capX=cap===0?40:x(cap);
+  return html`<div><svg class="chart" viewBox="0 0 560 285" role="img" aria-label=${'Capability by '+axis}>
+    <rect class="shade" x=${capX} y="15" width=${540-capX} height="230"/><line class="cap-line" x1=${capX} x2=${capX} y1="15" y2="245"/><text class="cap-label" x=${capX} y="12">Cap ${cap}</text>
+    ${ladderCore.linearTicks(min,max).map(v=>html`<g><line class="grid" x1="40" x2="540" y1=${y(v)} y2=${y(v)}/><text x="35" y=${y(v)+4} text-anchor="end">${v}</text></g>`)}
+    ${ladderCore.logTicks(lo,hi).filter(v=>v>0).map(v=>html`<g><line class="grid" x1=${x(v)} x2=${x(v)} y1="15" y2="245"/><text x=${x(v)} y="265" text-anchor="middle">${v}</text></g>`)}
+    <path class="edge" d=${path}/>${marks.map(r=>{ const cls='mark '+(ids.has(r.key)?'frontier ':'')+((axis==='price'?!r.price_published:r.latency_assumed)?'modelled':''); const title=`${r.name}: Capability ${r.capability.toFixed(1)}, $${M.priceText(r.price)}, ${M.latencyText(r.latency)}`; const px=x(r.cost), py=y(r.score); return r.board==='open' ? html`<circle class=${cls} cx=${px} cy=${py} r="5"><title>${title}</title></circle>` : r.board==='api' ? html`<rect class=${cls} x=${px-5} y=${py-5} width="10" height="10"><title>${title}</title></rect>` : html`<polygon class=${cls} points=${`${px},${py-6} ${px+6},${py} ${px},${py+6} ${px-6},${py}`}><title>${title}</title></polygon>`; })}</svg>
+    <p class="legend">Circle: open weights; square: hosted API; diamond: Reference and other boards. Filled: frontier. Dashed outline: modelled value. Zero and unavailable values cannot be plotted on a logarithmic axis; a zero cap is shown at the left edge.</p></div>`;
+}
+function App() {
+const [s,setS]=useState(initial), set=(key,value)=>setS({...s,[key]:value});
+useLayoutEffect(()=>{ const value=JSON.stringify(s); try { localStorage.setItem('decision_ladder.state',value); } catch (_) {} try { history.replaceState(null,'','#'+encodeURIComponent(value)); } catch (_) {} },[s]);
+const caps={cost:validCap(s.cost,data.caps.cost),latency:validCap(s.latency,data.caps.latency)};
+const prepared=M.prepare(data.rows,{board:s.board,mode:s.mode,axis:s.axis,caps});
+const edge=M.boardFrontier(prepared), byKey=new Map(edge.map(r=>[r.key,r]));
+let rows=M.tiers(M.searchRows(prepared,s.query)).map(r=>({...r,status:byKey.get(r.key)?.status || ''}));
+let inside=rows.filter(r=>r.inCaps), outside=rows.filter(r=>!r.inCaps);
+if (s.sort) { const cmp=(a,b)=>{const av=a[s.sort],bv=b[s.sort]; if(av==null)return bv==null?0:1; if(bv==null)return -1; return s.dir*ladderCore.compareValues(av,bv);}; inside.sort(cmp); outside.sort(cmp); }
+rows=inside.concat(s.outside?outside:[]);
+const heads=[['score','Capability'],['name','System'],['intelligence','Intelligence'],['calibration','Calibration'],['price','Price / 1,000'],['latency','Median latency'],['capability_rank','Capability rank'],['composite_rank','Composite rank'],['status','Frontier']];
+const sort=k=>setS({...s,sort:k,dir:s.sort===k?-s.dir:1});
+return html`<main class="wrap"><h1>Decision Ladder</h1><div class="status">
+<span id="status-age" class=${age.stale ? 'age stale' : 'age'}>${age.text}</span>
+<span>Revision <b>${data.revision}</b></span><span>Method <b>${data.method.label}</b></span>
+<span>Official caps <b>$${data.caps.cost} / 1,000 decisions; ${data.caps.latency}s</b></span>
+<span><b>${measured}</b> measured · <b>${ranked}</b> ranked</span><code>decision_ladder refresh</code><${Changes} changes=${data.change_history ? M.visibleHistory(data.change_history,s.mode) : data.changes} mode=${s.mode}/></div>
+<nav class="controls"><button onClick=${()=>set('tab','board')}>Board</button><button onClick=${()=>set('tab','compare')}>Compare</button><button onClick=${()=>set('tab','not-ranked')}>Not ranked</button></nav>
+${s.tab==='compare' && html`<${Compare} picks=${s.picks} setPicks=${v=>set('picks',v)}/>`}
+${s.tab==='not-ranked' && html`<section class="panel not-ranked"><h2>Not ranked</h2>${data.rows.filter(r=>!r.ranked).map(r=>html`<article><h3>${r.name}</h3><p>Listing: ${r.listing ?? 'Not available'}</p><p>${r.not_ranked_because ?? 'Not available'}</p></article>`)}</section>`}
+${s.tab==='board' && html`<div>
+<section class="panel"><div class="controls">
+<label>Board<select aria-label="Board" value=${s.board} onChange=${e=>set('board',e.target.value)}><option value="all">All</option><option value="open">Open weights</option><option value="api">Hosted API</option></select></label>
+<label>Cost cap<input aria-label="Cost cap" type="number" min="0" step="any" value=${s.cost} onInput=${e=>set('cost',e.target.value)}/></label>
+<label>Latency cap<input aria-label="Latency cap" type="number" min="0" step="any" value=${s.latency} onInput=${e=>set('latency',e.target.value)}/></label>
+<button onClick=${()=>setS({...s,cost:data.caps.cost,latency:data.caps.latency})}>Use official caps</button>
+<label>Scoring<select aria-label="Scoring" value=${s.mode} onChange=${e=>set('mode',e.target.value)}><option value="whole">Whole points</option><option value="decimal">Decimals</option></select></label>
+<label>Chart x-axis<select aria-label="Chart x-axis" value=${s.axis} onChange=${e=>set('axis',e.target.value)}><option value="price">Price</option><option value="latency">Latency</option></select></label>
+<label>Filter<input aria-label="Filter" value=${s.query} onInput=${e=>set('query',e.target.value)}/></label></div>
+${(validCap(s.cost,null)===null || validCap(s.latency,null)===null) && html`<p role="status">Enter a finite, nonnegative cap. The official cap is used until the entry is valid.</p>`}</section>
+<section class="panel"><h2>Capability and ${s.axis}</h2><${Chart} rows=${prepared} caps=${caps} axis=${s.axis} edge=${edge}/>${M.findings(prepared,caps,s.mode,s.axis).map(t=>html`<p>${t}</p>`)}</section>
+<section class="panel"><h2>Systems</h2>
+  <div class="controls"><button onClick=${()=>set('sort','')}>Tier order</button>
+    <label class="inline"><input type="checkbox" checked=${s.outside} onChange=${e=>set('outside',e.target.checked)}/>Show systems outside the caps</label></div>
+  <div class="table-wrap"><table><thead><tr>
+    ${heads.map(([key,label])=>html`<th tabindex="0" onClick=${()=>sort(key)} onKeyDown=${e=>{if(e.key==='Enter'||e.key===' ')sort(key)}}>${label}</th>`)}
+  </tr></thead><tbody>${rows.map(r=>{
+    const result=byKey.get(r.key);
+    const status=!r.inCaps?M.capReasons(r,caps).join(', '):result?.status==='frontier'
+      ?html`<span class="pill">Frontier</span>`:result?.by?'Dominated by '+result.by.label:'Unavailable';
+    return html`<tr key=${r.key} class=${'tier-'+r.tier+(r.tier%2===0?' tier-even':'')+(r.inCaps?'':' outside')}>
+      <td class="tier-band">${s.mode==='whole'?r.score:r.capability.toFixed(1)} ${s.mode==='whole'&&html`<span class="raw">(${r.capability.toFixed(1)})</span>`}</td>
+      <td class="name">${r.short}<span class="detail">${r.detail}</span><span class="pill">${boardLabel(r.board)}</span></td>
+      <td>${r.intelligence ?? ''}</td><td>${r.calibration ?? ''}</td>
+      <td>${r.price==null?'':'$'+M.priceText(r.price)} ${r.price!=null&&!r.price_published?'est.':''}</td>
+      <td>${M.latencyText(r.latency)} ${r.latency_assumed?'assumed':''}</td>
+      <td>${r.capability_rank ?? ''}</td><td>${r.composite_rank ?? ''}</td><td>${status}</td>
+    </tr>`;
+  })}</tbody></table></div>
+</section></div>`}
+<footer><p>Data: <a href="https://benchmarkheaven.com/">JevBench by Benchmark Heaven</a></p>
+<p>Costs are estimates unless published; adjusted latency may rely on assumptions. The feed has no confidence intervals.</p>
+<p>Built ${data.built_at} · ${data.app.name} ${data.app.version}</p></footer></main>`;
+}
+render(html`<${App}/>`, document.getElementById('app'));
+})();
+"""
+HTML_TEMPLATE = """<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Decision Ladder</title><!-- frontend-vendor --><style>{{CSS}}</style></head><body><div id="app"></div><script type="application/json" id="payload">{{PAYLOAD}}</script>{{SCRIPTS}}</body></html>"""
+
+# frontend-vendor:begin preact hooks htm ladder-core font:hanken-grotesk
+FRONTEND_VENDOR_HTML = r"""<!--
+The MIT License (MIT)
+
+Copyright (c) 2015-present Jason Miller
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+
+-->
+<!--
+
+                                 Apache License
+                           Version 2.0, January 2004
+                        http://www.apache.org/licenses/
+
+   TERMS AND CONDITIONS FOR USE, REPRODUCTION, AND DISTRIBUTION
+
+   1. Definitions.
+
+      "License" shall mean the terms and conditions for use, reproduction,
+      and distribution as defined by Sections 1 through 9 of this document.
+
+      "Licensor" shall mean the copyright owner or entity authorized by
+      the copyright owner that is granting the License.
+
+      "Legal Entity" shall mean the union of the acting entity and all
+      other entities that control, are controlled by, or are under common
+      control with that entity. For the purposes of this definition,
+      "control" means (i) the power, direct or indirect, to cause the
+      direction or management of such entity, whether by contract or
+      otherwise, or (ii) ownership of fifty percent (50%) or more of the
+      outstanding shares, or (iii) beneficial ownership of such entity.
+
+      "You" (or "Your") shall mean an individual or Legal Entity
+      exercising permissions granted by this License.
+
+      "Source" form shall mean the preferred form for making modifications,
+      including but not limited to software source code, documentation
+      source, and configuration files.
+
+      "Object" form shall mean any form resulting from mechanical
+      transformation or translation of a Source form, including but
+      not limited to compiled object code, generated documentation,
+      and conversions to other media types.
+
+      "Work" shall mean the work of authorship, whether in Source or
+      Object form, made available under the License, as indicated by a
+      copyright notice that is included in or attached to the work
+      (an example is provided in the Appendix below).
+
+      "Derivative Works" shall mean any work, whether in Source or Object
+      form, that is based on (or derived from) the Work and for which the
+      editorial revisions, annotations, elaborations, or other modifications
+      represent, as a whole, an original work of authorship. For the purposes
+      of this License, Derivative Works shall not include works that remain
+      separable from, or merely link (or bind by name) to the interfaces of,
+      the Work and Derivative Works thereof.
+
+      "Contribution" shall mean any work of authorship, including
+      the original version of the Work and any modifications or additions
+      to that Work or Derivative Works thereof, that is intentionally
+      submitted to Licensor for inclusion in the Work by the copyright owner
+      or by an individual or Legal Entity authorized to submit on behalf of
+      the copyright owner. For the purposes of this definition, "submitted"
+      means any form of electronic, verbal, or written communication sent
+      to the Licensor or its representatives, including but not limited to
+      communication on electronic mailing lists, source code control systems,
+      and issue tracking systems that are managed by, or on behalf of, the
+      Licensor for the purpose of discussing and improving the Work, but
+      excluding communication that is conspicuously marked or otherwise
+      designated in writing by the copyright owner as "Not a Contribution."
+
+      "Contributor" shall mean Licensor and any individual or Legal Entity
+      on behalf of whom a Contribution has been received by Licensor and
+      subsequently incorporated within the Work.
+
+   2. Grant of Copyright License. Subject to the terms and conditions of
+      this License, each Contributor hereby grants to You a perpetual,
+      worldwide, non-exclusive, no-charge, royalty-free, irrevocable
+      copyright license to reproduce, prepare Derivative Works of,
+      publicly display, publicly perform, sublicense, and distribute the
+      Work and such Derivative Works in Source or Object form.
+
+   3. Grant of Patent License. Subject to the terms and conditions of
+      this License, each Contributor hereby grants to You a perpetual,
+      worldwide, non-exclusive, no-charge, royalty-free, irrevocable
+      (except as stated in this section) patent license to make, have made,
+      use, offer to sell, sell, import, and otherwise transfer the Work,
+      where such license applies only to those patent claims licensable
+      by such Contributor that are necessarily infringed by their
+      Contribution(s) alone or by combination of their Contribution(s)
+      with the Work to which such Contribution(s) was submitted. If You
+      institute patent litigation against any entity (including a
+      cross-claim or counterclaim in a lawsuit) alleging that the Work
+      or a Contribution incorporated within the Work constitutes direct
+      or contributory patent infringement, then any patent licenses
+      granted to You under this License for that Work shall terminate
+      as of the date such litigation is filed.
+
+   4. Redistribution. You may reproduce and distribute copies of the
+      Work or Derivative Works thereof in any medium, with or without
+      modifications, and in Source or Object form, provided that You
+      meet the following conditions:
+
+      (a) You must give any other recipients of the Work or
+          Derivative Works a copy of this License; and
+
+      (b) You must cause any modified files to carry prominent notices
+          stating that You changed the files; and
+
+      (c) You must retain, in the Source form of any Derivative Works
+          that You distribute, all copyright, patent, trademark, and
+          attribution notices from the Source form of the Work,
+          excluding those notices that do not pertain to any part of
+          the Derivative Works; and
+
+      (d) If the Work includes a "NOTICE" text file as part of its
+          distribution, then any Derivative Works that You distribute must
+          include a readable copy of the attribution notices contained
+          within such NOTICE file, excluding those notices that do not
+          pertain to any part of the Derivative Works, in at least one
+          of the following places: within a NOTICE text file distributed
+          as part of the Derivative Works; within the Source form or
+          documentation, if provided along with the Derivative Works; or,
+          within a display generated by the Derivative Works, if and
+          wherever such third-party notices normally appear. The contents
+          of the NOTICE file are for informational purposes only and
+          do not modify the License. You may add Your own attribution
+          notices within Derivative Works that You distribute, alongside
+          or as an addendum to the NOTICE text from the Work, provided
+          that such additional attribution notices cannot be construed
+          as modifying the License.
+
+      You may add Your own copyright statement to Your modifications and
+      may provide additional or different license terms and conditions
+      for use, reproduction, or distribution of Your modifications, or
+      for any such Derivative Works as a whole, provided Your use,
+      reproduction, and distribution of the Work otherwise complies with
+      the conditions stated in this License.
+
+   5. Submission of Contributions. Unless You explicitly state otherwise,
+      any Contribution intentionally submitted for inclusion in the Work
+      by You to the Licensor shall be under the terms and conditions of
+      this License, without any additional terms or conditions.
+      Notwithstanding the above, nothing herein shall supersede or modify
+      the terms of any separate license agreement you may have executed
+      with Licensor regarding such Contributions.
+
+   6. Trademarks. This License does not grant permission to use the trade
+      names, trademarks, service marks, or product names of the Licensor,
+      except as required for reasonable and customary use in describing the
+      origin of the Work and reproducing the content of the NOTICE file.
+
+   7. Disclaimer of Warranty. Unless required by applicable law or
+      agreed to in writing, Licensor provides the Work (and each
+      Contributor provides its Contributions) on an "AS IS" BASIS,
+      WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or
+      implied, including, without limitation, any warranties or conditions
+      of TITLE, NON-INFRINGEMENT, MERCHANTABILITY, or FITNESS FOR A
+      PARTICULAR PURPOSE. You are solely responsible for determining the
+      appropriateness of using or redistributing the Work and assume any
+      risks associated with Your exercise of permissions under this License.
+
+   8. Limitation of Liability. In no event and under no legal theory,
+      whether in tort (including negligence), contract, or otherwise,
+      unless required by applicable law (such as deliberate and grossly
+      negligent acts) or agreed to in writing, shall any Contributor be
+      liable to You for damages, including any direct, indirect, special,
+      incidental, or consequential damages of any character arising as a
+      result of this License or out of the use or inability to use the
+      Work (including but not limited to damages for loss of goodwill,
+      work stoppage, computer failure or malfunction, or any and all
+      other commercial damages or losses), even if such Contributor
+      has been advised of the possibility of such damages.
+
+   9. Accepting Warranty or Additional Liability. While redistributing
+      the Work or Derivative Works thereof, You may choose to offer,
+      and charge a fee for, acceptance of support, warranty, indemnity,
+      or other liability obligations and/or rights consistent with this
+      License. However, in accepting such obligations, You may act only
+      on Your own behalf and on Your sole responsibility, not on behalf
+      of any other Contributor, and only if You agree to indemnify,
+      defend, and hold each Contributor harmless for any liability
+      incurred by, or claims asserted against, such Contributor by reason
+      of your accepting any such warranty or additional liability.
+
+   END OF TERMS AND CONDITIONS
+
+   APPENDIX: How to apply the Apache License to your work.
+
+      To apply the Apache License to your work, attach the following
+      boilerplate notice, with the fields enclosed by brackets "[]"
+      replaced with your own identifying information. (Don't include
+      the brackets!)  The text should be enclosed in the appropriate
+      comment syntax for the file format. We also recommend that a
+      file or class name and description of purpose be included on the
+      same "printed page" as the copyright notice for easier
+      identification within third-party archives.
+
+   Copyright 2018 Google Inc.
+
+   Licensed under the Apache License, Version 2.0 (the "License");
+   you may not use this file except in compliance with the License.
+   You may obtain a copy of the License at
+
+       http://www.apache.org/licenses/LICENSE-2.0
+
+   Unless required by applicable law or agreed to in writing, software
+   distributed under the License is distributed on an "AS IS" BASIS,
+   WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+   See the License for the specific language governing permissions and
+   limitations under the License.
+-->
+<!--
+Copyright 2021 The Hanken Grotesk Project Authors (https://github.com/marcologous/hanken-grotesk) HankenGrotesk-Italic[wght].ttf: Copyright 2021 The Hanken Grotesk Project Authors (https://github.com/marcologous/hanken-grotesk)
+
+This Font Software is licensed under the SIL Open Font License, Version 1.1.
+This license is copied below, and is also available with a FAQ at:
+http://scripts.sil.org/OFL
+
+
+-----------------------------------------------------------
+SIL OPEN FONT LICENSE Version 1.1 - 26 February 2007
+-----------------------------------------------------------
+
+PREAMBLE
+The goals of the Open Font License (OFL) are to stimulate worldwide
+development of collaborative font projects, to support the font creation
+efforts of academic and linguistic communities, and to provide a free and
+open framework in which fonts may be shared and improved in partnership
+with others.
+
+The OFL allows the licensed fonts to be used, studied, modified and
+redistributed freely as long as they are not sold by themselves. The
+fonts, including any derivative works, can be bundled, embedded,
+redistributed and/or sold with any software provided that any reserved
+names are not used by derivative works. The fonts and derivatives,
+however, cannot be released under any other type of license. The
+requirement for fonts to remain under this license does not apply
+to any document created using the fonts or their derivatives.
+
+DEFINITIONS
+"Font Software" refers to the set of files released by the Copyright
+Holder(s) under this license and clearly marked as such. This may
+include source files, build scripts and documentation.
+
+"Reserved Font Name" refers to any names specified as such after the
+copyright statement(s).
+
+"Original Version" refers to the collection of Font Software components as
+distributed by the Copyright Holder(s).
+
+"Modified Version" refers to any derivative made by adding to, deleting,
+or substituting -- in part or in whole -- any of the components of the
+Original Version, by changing formats or by porting the Font Software to a
+new environment.
+
+"Author" refers to any designer, engineer, programmer, technical
+writer or other person who contributed to the Font Software.
+
+PERMISSION & CONDITIONS
+Permission is hereby granted, free of charge, to any person obtaining
+a copy of the Font Software, to use, study, copy, merge, embed, modify,
+redistribute, and sell modified and unmodified copies of the Font
+Software, subject to the following conditions:
+
+1) Neither the Font Software nor any of its individual components,
+in Original or Modified Versions, may be sold by itself.
+
+2) Original or Modified Versions of the Font Software may be bundled,
+redistributed and/or sold with any software, provided that each copy
+contains the above copyright notice and this license. These can be
+included either as stand-alone text files, human-readable headers or
+in the appropriate machine-readable metadata fields within text or
+binary files as long as those fields can be easily viewed by the user.
+
+3) No Modified Version of the Font Software may use the Reserved Font
+Name(s) unless explicit written permission is granted by the corresponding
+Copyright Holder. This restriction only applies to the primary font name as
+presented to the users.
+
+4) The name(s) of the Copyright Holder(s) or the Author(s) of the Font
+Software shall not be used to promote, endorse or advertise any
+Modified Version, except to acknowledge the contribution(s) of the
+Copyright Holder(s) and the Author(s) or with their explicit written
+permission.
+
+5) The Font Software, modified or unmodified, in part or in whole,
+must be distributed entirely under this license, and must not be
+distributed under any other license. The requirement for fonts to
+remain under this license does not apply to any document created
+using the Font Software.
+
+TERMINATION
+This license becomes null and void if any of the above conditions are
+not met.
+
+DISCLAIMER
+THE FONT SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,
+EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO ANY WARRANTIES OF
+MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT
+OF COPYRIGHT, PATENT, TRADEMARK, OR OTHER RIGHT. IN NO EVENT SHALL THE
+COPYRIGHT HOLDER BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY,
+INCLUDING ANY GENERAL, SPECIAL, INDIRECT, INCIDENTAL, OR CONSEQUENTIAL
+DAMAGES, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING
+FROM, OUT OF THE USE OR INABILITY TO USE THE FONT SOFTWARE OR FROM
+OTHER DEALINGS IN THE FONT SOFTWARE.
+
+-->
+<script>
+!function(n,t){"object"==typeof exports&&"undefined"!=typeof module?t(exports):"function"==typeof define&&define.amd?define(["exports"],t):t((n||self).preact={})}(this,function(n){var t,i,e,r,f,o,u,c,s,a,h,l,p,y,v,d,w="http://www.w3.org/2000/svg",_="http://www.w3.org/1999/xhtml",g=null,m=void 0,b={},k=[],x=/acit|ex(?:s|g|n|p|$)|rph|grid|ows|mnc|ntw|ine[ch]|zoo|^ord|itera/i,M=Array.isArray;function S(n,t){for(var i in t)n[i]=t[i];return n}function T(n){n&&n.parentNode&&n.parentNode.removeChild(n)}function $(n,i,e){var r,f,o,u={};for(o in i)"key"==o?r=i[o]:"ref"==o?f=i[o]:u[o]=i[o];if(arguments.length>2&&(u.children=arguments.length>3?t.call(arguments,2):e),"function"==typeof n&&n.defaultProps!=g)for(o in n.defaultProps)u[o]===m&&(u[o]=n.defaultProps[o]);return C(n,u,r,f,g)}function C(n,t,r,f,o){var u={type:n,props:t,key:r,ref:f,__k:g,__:g,__b:0,__e:g,__c:g,constructor:m,__v:o==g?++e:o,__i:-1,__u:0};return o==g&&i.vnode!=g&&i.vnode(u),u}function I(n){return n.children}function P(n,t){this.props=n,this.context=t}function j(n,t){if(t==g)return n.__?j(n.__,n.__i+1):g;for(var i;t<n.__k.length;t++)if((i=n.__k[t])!=g&&i.__e!=g)return i.__e;return"function"==typeof n.type?j(n):g}function A(n){if(n.__P&&n.__d){var t=n.__v,e=t.__e,r=[],f=[],o=S({},t);o.__v=t.__v+1,i.vnode&&i.vnode(o),E(n.__P,o,t,n.__n,n.__P.namespaceURI,32&t.__u?[e]:g,r,e==g?j(t):e,!!(32&t.__u),f),o.__v=t.__v,o.__.__k[o.__i]=o,J(r,o,f),t.__e=t.__=null,o.__e!=e&&H(o)}}function H(n){if((n=n.__)!=g&&n.__c!=g)return n.__e=n.__c.base=g,n.__k.some(function(t){if(t!=g&&t.__e!=g)return n.__e=n.__c.base=t.__e}),H(n)}function L(n){(!n.__d&&(n.__d=!0)&&f.push(n)&&!F.__r++||o!=i.debounceRendering)&&((o=i.debounceRendering)||u)(F)}function F(){try{for(var n,t=1;f.length;)f.length>t&&f.sort(c),n=f.shift(),t=f.length,A(n)}finally{f.length=F.__r=0}}function O(n,t,i,e,r,f,o,u,c,s,a){var h,l,p,y,v,d,w=e&&e.__k||k,_=t.length;for(c=z(i,t,w,c,_),h=0;h<_;h++)(p=i.__k[h])!=g&&(l=-1!=p.__i&&w[p.__i]||b,p.__i=h,d=E(n,p,l,r,f,o,u,c,s,a),y=p.__e,p.ref&&l.ref!=p.ref&&(l.ref&&R(l.ref,g,p),a.push(p.ref,p.__c||y,p)),v==g&&y!=g&&(v=y),4&p.__u?(c=N(p,c,n),l.__e&&(l.__e=g)):"function"==typeof p.type&&d!==m?c=d:y&&(c=y.nextSibling),p.__u&=-7);return i.__e=v,c}function z(n,t,i,e,r){var f,o,u,c,s,a=i.length,h=a,l=0;for(n.__k=new Array(r),f=0;f<r;f++)(o=t[f])!=g&&"boolean"!=typeof o&&"function"!=typeof o?("string"==typeof o||"number"==typeof o||"bigint"==typeof o||o.constructor==String?o=n.__k[f]=C(g,o,g,g,g):M(o)?o=n.__k[f]=C(I,{children:o},g,g,g):o.constructor===m&&o.__b>0?o=n.__k[f]=C(o.type,o.props,o.key,o.ref?o.ref:g,o.__v):n.__k[f]=o,c=f+l,o.__=n,o.__b=n.__b+1,s=o.__i=V(o,i,c,h),u=g,-1!=s&&(h--,(u=i[s])&&(u.__u|=2)),u==g||u.__v==g?(-1==s&&(r>a?l--:r<a&&l++),"function"!=typeof o.type&&(o.__u|=4)):s!=c&&(s==c-1?l--:s==c+1?l++:(s>c?l--:l++,o.__u|=4))):n.__k[f]=g;if(h)for(f=0;f<a;f++)(u=i[f])!=g&&0==(2&u.__u)&&(u.__e==e&&(e=j(u)),U(u,u));return e}function N(n,t,i){var e,r;if("function"==typeof n.type){for(e=n.__k,r=0;e&&r<e.length;r++)e[r]&&(e[r].__=n,t=N(e[r],t,i));return t}n.__e!=t&&(t&&n.type&&!t.parentNode&&(t=j(n)),t=i.insertBefore(n.__e,t||g));do{t=t&&t.nextSibling}while(t!=g&&8==t.nodeType);return t}function V(n,t,i,e){var r,f,o,u=n.key,c=n.type,s=t[i],a=s!=g&&0==(2&s.__u);if(s===g&&null==u||a&&u==s.key&&c==s.type)return i;if(e>(a?1:0))for(r=i-1,f=i+1;r>=0||f<t.length;)if((s=t[o=r>=0?r--:f++])!=g&&0==(2&s.__u)&&u==s.key&&c==s.type)return o;return-1}function q(n,t,i){"-"==t[0]?n.setProperty(t,i==g?"":i):n[t]=i==g?"":"number"!=typeof i||x.test(t)?i:i+"px"}function B(n,t,i,e,r){var f,o;n:if("style"==t)if("string"==typeof i)n.style.cssText=i;else{if("string"==typeof e&&(n.style.cssText=e=""),e)for(t in e)i&&t in i||q(n.style,t,"");if(i)for(t in i)e&&i[t]==e[t]||q(n.style,t,i[t])}else if("o"==t[0]&&"n"==t[1])f=t!=(t=t.replace(l,"$1")),o=t.toLowerCase(),t=o in n||"onFocusOut"==t||"onFocusIn"==t?o.slice(2):t.slice(2),n.l||(n.l={}),n.l[t+f]=i,i?e?i[h]=e[h]:(i[h]=p,n.addEventListener(t,f?v:y,f)):n.removeEventListener(t,f?v:y,f);else{if(r==w)t=t.replace(/xlink(H|:h)/,"h").replace(/sName$/,"s");else if("width"!=t&&"height"!=t&&"href"!=t&&"list"!=t&&"form"!=t&&"tabIndex"!=t&&"download"!=t&&"rowSpan"!=t&&"colSpan"!=t&&"role"!=t&&"popover"!=t&&t in n)try{n[t]=i==g?"":i;break n}catch(n){}"function"==typeof i||(i==g||!1===i&&"-"!=t[4]?n.removeAttribute(t):n.setAttribute(t,"popover"==t&&1==i?"":i))}}function D(n){return function(t){if(this.l){var e=this.l[t.type+n];if(t[a]==g)t[a]=p++;else if(t[a]<e[h])return;return e(i.event?i.event(t):t)}}}function E(n,t,e,r,f,o,u,c,s,a){var h,l,p,y,v,d,w,_,b,x,$,C,A,H,L,F,z=t.type;if(t.constructor!==m)return g;128&e.__u&&(s=!!(32&e.__u),o=[c=t.__e=e.__e]),(h=i.__b)&&h(t);n:if("function"==typeof z){l=u.length;try{if(b=t.props,x=z.prototype&&z.prototype.render,$=(h=z.contextType)&&r[h.__c],C=h?$?$.props.value:h.__:r,e.__c?_=(p=t.__c=e.__c).__=p.__E:(x?t.__c=p=new z(b,C):(t.__c=p=new P(b,C),p.constructor=z,p.render=W),$&&$.sub(p),p.state||(p.state={}),p.__n=r,y=p.__d=!0,p.__h=[],p._sb=[]),x&&p.__s==g&&(p.__s=p.state),x&&z.getDerivedStateFromProps!=g&&(p.__s==p.state&&(p.__s=S({},p.__s)),S(p.__s,z.getDerivedStateFromProps(b,p.__s))),v=p.props,d=p.state,p.__v=t,y)x&&z.getDerivedStateFromProps==g&&p.componentWillMount!=g&&p.componentWillMount(),x&&p.componentDidMount!=g&&p.__h.push(p.componentDidMount);else{if(x&&z.getDerivedStateFromProps==g&&b!==v&&p.componentWillReceiveProps!=g&&p.componentWillReceiveProps(b,C),t.__v==e.__v||!p.__e&&p.shouldComponentUpdate!=g&&!1===p.shouldComponentUpdate(b,p.__s,C)){t.__v!=e.__v&&(p.props=b,p.state=p.__s,p.__d=!1),t.__e=e.__e,t.__k=e.__k,t.__k.some(function(n){n&&(n.__=t)}),k.push.apply(p.__h,p._sb),p._sb=[],p.__h.length&&u.push(p),c=j(e);break n}p.componentWillUpdate!=g&&p.componentWillUpdate(b,p.__s,C),x&&p.componentDidUpdate!=g&&p.__h.push(function(){p.componentDidUpdate(v,d,w)})}if(p.context=C,p.props=b,p.__P=n,p.__e=!1,A=i.__r,H=0,x)p.state=p.__s,p.__d=!1,A&&A(t),h=p.render(p.props,p.state,p.context),k.push.apply(p.__h,p._sb),p._sb=[];else do{p.__d=!1,A&&A(t),h=p.render(p.props,p.state,p.context),p.state=p.__s}while(p.__d&&++H<25);p.state=p.__s,p.getChildContext!=g&&(r=S(S({},r),p.getChildContext())),x&&!y&&p.getSnapshotBeforeUpdate!=g&&(w=p.getSnapshotBeforeUpdate(v,d)),L=h!=g&&h.type===I&&h.key==g?K(h.props.children):h,c=O(n,M(L)?L:[L],t,e,r,f,o,u,c,s,a),p.base=t.__e,t.__u&=-161,p.__h.length&&u.push(p),_&&(p.__E=p.__=g)}catch(n){if(u.length=l,t.__v=g,s||o!=g){if(n.then){for(t.__u|=s?160:128;c&&8==c.nodeType&&c.nextSibling;)c=c.nextSibling;o!=g&&(o[o.indexOf(c)]=g),t.__e=c}else if(o!=g)for(F=o.length;F--;)T(o[F])}else t.__e=e.__e;t.__k==g&&(t.__k=e.__k||[]),n.then||G(t),i.__e(n,t,e)}}else o==g&&t.__v==e.__v?(t.__k=e.__k,t.__e=e.__e):c=t.__e=Q(e.__e,t,e,r,f,o,u,s,a);return(h=i.diffed)&&h(t),128&t.__u?void 0:c}function G(n){n&&(n.__c&&(n.__c.__e=!0),n.__k&&n.__k.some(G))}function J(n,t,e){for(var r=0;r<e.length;r++)R(e[r],e[++r],e[++r]);i.__c&&i.__c(t,n),n.some(function(t){try{n=t.__h,t.__h=[],n.some(function(n){n.call(t)})}catch(n){i.__e(n,t.__v)}})}function K(n){return"object"!=typeof n||n==g||n.__b>0?n:M(n)?n.map(K):n.constructor!==m?null:S({},n)}function Q(n,e,r,f,o,u,c,s,a){var h,l,p,y,v,d,k,x=r.props||b,S=e.props,$=e.type;if("svg"==$?o=w:"math"==$?o="http://www.w3.org/1998/Math/MathML":o||(o=_),u!=g)for(h=0;h<u.length;h++)if((v=u[h])&&"setAttribute"in v==!!$&&($?v.localName==$:3==v.nodeType)){n=v,u[h]=g;break}if(n==g){if($==g)return document.createTextNode(S);n=document.createElementNS(o,$,S.is&&S),s&&(i.__m&&i.__m(e,u),s=!1),u=g}if($==g)x===S||s&&n.data==S||(n.data=S);else{if(u="textarea"==$&&S.defaultValue!=g?g:u&&t.call(n.childNodes),!s&&u!=g)for(x={},h=0;h<n.attributes.length;h++)x[(v=n.attributes[h]).name]=v.value;for(h in x)v=x[h],"dangerouslySetInnerHTML"==h?p=v:"children"==h||h in S||"value"==h&&"defaultValue"in S||"checked"==h&&"defaultChecked"in S||B(n,h,g,v,o);for(h in S)v=S[h],"children"==h?y=v:"dangerouslySetInnerHTML"==h?l=v:"value"==h?d=v:"checked"==h?k=v:s&&"function"!=typeof v||x[h]===v||B(n,h,v,x[h],o);if(l)s||p&&(l.__html==p.__html||l.__html==n.innerHTML)||(n.innerHTML=l.__html),e.__k=[];else if(p&&(n.innerHTML=""),O("template"==e.type?n.content:n,M(y)?y:[y],e,r,f,"foreignObject"==$?_:o,u,c,u?u[0]:r.__k&&j(r,0),s,a),u!=g)for(h=u.length;h--;)T(u[h]);s&&"textarea"!=$||(h="value","progress"==$&&d==g?n.removeAttribute("value"):d!=m&&(d!==n[h]||"progress"==$&&!d||"option"==$&&d!=x[h])&&B(n,h,d,x[h],o),h="checked",k!=m&&k!=n[h]&&B(n,h,k,x[h],o))}return n}function R(n,t,e){try{if("function"==typeof n){var r="function"==typeof n.__u;r&&n.__u(),r&&t==g||(n.__u=n(t))}else n.current=t}catch(n){i.__e(n,e)}}function U(n,t,e){var r,f;if(i.unmount&&i.unmount(n),(r=n.ref)&&(r.current&&r.current!=n.__e||R(r,g,t)),(r=n.__c)!=g){if(r.componentWillUnmount)try{r.componentWillUnmount()}catch(n){i.__e(n,t)}r.base=r.__P=r.__n=g}if(r=n.__k)for(f=0;f<r.length;f++)r[f]&&U(r[f],t,e||"function"!=typeof n.type);e||T(n.__e),n.__c=n.__=n.__e=m}function W(n,t,i){return this.constructor(n,i)}function X(n,e,r){var f,o,u,c;e==document&&(e=document.documentElement),i.__&&i.__(n,e),o=(f="function"==typeof r)?g:r&&r.__k||e.__k,u=[],c=[],E(e,n=(!f&&r||e).__k=$(I,g,[n]),o||b,b,e.namespaceURI,!f&&r?[r]:o?g:e.firstChild?t.call(e.childNodes):g,u,!f&&r?r:o?o.__e:e.firstChild,f,c),J(u,n,c),n.props.children=g}t=k.slice,i={__e:function(n,t,i,e){for(var r,f,o;t=t.__;)if((r=t.__c)&&!r.__)try{if((f=r.constructor)&&f.getDerivedStateFromError!=g&&(r.setState(f.getDerivedStateFromError(n)),o=r.__d),r.componentDidCatch!=g&&(r.componentDidCatch(n,e||{}),o=r.__d),o)return r.__E=r}catch(t){n=t}throw n}},e=0,r=function(n){return n!=g&&n.constructor===m},P.prototype.setState=function(n,t){var i;i=this.__s!=g&&this.__s!=this.state?this.__s:this.__s=S({},this.state),"function"==typeof n&&(n=n(S({},i),this.props)),n&&S(i,n),n!=g&&this.__v&&(t&&this._sb.push(t),L(this))},P.prototype.forceUpdate=function(n){this.__v&&(this.__e=!0,n&&this.__h.push(n),L(this))},P.prototype.render=I,f=[],u="function"==typeof Promise?Promise.prototype.then.bind(Promise.resolve()):setTimeout,c=function(n,t){return n.__v.__b-t.__v.__b},F.__r=0,s=Math.random().toString(8),a="__d"+s,h="__a"+s,l=/(PointerCapture)$|Capture$/i,p=0,y=D(!1),v=D(!0),d=0,n.Component=P,n.Fragment=I,n.cloneElement=function(n,i,e){var r,f,o,u,c=S({},n.props);for(o in n.type&&n.type.defaultProps&&(u=n.type.defaultProps),i)"key"==o?r=i[o]:"ref"==o?f=i[o]:c[o]=i[o]===m&&u!=m?u[o]:i[o];return arguments.length>2&&(c.children=arguments.length>3?t.call(arguments,2):e),C(n.type,c,r||n.key,f||n.ref,g)},n.createContext=function(n){function t(n){var i,e;return this.getChildContext||(i=new Set,(e={})[t.__c]=this,this.getChildContext=function(){return e},this.componentWillUnmount=function(){i=g},this.shouldComponentUpdate=function(n){this.props.value!=n.value&&i.forEach(function(n){n.__e=!0,L(n)})},this.sub=function(n){i.add(n);var t=n.componentWillUnmount;n.componentWillUnmount=function(){i&&i.delete(n),t&&t.call(n)}}),n.children}return t.__c="__cC"+d++,t.__=n,t.Provider=t.__l=(t.Consumer=function(n,t){return n.children(t)}).contextType=t,t},n.createElement=$,n.createRef=function(){return{current:g}},n.h=$,n.hydrate=function n(t,i){X(t,i,n)},n.isValidElement=r,n.options=i,n.render=X,n.toChildArray=function n(t,i){return i=i||[],t==g||"boolean"==typeof t||(M(t)?t.some(function(t){n(t,i)}):i.push(t)),i}});
+//# sourceMappingURL=preact.umd.js.map
+
+</script>
+<script>
+!function(n,t){"object"==typeof exports&&"undefined"!=typeof module?t(exports,require("preact")):"function"==typeof define&&define.amd?define(["exports","preact"],t):t((n||self).preactHooks={},n.preact)}(this,function(n,t){var u,i,r,o,f=0,c=[],e=t.options,a=e.__b,v=e.__r,l=e.diffed,d=e.__c,p=e.unmount,s=e.__;function y(n,t){e.__h&&e.__h(i,n,f||t),f=0;var u=i.__H||(i.__H={__:[],__h:[]});return n>=u.__.length&&u.__.push({}),u.__[n]}function h(n){return f=1,m(j,n)}function m(n,t,r){var o=y(u++,2);if(o.t=n,!o.__c&&(o.__=[r?r(t):j(void 0,t),function(n){var t=o.__N?o.__N[0]:o.__[0],u=o.t(t,n);t!==u&&(o.__N=[u,o.__[1]],o.__c.setState({}))}],o.__c=i,!i.__f)){var f=function(n,t,u){if(!o.__c.__H)return!0;var i=!1,r=o.__c.props!==n;if(o.__c.__H.__.some(function(n){if(n.__N){i=!0;var t=n.__[0];n.__=n.__N,n.__N=void 0,t!==n.__[0]&&(r=!0)}}),c){var f=c.call(this,n,t,u);return i?f||r:f}return!i||r};i.__f=!0;var c=i.shouldComponentUpdate,e=i.componentWillUpdate;i.componentWillUpdate=function(n,t,u){if(this.__e){var i=c;c=void 0,f(n,t,u),c=i}e&&e.call(this,n,t,u)},i.shouldComponentUpdate=f}return o.__N||o.__}function T(n,t){var r=y(u++,4);!e.__s&&g(r.__H,t)&&(r.__=n,r.u=t,i.__h.push(r))}function _(n,t){var i=y(u++,7);return g(i.__H,t)&&(i.__=n(),i.__H=t,i.__h=n),i.__}function b(){for(var n;n=c.shift();){var t=n.__H;if(n.__P&&t)try{t.__h.some(A),t.__h.some(F),t.__h=[]}catch(u){t.__h=[],e.__e(u,n.__v)}}}e.__b=function(n){i=null,a&&a(n)},e.__=function(n,t){n&&t.__k&&t.__k.__m&&(n.__m=t.__k.__m),s&&s(n,t)},e.__r=function(n){v&&v(n),u=0;var t=(i=n.__c).__H;t&&(r===i?(t.__h=[],i.__h=[],t.__.some(function(n){n.__N&&(n.__=n.__N),n.u=n.__N=void 0})):(t.__h.some(A),t.__h.some(F),t.__h=[],u=0)),r=i},e.diffed=function(n){l&&l(n);var t=n.__c;t&&t.__H&&(t.__H.__h.length&&(1!==c.push(t)&&o===e.requestAnimationFrame||((o=e.requestAnimationFrame)||x)(b)),t.__H.__.some(function(n){n.u&&(n.__H=n.u,n.u=void 0)})),r=i=null},e.__c=function(n,t){t.some(function(n){try{n.__h.some(A),n.__h=n.__h.filter(function(n){return!n.__||F(n)})}catch(u){t.some(function(n){n.__h&&(n.__h=[])}),t=[],e.__e(u,n.__v)}}),d&&d(n,t)},e.unmount=function(n){p&&p(n);var t,u=n.__c;u&&u.__H&&(u.__H.__.some(function(n){try{A(n)}catch(n){t=n}}),u.__H=void 0,t&&e.__e(t,u.__v))};var q="function"==typeof requestAnimationFrame;function x(n){var t,u=function(){clearTimeout(i),q&&cancelAnimationFrame(t),setTimeout(n)},i=setTimeout(u,35);q&&(t=requestAnimationFrame(u))}function A(n){var t=i,u=n.__c;"function"==typeof u&&(n.__c=void 0,u()),i=t}function F(n){var t=i;n.__c=n.__(),i=t}function g(n,t){return!n||n.length!==t.length||t.some(function(t,u){return t!==n[u]})}function j(n,t){return"function"==typeof t?t(n):t}n.useCallback=function(n,t){return f=8,_(function(){return n},t)},n.useContext=function(n){var t=i.context[n.__c],r=y(u++,9);return r.c=n,t?(null==r.__&&(r.__=!0,t.sub(i)),t.props.value):n.__},n.useDebugValue=function(n,t){e.useDebugValue&&e.useDebugValue(t?t(n):n)},n.useEffect=function(n,t){var r=y(u++,3);!e.__s&&g(r.__H,t)&&(r.__=n,r.u=t,i.__H.__h.push(r))},n.useErrorBoundary=function(n){var t=y(u++,10),r=h();return t.__=n,i.componentDidCatch||(i.componentDidCatch=function(n,u){t.__&&t.__(n,u),r[1](n)}),[r[0],function(){r[1](void 0)}]},n.useId=function(){var n=y(u++,11);if(!n.__){for(var t=i.__v;null!==t&&!t.__m&&null!==t.__;)t=t.__;var r=t.__m||(t.__m=[0,0]);n.__="P"+r[0]+"-"+r[1]++}return n.__},n.useImperativeHandle=function(n,t,u){f=6,T(function(){if("function"==typeof n){var u=n(t());return function(){n(null),u&&"function"==typeof u&&u()}}if(n)return n.current=t(),function(){return n.current=null}},null==u?u:u.concat(n))},n.useLayoutEffect=T,n.useMemo=_,n.useReducer=m,n.useRef=function(n){return f=5,_(function(){return{current:n}},[])},n.useState=h});
+//# sourceMappingURL=hooks.umd.js.map
+
+</script>
+<script>
+!function(n,e){"object"==typeof exports&&"undefined"!=typeof module?module.exports=e():"function"==typeof define&&define.amd?define(e):n.htm=e()}(this,function(){var n=function(e,t,u,s){var r;t[0]=0;for(var p=1;p<t.length;p++){var h=t[p++],o=t[p]?(t[0]|=h?1:2,u[t[p++]]):t[++p];3===h?s[0]=o:4===h?s[1]=Object.assign(s[1]||{},o):5===h?(s[1]=s[1]||{})[t[++p]]=o:6===h?s[1][t[++p]]+=o+"":h?(r=e.apply(o,n(e,o,u,["",null])),s.push(r),o[0]?t[0]|=2:(t[p-2]=0,t[p]=r)):s.push(o)}return s},e=new Map;return function(t){var u=e.get(this);return u||(u=new Map,e.set(this,u)),(u=n(this,u.get(t)||(u.set(t,u=function(n){for(var e,t,u=1,s="",r="",p=[0],h=function(n){1===u&&(n||(s=s.replace(/^\s*\n\s*|\s*\n\s*$/g,"")))?p.push(0,n,s):3===u&&(n||s)?(p.push(3,n,s),u=2):2===u&&"..."===s&&n?p.push(4,n,0):2===u&&s&&!n?p.push(5,0,!0,s):u>=5&&((s||!n&&5===u)&&(p.push(u,0,s,t),u=6),n&&(p.push(u,n,0,t),u=6)),s=""},o=0;o<n.length;o++){o&&(1===u&&h(),h(o));for(var f=0;f<n[o].length;f++)e=n[o][f],1===u?"<"===e?(h(),p=[p],u=3):s+=e:4===u?"--"===s&&">"===e?(u=1,s=""):s=e+s[0]:r?e===r?r="":s+=e:'"'===e||"'"===e?r=e:">"===e?(h(),u=1):u&&("="===e?(u=5,t=s,s=""):"/"===e&&(u<5||">"===n[o][f+1])?(h(),3===u&&(p=p[0]),u=p,(p=p[0]).push(2,0,u),u=0):" "===e||"\t"===e||"\n"===e||"\r"===e?(h(),u=2):s+=e),3===u&&"!--"===s&&(u=4,p=p[0])}return h(),p}(t)),u),arguments,[])).length>1?u:u[0]}});
+
+</script>
+<script>
+(function () {
+"use strict";
+var FLOAT_NOISE = 1e9;
+
+function wholePoints(raw) {
+  return Math.floor((Math.round(raw * 10) + 5) / 10);
+}
+
+function priced(row) {
+  return row.cost !== null && row.cost !== undefined;
+}
+
+function dominates(b, a) {
+  return b.score >= a.score && b.cost <= a.cost && (b.score > a.score || b.cost < a.cost);
+}
+
+function compareText(a, b) {
+  return a < b ? -1 : a > b ? 1 : 0;
+}
+
+function frontier(rows) {
+  var candidates = rows.filter(priced);
+  return candidates.filter(function (row) {
+    return !candidates.some(function (other) { return dominates(other, row); });
+  }).sort(function (a, b) {
+    return (a.cost - b.cost) || (a.score - b.score) || compareText(a.label, b.label);
+  });
+}
+
+function makeStep(from, to, direction) {
+  var points = to.score - from.score;
+  var cost = priced(from) && priced(to)
+    ? Math.round((to.cost - from.cost) * FLOAT_NOISE) / FLOAT_NOISE : null;
+  var perPoint = null;
+  var note = null;
+  if (direction === "up") {
+    if (points > 0) {
+      if (cost !== null) {
+        if (cost > 0) perPoint = cost / points; else note = "costs no more";
+      }
+    } else if (points === 0) note = "no gain";
+    else note = "scores lower";
+  } else {
+    if (points < 0) {
+      if (cost !== null) {
+        if (cost < 0) perPoint = cost / points; else note = "saves nothing";
+      }
+    } else if (points === 0) note = "no loss";
+    else note = "scores higher";
+  }
+  return { to: to, points: points, cost: cost, perPoint: perPoint, note: note };
+}
+
+function paretoRows(rows) {
+  var list = rows.filter(priced).map(function (row) { return Object.assign({}, row); });
+  list.sort(function (a, b) {
+    return (a.cost - b.cost) || (b.score - a.score) || compareText(a.label, b.label);
+  });
+  var edge = frontier(list);
+  var onEdge = new Set(edge);
+  // frontier() returns the same objects it was given, so membership is by identity
+  list.forEach(function (row) {
+    row.up = null;
+    row.down = null;
+    if (onEdge.has(row)) {
+      row.status = "frontier";
+      row.by = null;
+      var at = edge.indexOf(row);
+      if (at < edge.length - 1) row.up = makeStep(row, edge[at + 1], "up");
+      if (at > 0) row.down = makeStep(row, edge[at - 1], "down");
+      return;
+    }
+    row.status = "dominated";
+    var beaters = edge.filter(function (other) {
+      return other.score >= row.score && other.cost <= row.cost;
+    }).sort(function (a, b) {
+      return (b.score - a.score) || (a.cost - b.cost) || compareText(a.label, b.label);
+    });
+    row.by = beaters[0] || null;
+  });
+  return list;
+}
+
+function pathValue(row, key) {
+  var value = row;
+  var parts = key.split(".");
+  for (var i = 0; i < parts.length; i += 1) {
+    if (value === null || value === undefined) return null;
+    value = value[parts[i]];
+  }
+  return value === undefined ? null : value;
+}
+
+function compareValues(a, b) {
+  return typeof a === "string" || typeof b === "string" ? compareText(String(a), String(b)) : a - b;
+}
+
+function dataAge(lastCheckedIso, nowMs, maxAgeHours) {
+  var then = Date.parse(lastCheckedIso);
+  if (isNaN(then)) return { text: "Data age is unknown", stale: true };
+  var hours = Math.max(0, (nowMs - then) / 3.6e6);
+  var text;
+  if (hours < 1) text = "Data is less than an hour old";
+  else if (hours < 2) text = "Data is 1 hour old";
+  else if (hours < 48) text = "Data is " + Math.floor(hours) + " hours old";
+  else text = "Data is " + Math.floor(hours / 24) + " days old";
+  return { text: text, stale: hours > maxAgeHours };
+}
+
+function linearTicks(lo, hi) {
+  const span = hi - lo;
+  const step = span > 60 ? 20 : span > 30 ? 10 : span > 12 ? 5 : span > 5 ? 2 : 1;
+  const out = [];
+  for (let v = Math.ceil(lo / step) * step; v <= hi; v += step) out.push(v);
+  return out;
+}
+
+function logTicks(lo, hi) {
+  const out = [];
+  for (let e = Math.floor(Math.log10(lo)); e <= Math.ceil(Math.log10(hi)); e += 1) {
+    [1, 2, 5].forEach((m) => {
+      const v = Number((m * Math.pow(10, e)).toPrecision(3));
+      if (v >= lo && v <= hi) out.push(v);
+    });
+  }
+  return out;
+}
+
+var api = { FLOAT_NOISE: FLOAT_NOISE, wholePoints: wholePoints, priced: priced, dominates: dominates, compareText: compareText, frontier: frontier, makeStep: makeStep, paretoRows: paretoRows, pathValue: pathValue, compareValues: compareValues, dataAge: dataAge, linearTicks: linearTicks, logTicks: logTicks };
+if (typeof module !== "undefined") module.exports = api; else window.ladderCore = api;
+}());
+
+</script>
+<style>@font-face{font-family:"Hanken Grotesk";font-style:normal;font-weight:100 900;src:url(data:font/woff2;base64,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) format('woff2');}</style>"""
+# frontend-vendor:end
+HTML_TEMPLATE = HTML_TEMPLATE.replace("<!-- frontend-vendor -->", FRONTEND_VENDOR_HTML)
+
+
+def render_page(payload):
+    assets = {"PAGE_CSS": PAGE_CSS, "DECISION_MATH_JS": DECISION_MATH_JS, "APP_JS": APP_JS}
+    for name, text in assets.items():
+        if "</script" in text.lower():
+            raise ValueError(f"{name} contains a closing script tag")
+    parts = {"{{CSS}}": PAGE_CSS, "{{SCRIPTS}}": f"<script>{DECISION_MATH_JS}</script><script>{APP_JS}</script>",
+             "{{PAYLOAD}}": json.dumps(payload, separators=(",", ":")).replace("<", "\\u003c")}
+    out, rest = [], HTML_TEMPLATE
+    for marker in sorted(parts, key=HTML_TEMPLATE.index):
+        before, found, rest = rest.partition(marker)
+        if not found:
+            raise ValueError(f"page template is missing {marker}")
+        out += [before, parts[marker]]
+    out.append(rest)
+    return "".join(out).encode("utf-8")
+
+
+def build_page(home, output):
+    paths = load_snapshots(home)
+    if not paths:
+        raise StoreError("no snapshot to build from")
+    snapshot = read_snapshot(paths[0])
+    payload = build_payload(snapshot, None, load_config())
+    payload["change_history"] = []
+    for path in paths[1:]:
+        try:
+            payload["change_history"].append(diff_rows(read_snapshot(path), snapshot))
+        except StoreError as error:
+            _complain(f"{error}; skipping it for the list of changes")
+    payload["changes"] = next((diff for diff in payload["change_history"] if _shows_a_change(diff)), None)
+    payload["built_at"] = datetime.now(timezone.utc).isoformat()
+    atomic_write_bytes(output, render_page(payload))
+
+
+def testing_mode_enabled() -> bool:
+    return os.environ.get("UTILITIES_TESTING", "").lower() not in {"", "0", "false", "no"}
+
+
+def build_parser():
+    parser = argparse.ArgumentParser(prog="decision_ladder", description="Explore JevBench system measurements.",
+                                     epilog="Runtime home: ~/.decision_ladder/ (override with DECISION_LADDER_HOME).")
+    parser.add_argument("command", nargs="?", choices=("refresh", "build"))
+    parser.add_argument("--no-refresh", action="store_true")
+    parser.add_argument("--no-open", action="store_true")
+    parser.add_argument("--output", type=Path)
+    parser.add_argument("--version", action="version", version=f"Decision Ladder {VERSION}")
+    return parser
+
+
+def _complain(message):
+    print(f"Decision Ladder: {message}", file=sys.stderr)
+
+
+def main(argv=None, *, now=None, fetch=fetch_feed, open_page=webbrowser.open):
+    args = build_parser().parse_args(argv)
+    now = now or datetime.now(timezone.utc)
+    try:
+        config = load_config()
+        home = runtime_home()
+        paths = load_snapshots(home)
+        newest = read_snapshot(paths[0]) if paths else None
+    except (ValueError, OSError, StoreError) as error:
+        _complain(str(error))
+        return 1
+    should_fetch = not (args.command == "build" or args.no_refresh) and (
+        args.command == "refresh" or newest is None or
+        _utc(now) - _utc(datetime.fromisoformat(newest["last_checked"])) > timedelta(hours=config["max_age_hours"]))
+    if should_fetch:
+        try:
+            result = fetch()
+            save_snapshot(home, result, now)
+            systems = result["feed"]["systems"]
+            print(f"Fetched {len(systems)} systems ({sum(row['ranked'] for row in systems)} ranked), revision {result['feed']['revision']}.")
+        except (FetchError, StoreError, OSError) as error:
+            _complain(f"{error}; building from the existing snapshot" if newest is not None else str(error))
+            if newest is None:
+                return 1
+    elif newest is None:
+        _complain("no snapshot yet; run decision_ladder refresh to fetch one")
+        return 1
+    output = args.output.expanduser() if args.output else home / "decision_ladder.html"
+    try:
+        build_page(home, output)
+    except (OSError, StoreError, ValueError) as error:
+        _complain(f"cannot build the page: {error}")
+        return 1
+    print(output)
+    if not args.no_open and not testing_mode_enabled():
+        try:
+            open_page(output.resolve().as_uri())
+        except Exception:
+            _complain("could not open a browser; open the page manually")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
