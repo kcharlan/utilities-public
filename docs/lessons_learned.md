@@ -2554,6 +2554,12 @@ produce a change whose two displayed endpoints look identical. Test invisible
 rounding differences, visible differences, and transitions to and from missing
 values in every display mode; keep unrounded values for calculations and meters.
 
+## 2026-11-12: Test visible fixes at the page
+
+Git Fleet 0.3.8 corrected failed quick-scan status in the API and tested that
+contract, but the detail header still hid the failure. A fix for a visible
+symptom needs a browser test that checks what the user sees on the page.
+
 ## 2026-11-12: Guard every browser storage consumer
 
 A guarded Findings preference could not prevent a blocked-storage error from the
