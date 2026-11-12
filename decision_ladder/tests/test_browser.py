@@ -1,4 +1,5 @@
 from datetime import datetime, timezone
+import re
 from urllib.parse import quote
 
 import pytest
@@ -79,9 +80,9 @@ def test_large_board_navigation_and_chart(dl, tmp_path, scheme):
 
 
 @pytest.mark.parametrize('scores,decimal_expected', [
-    ([8.0, 8.0, 8.0], 'price: 2 → 3.001'),
-    ([7.9, 8.1, 8.2], 'capability: 8.1 → 8.2'),
-    ([7.9, 8.123, 8.456], 'capability: 8.1 → 8.5'),
+    ([8.0, 8.0, 8.0], 'Price $2.00 → $3.00'),
+    ([7.9, 8.1, 8.2], 'Capability 8.1 → 8.2'),
+    ([7.9, 8.123, 8.456], 'Capability 8.1 → 8.5'),
 ])
 def test_history_uses_displayed_changes_for_each_mode(dl, tmp_path, scores, decimal_expected):
     from datetime import timedelta
@@ -98,7 +99,7 @@ def test_history_uses_displayed_changes_for_each_mode(dl, tmp_path, scores, deci
         blocked = block_external_requests(context); page = context.new_page()
         with guard_browser_errors(page):
             page.goto(path.as_uri()); page.get_by_text('Changes', exact=True).click()
-            expect(page.locator('.changes')).to_contain_text('price: 3 → 3.001' if scores[-1] == 8.456 else 'price: 2 → 3.001')
+            expect(page.locator('.changes')).to_contain_text('Capability 8 → 9' if scores[-1] == 8.456 else 'Price $2.00 → $3.00')
             page.get_by_label('Scoring').select_option('decimal')
             expect(page.locator('.changes')).to_contain_text(decimal_expected)
             assert_no_external_resources(page, blocked)
@@ -487,6 +488,29 @@ def test_changes_method_and_caps_notices(dl, tmp_path):
         with guard_browser_errors(page):
             page.goto(path.as_uri()); page.get_by_text('Changes', exact=True).click()
             expect(page.locator('.changes')).to_contain_text('Scoring method changed from Old synthetic method to New synthetic method; scores before and after are not comparable')
-            expect(page.locator('.changes')).to_contain_text('$3 / 1,000 decisions; 10s → $5 / 1,000 decisions; 10s')
+            expect(page.locator('.changes')).to_contain_text('$3.00 / 1,000 decisions; 10.00 s → $5.00 / 1,000 decisions; 10.00 s')
             expect(page.locator('.changes')).not_to_contain_text('Synthetic changed')
+        context.close(); browser.close()
+
+
+def test_changes_rounds_high_precision_caps_and_prices(dl, tmp_path):
+    from copy import deepcopy
+    from helpers import feed, snapshot, system
+    old = feed(capability_policy={'cost_cap_usd_per_1000': 0.123456789012345, 'median_latency_cap_s': 1.23456789012345},
+               systems=[system(price={'usd_per_1000_decisions': 0.0651234567890123})])
+    new = deepcopy(old)
+    new['capability_policy'] = {'cost_cap_usd_per_1000': 0.234567890123456, 'median_latency_cap_s': 2.34567890123456}
+    new['systems'][0]['price']['usd_per_1000_decisions'] = 0.0711234567890123
+    payload = dl.build_payload(snapshot(new), snapshot(old), {'max_age_hours': 24})
+    path = tmp_path / 'precision.html'; path.write_bytes(dl.render_page(payload))
+    with sync_playwright() as playwright:
+        browser = playwright.chromium.launch(); context = browser.new_context(service_workers='block'); context.set_offline(True)
+        blocked = block_external_requests(context); page = context.new_page()
+        with guard_browser_errors(page):
+            page.goto(path.as_uri()); page.get_by_text('Changes', exact=True).click()
+            changes = page.locator('.changes')
+            expect(changes).to_contain_text('Price $0.065 → $0.071')
+            expect(changes).to_contain_text('$0.123 / 1,000 decisions; 1.23 s → $0.235 / 1,000 decisions; 2.35 s')
+            assert not re.search(r'\d+\.\d{6,}', changes.inner_text())
+            assert_no_external_resources(page, blocked)
         context.close(); browser.close()

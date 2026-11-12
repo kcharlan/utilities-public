@@ -1,5 +1,12 @@
 # Lessons learned
 
+## Render the same fields used to select a change
+
+Filtering history at display precision is insufficient if the panel then renders
+raw values or fields that rounded to the same text. Build formatted field pairs
+once for both selection and display, and exercise high-precision caps and prices
+in the rendered browser as well as missing values and both scoring modes.
+
 ## Compare history metadata at display granularity
 
 Comparing entire method or policy objects can report an invisible change and

@@ -448,18 +448,28 @@ function rankText(row,key,caps) {
   return row[key] ?? 'Not measured';
 }
 function rankBestIn(rows,key,caps) { return bestIn(rows.map(r=>({...r,[key]:r.ranked && withinCaps(r,caps)?r[key]:null})),key,'min'); }
+function changeText(field,value,mode) {
+  if (value == null) return 'none';
+  if (field==='capability') return mode==='whole' ? String(ladderCore.wholePoints(value)) : scoreText(value);
+  if (field==='price') return '$'+priceText(value);
+  if (field==='latency') return latencyText(value);
+  if (field==='listing') return listingText(value);
+  return String(value);
+}
+function changeFields(row,mode) {
+  return [['capability','Capability'],['price','Price'],['latency','Latency'],['listing','Listing'],['capability_rank','Capability rank'],['composite_rank','Composite rank']]
+    .filter(([field])=>row[field])
+    .map(([field,label])=>({label,from:changeText(field,row[field][0],mode),to:changeText(field,row[field][1],mode)}))
+    .filter(({from,to})=>from!==to);
+}
 function changesToShow(changes, mode) {
   if (!changes || changes.method) return [];
-  const fields=['listing','capability_rank','composite_rank'];
-  const formattedChange=(pair,format)=>pair && format(pair[0])!==format(pair[1]);
-  return (changes.changed || []).filter(r=>fields.some(k=>r[k] && r[k][0]!==r[k][1]) ||
-    formattedChange(r.price,priceText) || formattedChange(r.latency,latencyText) ||
-    (r.capability && r.capability.map(v=>finite(v)?(mode==='whole'?ladderCore.wholePoints(v):v.toFixed(1)):v).some((v,i,a)=>v!==a[0])));
+  return (changes.changed || []).filter(r=>changeFields(r,mode).length>0);
 }
 function visibleHistory(history, mode) {
   return history.find(c=>c.revision || c.method || c.caps || c.added.length || c.removed.length || changesToShow(c,mode).length) || null;
 }
-const api={withinCaps,capReasons,prepare,tiers,defaultExpanded,tierGroups,visibleTierRows,chartMarks,boardPartitions,boardFrontier,priceText,latencyText,secondsText,scoreText,capText,label,listingText,whenText,findings,searchRows,notRankedRows,pickerRows,bestIn,rankText,rankBestIn,changesToShow,visibleHistory};
+const api={withinCaps,capReasons,prepare,tiers,defaultExpanded,tierGroups,visibleTierRows,chartMarks,boardPartitions,boardFrontier,priceText,latencyText,secondsText,scoreText,capText,label,listingText,whenText,findings,searchRows,notRankedRows,pickerRows,bestIn,rankText,rankBestIn,changeText,changeFields,changesToShow,visibleHistory};
 if (typeof module !== 'undefined') module.exports=api; else window.decisionMath=api;
 }());
 // decision-math:end
@@ -491,13 +501,13 @@ function boardLabel(board) { return board==='open'?'Open weights':board==='api'?
 function Changes({changes,mode}) {
   if (!changes) return html`<details class="changes"><summary>Changes</summary><p>No previous snapshot.</p></details>`;
   const pair=(p)=>p ? `${p[0]} → ${p[1]}` : '';
-  const cap=p=>`$${p.cost_cap_usd_per_1000} / 1,000 decisions; ${p.median_latency_cap_s}s`;
+  const cap=p=>`${p.cost_cap_usd_per_1000 == null ? 'none' : M.capText(p.cost_cap_usd_per_1000,'price')} / 1,000 decisions; ${p.median_latency_cap_s == null ? 'none' : M.capText(p.median_latency_cap_s,'latency')}`;
   return html`<details class="changes"><summary>Changes</summary>
     ${changes.revision && html`<p>Revision: ${pair(changes.revision)}</p>`}
     ${changes.method && html`<p>Scoring method changed from ${changes.method[0].label} to ${changes.method[1].label}; scores before and after are not comparable</p>`}
     ${changes.caps && html`<p>Caps: ${cap(changes.caps[0])} → ${cap(changes.caps[1])}</p>`}
     ${(changes.added||[]).map(name=>html`<p>Added: ${name}</p>`)}${(changes.removed||[]).map(name=>html`<p>Removed: ${name}</p>`)}
-    ${M.changesToShow(changes,mode).map(r=>html`<p>Changed: ${r.name} ${['capability','price','latency','listing','capability_rank','composite_rank'].filter(k=>r[k] && r[k][0]!==r[k][1]).map(k=>`${k}: ${pair(k==='capability'?r[k].map(v=>v==null?v:M.scoreText(v)):r[k])}`).join('; ')}</p>`)}
+    ${M.changesToShow(changes,mode).map(r=>html`<p>Changed: ${r.name}: ${M.changeFields(r,mode).map(({label,from,to})=>`${label} ${from} → ${to}`).join('; ')}</p>`)}
   </details>`;
 }
 function Picker({picks,onAdd}) {

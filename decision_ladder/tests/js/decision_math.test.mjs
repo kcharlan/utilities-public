@@ -125,3 +125,18 @@ test('changes compare displayed price and latency in both scoring modes', () => 
     }
   }
 });
+test('change fields format each endpoint and omit differences hidden by formatting', () => {
+  for (const mode of ['whole','decimal']) {
+    for (const [field,value,expected] of [['capability',8.26,mode==='whole'?'8':'8.3'],['price',0.0651234567890123,'$0.065'],['latency',1.23456789012345,'1.23 s'],['listing','synthetic-listing','synthetic listing'],['capability_rank',4,'4'],['composite_rank',3,'3']]) {
+      assert.equal(m.changeText(field,value,mode),expected);
+      assert.equal(m.changeText(field,null,mode),'none');
+      assert.equal(m.changeText(field,undefined,mode),'none');
+    }
+    assert.deepEqual(m.changeFields({capability:[8.1,9.2],price:[0.065,0.071],latency:[1,2],listing:['synthetic-old','synthetic-new'],capability_rank:[4,3],composite_rank:[null,2]},mode),[
+      {label:'Capability',from:mode==='whole'?'8':'8.1',to:mode==='whole'?'9':'9.2'},
+      {label:'Price',from:'$0.065',to:'$0.071'}, {label:'Latency',from:'1.00 s',to:'2.00 s'},
+      {label:'Listing',from:'synthetic old',to:'synthetic new'}, {label:'Capability rank',from:'4',to:'3'},
+      {label:'Composite rank',from:'none',to:'2'}]);
+    assert.deepEqual(m.changeFields({price:[2.001,2.002],latency:[3.001,3.002]},mode),[]);
+  }
+});
