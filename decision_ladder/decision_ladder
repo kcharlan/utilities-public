@@ -21,7 +21,7 @@ import zlib
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-VERSION = "1.0.0"
+VERSION = "1.1.0"
 DEFAULT_CONFIG = {"max_age_hours": 24}
 MAX_AGE_LIMIT = 87600
 FEED_URL = "https://benchmarkheaven.com/api/jevbench/latest"
@@ -292,9 +292,11 @@ def diff_rows(old, new):
     a, b = old["feed"], new["feed"]
     def pair(x, y):
         return None if x == y else [x, y]
+    def displayed_caps(feed):
+        return {key: feed["capability_policy"].get(key) for key in ("cost_cap_usd_per_1000", "median_latency_cap_s")}
     return {"from": old["fetched_at"], "to": new["fetched_at"],
-            "revision": pair(a["revision"], b["revision"]), "method": pair(a["method"], b["method"]),
-            "caps": pair(a["capability_policy"], b["capability_policy"]),
+            "revision": pair(a["revision"], b["revision"]), "method": pair({"label": a["method"].get("label")}, {"label": b["method"].get("label")}),
+            "caps": pair(displayed_caps(a), displayed_caps(b)),
             "added": [r["name"] for k, r in after.items() if k not in before],
             "removed": [r["name"] for k, r in before.items() if k not in after], "changed": changed}
 
@@ -335,16 +337,30 @@ PAGE_CSS = r"""
  --line:#2c3946; --accent:#5cc9bd; --warn:#f0c060; --warn-bg:#3a2e12; --front:#6fd39b; --front-bg:#163324; --dom-bg:#212b36;
  --s1:#6fb1f5; --s2:#f08a63; --s3:#b697e8; --s4:#5cc9bd; --s5:#ea86bd; --s6:#c9cd5a; --s7:#9aa9f0; --s8:#e0ac68; color-scheme:dark; } }
 * { box-sizing:border-box } body { margin:0; background:var(--bg); color:var(--ink); font:15px/1.45 var(--font); padding:20px 16px 40px }
-.wrap { max-width:1180px; margin:auto; overflow-wrap:anywhere } h1 { font-size:26px; margin:0 0 12px } .status { display:flex; flex-wrap:wrap; gap:8px 18px; color:var(--muted) }
+.wrap { max-width:1180px; margin:auto } h1 { font-size:26px; margin:0 0 12px } .status { display:flex; flex-wrap:wrap; gap:8px 18px; color:var(--muted) }
+p, .picker label { overflow-wrap:anywhere } th { overflow-wrap:normal }
+input[type="checkbox"] { padding:0; width:16px; height:16px; accent-color:var(--accent) }
+button:focus-visible, select:focus-visible, input:focus-visible, th:focus-visible, summary:focus-visible, a:focus-visible { outline:2px solid var(--accent); outline-offset:2px }
+.tabs { display:flex; gap:4px; border-bottom:1px solid var(--line) }
+.tabs button { border:0; border-bottom:2px solid transparent; border-radius:0; background:none; padding:6px 12px; font-weight:600; color:var(--muted); margin-bottom:-1px }
+.tabs button[aria-selected="true"] { color:var(--ink); border-bottom-color:var(--accent) }
 .status b { color:var(--ink) } .age { background:var(--front-bg); color:var(--front); border-radius:999px; padding:2px 10px; font-weight:600 }
 .age.stale { background:var(--warn-bg); color:var(--warn) } code { background:var(--panel); border:1px solid var(--line); padding:2px 6px }
 a { color:var(--accent) } footer { margin-top:40px; color:var(--muted); border-top:1px solid var(--line) }
 .panel { background:var(--panel); border:1px solid var(--line); border-radius:10px; margin-top:18px; padding:16px; min-width:0 }
 .controls { display:flex; flex-wrap:wrap; gap:12px; align-items:end } label { display:flex; flex-direction:column; gap:3px; color:var(--muted) }
 input, select, button { font:inherit; color:var(--ink); background:var(--panel); border:1px solid var(--line); border-radius:5px; padding:6px; max-width:100% } button { cursor:pointer }
-.inline { flex-direction:row; align-items:center } .table-wrap { overflow-x:auto; max-width:100% } table { border-collapse:collapse; width:100%; min-width:900px } th,td { border-bottom:1px solid var(--line); padding:8px; text-align:left; vertical-align:top } th { cursor:pointer } tbody tr:nth-child(even) { background:var(--bg) } tbody tr.outside { opacity:.55 } .tier-band { border-left:4px solid var(--accent) } .raw,.detail { color:var(--muted); font-size:.85em } .detail { display:block; overflow-wrap:anywhere } .pill { background:var(--front-bg); color:var(--front); border-radius:999px; padding:2px 6px; white-space:nowrap } .name { overflow-wrap:anywhere; max-width:240px } .chart { width:100%; height:auto; max-height:400px } .chart text { fill:var(--muted); font-size:11px } .chart .grid { stroke:var(--line) } .chart .cap-line { stroke:var(--warn); stroke-width:2 } .chart .shade { fill:var(--warn); opacity:.08 } .chart .edge { fill:none; stroke:var(--front); stroke-width:2 } .chart .mark { stroke:var(--accent); stroke-width:2; fill:var(--panel) } .chart .mark.frontier { fill:var(--accent) } .chart .mark.modelled { stroke-dasharray:3 2 } .legend { color:var(--muted); overflow-wrap:anywhere }
-.tier-even .tier-band { border-color:var(--s2) }
-.picker { max-height:240px; overflow-y:auto; margin:8px 0; border:1px solid var(--line); padding:8px } .compare progress { display:block; width:100%; max-width:150px; accent-color:var(--accent) }
+.inline { flex-direction:row; align-items:center } .table-wrap { overflow-x:auto; max-width:100% } table { border-collapse:collapse; width:100%; min-width:900px } th,td { border-bottom:1px solid var(--line); padding:8px; text-align:left; vertical-align:top } th { cursor:pointer } tbody tr.outside { opacity:.55 } .raw,.detail { color:var(--muted); font-size:.85em } .detail { display:block; overflow-wrap:anywhere } .pill { background:var(--front-bg); color:var(--front); border-radius:999px; padding:2px 6px; overflow-wrap:anywhere } .name { overflow-wrap:anywhere; max-width:240px } .chart { width:100%; height:auto } .chart text { fill:var(--muted) } .chart .grid { stroke:var(--line) } .chart .cap-line { stroke:var(--warn); stroke-width:2 } .chart .shade { fill:var(--warn); opacity:.08 } .chart .edge { fill:none; stroke:var(--front); stroke-width:2 } .chart .mark { fill:var(--panel) } .chart .mark.frontier { fill:var(--accent) } .legend { color:var(--muted); overflow-wrap:anywhere }
+.board-table { max-height:65vh; overflow:auto } .board-table thead th { position:sticky; top:0; z-index:2; background:var(--panel) }
+.board-table td { padding:5px 8px } .board-table .name { width:240px; max-width:240px } .board-table .name .detail { overflow:hidden; text-overflow:ellipsis; white-space:nowrap } .board-table .name-line { display:flex; gap:5px; align-items:center; white-space:nowrap; overflow:hidden } .board-table .short { overflow:hidden; text-overflow:ellipsis; font-weight:600 } .board-tag { color:var(--muted); border:1px solid var(--line); border-radius:4px; padding:0 4px; font-size:.8em; flex:none } .tier-heading td { background:var(--bg); padding:0 } .tier-heading button { width:100%; text-align:left; border:0; background:none; font-weight:600 } .dominated { color:var(--muted) }
+.chart { max-height:none } .chart text { font-size:inherit } .chart .mark { stroke:var(--accent); stroke-width:1; opacity:.7; cursor:pointer } .chart .mark.published { stroke:var(--ink); stroke-width:2 } .chart .mark.dim { opacity:.15 } .chart .mark.highlight { opacity:1; stroke-width:3 }
+.selection { display:flex; flex-wrap:wrap; align-items:center; gap:8px; margin:12px 0 }
+.chip { border:1px solid var(--ink); border-radius:999px; display:inline-flex; gap:7px; align-items:center; padding:3px 4px 3px 11px; overflow-wrap:anywhere }
+.chip small { color:var(--muted) } .chip button { border:0; background:none; padding:0 6px }
+.picker { position:relative; display:inline-block } .pop { position:absolute; z-index:5; top:calc(100% + 6px); left:0; width:min(430px, calc(100vw - 80px)); background:var(--panel); border:1px solid var(--ink); border-radius:8px; padding:8px }
+.pop input { width:100% } .pop ul { list-style:none; margin:0; padding:0; max-height:300px; overflow-y:auto } .pop li button { width:100%; border:0; display:grid; grid-template-columns:minmax(0,1fr) auto; gap:2px 12px; text-align:left; overflow-wrap:anywhere } .pop li button.first:not(:disabled), .pop li button:hover:not(:disabled) { background:var(--dom-bg) } .pop small { color:var(--muted) } .pop p { margin:4px; color:var(--muted) }
+.compare { max-height:70vh; overflow:auto } .compare table { table-layout:fixed; border-collapse:separate; border-spacing:0 } .compare th, .compare td { min-width:150px; overflow-wrap:anywhere } .compare thead th { position:sticky; top:0; z-index:2; background:var(--panel) } .compare tr > :first-child { position:sticky; left:0; z-index:1; width:150px; background:var(--panel) } .compare thead tr > :first-child { z-index:3 } .compare progress { display:block; width:100%; max-width:150px; accent-color:var(--accent) } .compare-details p { max-width:75ch }
+.not-ranked td:last-child { max-width:75ch; overflow-wrap:anywhere }
 """
 DECISION_MATH_JS = r"""
 // decision-math:begin
@@ -369,9 +385,40 @@ function tiers(rows) {
   list.forEach((r,i) => { if (i === 0 || r.score !== previous) { tier++; previous=r.score; size=list.filter(x => x.score === r.score).length; } list[i]={...r,tier,tierSize:size}; });
   return list;
 }
+function defaultExpanded(rows, limit=25) {
+  const expanded=[]; let count=0;
+  for (const row of rows) { if (count>=limit) break; if (!expanded.includes(row.tier)) expanded.push(row.tier); count++; }
+  return expanded;
+}
+function tierGroups(rows) {
+  const groups=[]; for (const r of rows) { let group=groups.find(g=>g.tier===r.tier); if (!group) { group={tier:r.tier,score:r.score,rows:[]}; groups.push(group); } group.rows.push(r); }
+  return groups;
+}
+function visibleTierRows(groups, opened, filtering) { return groups.flatMap(g=>[{heading:true,...g},...((filtering || opened.includes(g.tier))?g.rows:[])]); }
+function chartMarks(rows, query, highlight, edge=[], axis='price') {
+  const matches=new Set(searchRows(rows,query).map(r=>r.key));
+  const frontier=new Set(edge.filter(r=>r.status==='frontier').map(r=>r.key));
+  return rows.filter(r=>r.cost>0).map(r=>{
+    const isFrontier=frontier.has(r.key), highlighted=r.key===highlight;
+    return {...r,frontier:isFrontier,published:axis==='price'?!!r.price_published:!r.latency_assumed,
+      dim:!!query && !matches.has(r.key),highlighted,size:(isFrontier?5:3.5)+(highlighted?2:0)};
+  }).sort((a,b)=>(a.highlighted?2:matches.has(a.key)?1:0)-(b.highlighted?2:matches.has(b.key)?1:0));
+}
+function boardPartitions(rows, frontierOnly) {
+  return {inside:rows.filter(r=>r.inCaps && (!frontierOnly || r.status==='frontier')),
+    outside:frontierOnly?[]:rows.filter(r=>!r.inCaps)};
+}
 function boardFrontier(rows) { return ladderCore.paretoRows(rows.filter(r => r.inCaps)); }
 function priceText(v) { return finite(v) ? v.toFixed(v < .01 ? 4 : v < 1 ? 3 : 2) : ''; }
 function latencyText(v) { return finite(v) ? (v < 1 ? Math.round(v*1000)+' ms' : v.toFixed(2)+' s') : ''; }
+function secondsText(v) { return finite(v) ? String(Number(v.toPrecision(3))) : ''; }
+function scoreText(v) { return finite(v) ? v.toFixed(1) : ''; }
+function capText(v,axis) { return axis==='price' ? '$'+priceText(v) : latencyText(v); }
+function label(kind,token) {
+  const labels={price:{tariff:'published tariff',listed:'listed price',estimate:'estimate',estimated:'estimate',mixed:'part estimate',unpriced:'no price'},latency:{'api-end-to-end':'measured end to end','measured-loopback':'loopback, adjusted','demo-endpoint-x2':'demo endpoint, adjusted'}};
+  return Object.hasOwn(labels,kind) && Object.hasOwn(labels[kind],token) ? labels[kind][token] : (token == null ? '' : String(token).replace(/-/g,' '));
+}
+function whenText(iso) { const date=new Date(iso); return Number.isNaN(date.getTime()) ? iso : date.toISOString().slice(0,16).replace('T',' ')+' UTC'; }
 function findings(rows, caps, mode, axis='price') {
   const inside=rows.filter(r=>r.inCaps), ranked=tiers(inside), front=boardFrontier(rows).filter(r=>r.status==='frontier');
   const out=[`${inside.length} ranked systems are inside the caps; ${front.length} are on the frontier.`];
@@ -386,6 +433,21 @@ function findings(rows, caps, mode, axis='price') {
   return out;
 }
 function searchRows(rows, query) { const q=query.toLowerCase(); return rows.filter(r=>r.name.toLowerCase().includes(q)); }
+function listingText(token) { return token == null ? 'Not available' : label('listing',token); }
+function notRankedRows(rows, query) { return searchRows(rows.filter(r=>!r.ranked),query).sort((a,b)=>ladderCore.compareText(listingText(a.listing).toLowerCase(),listingText(b.listing).toLowerCase()) || ladderCore.compareText(a.name,b.name)); }
+function pickerRows(rows) { return rows.slice().sort((a,b)=> (a.ranked===b.ranked ? 0 : a.ranked ? -1 : 1) || (finite(b.capability)?b.capability:-Infinity)-(finite(a.capability)?a.capability:-Infinity) || ladderCore.compareText(a.name,b.name)); }
+function bestIn(rows,key,direction) {
+  const values=rows.map(r=>r[key]).filter(finite);
+  if (rows.length<2 || !values.length) return rows.map(()=>false);
+  const best=direction==='max'?Math.max(...values):Math.min(...values);
+  return rows.map(r=>finite(r[key]) && r[key]===best);
+}
+function rankText(row,key,caps) {
+  if (!row.ranked) return `Not ranked: ${row.not_ranked_because || 'Not available'}`;
+  if (!withinCaps(row,caps)) return `Not ranked: ${capReasons(row,caps).join(', ')}`;
+  return row[key] ?? 'Not measured';
+}
+function rankBestIn(rows,key,caps) { return bestIn(rows.map(r=>({...r,[key]:r.ranked && withinCaps(r,caps)?r[key]:null})),key,'min'); }
 function changesToShow(changes, mode) {
   if (!changes || changes.method) return [];
   const fields=['listing','capability_rank','composite_rank'];
@@ -397,7 +459,7 @@ function changesToShow(changes, mode) {
 function visibleHistory(history, mode) {
   return history.find(c=>c.revision || c.method || c.caps || c.added.length || c.removed.length || changesToShow(c,mode).length) || null;
 }
-const api={withinCaps,capReasons,prepare,tiers,boardFrontier,priceText,latencyText,findings,searchRows,changesToShow,visibleHistory};
+const api={withinCaps,capReasons,prepare,tiers,defaultExpanded,tierGroups,visibleTierRows,chartMarks,boardPartitions,boardFrontier,priceText,latencyText,secondsText,scoreText,capText,label,listingText,whenText,findings,searchRows,notRankedRows,pickerRows,bestIn,rankText,rankBestIn,changesToShow,visibleHistory};
 if (typeof module !== 'undefined') module.exports=api; else window.decisionMath=api;
 }());
 // decision-math:end
@@ -406,7 +468,7 @@ APP_JS = r"""
 (function () {
 const data = JSON.parse(document.getElementById('payload').textContent);
 const { h, render } = preact;
-const { useState, useLayoutEffect } = preactHooks;
+const { useState, useLayoutEffect, useEffect, useRef } = preactHooks;
 const html = htm.bind(h);
 const M = decisionMath;
 const age = ladderCore.dataAge(data.last_checked, Date.now(), data.max_age_hours);
@@ -418,7 +480,7 @@ function initial() {
   if (!saved || typeof saved !== 'object' || Array.isArray(saved)) saved={};
   const choice=(value,allowed,fallback)=>allowed.includes(value)?value:fallback;
   return {board:choice(saved.board,['all','open','api'],'all'), mode:choice(saved.mode,['whole','decimal'],'whole'),
-    axis:choice(saved.axis,['price','latency'],'price'), cost:validCap(saved.cost,data.caps.cost), latency:validCap(saved.latency,data.caps.latency),
+    axis:choice(saved.axis,['price','latency'],'price'), cost:validCap(saved.cost,null)===data.caps.cost?null:validCap(saved.cost,null), latency:validCap(saved.latency,null)===data.caps.latency?null:validCap(saved.latency,null),
     query:typeof saved.query==='string'?saved.query:'', outside:typeof saved.outside==='boolean'?saved.outside:false,
     sort:choice(saved.sort,['','score','name','intelligence','calibration','price','latency','capability_rank','composite_rank','status'],''),
     dir:choice(saved.dir,[-1,1],1), tab:choice(saved.tab,['board','compare','not-ranked'],'board'),
@@ -435,92 +497,118 @@ function Changes({changes,mode}) {
     ${changes.method && html`<p>Scoring method changed from ${changes.method[0].label} to ${changes.method[1].label}; scores before and after are not comparable</p>`}
     ${changes.caps && html`<p>Caps: ${cap(changes.caps[0])} → ${cap(changes.caps[1])}</p>`}
     ${(changes.added||[]).map(name=>html`<p>Added: ${name}</p>`)}${(changes.removed||[]).map(name=>html`<p>Removed: ${name}</p>`)}
-    ${M.changesToShow(changes,mode).map(r=>html`<p>Changed: ${r.name} ${['capability','price','latency','listing','capability_rank','composite_rank'].filter(k=>r[k] && r[k][0]!==r[k][1]).map(k=>`${k}: ${pair(r[k])}`).join('; ')}</p>`)}
+    ${M.changesToShow(changes,mode).map(r=>html`<p>Changed: ${r.name} ${['capability','price','latency','listing','capability_rank','composite_rank'].filter(k=>r[k] && r[k][0]!==r[k][1]).map(k=>`${k}: ${pair(k==='capability'?r[k].map(v=>v==null?v:M.scoreText(v)):r[k])}`).join('; ')}</p>`)}
   </details>`;
 }
-function Compare({picks,setPicks}) {
-  const [query,setQuery]=useState('');
-  const rows=picks.map(key=>data.rows.find(r=>r.key===key)).filter(Boolean);
-  const axes=[['intelligence','Intelligence'],['calibration','Calibration'],['speed','Speed'],['cost_axis','Cost']];
-  const value=v=>v==null?'Not measured':v;
-  const score=v=>Number.isFinite(v)?v.toFixed(1):'Not measured';
-  return html`<section class="panel"><h2>Compare systems</h2><p>Choose up to 8 systems.</p>
-    <label>Search systems<input aria-label="Search systems" value=${query} onInput=${e=>setQuery(e.target.value)}/></label>
-    <div class="picker">${M.searchRows(data.rows,query).map(r=>html`<label class="inline"><input type="checkbox" checked=${picks.includes(r.key)} disabled=${picks.length>=8&&!picks.includes(r.key)} onChange=${e=>setPicks(e.target.checked?[...picks,r.key]:picks.filter(k=>k!==r.key))}/>${r.name}</label>`)}</div>
-    <div class="table-wrap compare"><table><thead><tr><th>Measure</th>${rows.map(r=>html`<th>${r.name}</th>`)}</tr></thead><tbody>
-      ${axes.map(([key,label])=>html`<tr><th>${label}</th>${rows.map(r=>html`<td>${score(r[key])} ${Number.isFinite(r[key])&&html`<progress value=${r[key]} max="100">${score(r[key])}</progress>`}</td>`)}</tr>`)}
-      <tr><th>Capability</th>${rows.map(r=>html`<td>${score(r.capability)}</td>`)}</tr>
-      ${[['capability_rank','Capability rank'],['composite_rank','Composite rank']].map(([key,label])=>html`<tr><th>${label}</th>${rows.map(r=>html`<td>${value(r[key])}</td>`)}</tr>`)}
-      <tr><th>Price / 1,000 decisions</th>${rows.map(r=>html`<td>${r.price==null?'No price':'$'+M.priceText(r.price)} ${r.price_kind||''}</td>`)}</tr>
-      <tr><th>Median latency</th>${rows.map(r=>html`<td>${M.latencyText(r.latency)||'Not measured'} ${r.latency_basis||''}</td>`)}</tr>
-      <tr><th>p95 latency</th>${rows.map(r=>html`<td>${M.latencyText(r.latency_p95)||'Not measured'} ${r.latency_basis||''}</td>`)}</tr>
-      <tr><th>Measurement date</th>${rows.map(r=>html`<td>${value(r.measured_on)}</td>`)}</tr>
-      <tr><th>Source</th>${rows.map(r=>html`<td>${safeLink(r.source_url)?html`<a href=${safeLink(r.source_url)} rel="noopener noreferrer">Source</a>`:'Not available'}</td>`)}</tr>
-      <tr><th>Basis and adjustment</th>${rows.map(r=>html`<td><details><summary>Details</summary><p>Price basis: ${value(r.price_basis)}</p><p>Latency adjustment: ${value(r.latency_adjustment)}</p></details></td>`)}</tr>
-    </tbody></table></div></section>`;
+function Picker({picks,onAdd}) {
+  const [open,setOpen]=useState(false), [query,setQuery]=useState('');
+  const wrap=useRef(null), button=useRef(null), input=useRef(null), full=picks.length>=8;
+  const sorted=M.pickerRows(data.rows);
+  const list=M.searchRows(sorted,query), choosable=list.filter(r=>!picks.includes(r.key));
+  useLayoutEffect(()=>{if(open && input.current) input.current.focus();},[open]);
+  useEffect(()=>{if(full) setOpen(false);},[full]);
+  useEffect(()=>{if(!open)return; const away=e=>{if(wrap.current && !wrap.current.contains(e.target))setOpen(false);}; document.addEventListener('mousedown',away); return ()=>document.removeEventListener('mousedown',away);},[open]);
+  const pick=r=>{if(r){onAdd(r.key);input.current?.focus();}};
+  const onKey=e=>{if(e.key==='Escape'){e.preventDefault();setOpen(false);button.current?.focus();} else if(e.key==='ArrowDown' || e.key==='ArrowUp'){e.preventDefault();const options=[...wrap.current.querySelectorAll('li button:not(:disabled)')], i=options.indexOf(document.activeElement), next=i<0?(e.key==='ArrowDown'?0:options.length-1):Math.max(0,Math.min(options.length-1,i+(e.key==='ArrowDown'?1:-1)));options[next]?.focus();options[next]?.scrollIntoView({block:'nearest'});} else if(e.key==='Enter' && e.target===input.current){e.preventDefault();pick(choosable[0]);}};
+  return html`<div class="picker" ref=${wrap}><button type="button" ref=${button} disabled=${full} aria-expanded=${String(open)} onClick=${()=>setOpen(!open)}>${full?'Limit of 8 reached':'Add system'}</button>
+    ${open && html`<div class="pop" onKeyDown=${onKey}><input type="search" aria-label="Search systems" placeholder="Search systems" ref=${input} value=${query} onInput=${e=>setQuery(e.currentTarget.value)}/><ul>${list.map(r=>html`<li key=${r.key}><button type="button" disabled=${picks.includes(r.key)} onClick=${()=>pick(r)}><span>${r.short}</span><span>${picks.includes(r.key)?'Added':M.scoreText(r.capability)||'Not measured'}</span><small>${r.detail}</small><small>${boardLabel(r.board)}</small></button></li>`)}</ul><p>${list.length?`${list.length} of ${data.rows.length} systems.`:'No system matches that search.'}</p></div>`}</div>`;
 }
-function Chart({rows, caps, axis, edge}) {
+function Compare({picks,setPicks}) {
+  const rows=picks.map(key=>data.rows.find(r=>r.key===key)).filter(Boolean);
+  const value=v=>v==null?'Not measured':v, score=v=>M.scoreText(v)||'Not measured';
+  const remove=key=>setPicks(picks.filter(k=>k!==key));
+  const rank=(r,key)=>M.rankText(r,key,data.caps);
+  const specs=[['intelligence','Intelligence','max',r=>score(r.intelligence),true],['calibration','Calibration','max',r=>score(r.calibration),true],['speed','Speed','max',r=>score(r.speed),true],['cost_axis','Cost','max',r=>score(r.cost_axis),true],['capability','Capability','max',r=>score(r.capability)],['capability_rank','Capability rank','min',r=>rank(r,'capability_rank')],['composite_rank','Composite rank','min',r=>rank(r,'composite_rank')],['price','Price / 1,000 decisions','min',r=>`${r.price==null?'No price':'$'+M.priceText(r.price)} ${M.label('price',r.price_kind)}`],['latency','Median latency','min',r=>`${M.latencyText(r.latency)||'Not measured'} ${M.label('latency',r.latency_basis)}`],['latency_p95','p95 latency','min',r=>`${M.latencyText(r.latency_p95)||'Not measured'} ${M.label('latency',r.latency_basis)}`]];
+  return html`<section class="panel"><h2>Compare systems</h2><div class="selection">${rows.map(r=>html`<span class="chip">${r.short} <small>${boardLabel(r.board)}</small><button type="button" aria-label=${'Remove '+r.name} onClick=${()=>remove(r.key)}>×</button></span>`)}${rows.length>0 && html`<button type="button" onClick=${()=>setPicks([])}>Clear all</button>`}<span>${rows.length} of 8 selected</span></div>
+    <${Picker} picks=${picks} onAdd=${key=>setPicks([...picks,key])}/>
+    ${!rows.length ? html`<p>No systems selected. Add up to 8 to compare them side by side.</p>` : html`<div class="table-wrap compare"><table style=${{minWidth:(rows.length+1)*150+'px'}}><colgroup><col style="width:150px"/>${rows.map(()=>html`<col/>`)}</colgroup><thead><tr><th>Measure</th>${rows.map(r=>html`<th>${r.short}<span class="detail">${r.detail}</span><button type="button" aria-label=${'Remove '+r.name} onClick=${()=>remove(r.key)}>×</button></th>`)}</tr></thead><tbody>
+      ${specs.map(([key,title,direction,display,progress])=>{const best=key.endsWith('_rank')?M.rankBestIn(rows,key,data.caps):M.bestIn(rows,key,direction); return html`<tr><th>${title}</th>${rows.map((r,i)=>html`<td><span class=${best[i]?'pill':''}>${display(r)}</span>${progress && Number.isFinite(r[key]) && html`<progress value=${r[key]} max="100">${score(r[key])}</progress>`}</td>`)}</tr>`;})}
+      <tr><th>Measurement date</th>${rows.map(r=>html`<td>${r.measured_on ?? 'Not given'}</td>`)}</tr><tr><th>Source</th>${rows.map(r=>html`<td>${safeLink(r.source_url)?html`<a href=${safeLink(r.source_url)} rel="noopener noreferrer">Source</a>`:'Not available'}</td>`)}</tr>
+    </tbody></table></div>`}
+    ${rows.length>0 && html`<details class="compare-details"><summary>Price basis and latency adjustment</summary>${rows.map(r=>html`<article><h3>${r.name}</h3><p>Price basis: ${value(r.price_basis)}</p><p>Latency adjustment: ${value(r.latency_adjustment)}</p></article>`)}</details>`}</section>`;
+}
+function NotRanked() {
+  const [query,setQuery]=useState(''), rows=M.notRankedRows(data.rows,query);
+  return html`<section role="tabpanel" class="panel not-ranked"><h2>Not ranked</h2><label>Filter<input aria-label="Filter not ranked systems" value=${query} onInput=${e=>setQuery(e.currentTarget.value)}/></label><p>${rows.length} ${rows.length===1?'system':'systems'}</p><div class="table-wrap"><table><thead><tr><th>System</th><th>Listing</th><th>Reason</th></tr></thead><tbody>${rows.map(r=>html`<tr key=${r.key}><td>${r.short}<span class="detail">${r.detail}</span></td><td>${M.listingText(r.listing)}</td><td>${r.not_ranked_because ?? 'Not available'}</td></tr>`)}</tbody></table></div></section>`;
+}
+function Th({k, label, active, dir, onSort}) {
+  const onKey=e=>{if(e.key==='Enter'||e.key===' '){e.preventDefault();onSort(k);}};
+  return html`<th tabindex="0" aria-sort=${active?(dir===1?'ascending':'descending'):'none'} onClick=${()=>onSort(k)} onKeyDown=${onKey}>${label}${active?(dir===1?' ▲':' ▼'):''}</th>`;
+}
+function Chart({rows, caps, axis, edge, query, highlight, onSelect}) {
+  const [narrow,setNarrow]=useState(()=>window.innerWidth<600);
+  useEffect(()=>{const resize=()=>setNarrow(window.innerWidth<600);window.addEventListener('resize',resize);return ()=>window.removeEventListener('resize',resize);},[]);
   const positive=rows.map(r=>r.cost).filter(v=>Number.isFinite(v) && v>0), cap=axis==='price'?caps.cost:caps.latency;
   if (cap>0) positive.push(cap);
   if (!positive.length) return html`<p>No positive values are available for the logarithmic chart.</p>`;
   const logLo=Math.log(Math.min(...positive))-Math.log(1.4), logHi=Math.log(Math.max(...positive))+Math.log(1.4);
   const lo=Math.max(Number.MIN_VALUE,Math.exp(logLo)), hi=Math.min(Number.MAX_VALUE,Math.exp(logHi));
   const scores=rows.map(r=>r.score), min=Math.min(...scores,0)-1, max=Math.max(...scores,1)+1;
-  const x=v=>40+(Math.log(v)-logLo)/(logHi-logLo)*500, y=v=>245-(v-min)/(max-min)*220;
-  const marks=rows.filter(r=>r.cost>0), ids=new Set(edge.filter(r=>r.status==='frontier').map(r=>r.key));
+  const width=narrow?480:960, height=narrow?360:420, left=40, right=width-20, top=24, bottom=height-55;
+  const x=v=>left+(Math.log(v)-logLo)/(logHi-logLo)*(right-left), y=v=>bottom-(v-min)/(max-min)*(bottom-top);
+  const marks=M.chartMarks(rows,query,highlight,edge,axis);
   const path=edge.filter(r=>r.status==='frontier' && r.cost>0).map((r,i)=>(i?' H':'M')+x(r.cost)+(i?' V':',')+y(r.score)).join('');
-  const capX=cap===0?40:x(cap);
-  return html`<div><svg class="chart" viewBox="0 0 560 285" role="img" aria-label=${'Capability by '+axis}>
-    <rect class="shade" x=${capX} y="15" width=${540-capX} height="230"/><line class="cap-line" x1=${capX} x2=${capX} y1="15" y2="245"/><text class="cap-label" x=${capX} y="12">Cap ${cap}</text>
-    ${ladderCore.linearTicks(min,max).map(v=>html`<g><line class="grid" x1="40" x2="540" y1=${y(v)} y2=${y(v)}/><text x="35" y=${y(v)+4} text-anchor="end">${v}</text></g>`)}
-    ${ladderCore.logTicks(lo,hi).filter(v=>v>0).map(v=>html`<g><line class="grid" x1=${x(v)} x2=${x(v)} y1="15" y2="245"/><text x=${x(v)} y="265" text-anchor="middle">${v}</text></g>`)}
-    <path class="edge" d=${path}/>${marks.map(r=>{ const cls='mark '+(ids.has(r.key)?'frontier ':'')+((axis==='price'?!r.price_published:r.latency_assumed)?'modelled':''); const title=`${r.name}: Capability ${r.capability.toFixed(1)}, $${M.priceText(r.price)}, ${M.latencyText(r.latency)}`; const px=x(r.cost), py=y(r.score); return r.board==='open' ? html`<circle class=${cls} cx=${px} cy=${py} r="5"><title>${title}</title></circle>` : r.board==='api' ? html`<rect class=${cls} x=${px-5} y=${py-5} width="10" height="10"><title>${title}</title></rect>` : html`<polygon class=${cls} points=${`${px},${py-6} ${px+6},${py} ${px},${py+6} ${px-6},${py}`}><title>${title}</title></polygon>`; })}</svg>
-    <p class="legend">Circle: open weights; square: hosted API; diamond: Reference and other boards. Filled: frontier. Dashed outline: modelled value. Zero and unavailable values cannot be plotted on a logarithmic axis; a zero cap is shown at the left edge.</p></div>`;
+  const capX=cap===0?left:x(cap);
+  return html`<div><svg class="chart" viewBox=${`0 0 ${width} ${height}`} role="img" aria-label=${'Capability by '+axis} style=${{fontSize:narrow?'16px':'11px'}} onMouseDown=${e=>{if(e.target.classList.contains('mark')) e.preventDefault();}}>
+    <rect class="shade" x=${capX} y=${top} width=${right-capX} height=${bottom-top}/><line class="cap-line" x1=${capX} x2=${capX} y1=${top} y2=${bottom}/><text class="cap-label" x=${capX} y="16">Cap ${M.capText(cap,axis)}</text>
+    ${ladderCore.linearTicks(min,max).map(v=>html`<g><line class="grid" x1=${left} x2=${right} y1=${y(v)} y2=${y(v)}/><text x="35" y=${y(v)+4} text-anchor="end">${v}</text></g>`)}
+    ${ladderCore.logTicks(lo,hi).filter(v=>v>0).map(v=>html`<g><line class="grid" x1=${x(v)} x2=${x(v)} y1=${top} y2=${bottom}/><text x=${x(v)} y=${bottom+18} text-anchor="middle">${v}</text></g>`)}
+    <text x=${width/2} y=${height-5} text-anchor="middle">${axis==='price'?'Price per 1,000 decisions (USD, log scale)':'Median latency (seconds, log scale)'}</text>
+    <path class="edge" d=${path}/>${marks.map(r=>{ const cls='mark '+(r.frontier?'frontier ':'')+(r.published?'published ':'')+(r.dim?'dim ':'')+(r.highlighted?'highlight':''); const title=`${r.name}: Capability ${M.scoreText(r.capability)}, $${M.priceText(r.price)}, ${M.latencyText(r.latency)}`; const px=x(r.cost), py=y(r.score), size=r.size; return r.board==='open' ? html`<circle class=${cls} cx=${px} cy=${py} r=${size} onClick=${()=>onSelect(r.name)}><title>${title}</title></circle>` : r.board==='api' ? html`<rect class=${cls} x=${px-size} y=${py-size} width=${size*2} height=${size*2} onClick=${()=>onSelect(r.name)}><title>${title}</title></rect>` : html`<polygon class=${cls} points=${`${px},${py-size} ${px+size},${py} ${px},${py+size} ${px-size},${py}`} onClick=${()=>onSelect(r.name)}><title>${title}</title></polygon>`; })}</svg>
+    <p class="legend">Circle: open weights; square: hosted API; diamond: Reference and other boards. Filled: frontier. Dark outline: published price or measured end-to-end latency. Zero and unavailable values cannot be plotted on a logarithmic axis; a zero cap is shown at the left edge.</p></div>`;
 }
 function App() {
 const [s,setS]=useState(initial), set=(key,value)=>setS({...s,[key]:value});
+const [capReset,setCapReset]=useState(0);
+const [expanded,setExpanded]=useState(null), [frontierOnly,setFrontierOnly]=useState(false), [hovered,setHovered]=useState(null), [focused,setFocused]=useState(null);
 useLayoutEffect(()=>{ const value=JSON.stringify(s); try { localStorage.setItem('decision_ladder.state',value); } catch (_) {} try { history.replaceState(null,'','#'+encodeURIComponent(value)); } catch (_) {} },[s]);
 const caps={cost:validCap(s.cost,data.caps.cost),latency:validCap(s.latency,data.caps.latency)};
 const prepared=M.prepare(data.rows,{board:s.board,mode:s.mode,axis:s.axis,caps});
 const edge=M.boardFrontier(prepared), byKey=new Map(edge.map(r=>[r.key,r]));
-let rows=M.tiers(M.searchRows(prepared,s.query)).map(r=>({...r,status:byKey.get(r.key)?.status || ''}));
-let inside=rows.filter(r=>r.inCaps), outside=rows.filter(r=>!r.inCaps);
+let rows=M.searchRows(M.tiers(prepared),s.query).map(r=>({...r,status:byKey.get(r.key)?.status || ''}));
+let {inside,outside}=M.boardPartitions(rows,frontierOnly);
 if (s.sort) { const cmp=(a,b)=>{const av=a[s.sort],bv=b[s.sort]; if(av==null)return bv==null?0:1; if(bv==null)return -1; return s.dir*ladderCore.compareValues(av,bv);}; inside.sort(cmp); outside.sort(cmp); }
 rows=inside.concat(s.outside?outside:[]);
+const opened=expanded===null?M.defaultExpanded(rows):expanded;
+const groups=M.tierGroups(rows);
+const visibleRows=s.sort?rows:M.visibleTierRows(groups,opened,!!s.query);
 const heads=[['score','Capability'],['name','System'],['intelligence','Intelligence'],['calibration','Calibration'],['price','Price / 1,000'],['latency','Median latency'],['capability_rank','Capability rank'],['composite_rank','Composite rank'],['status','Frontier']];
 const sort=k=>setS({...s,sort:k,dir:s.sort===k?-s.dir:1});
 return html`<main class="wrap"><h1>Decision Ladder</h1><div class="status">
 <span id="status-age" class=${age.stale ? 'age stale' : 'age'}>${age.text}</span>
 <span>Revision <b>${data.revision}</b></span><span>Method <b>${data.method.label}</b></span>
-<span>Official caps <b>$${data.caps.cost} / 1,000 decisions; ${data.caps.latency}s</b></span>
-<span><b>${measured}</b> measured · <b>${ranked}</b> ranked</span><code>decision_ladder refresh</code><${Changes} changes=${data.change_history ? M.visibleHistory(data.change_history,s.mode) : data.changes} mode=${s.mode}/></div>
-<nav class="controls"><button onClick=${()=>set('tab','board')}>Board</button><button onClick=${()=>set('tab','compare')}>Compare</button><button onClick=${()=>set('tab','not-ranked')}>Not ranked</button></nav>
-${s.tab==='compare' && html`<${Compare} picks=${s.picks} setPicks=${v=>set('picks',v)}/>`}
-${s.tab==='not-ranked' && html`<section class="panel not-ranked"><h2>Not ranked</h2>${data.rows.filter(r=>!r.ranked).map(r=>html`<article><h3>${r.name}</h3><p>Listing: ${r.listing ?? 'Not available'}</p><p>${r.not_ranked_because ?? 'Not available'}</p></article>`)}</section>`}
-${s.tab==='board' && html`<div>
+<span>Official caps <b>${M.capText(data.caps.cost,'price')} / 1,000 decisions; ${M.capText(data.caps.latency,'latency')}</b></span>
+<span><b>${measured}</b> measured · <b>${ranked}</b> ranked</span><code>decision_ladder refresh</code></div>
+<${Changes} changes=${data.change_history ? M.visibleHistory(data.change_history,s.mode) : data.changes} mode=${s.mode}/>
+<nav class="tabs" role="tablist">${[['board','Board'],['compare','Compare'],['not-ranked','Not ranked']].map(([id,name])=>html`<button role="tab" aria-selected=${s.tab===id} onClick=${()=>set('tab',id)}>${name}</button>`)}</nav>
+${s.tab==='compare' && html`<div role="tabpanel"><${Compare} picks=${s.picks} setPicks=${v=>set('picks',v)}/></div>`}
+${s.tab==='not-ranked' && html`<${NotRanked}/>`}
+${s.tab==='board' && html`<div role="tabpanel">
 <section class="panel"><div class="controls">
 <label>Board<select aria-label="Board" value=${s.board} onChange=${e=>set('board',e.target.value)}><option value="all">All</option><option value="open">Open weights</option><option value="api">Hosted API</option></select></label>
-<label>Cost cap<input aria-label="Cost cap" type="number" min="0" step="any" value=${s.cost} onInput=${e=>set('cost',e.target.value)}/></label>
-<label>Latency cap<input aria-label="Latency cap" type="number" min="0" step="any" value=${s.latency} onInput=${e=>set('latency',e.target.value)}/></label>
-<button onClick=${()=>setS({...s,cost:data.caps.cost,latency:data.caps.latency})}>Use official caps</button>
+<label>Cost cap ($ per 1,000 decisions)<input key=${'cost'+capReset} aria-label="Cost cap ($ per 1,000 decisions)" type="number" min="0" step="any" defaultValue=${s.cost ?? ''} placeholder=${M.priceText(data.caps.cost)} onInput=${e=>set('cost',e.target.validity.badInput?'invalid':e.target.value===''?null:validCap(e.target.value,e.target.value))}/></label>
+<label>Latency cap (seconds)<input key=${'latency'+capReset} aria-label="Latency cap (seconds)" type="number" min="0" step="any" defaultValue=${s.latency ?? ''} placeholder=${M.secondsText(data.caps.latency)} onInput=${e=>set('latency',e.target.validity.badInput?'invalid':e.target.value===''?null:validCap(e.target.value,e.target.value))}/></label>
+<button disabled=${s.cost===null && s.latency===null} onClick=${()=>{setCapReset(capReset+1);setS({...s,cost:null,latency:null});}}>Use official caps</button>${(s.cost!==null || s.latency!==null) && html`<span>Custom caps</span>`}
 <label>Scoring<select aria-label="Scoring" value=${s.mode} onChange=${e=>set('mode',e.target.value)}><option value="whole">Whole points</option><option value="decimal">Decimals</option></select></label>
 <label>Chart x-axis<select aria-label="Chart x-axis" value=${s.axis} onChange=${e=>set('axis',e.target.value)}><option value="price">Price</option><option value="latency">Latency</option></select></label>
 <label>Filter<input aria-label="Filter" value=${s.query} onInput=${e=>set('query',e.target.value)}/></label></div>
-${(validCap(s.cost,null)===null || validCap(s.latency,null)===null) && html`<p role="status">Enter a finite, nonnegative cap. The official cap is used until the entry is valid.</p>`}</section>
-<section class="panel"><h2>Capability and ${s.axis}</h2><${Chart} rows=${prepared} caps=${caps} axis=${s.axis} edge=${edge}/>${M.findings(prepared,caps,s.mode,s.axis).map(t=>html`<p>${t}</p>`)}</section>
+${((s.cost!==null && validCap(s.cost,null)===null) || (s.latency!==null && validCap(s.latency,null)===null)) && html`<p role="status">Enter a finite, nonnegative cap. The official cap is used until the entry is valid.</p>`}</section>
+<section class="panel"><h2>Capability and ${s.axis}</h2><${Chart} rows=${prepared} caps=${caps} axis=${s.axis} edge=${edge} query=${s.query} highlight=${hovered ?? focused} onSelect=${name=>set('query',name)}/>${M.findings(prepared,caps,s.mode,s.axis).map(t=>html`<p>${t}</p>`)}</section>
 <section class="panel"><h2>Systems</h2>
-  <div class="controls"><button onClick=${()=>set('sort','')}>Tier order</button>
-    <label class="inline"><input type="checkbox" checked=${s.outside} onChange=${e=>set('outside',e.target.checked)}/>Show systems outside the caps</label></div>
-  <div class="table-wrap"><table><thead><tr>
-    ${heads.map(([key,label])=>html`<th tabindex="0" onClick=${()=>sort(key)} onKeyDown=${e=>{if(e.key==='Enter'||e.key===' ')sort(key)}}>${label}</th>`)}
-  </tr></thead><tbody>${rows.map(r=>{
+  <div class="controls"><button onClick=${()=>set('sort','')}>Tier order</button><button onClick=${()=>setExpanded(groups.map(g=>g.tier))}>Expand all</button><button onClick=${()=>setExpanded([])}>Collapse all</button>
+    <label class="inline"><input type="checkbox" checked=${s.outside} onChange=${e=>set('outside',e.target.checked)}/>Show systems outside the caps</label><label class="inline"><input type="checkbox" checked=${frontierOnly} onChange=${e=>setFrontierOnly(e.target.checked)}/>Frontier only</label></div>
+  <p class="raw">Within a tier: lowest price first, then lowest latency.</p>
+  <div class="table-wrap board-table"><table><thead><tr>
+    ${heads.map(([key,label])=>html`<${Th} k=${key} label=${label} active=${s.sort===key} dir=${s.dir} onSort=${sort}/>`)}
+  </tr></thead><tbody>${!rows.length && s.query ? html`<tr><td colspan=${heads.length}>No system matches “${s.query}”. <button onClick=${()=>set('query','')}>Clear filter</button></td></tr>` : visibleRows.map(r=>{
+    if (r.heading) return html`<tr class="tier-heading"><td colspan=${heads.length}><button aria-expanded=${!!(s.query || opened.includes(r.tier))} onClick=${()=>setExpanded(opened.includes(r.tier)?opened.filter(t=>t!==r.tier):[...opened,r.tier])}>${s.mode==='whole'?r.score+' points':M.scoreText(r.score)} · ${r.rows.length} ${r.rows.length===1?'system':'systems'}</button></td></tr>`;
     const result=byKey.get(r.key);
     const status=!r.inCaps?M.capReasons(r,caps).join(', '):result?.status==='frontier'
-      ?html`<span class="pill">Frontier</span>`:result?.by?'Dominated by '+result.by.label:'Unavailable';
-    return html`<tr key=${r.key} class=${'tier-'+r.tier+(r.tier%2===0?' tier-even':'')+(r.inCaps?'':' outside')}>
-      <td class="tier-band">${s.mode==='whole'?r.score:r.capability.toFixed(1)} ${s.mode==='whole'&&html`<span class="raw">(${r.capability.toFixed(1)})</span>`}</td>
-      <td class="name">${r.short}<span class="detail">${r.detail}</span><span class="pill">${boardLabel(r.board)}</span></td>
-      <td>${r.intelligence ?? ''}</td><td>${r.calibration ?? ''}</td>
+      ?html`<span class="pill">Frontier</span>`:result?.by?html`<span class="dominated" title=${result.by.name}>Dominated</span>`:'Unavailable';
+    return html`<tr key=${r.key} tabindex="0" onMouseEnter=${()=>setHovered(r.key)} onMouseLeave=${()=>setHovered(null)} onFocus=${()=>setFocused(r.key)} onBlur=${()=>setFocused(null)} class=${'system-row tier-'+r.tier+(r.inCaps?'':' outside')}>
+      <td>${s.mode==='whole'?r.score:M.scoreText(r.capability)} ${s.mode==='whole'&&html`<span class="raw">(${M.scoreText(r.capability)})</span>`}</td>
+      <td class="name" title=${r.name}><span class="name-line"><span class="short">${r.short}</span><span class="board-tag">${boardLabel(r.board)}</span></span><span class="detail">${r.detail}</span></td>
+      <td>${M.scoreText(r.intelligence)}</td><td>${M.scoreText(r.calibration)}</td>
       <td>${r.price==null?'':'$'+M.priceText(r.price)} ${r.price!=null&&!r.price_published?'est.':''}</td>
       <td>${M.latencyText(r.latency)} ${r.latency_assumed?'assumed':''}</td>
       <td>${r.capability_rank ?? ''}</td><td>${r.composite_rank ?? ''}</td><td>${status}</td>
@@ -529,7 +617,7 @@ ${(validCap(s.cost,null)===null || validCap(s.latency,null)===null) && html`<p r
 </section></div>`}
 <footer><p>Data: <a href="https://benchmarkheaven.com/">JevBench by Benchmark Heaven</a></p>
 <p>Costs are estimates unless published; adjusted latency may rely on assumptions. The feed has no confidence intervals.</p>
-<p>Built ${data.built_at} · ${data.app.name} ${data.app.version}</p></footer></main>`;
+<p>Built ${M.whenText(data.built_at)} · ${data.app.name} ${data.app.version}</p></footer></main>`;
 }
 render(html`<${App}/>`, document.getElementById('app'));
 })();

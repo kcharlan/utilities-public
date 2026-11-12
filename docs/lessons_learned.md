@@ -1,5 +1,33 @@
 # Lessons learned
 
+## Compare history metadata at display granularity
+
+Comparing entire method or policy objects can report an invisible change and
+hide changed rows when the page suppresses row comparisons for a method change.
+Compare only the displayed label and caps, preserving the shape the page reads;
+test metadata-only changes together with an independently changed row.
+
+## Keep tier identity ahead of search
+
+Assign tier numbers before filtering so a search does not change a system's
+ranked group. Browser tests counting data rows must distinguish tier heading
+rows, and chart resize checks must wait for the responsive viewBox to update.
+
+## Preserve exact limits behind rounded controls
+
+An official threshold displayed at rounded precision can change classification if
+the display value is fed back into comparisons. Represent the official selection
+separately from custom input and compare with the original value. Exercise a
+synthetic row between the displayed and exact thresholds, including restoration
+of saved settings. JavaScript object lookups for external tokens must also avoid
+inherited properties so unknown tokens remain visible.
+
+When a numeric input applies values on each keystroke, converting and writing
+the value back can destroy a decimal point while the user is still typing. Keep
+the browser's editable draft separate from the applied number, and test actual
+sequential keystrokes as well as the resulting threshold. Numeric placeholders
+must use the same units as their labels.
+
 ## Display-aware history and board fallbacks
 
 Choose a history baseline using the same formatting and scoring mode as the
@@ -2524,3 +2552,18 @@ values in every display mode; keep unrounded values for calculations and meters.
 A guarded Findings preference could not prevent a blocked-storage error from the
 separate theme initializer. Guard each storage read and write, preserve an OS
 preference fallback, and test the dashboard with storage methods throwing.
+
+## 2026-11-12: Keep comparison details outside fixed-width tables
+
+Long explanatory text inside a comparison table can force one column wider and
+crush the others. Place the details outside the table, set explicit minimum
+column widths, and test the open details state with long synthetic text and a
+narrow viewport.
+
+Keyboard navigation through a long picker must expose the active item to
+assistive technology and keep it visible. Move focus to the actual option,
+scroll it into view, and test navigation beyond the list's visible height.
+
+Pointer hover and keyboard focus can coexist on different rows. Track their
+ownership separately so leaving one row or blurring another does not clear an
+active chart highlight; test transitions between both inputs in a browser.

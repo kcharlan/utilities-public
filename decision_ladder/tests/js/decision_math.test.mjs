@@ -9,6 +9,65 @@ new Function('module', 'ladderCore', code)(module, createRequire(import.meta.url
 const m = module.exports;
 const row = (name, capability, price, latency, extra={}) => ({key:name, name, ranked:true, board:'api', capability, price, latency, ...extra});
 const caps = {cost:5, latency:10};
+test('not ranked rows sort by displayed listing then name and filter by name', () => {
+  const rows=[row('Synthetic Z',1,1,1,{ranked:false,listing:'z-list'}),row('Synthetic B',1,1,1,{ranked:false,listing:'a-list'}),row('Synthetic A',1,1,1,{ranked:false,listing:'a-list'}),row('Synthetic ranked',1,1,1)];
+  assert.deepEqual(m.notRankedRows(rows,'').map(r=>r.name),['Synthetic A','Synthetic B','Synthetic Z']);
+  assert.deepEqual(m.notRankedRows(rows,'synthetic b').map(r=>r.name),['Synthetic B']);
+  assert.deepEqual(m.notRankedRows([row('Synthetic Z',1,1,1,{ranked:false,listing:'z-list'}),row('Synthetic missing',1,1,1,{ranked:false,listing:null}),row('Synthetic A',1,1,1,{ranked:false,listing:'a-list'})],'').map(r=>r.name),['Synthetic A','Synthetic missing','Synthetic Z']);
+});
+test('tier numbers remain stable when searching ranked rows', () => {
+  const rows=m.prepare([row('Synthetic top',9,1,1),row('Synthetic lower',7,1,1)],{board:'all',mode:'whole',axis:'price',caps});
+  assert.equal(m.searchRows(m.tiers(rows),'lower')[0].tier,2);
+  assert.deepEqual(m.defaultExpanded(m.tiers(rows),1),[1]);
+  assert.deepEqual(m.tierGroups(m.tiers(rows)).map(g=>[g.tier,g.rows.length]),[[1,1],[2,1]]);
+  assert.deepEqual(m.visibleTierRows(m.tierGroups(m.tiers(rows)),[1],false).map(r=>r.heading?'heading':r.name),['heading','Synthetic top','heading']);
+  assert.deepEqual(m.chartMarks([{key:'a',name:'Synthetic A',cost:1},{key:'b',name:'Synthetic B',cost:1}],'A','b').map(r=>r.key),['a','b']);
+});
+test('chart marks describe axis provenance, match, highlight and size', () => {
+  const rows=[{key:'a',name:'Synthetic A',cost:1,price_published:true,latency_assumed:true},
+    {key:'b',name:'Synthetic B',cost:2,price_published:false,latency_assumed:false},
+    {key:'zero',name:'Synthetic zero',cost:0}];
+  const edge=[{key:'a',status:'frontier'},{key:'b',status:'dominated'}];
+  const price=m.chartMarks(rows,'Synthetic A','b',edge,'price');
+  assert.deepEqual(price.map(({key,frontier,published,dim,highlighted,size})=>({key,frontier,published,dim,highlighted,size})),[
+    {key:'a',frontier:true,published:true,dim:false,highlighted:false,size:5},
+    {key:'b',frontier:false,published:false,dim:true,highlighted:true,size:5.5}]);
+  const latency=m.chartMarks(rows,'',null,edge,'latency');
+  assert.deepEqual(latency.map(({published,dim,size})=>({published,dim,size})),[
+    {published:false,dim:false,size:5},{published:true,dim:false,size:3.5}]);
+});
+test('frontier-only filtering excludes dominated and outside rows', () => {
+  const rows=[{key:'a',inCaps:true,status:'frontier'},{key:'b',inCaps:true,status:'dominated'},
+    {key:'c',inCaps:false,status:''}];
+  assert.deepEqual(m.boardPartitions(rows,false),{inside:rows.slice(0,2),outside:rows.slice(2)});
+  assert.deepEqual(m.boardPartitions(rows,true),{inside:rows.slice(0,1),outside:[]});
+});
+test('bestIn identifies ties and ignores missing values in either direction', () => {
+  const rows=[{v:3},{v:1},{v:3},{v:null}];
+  assert.deepEqual(m.bestIn(rows,'v','max'),[true,false,true,false]);
+  assert.deepEqual(m.bestIn(rows,'v','min'),[false,true,false,false]);
+  assert.deepEqual(m.bestIn([{v:1}],'v','min'),[false]);
+  assert.deepEqual(m.bestIn([{v:null},{v:null}],'v','max'),[false,false]);
+});
+test('picker order ranks capability descending, then name, with unranked last', () => {
+  const rows=[row('Synthetic Z',2,1,1),row('Synthetic A',2,1,1),row('Synthetic high',9,1,1,{ranked:false}),row('Synthetic low',1,1,1)];
+  assert.deepEqual(m.pickerRows(rows).map(r=>r.name),['Synthetic A','Synthetic Z','Synthetic low','Synthetic high']);
+});
+test('rank presentation uses official exclusions and only compares eligible ranks', () => {
+  const rows=[row('Synthetic excluded',4,1,1,{ranked:false,not_ranked_because:'Synthetic reason',capability_rank:1}),row('Synthetic price',4,6,1,{capability_rank:2}),row('Synthetic latency',4,1,11,{capability_rank:3}),row('Synthetic missing',4,null,null,{capability_rank:4}),row('Synthetic eligible',4,1,1,{capability_rank:5})];
+  assert.deepEqual(rows.map(r=>m.rankText(r,'capability_rank',caps)),['Not ranked: Synthetic reason','Not ranked: price above the cap','Not ranked: latency above the cap','Not ranked: no price, no latency',5]);
+  assert.deepEqual(m.rankBestIn(rows,'capability_rank',caps),[false,false,false,false,true]);
+});
+test('display formatters retain precision and translate feed tokens', () => {
+  assert.equal(m.scoreText(4.123), '4.1'); assert.equal(m.scoreText(null), '');
+  assert.equal(m.capText(0.0000646123456789, 'price'), '$0.0001');
+  assert.equal(m.capText(1.2345, 'latency'), '1.23 s');
+  assert.equal(m.secondsText(0.5), '0.5'); assert.equal(m.secondsText(1.2345), '1.23'); assert.equal(m.secondsText(0.00001234), '0.0000123');
+  for (const [kind, token, expected] of [['price','tariff','published tariff'],['price','listed','listed price'],['price','estimate','estimate'],['price','estimated','estimate'],['price','mixed','part estimate'],['price','unpriced','no price'],['latency','api-end-to-end','measured end to end'],['latency','measured-loopback','loopback, adjusted'],['latency','demo-endpoint-x2','demo endpoint, adjusted'],['listing','synthetic-other','synthetic other'],['price','unknown-token','unknown token']]) assert.equal(m.label(kind,token),expected);
+  assert.equal(m.label('price','toString'), 'toString');
+  assert.equal(m.whenText('2026-01-02T03:04:55.123Z'), '2026-01-02 03:04 UTC');
+  assert.equal(m.whenText('synthetic'), 'synthetic');
+});
 test('official cap boundaries and unavailable values', () => {
   for (const [price, latency, expected] of [[4,9,true],[5,10,true],[5.1,10,false],[5,10.1,false],[null,1,false],[1,null,false]]) {
     const r = row('Synthetic',1,price,latency,{within_caps:expected});
