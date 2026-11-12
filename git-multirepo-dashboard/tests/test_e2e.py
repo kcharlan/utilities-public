@@ -379,6 +379,104 @@ def test_card_shows_status_failed_badge(page, server_context, tmp_path):
             db.execute('DELETE FROM repositories WHERE id=?', ('synthetic-corrupt',))
 
 
+def test_detail_shows_failed_quick_scan(page, server_context, tmp_path):
+    import sqlite3
+    repo_id = 'synthetic-detail-failed'
+    repo = _create_git_repo(tmp_path, repo_id)
+    (repo / '.git' / 'index').write_bytes(b'synthetic corrupt index')
+    with sqlite3.connect(server_context['db_path']) as db:
+        db.execute('INSERT INTO repositories (id,name,path,added_at) VALUES (?,?,?,?)',
+                   (repo_id, repo_id, str(repo), '2026-01-01'))
+    try:
+        _open_app(page, server_context['url'])
+        expect(page.locator('.project-card').filter(has_text=repo_id).get_by_text('status failed')).to_be_visible()
+        with sqlite3.connect(server_context['db_path']) as db:
+            error = db.execute('SELECT quick_scan_error FROM working_state WHERE repo_id=?', (repo_id,)).fetchone()[0]
+        assert error
+        page.goto(server_context['url'] + '/#/repo/' + repo_id)
+        header = page.locator('.detail-header')
+        expect(header.get_by_text('status failed', exact=True)).to_be_visible()
+        expect(header.get_by_role('alert')).to_contain_text(error)
+        expect(header.get_by_text('Clean', exact=True)).to_have_count(0)
+    finally:
+        with sqlite3.connect(server_context['db_path']) as db:
+            db.execute('PRAGMA foreign_keys = ON')
+            db.execute('DELETE FROM repositories WHERE id=?', (repo_id,))
+
+
+def test_detail_shows_clean_and_dirty_status(page, server_context, tmp_path):
+    import sqlite3
+    repo_id = 'synthetic-detail-status'
+    repo = _create_git_repo(tmp_path, repo_id)
+    with sqlite3.connect(server_context['db_path']) as db:
+        db.execute('INSERT INTO repositories (id,name,path,added_at) VALUES (?,?,?,?)',
+                   (repo_id, repo_id, str(repo), '2026-01-01'))
+    try:
+        _open_app(page, server_context['url'])
+        expect(page.locator('.project-card').filter(has_text=repo_id).get_by_text('Clean', exact=True)).to_be_visible()
+        page.goto(server_context['url'] + '/#/repo/' + repo_id)
+        header = page.locator('.detail-header')
+        expect(header.get_by_text('Clean', exact=True)).to_be_visible()
+        expect(header.get_by_role('alert')).to_have_count(0)
+        (repo / 'synthetic-untracked.txt').write_text('synthetic')
+        _open_app(page, server_context['url'])
+        expect(page.locator('.project-card').filter(has_text=repo_id).get_by_text('1 new', exact=True)).to_be_visible()
+        page.goto(server_context['url'] + '/#/repo/' + repo_id)
+        expect(header.get_by_text('1 new', exact=True)).to_be_visible()
+        expect(header.get_by_text('Clean', exact=True)).to_have_count(0)
+        expect(header.get_by_role('alert')).to_have_count(0)
+    finally:
+        with sqlite3.connect(server_context['db_path']) as db:
+            db.execute('PRAGMA foreign_keys = ON')
+            db.execute('DELETE FROM repositories WHERE id=?', (repo_id,))
+
+
+def test_detail_missing_path_has_no_status(page, server_context, tmp_path):
+    import shutil
+    import sqlite3
+    repo_id = 'synthetic-detail-missing'
+    repo = _create_git_repo(tmp_path, repo_id)
+    with sqlite3.connect(server_context['db_path']) as db:
+        db.execute('INSERT INTO repositories (id,name,path,added_at) VALUES (?,?,?,?)',
+                   (repo_id, repo_id, str(repo), '2026-01-01'))
+    shutil.rmtree(repo)
+    try:
+        _open_app(page, server_context['url'])
+        expect(page.locator('.project-card').filter(has_text=repo_id)).to_be_visible()
+        page.goto(server_context['url'] + '/#/repo/' + repo_id)
+        header = page.locator('.detail-header')
+        expect(header.get_by_text('Path not found', exact=False)).to_be_visible()
+        for text in ('Clean', 'status failed', '1 new', '1 mod', '1 staged'):
+            expect(header.get_by_text(text, exact=True)).to_have_count(0)
+        expect(header.get_by_role('alert')).to_have_count(0)
+    finally:
+        with sqlite3.connect(server_context['db_path']) as db:
+            db.execute('PRAGMA foreign_keys = ON')
+            db.execute('DELETE FROM repositories WHERE id=?', (repo_id,))
+
+
+def test_detail_without_working_state_has_no_status(page, server_context, tmp_path):
+    import sqlite3
+    repo_id = 'synthetic-detail-unscanned'
+    repo = _create_git_repo(tmp_path, repo_id)
+    with sqlite3.connect(server_context['db_path']) as db:
+        db.execute('INSERT INTO repositories (id,name,path,added_at) VALUES (?,?,?,?)',
+                   (repo_id, repo_id, str(repo), '2026-01-01'))
+    try:
+        _open_app(page, server_context['url'] + '/#/repo/' + repo_id)
+        header = page.locator('.detail-header')
+        expect(header.get_by_role('heading', name=repo_id)).to_be_visible()
+        for text in ('Clean', 'status failed', '1 new', '1 mod', '1 staged'):
+            expect(header.get_by_text(text, exact=True)).to_have_count(0)
+        expect(header.get_by_role('alert')).to_have_count(0)
+        with sqlite3.connect(server_context['db_path']) as db:
+            assert db.execute('SELECT 1 FROM working_state WHERE repo_id=?', (repo_id,)).fetchone() is None
+    finally:
+        with sqlite3.connect(server_context['db_path']) as db:
+            db.execute('PRAGMA foreign_keys = ON')
+            db.execute('DELETE FROM repositories WHERE id=?', (repo_id,))
+
+
 @pytest.fixture
 def seeded_coverage(server_context, dependency_report_seed, tmp_path):
     import sqlite3

@@ -48,7 +48,7 @@ except ImportError:  # pragma: no cover - Windows
 
 # ── Constants ─────────────────────────────────────────────────────────────────
 DEFAULT_PORT = 8300
-VERSION = "0.3.8"
+VERSION = "0.3.9"
 
 # Populated by build_tools_dict() during preflight; global so /api/status can
 # return it without re-running which() on every request.
@@ -4361,6 +4361,8 @@ const htmlTag = htm.bind(preact.h);
         : (repo.last_full_scan_at ? timeAgo(repo.last_full_scan_at) : 'never');
 
       const pathMissing = repo.path_exists === false;
+      const ws = repo.working_state;
+      const quickScanError = !pathMissing && ws ? ws.quick_scan_error : null;
 
       function handleRemove() {
         fetch(`/api/repos/${repo.id}`, { method: 'DELETE' })
@@ -4389,7 +4391,7 @@ const htmlTag = htm.bind(preact.h);
       }
 
       return (
-        htmlTag`<div class=${"detail-header"}><div><button class=${"detail-back-btn"} onClick=${() => { window.location.hash = '#/fleet'; }} aria-label=${"Back to fleet"}><svg width=${"14"} height=${"14"} viewBox=${"0 0 14 14"} fill=${"none"} aria-hidden=${"true"}><path d=${"M9 2L4 7L9 12"} stroke=${"currentColor"} stroke-width=${"1.5"} stroke-linecap=${"round"} stroke-linejoin=${"round"} /></svg>Back</button><h1 style=${{ fontFamily: 'var(--font-heading)', fontSize: '24px', fontWeight: 700, color: 'var(--text-primary)', marginBottom: '4px' }}>${repo.name}</h1><p style=${{ fontFamily: 'var(--font-mono)', fontSize: '12px', color: pathMissing ? 'var(--status-red)' : 'var(--text-muted)', marginBottom: '6px' }}>${repo.path}${pathMissing && ' — Path not found'}</p><div style=${{ display: 'flex', alignItems: 'center', gap: '8px', fontFamily: 'var(--font-body)', fontSize: '13px', color: 'var(--text-secondary)' }}><${RuntimeBadge} runtime=${repo.runtime} /><span onClick=${onGoToBranches} style=${{ cursor: 'pointer', borderBottom: '1px dotted var(--text-muted)' }} title=${"Switch branch"}>${selectedBranch || repo.default_branch}</span><span>·</span><span>Last scanned ${scanAge}</span></div>${pathMissing && (
+        htmlTag`<div class=${"detail-header"}><div><button class=${"detail-back-btn"} onClick=${() => { window.location.hash = '#/fleet'; }} aria-label=${"Back to fleet"}><svg width=${"14"} height=${"14"} viewBox=${"0 0 14 14"} fill=${"none"} aria-hidden=${"true"}><path d=${"M9 2L4 7L9 12"} stroke=${"currentColor"} stroke-width=${"1.5"} stroke-linecap=${"round"} stroke-linejoin=${"round"} /></svg>Back</button><h1 style=${{ fontFamily: 'var(--font-heading)', fontSize: '24px', fontWeight: 700, color: 'var(--text-primary)', marginBottom: '4px' }}>${repo.name}</h1><p style=${{ fontFamily: 'var(--font-mono)', fontSize: '12px', color: pathMissing ? 'var(--status-red)' : 'var(--text-muted)', marginBottom: '6px' }}>${repo.path}${pathMissing && ' — Path not found'}</p><div style=${{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap', fontFamily: 'var(--font-body)', fontSize: '13px', color: 'var(--text-secondary)' }}><${RuntimeBadge} runtime=${repo.runtime} />${!pathMissing && ws && htmlTag`<${StatusPills} repo=${ws} />`}<span onClick=${onGoToBranches} style=${{ cursor: 'pointer', borderBottom: '1px dotted var(--text-muted)' }} title=${"Switch branch"}>${selectedBranch || repo.default_branch}</span><span>·</span><span>Last scanned ${scanAge}</span></div>${quickScanError && htmlTag`<div role=${"alert"} style=${{ marginTop: '10px', padding: '8px 12px', borderRadius: 'var(--radius-sm)', background: 'var(--status-red-bg)', color: 'var(--status-red)', fontFamily: 'var(--font-mono)', fontSize: '12px' }}>Git status failed: ${quickScanError}</div>`}${pathMissing && (
               htmlTag`<div style=${{ display: 'flex', gap: '8px', marginTop: '12px', alignItems: 'center', flexWrap: 'wrap' }}><button class=${"btn btn-secondary"} style=${{ color: 'var(--status-red)' }} onClick=${handleRemove}>Remove</button><button class=${"btn btn-secondary"} onClick=${() => setShowUpdatePath(v => !v)}>Update Path</button>${showUpdatePath && (
                   htmlTag`<input type=${"text"} value=${newPath} onInput=${e => setNewPath(e.target.value)} placeholder=${"New absolute path…"} style=${{
                         fontFamily: 'var(--font-mono)', fontSize: '13px',

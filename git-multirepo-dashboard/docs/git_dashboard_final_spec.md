@@ -268,6 +268,7 @@ Important interaction contracts:
 - Full scans show both a slim progress bar and an SSE-driven toast.
 - Cards remain keyboard reachable; delete controls do not steal the card navigation action.
 - Repository detail preserves the selected branch across Branches and Commits.
+- The repository detail header shows the working-tree status pills and, when a quick scan fails, the error text. Missing paths and absent working state show neither status pills nor a quick-scan error notice.
 - Dependency findings can be exported entirely in the browser as Markdown or JSON.
 - Offline asset loading and JavaScript errors are covered by the separate Playwright suite.
 
