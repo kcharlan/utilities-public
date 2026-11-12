@@ -412,6 +412,12 @@ function bestIn(rows,key,direction) {
   const best=direction==='max'?Math.max(...values):Math.min(...values);
   return rows.map(r=>finite(r[key]) && r[key]===best);
 }
+function rankText(row,key,caps) {
+  if (!row.ranked) return `Not ranked: ${row.not_ranked_because || 'Not available'}`;
+  if (!withinCaps(row,caps)) return `Not ranked: ${capReasons(row,caps).join(', ')}`;
+  return row[key] ?? 'Not measured';
+}
+function rankBestIn(rows,key,caps) { return bestIn(rows.map(r=>({...r,[key]:r.ranked && withinCaps(r,caps)?r[key]:null})),key,'min'); }
 function changesToShow(changes, mode) {
   if (!changes || changes.method) return [];
   const fields=['listing','capability_rank','composite_rank'];
@@ -423,7 +429,7 @@ function changesToShow(changes, mode) {
 function visibleHistory(history, mode) {
   return history.find(c=>c.revision || c.method || c.caps || c.added.length || c.removed.length || changesToShow(c,mode).length) || null;
 }
-const api={withinCaps,capReasons,prepare,tiers,boardFrontier,priceText,latencyText,secondsText,scoreText,capText,label,whenText,findings,searchRows,pickerRows,bestIn,changesToShow,visibleHistory};
+const api={withinCaps,capReasons,prepare,tiers,boardFrontier,priceText,latencyText,secondsText,scoreText,capText,label,whenText,findings,searchRows,pickerRows,bestIn,rankText,rankBestIn,changesToShow,visibleHistory};
 if (typeof module !== 'undefined') module.exports=api; else window.decisionMath=api;
 }());
 // decision-math:end
@@ -465,28 +471,28 @@ function Changes({changes,mode}) {
   </details>`;
 }
 function Picker({picks,onAdd}) {
-  const [open,setOpen]=useState(false), [query,setQuery]=useState(''), [active,setActive]=useState(0);
+  const [open,setOpen]=useState(false), [query,setQuery]=useState('');
   const wrap=useRef(null), button=useRef(null), input=useRef(null), full=picks.length>=8;
   const sorted=M.pickerRows(data.rows);
-  const list=M.searchRows(sorted,query), choosable=list.filter(r=>!picks.includes(r.key)), current=choosable[Math.min(active,choosable.length-1)];
-  useEffect(()=>{if(open && input.current) input.current.focus();},[open]);
+  const list=M.searchRows(sorted,query), choosable=list.filter(r=>!picks.includes(r.key));
+  useLayoutEffect(()=>{if(open && input.current) input.current.focus();},[open]);
   useEffect(()=>{if(full) setOpen(false);},[full]);
   useEffect(()=>{if(!open)return; const away=e=>{if(wrap.current && !wrap.current.contains(e.target))setOpen(false);}; document.addEventListener('mousedown',away); return ()=>document.removeEventListener('mousedown',away);},[open]);
-  const pick=r=>{if(r){onAdd(r.key);setActive(0);}};
-  const onKey=e=>{if(e.key==='ArrowDown'){e.preventDefault();setActive(a=>Math.min(a+1,Math.max(choosable.length-1,0)));} else if(e.key==='ArrowUp'){e.preventDefault();setActive(a=>Math.max(a-1,0));} else if(e.key==='Enter'){e.preventDefault();pick(current);} else if(e.key==='Escape'){e.preventDefault();setOpen(false);button.current?.focus();}};
+  const pick=r=>{if(r){onAdd(r.key);input.current?.focus();}};
+  const onKey=e=>{if(e.key==='Escape'){e.preventDefault();setOpen(false);button.current?.focus();} else if(e.key==='ArrowDown' || e.key==='ArrowUp'){e.preventDefault();const options=[...wrap.current.querySelectorAll('li button:not(:disabled)')], i=options.indexOf(document.activeElement), next=i<0?(e.key==='ArrowDown'?0:options.length-1):Math.max(0,Math.min(options.length-1,i+(e.key==='ArrowDown'?1:-1)));options[next]?.focus();options[next]?.scrollIntoView({block:'nearest'});} else if(e.key==='Enter' && e.target===input.current){e.preventDefault();pick(choosable[0]);}};
   return html`<div class="picker" ref=${wrap}><button type="button" ref=${button} disabled=${full} aria-expanded=${String(open)} onClick=${()=>setOpen(!open)}>${full?'Limit of 8 reached':'Add system'}</button>
-    ${open && html`<div class="pop"><input type="search" aria-label="Search systems" placeholder="Search systems" ref=${input} value=${query} onInput=${e=>{setQuery(e.currentTarget.value);setActive(0);}} onKeyDown=${onKey}/><ul>${list.map(r=>html`<li key=${r.key}><button type="button" disabled=${picks.includes(r.key)} class=${r===current?'first':''} onClick=${()=>pick(r)}><span>${r.short}</span><span>${picks.includes(r.key)?'Added':M.scoreText(r.capability)||'Not measured'}</span><small>${r.detail}</small><small>${boardLabel(r.board)}</small></button></li>`)}</ul><p>${list.length?`${list.length} of ${data.rows.length} systems.`:'No system matches that search.'}</p></div>`}</div>`;
+    ${open && html`<div class="pop" onKeyDown=${onKey}><input type="search" aria-label="Search systems" placeholder="Search systems" ref=${input} value=${query} onInput=${e=>setQuery(e.currentTarget.value)}/><ul>${list.map(r=>html`<li key=${r.key}><button type="button" disabled=${picks.includes(r.key)} onClick=${()=>pick(r)}><span>${r.short}</span><span>${picks.includes(r.key)?'Added':M.scoreText(r.capability)||'Not measured'}</span><small>${r.detail}</small><small>${boardLabel(r.board)}</small></button></li>`)}</ul><p>${list.length?`${list.length} of ${data.rows.length} systems.`:'No system matches that search.'}</p></div>`}</div>`;
 }
 function Compare({picks,setPicks}) {
   const rows=picks.map(key=>data.rows.find(r=>r.key===key)).filter(Boolean);
   const value=v=>v==null?'Not measured':v, score=v=>M.scoreText(v)||'Not measured';
   const remove=key=>setPicks(picks.filter(k=>k!==key));
-  const rank=(r,key)=>!r.ranked ? `Not ranked: ${r.not_ranked_because || 'Not available'}` : !M.withinCaps(r,data.caps) ? `Not ranked: ${M.capReasons(r,data.caps).join(', ')}` : value(r[key]);
+  const rank=(r,key)=>M.rankText(r,key,data.caps);
   const specs=[['intelligence','Intelligence','max',r=>score(r.intelligence),true],['calibration','Calibration','max',r=>score(r.calibration),true],['speed','Speed','max',r=>score(r.speed),true],['cost_axis','Cost','max',r=>score(r.cost_axis),true],['capability','Capability','max',r=>score(r.capability)],['capability_rank','Capability rank','min',r=>rank(r,'capability_rank')],['composite_rank','Composite rank','min',r=>rank(r,'composite_rank')],['price','Price / 1,000 decisions','min',r=>`${r.price==null?'No price':'$'+M.priceText(r.price)} ${M.label('price',r.price_kind)}`],['latency','Median latency','min',r=>`${M.latencyText(r.latency)||'Not measured'} ${M.label('latency',r.latency_basis)}`],['latency_p95','p95 latency','min',r=>`${M.latencyText(r.latency_p95)||'Not measured'} ${M.label('latency',r.latency_basis)}`]];
   return html`<section class="panel"><h2>Compare systems</h2><div class="selection">${rows.map(r=>html`<span class="chip">${r.short} <small>${boardLabel(r.board)}</small><button type="button" aria-label=${'Remove '+r.name} onClick=${()=>remove(r.key)}>×</button></span>`)}${rows.length>0 && html`<button type="button" onClick=${()=>setPicks([])}>Clear all</button>`}<span>${rows.length} of 8 selected</span></div>
     <${Picker} picks=${picks} onAdd=${key=>setPicks([...picks,key])}/>
     ${!rows.length ? html`<p>No systems selected. Add up to 8 to compare them side by side.</p>` : html`<div class="table-wrap compare"><table style=${{minWidth:(rows.length+1)*150+'px'}}><colgroup><col style="width:150px"/>${rows.map(()=>html`<col/>`)}</colgroup><thead><tr><th>Measure</th>${rows.map(r=>html`<th>${r.short}<span class="detail">${r.detail}</span><button type="button" aria-label=${'Remove '+r.name} onClick=${()=>remove(r.key)}>×</button></th>`)}</tr></thead><tbody>
-      ${specs.map(([key,title,direction,display,progress])=>{const comparable=key.endsWith('_rank')?rows.map(r=>({...r,[key]:r.ranked && M.withinCaps(r,data.caps)?r[key]:null})):rows, best=M.bestIn(comparable,key,direction); return html`<tr><th>${title}</th>${rows.map((r,i)=>html`<td><span class=${best[i]?'pill':''}>${display(r)}</span>${progress && Number.isFinite(r[key]) && html`<progress value=${r[key]} max="100">${score(r[key])}</progress>`}</td>`)}</tr>`;})}
+      ${specs.map(([key,title,direction,display,progress])=>{const best=key.endsWith('_rank')?M.rankBestIn(rows,key,data.caps):M.bestIn(rows,key,direction); return html`<tr><th>${title}</th>${rows.map((r,i)=>html`<td><span class=${best[i]?'pill':''}>${display(r)}</span>${progress && Number.isFinite(r[key]) && html`<progress value=${r[key]} max="100">${score(r[key])}</progress>`}</td>`)}</tr>`;})}
       <tr><th>Measurement date</th>${rows.map(r=>html`<td>${r.measured_on ?? 'Not given'}</td>`)}</tr><tr><th>Source</th>${rows.map(r=>html`<td>${safeLink(r.source_url)?html`<a href=${safeLink(r.source_url)} rel="noopener noreferrer">Source</a>`:'Not available'}</td>`)}</tr>
     </tbody></table></div>`}
     ${rows.length>0 && html`<details class="compare-details"><summary>Price basis and latency adjustment</summary>${rows.map(r=>html`<article><h3>${r.name}</h3><p>Price basis: ${value(r.price_basis)}</p><p>Latency adjustment: ${value(r.latency_adjustment)}</p></article>`)}</details>`}</section>`;

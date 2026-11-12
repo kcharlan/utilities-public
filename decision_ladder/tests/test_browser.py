@@ -271,6 +271,31 @@ def test_offline_status_and_untrusted_text(dl, tmp_path, scheme):
         browser.close()
 
 
+def test_picker_keyboard_navigation_keeps_focused_option_visible(dl, tmp_path):
+    from helpers import feed, system, snapshot
+    systems = [system(key=f'synthetic-{i:02}', name=f'Synthetic system {i:02}',
+                      capability={'score': 20 - i, 'eligible': True, 'within_caps': True},
+                      price={'usd_per_1000_decisions': 1}, latency={'p50_s_adjusted': 1}) for i in range(20)]
+    payload = dl.build_payload(snapshot(feed(systems=systems)), None, {'max_age_hours': 24})
+    path = tmp_path / 'picker.html'; path.write_bytes(dl.render_page(payload))
+    with sync_playwright() as playwright:
+        browser = playwright.chromium.launch(); context = browser.new_context(service_workers='block'); context.set_offline(True)
+        blocked = block_external_requests(context); page = context.new_page()
+        with guard_browser_errors(page):
+            page.goto(path.as_uri()); page.get_by_role('tab', name='Compare', exact=True).click()
+            page.get_by_role('button', name='Add system').click()
+            page.get_by_label('Search systems').press('ArrowDown')
+            for _ in range(12): page.keyboard.press('ArrowDown')
+            active = page.locator('.pop li button:focus')
+            expect(active).to_contain_text('Synthetic system 12')
+            bounds = active.evaluate('(el) => { const a=el.getBoundingClientRect(), b=el.closest("ul").getBoundingClientRect(); return [a.top, a.bottom, b.top, b.bottom]; }')
+            assert bounds[0] >= bounds[2] - 1 and bounds[1] <= bounds[3] + 1, bounds
+            page.keyboard.press('Enter')
+            expect(page.locator('.chip')).to_contain_text('Synthetic system 12')
+            assert_no_external_resources(page, blocked)
+        context.close(); browser.close()
+
+
 def test_compare_not_ranked_and_changes_offline(dl, tmp_path):
     from copy import deepcopy
     systems = [{'key': str(i), 'name': f'Synthetic system {i}', 'board': 'api', 'ranked': i != 9,

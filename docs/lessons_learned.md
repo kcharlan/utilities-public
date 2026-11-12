@@ -2546,3 +2546,7 @@ Long explanatory text inside a comparison table can force one column wider and
 crush the others. Place the details outside the table, set explicit minimum
 column widths, and test the open details state with long synthetic text and a
 narrow viewport.
+
+Keyboard navigation through a long picker must expose the active item to
+assistive technology and keep it visible. Move focus to the actual option,
+scroll it into view, and test navigation beyond the list's visible height.

@@ -20,6 +20,11 @@ test('picker order ranks capability descending, then name, with unranked last', 
   const rows=[row('Synthetic Z',2,1,1),row('Synthetic A',2,1,1),row('Synthetic high',9,1,1,{ranked:false}),row('Synthetic low',1,1,1)];
   assert.deepEqual(m.pickerRows(rows).map(r=>r.name),['Synthetic A','Synthetic Z','Synthetic low','Synthetic high']);
 });
+test('rank presentation uses official exclusions and only compares eligible ranks', () => {
+  const rows=[row('Synthetic excluded',4,1,1,{ranked:false,not_ranked_because:'Synthetic reason',capability_rank:1}),row('Synthetic price',4,6,1,{capability_rank:2}),row('Synthetic latency',4,1,11,{capability_rank:3}),row('Synthetic missing',4,null,null,{capability_rank:4}),row('Synthetic eligible',4,1,1,{capability_rank:5})];
+  assert.deepEqual(rows.map(r=>m.rankText(r,'capability_rank',caps)),['Not ranked: Synthetic reason','Not ranked: price above the cap','Not ranked: latency above the cap','Not ranked: no price, no latency',5]);
+  assert.deepEqual(m.rankBestIn(rows,'capability_rank',caps),[false,false,false,false,true]);
+});
 test('display formatters retain precision and translate feed tokens', () => {
   assert.equal(m.scoreText(4.123), '4.1'); assert.equal(m.scoreText(null), '');
   assert.equal(m.capText(0.0000646123456789, 'price'), '$0.0001');
