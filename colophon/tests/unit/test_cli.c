@@ -28,6 +28,16 @@ static char *captured(FILE *file,int saved,int descriptor){
     ASSERT_EQ(0,fseek(file,0,SEEK_SET));char *text=calloc((size_t)length+1,1);ASSERT_TRUE(text);
     ASSERT_EQ((size_t)length,fread(text,1,(size_t)length,file));fclose(file);return text;
 }
+TEST(cli_phase_output_requires_tty_and_preserves_display_state){
+    for(int tty=0;tty<=1;tty++){
+        FILE *file=tmpfile();ASSERT_TRUE(file);int saved=dup(2);ASSERT_TRUE(saved>=0);ASSERT_EQ(2,dup2(fileno(file),2));
+        ScanDisplay display={.tty=tty,.active=true,.width=37};
+        progress_phase(&display,"reading Claude cache…");
+        char *text=captured(file,saved,2);
+        ASSERT_STREQ(tty?"colophon: reading Claude cache…\n":"",text);
+        ASSERT_TRUE(display.active);ASSERT_EQ(37,display.width);free(text);
+    }
+}
 TEST(cli_original_progress_format_cases){
     struct {uint64_t done,total;const char *clock,*expected;} cases[]={
         {1048576,4194304,"0,2","\rcolophon: parsing 1.0/4.0 MB · ETA 6s\n"},

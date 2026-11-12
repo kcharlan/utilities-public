@@ -9,6 +9,7 @@
 bool progress_tty(void){
     return isatty(STDERR_FILENO)!=0;
 }
+void progress_phase(const ScanDisplay *display,const char *label){if(display->tty){fprintf(stderr,"colophon: %s\n",label);fflush(stderr);}}
 Err progress_scan_start(double *start){Err e=cp_monotonic_start();return e.code==ERR_OK?cp_monotonic(start):e;}
 Err progress_update(uint64_t done,uint64_t total,void *context){
     ScanDisplay *display=context;if(!display->tty)return ERR_SUCCESS;

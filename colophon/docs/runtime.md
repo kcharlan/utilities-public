@@ -1,5 +1,21 @@
 # Runtime behavior
 
+## Launch progress
+
+When stderr is a terminal, Colophon writes these launch lines to stderr:
+
+- `colophon: reading Claude cache…`
+- `colophon: scanning Claude transcripts…`
+- `colophon: reading OpenCode databases…`
+- `colophon: reading Antigravity databases…`
+- `colophon: parsing X/Y MB · ETA ...` while scanning Codex logs
+- `colophon: assembling sessions…`
+- `colophon: waiting for the price catalog…`
+- `colophon: building the page…`
+
+Disabled sources and offline catalog waiting are omitted. Stdout still carries
+only the end-of-run summary.
+
 ## Antigravity source discovery
 
 `--antigravity-home PATH` selects a Gemini root, defaulting to `~/.gemini`,
@@ -134,7 +150,7 @@ reader. Missing legacy provider fields mean Codex. Source filtering applies
 to overview totals, session lists, descendants and direct subagent links.
 The snapshot log count always includes Codex and Claude logs, regardless of the
 switch; accepted OpenCode and Antigravity database counts are shown separately. The footer
-displays the embedded payload's release version (`colophon 0.5.4`).
+displays the embedded payload's release version (`colophon 0.5.5`).
 
 Codex uses green, Claude blue, OpenCode violet and Antigravity pink. In All, KPI share rules and workspace
 bars split by provider; calendar cells use the provider with the greater
@@ -224,7 +240,7 @@ An empty value selects the default `~/.claude` config root. Its
 `COLOPHON_HOME` selects the private runtime home (default `~/.colophon`);
 tilde expansion is supported. `COLOPHON_PRICING_URL` defaults to
 `https://models.dev/api.json`. Help and version exit without initializing
-runtime state. Version is currently `colophon 0.5.4`.
+runtime state. Version is currently `colophon 0.5.5`.
 
 | Flag | Behavior |
 | --- | --- |
