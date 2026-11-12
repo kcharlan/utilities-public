@@ -74,6 +74,17 @@ def test_board_controls_and_responsive_layout(dl, tmp_path, scheme):
                 assert page.locator('.cap-line').get_attribute('x1') == '40'
                 assert page.locator('.shade').get_attribute('width') == '500'
                 page.get_by_role('button', name='Use official caps').click()
+                for invalid in ['-1', '', '1e999']:
+                    page.get_by_label(label).fill(invalid)
+                    expect(page.locator('.cap-label')).to_have_text('Cap ' + ('5' if axis == 'price' else '10'))
+                    expect(page.get_by_role('status')).to_contain_text('official cap is used')
+                    assert 'NaN' not in page.locator('.cap-line').get_attribute('x1')
+                    assert 'NaN' not in page.locator('.shade').get_attribute('width')
+                for extreme in ['1e308', '5e-324']:
+                    page.get_by_label(label).fill(extreme)
+                    assert float(page.locator('.cap-line').get_attribute('x1')) > 0
+                    assert float(page.locator('.shade').get_attribute('width')) > 0
+                page.get_by_role('button', name='Use official caps').click()
             assert page.evaluate('document.documentElement.scrollWidth <= innerWidth')
             assert page.locator('tbody b').count() == 0
             assert_no_external_resources(page, blocked)
