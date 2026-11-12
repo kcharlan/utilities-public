@@ -7,6 +7,23 @@ import pytest
 from helpers import feed
 
 
+def test_fetch_reports_progress_before_request(dl, capsys):
+    class Response:
+        headers = {}
+        def __enter__(self): return self
+        def __exit__(self, *args): pass
+        def read(self, size): return json.dumps(feed()).encode()
+
+    def open_url(request, timeout):
+        captured = capsys.readouterr()
+        assert captured.out == "Fetching the JevBench feed from Benchmark Heaven…\n"
+        assert captured.err == ""
+        return Response()
+
+    dl.fetch_feed(open_url)
+    assert capsys.readouterr().err == ""
+
+
 def test_fetch_checks_checksum_and_returns_feed(dl):
     body = json.dumps(feed()).encode()
 

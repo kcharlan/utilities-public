@@ -33,6 +33,7 @@ Install [uv](https://docs.astral.sh/uv/) (`brew install uv`), then run
 
 A refresh makes one request to Benchmark Heaven. If fetching fails, the newest
 snapshot is used when available.
+Each slow step announces itself on stdout before it starts; stderr carries only problems.
 
 ## Tiers and caps
 
