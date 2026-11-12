@@ -9,6 +9,12 @@ new Function('module', 'ladderCore', code)(module, createRequire(import.meta.url
 const m = module.exports;
 const row = (name, capability, price, latency, extra={}) => ({key:name, name, ranked:true, board:'api', capability, price, latency, ...extra});
 const caps = {cost:5, latency:10};
+test('not ranked rows sort by displayed listing then name and filter by name', () => {
+  const rows=[row('Synthetic Z',1,1,1,{ranked:false,listing:'z-list'}),row('Synthetic B',1,1,1,{ranked:false,listing:'a-list'}),row('Synthetic A',1,1,1,{ranked:false,listing:'a-list'}),row('Synthetic ranked',1,1,1)];
+  assert.deepEqual(m.notRankedRows(rows,'').map(r=>r.name),['Synthetic A','Synthetic B','Synthetic Z']);
+  assert.deepEqual(m.notRankedRows(rows,'synthetic b').map(r=>r.name),['Synthetic B']);
+  assert.deepEqual(m.notRankedRows([row('Synthetic Z',1,1,1,{ranked:false,listing:'z-list'}),row('Synthetic missing',1,1,1,{ranked:false,listing:null}),row('Synthetic A',1,1,1,{ranked:false,listing:'a-list'})],'').map(r=>r.name),['Synthetic A','Synthetic missing','Synthetic Z']);
+});
 test('tier numbers remain stable when searching ranked rows', () => {
   const rows=m.prepare([row('Synthetic top',9,1,1),row('Synthetic lower',7,1,1)],{board:'all',mode:'whole',axis:'price',caps});
   assert.equal(m.searchRows(m.tiers(rows),'lower')[0].tier,2);

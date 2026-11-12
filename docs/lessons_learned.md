@@ -1,5 +1,12 @@
 # Lessons learned
 
+## Compare history metadata at display granularity
+
+Comparing entire method or policy objects can report an invisible change and
+hide changed rows when the page suppresses row comparisons for a method change.
+Compare only the displayed label and caps, preserving the shape the page reads;
+test metadata-only changes together with an independently changed row.
+
 ## Keep tier identity ahead of search
 
 Assign tier numbers before filtering so a search does not change a system's

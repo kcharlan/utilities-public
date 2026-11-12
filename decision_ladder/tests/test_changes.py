@@ -27,6 +27,31 @@ def test_diff_reports_additions_and_removals(dl):
     assert diff["removed"] == ["Synthetic"]
 
 
+def test_unused_method_and_policy_metadata_do_not_hide_changed_rows(dl):
+    old = {"fetched_at": "before", "feed": feed()}
+    new = deepcopy(old)
+    new["feed"]["method"]["rule"] = "Synthetic new rule"
+    new["feed"]["capability_policy"]["factor"] = 42
+    diff = dl.diff_rows(old, new)
+    assert diff["method"] is None and diff["caps"] is None
+    assert not dl._shows_a_change(diff)
+    new["feed"]["systems"][0]["price"] = {"usd_per_1000_decisions": 3}
+    diff = dl.diff_rows(old, new)
+    assert diff["method"] is None and diff["caps"] is None
+    assert diff["changed"][0]["price"] == [None, 3]
+
+
+def test_method_and_caps_pairs_contain_only_displayed_fields(dl):
+    old = {"fetched_at": "before", "feed": feed()}
+    new = deepcopy(old)
+    new["feed"]["method"]["label"] = "Synthetic new method"
+    new["feed"]["capability_policy"]["cost_cap_usd_per_1000"] = 8
+    diff = dl.diff_rows(old, new)
+    assert diff["method"] == [{"label": old["feed"]["method"]["label"]}, {"label": "Synthetic new method"}]
+    assert set(diff["caps"][0]) == {"cost_cap_usd_per_1000", "median_latency_cap_s"}
+    assert diff["caps"][1]["cost_cap_usd_per_1000"] == 8
+
+
 def test_last_real_change_skips_unused_fields(dl, tmp_path):
     now = datetime(2026, 1, 1, tzinfo=timezone.utc)
     data = feed()

@@ -21,7 +21,7 @@ import zlib
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-VERSION = "1.0.0"
+VERSION = "1.1.0"
 DEFAULT_CONFIG = {"max_age_hours": 24}
 MAX_AGE_LIMIT = 87600
 FEED_URL = "https://benchmarkheaven.com/api/jevbench/latest"
@@ -292,9 +292,11 @@ def diff_rows(old, new):
     a, b = old["feed"], new["feed"]
     def pair(x, y):
         return None if x == y else [x, y]
+    def displayed_caps(feed):
+        return {key: feed["capability_policy"].get(key) for key in ("cost_cap_usd_per_1000", "median_latency_cap_s")}
     return {"from": old["fetched_at"], "to": new["fetched_at"],
-            "revision": pair(a["revision"], b["revision"]), "method": pair(a["method"], b["method"]),
-            "caps": pair(a["capability_policy"], b["capability_policy"]),
+            "revision": pair(a["revision"], b["revision"]), "method": pair({"label": a["method"].get("label")}, {"label": b["method"].get("label")}),
+            "caps": pair(displayed_caps(a), displayed_caps(b)),
             "added": [r["name"] for k, r in after.items() if k not in before],
             "removed": [r["name"] for k, r in before.items() if k not in after], "changed": changed}
 
@@ -358,6 +360,7 @@ input, select, button { font:inherit; color:var(--ink); background:var(--panel);
 .picker { position:relative; display:inline-block } .pop { position:absolute; z-index:5; top:calc(100% + 6px); left:0; width:min(430px, calc(100vw - 80px)); background:var(--panel); border:1px solid var(--ink); border-radius:8px; padding:8px }
 .pop input { width:100% } .pop ul { list-style:none; margin:0; padding:0; max-height:300px; overflow-y:auto } .pop li button { width:100%; border:0; display:grid; grid-template-columns:minmax(0,1fr) auto; gap:2px 12px; text-align:left; overflow-wrap:anywhere } .pop li button.first:not(:disabled), .pop li button:hover:not(:disabled) { background:var(--dom-bg) } .pop small { color:var(--muted) } .pop p { margin:4px; color:var(--muted) }
 .compare { max-height:70vh; overflow:auto } .compare table { table-layout:fixed; border-collapse:separate; border-spacing:0 } .compare th, .compare td { min-width:150px; overflow-wrap:anywhere } .compare thead th { position:sticky; top:0; z-index:2; background:var(--panel) } .compare tr > :first-child { position:sticky; left:0; z-index:1; width:150px; background:var(--panel) } .compare thead tr > :first-child { z-index:3 } .compare progress { display:block; width:100%; max-width:150px; accent-color:var(--accent) } .compare-details p { max-width:75ch }
+.not-ranked td:last-child { max-width:75ch; overflow-wrap:anywhere }
 """
 DECISION_MATH_JS = r"""
 // decision-math:begin
@@ -430,6 +433,8 @@ function findings(rows, caps, mode, axis='price') {
   return out;
 }
 function searchRows(rows, query) { const q=query.toLowerCase(); return rows.filter(r=>r.name.toLowerCase().includes(q)); }
+function listingText(token) { return token == null ? 'Not available' : label('listing',token); }
+function notRankedRows(rows, query) { return searchRows(rows.filter(r=>!r.ranked),query).sort((a,b)=>ladderCore.compareText(listingText(a.listing).toLowerCase(),listingText(b.listing).toLowerCase()) || ladderCore.compareText(a.name,b.name)); }
 function pickerRows(rows) { return rows.slice().sort((a,b)=> (a.ranked===b.ranked ? 0 : a.ranked ? -1 : 1) || (finite(b.capability)?b.capability:-Infinity)-(finite(a.capability)?a.capability:-Infinity) || ladderCore.compareText(a.name,b.name)); }
 function bestIn(rows,key,direction) {
   const values=rows.map(r=>r[key]).filter(finite);
@@ -454,7 +459,7 @@ function changesToShow(changes, mode) {
 function visibleHistory(history, mode) {
   return history.find(c=>c.revision || c.method || c.caps || c.added.length || c.removed.length || changesToShow(c,mode).length) || null;
 }
-const api={withinCaps,capReasons,prepare,tiers,defaultExpanded,tierGroups,visibleTierRows,chartMarks,boardPartitions,boardFrontier,priceText,latencyText,secondsText,scoreText,capText,label,whenText,findings,searchRows,pickerRows,bestIn,rankText,rankBestIn,changesToShow,visibleHistory};
+const api={withinCaps,capReasons,prepare,tiers,defaultExpanded,tierGroups,visibleTierRows,chartMarks,boardPartitions,boardFrontier,priceText,latencyText,secondsText,scoreText,capText,label,listingText,whenText,findings,searchRows,notRankedRows,pickerRows,bestIn,rankText,rankBestIn,changesToShow,visibleHistory};
 if (typeof module !== 'undefined') module.exports=api; else window.decisionMath=api;
 }());
 // decision-math:end
@@ -522,6 +527,10 @@ function Compare({picks,setPicks}) {
     </tbody></table></div>`}
     ${rows.length>0 && html`<details class="compare-details"><summary>Price basis and latency adjustment</summary>${rows.map(r=>html`<article><h3>${r.name}</h3><p>Price basis: ${value(r.price_basis)}</p><p>Latency adjustment: ${value(r.latency_adjustment)}</p></article>`)}</details>`}</section>`;
 }
+function NotRanked() {
+  const [query,setQuery]=useState(''), rows=M.notRankedRows(data.rows,query);
+  return html`<section role="tabpanel" class="panel not-ranked"><h2>Not ranked</h2><label>Filter<input aria-label="Filter not ranked systems" value=${query} onInput=${e=>setQuery(e.currentTarget.value)}/></label><p>${rows.length} ${rows.length===1?'system':'systems'}</p><div class="table-wrap"><table><thead><tr><th>System</th><th>Listing</th><th>Reason</th></tr></thead><tbody>${rows.map(r=>html`<tr key=${r.key}><td>${r.short}<span class="detail">${r.detail}</span></td><td>${M.listingText(r.listing)}</td><td>${r.not_ranked_because ?? 'Not available'}</td></tr>`)}</tbody></table></div></section>`;
+}
 function Th({k, label, active, dir, onSort}) {
   const onKey=e=>{if(e.key==='Enter'||e.key===' '){e.preventDefault();onSort(k);}};
   return html`<th tabindex="0" aria-sort=${active?(dir===1?'ascending':'descending'):'none'} onClick=${()=>onSort(k)} onKeyDown=${onKey}>${label}${active?(dir===1?' ▲':' ▼'):''}</th>`;
@@ -573,7 +582,7 @@ return html`<main class="wrap"><h1>Decision Ladder</h1><div class="status">
 <${Changes} changes=${data.change_history ? M.visibleHistory(data.change_history,s.mode) : data.changes} mode=${s.mode}/>
 <nav class="tabs" role="tablist">${[['board','Board'],['compare','Compare'],['not-ranked','Not ranked']].map(([id,name])=>html`<button role="tab" aria-selected=${s.tab===id} onClick=${()=>set('tab',id)}>${name}</button>`)}</nav>
 ${s.tab==='compare' && html`<div role="tabpanel"><${Compare} picks=${s.picks} setPicks=${v=>set('picks',v)}/></div>`}
-${s.tab==='not-ranked' && html`<section role="tabpanel" class="panel not-ranked"><h2>Not ranked</h2>${data.rows.filter(r=>!r.ranked).map(r=>html`<article><h3>${r.name}</h3><p>Listing: ${r.listing == null ? 'Not available' : M.label('listing',r.listing)}</p><p>${r.not_ranked_because ?? 'Not available'}</p></article>`)}</section>`}
+${s.tab==='not-ranked' && html`<${NotRanked}/>`}
 ${s.tab==='board' && html`<div role="tabpanel">
 <section class="panel"><div class="controls">
 <label>Board<select aria-label="Board" value=${s.board} onChange=${e=>set('board',e.target.value)}><option value="all">All</option><option value="open">Open weights</option><option value="api">Hosted API</option></select></label>

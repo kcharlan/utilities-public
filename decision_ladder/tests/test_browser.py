@@ -440,6 +440,11 @@ def test_compare_not_ranked_and_changes_offline(dl, tmp_path):
             page.get_by_role('tab', name='Not ranked', exact=True).click()
             expect(page.locator('.not-ranked')).to_contain_text('Synthetic listing')
             expect(page.locator('.not-ranked')).to_contain_text('Synthetic full reason')
+            expect(page.locator('.not-ranked table tbody tr')).to_have_count(1)
+            expect(page.locator('.not-ranked')).to_contain_text('1 system')
+            page.get_by_label('Filter not ranked systems').fill('no match')
+            expect(page.locator('.not-ranked table tbody tr')).to_have_count(0)
+            expect(page.locator('.not-ranked')).to_contain_text('0 systems')
             assert_no_external_resources(page, blocked)
         context.close(); browser.close()
 
