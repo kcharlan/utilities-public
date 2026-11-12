@@ -341,6 +341,12 @@ malformed generator isolation with an independent valid sibling through SQLite.
 
 # Availability of mutable log inputs
 
+Pooled transcript processing must stage diagnostics as well as records: a
+traversal skip can occur between two parse skips, and speculative workers can
+produce events after the first failing record. Replay only the ordered prefix.
+Claude cache hits reload cleared sidecar fields; misses already load the sidecar
+inside parsing and must not load it a second time.
+
 Treat a frozen log size as a read contract: a short fingerprint or a later EOF
 must fail that log instead of caching partial facts. Discovery alone cannot
 guarantee a path remains a regular file, so open without blocking and check the

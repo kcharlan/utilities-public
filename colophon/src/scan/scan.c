@@ -2,11 +2,9 @@
 #include "scan.h"
 #include "parse/record.h"
 #include "testing/hooks.h"
+#include "util/jobpool.h"
 #include <errno.h>
-#include <pthread.h>
-#include <stdatomic.h>
 #include <stdlib.h>
-#include <time.h>
 #include <sys/sysctl.h>
 
 size_t scan_worker_count(void) {
@@ -32,46 +30,30 @@ size_t scan_worker_count(void) {
     return count < 1 ? 1 : count > 16 ? 16 : (size_t)count;
 }
 
-typedef struct { LogRecord *record; Err error; bool hit, ready, miss; } Slot;
+typedef struct { LogRecord *record; Err error; bool hit, miss; } Slot;
 typedef struct {
     ScanResult *scan;
     Cache *cache;
     const size_t *order, *jobs;
-    size_t count, next;
+    size_t count;
     Slot *slots;
     bool parse;
-    atomic_bool cancelled;
-    pthread_mutex_t mutex;
-    pthread_cond_t changed;
-#ifdef COLOPHON_TESTING
-    size_t engaged;
-#endif
+    ScanProgress progress;
+    void *progress_context;
+    uint64_t total;
 } Pool;
 static Err cancelled_chunk(void *context) {
-    Pool *pool = context;
-    return atomic_load_explicit(&pool->cancelled, memory_order_relaxed)
+    (void)context;
+    return jobpool_cancelled()
         ? err_make(ERR_IO, "interrupted") : ERR_SUCCESS;
 }
 static Err cancelled_line(void *context, const ReaderRawLine *line) {
     (void)line;
     return cancelled_chunk(context);
 }
-static void *worker(void *context) {
+static Err worker(size_t job, void *context) {
     Pool *pool = context;
-#ifdef COLOPHON_TESTING
-    bool engaged = false;
-#endif
-    /* Workers inherit SIGINT blocked; the main thread handles cancellation. */
-    for (;;) {
-        pthread_mutex_lock(&pool->mutex);
-        if (pool->next == pool->count || atomic_load(&pool->cancelled)) {
-            pthread_mutex_unlock(&pool->mutex); return NULL;
-        }
-        size_t index = pool->jobs[pool->next++];
-#ifdef COLOPHON_TESTING
-        if (!engaged) { pool->engaged++; engaged = true; }
-#endif
-        pthread_mutex_unlock(&pool->mutex);
+        size_t index = pool->jobs[job];
         Slot *slot = &pool->slots[index];
         const DiscoveredLog *key = &pool->scan->discovery.logs[pool->order[index]];
         if (!slot->error.code) {
@@ -83,49 +65,14 @@ static void *worker(void *context) {
                 slot->error = cache_get(pool->cache, key, &pool->scan->identifiers,
                                         slot->record, &slot->hit);
         }
-        pthread_mutex_lock(&pool->mutex);
-        slot->ready = true;
-        pthread_cond_broadcast(&pool->changed);
-        pthread_mutex_unlock(&pool->mutex);
-    }
+        return slot->error;
 }
-static Err phase(Pool *pool, size_t workers, volatile sig_atomic_t *flag,
-                 ScanProgress progress, void *context, uint64_t total) {
-    if (!pool->count) return ERR_SUCCESS;
-    pthread_t threads[16];
-    size_t started = 0;
-    Err e = ERR_SUCCESS;
-    atomic_init(&pool->cancelled, false);
-    pool->next = 0;
-#ifdef COLOPHON_TESTING
-    pool->engaged = 0;
-#endif
-    if (pthread_mutex_init(&pool->mutex, NULL)) return err_make(ERR_NOMEM, "scan mutex failed");
-    if (pthread_cond_init(&pool->changed, NULL)) {
-        pthread_mutex_destroy(&pool->mutex); return err_make(ERR_NOMEM, "scan condition failed");
-    }
-    sigset_t blocked, previous;
-    sigemptyset(&blocked); sigaddset(&blocked, SIGINT);
-    if (pthread_sigmask(SIG_BLOCK, &blocked, &previous)) {
-        e = err_make(ERR_IO, "scan signal mask failed"); goto cleanup;
-    }
-    for (; started < workers && started < pool->count; started++)
-        if (pthread_create(&threads[started], NULL, worker, pool)) {
-            e = err_make(ERR_NOMEM, "scan worker creation failed"); break;
-        }
-    pthread_sigmask(SIG_SETMASK, &previous, NULL);
-    for (size_t j = 0; !e.code && j < pool->count; j++) {
+static Err collect(size_t j, Err result, void *context) {
+        Pool *pool = context;
+        Err e = ERR_SUCCESS;
         size_t index = pool->jobs[j];
         Slot *slot = &pool->slots[index];
-        pthread_mutex_lock(&pool->mutex);
-        while (!slot->ready && !(flag && *flag)) {
-            struct timespec until;
-            timespec_get(&until, TIME_UTC); until.tv_nsec += 10000000;
-            if (until.tv_nsec >= 1000000000) { until.tv_sec++; until.tv_nsec -= 1000000000; }
-            pthread_cond_timedwait(&pool->changed, &pool->mutex, &until);
-        }
-        pthread_mutex_unlock(&pool->mutex);
-        if (flag && *flag) { e = err_make(ERR_IO, "interrupted"); break; }
+        slot->error = result;
         const DiscoveredLog *key = &pool->scan->discovery.logs[pool->order[index]];
         if (slot->error.code == ERR_IO) {
             pool->scan->unreadable[pool->scan->unreadable_count++] = (UnreadableLog){key->path, slot->error};
@@ -139,18 +86,22 @@ static Err phase(Pool *pool, size_t workers, volatile sig_atomic_t *flag,
             if (!e.code) {
                 pool->scan->parsed++;
                 pool->scan->bytes_parsed += (uint64_t)key->size;
-                if (progress) e = progress(pool->scan->bytes_parsed, total, context);
+                if (pool->progress) e = pool->progress(pool->scan->bytes_parsed, pool->total, pool->progress_context);
             }
         }
-    }
-    if (e.code) atomic_store(&pool->cancelled, true);
-    for (size_t i = 0; i < started; i++) pthread_join(threads[i], NULL);
+    return e;
+}
+static Err phase(Pool *pool, size_t workers, volatile sig_atomic_t *flag,
+                 ScanProgress progress, void *context, uint64_t total) {
+    pool->progress = progress; pool->progress_context = context; pool->total = total;
+    JobStats stats = {0};
+    Err e = jobpool_run(pool->count, workers, flag, worker, collect, pool, &stats);
 #ifdef COLOPHON_TESTING
-    if (pool->parse) pool->scan->parse_workers = pool->engaged;
-    else pool->scan->lookup_workers = pool->engaged;
+    if (pool->count) {
+        if (pool->parse) pool->scan->parse_workers = stats.engaged;
+        else pool->scan->lookup_workers = stats.engaged;
+    }
 #endif
-cleanup:
-    pthread_cond_destroy(&pool->changed); pthread_mutex_destroy(&pool->mutex);
     return e;
 }
 void scan_destroy(ScanResult *r) {
@@ -194,7 +145,6 @@ static Err scan_impl(const char *codex, Cache *cache, volatile sig_atomic_t *fla
     uint64_t total = 0;
     for (size_t i = 0; i < n; i++)
         if (slots[i].miss) {
-            slots[i].ready = false;
             jobs[pool.count++] = i;
             total += (uint64_t)out->discovery.logs[order[i]].size;
         }

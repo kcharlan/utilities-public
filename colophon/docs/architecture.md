@@ -25,7 +25,7 @@ catalog/priority/pricing → payload/page:
 | `src/corpus/` | Assemble sessions, titles/status, subagent relationships and workspace aliases. |
 | `src/price/` | Fetch/cache catalog, validate and record history, retain priority evidence, compose usage and dated costs. |
 | `src/out/` | Serialize payload and embed it in the offline page. |
-| `src/cli/`, `src/util/` | Coordinate lifecycle, progress, browser/summary, atomic I/O, events, Unicode and stable sort. |
+| `src/cli/`, `src/util/` | Coordinate lifecycle, progress, browser/summary, atomic I/O, events, the shared job pool, Unicode and stable sort. |
 
 Catalog work starts before scanning and joins before pricing. The CLI reads
 ledger state and detects edits before appending newly observed rates; this
@@ -35,7 +35,9 @@ cache commit. Cleanup joins catalog work before freeing shared resources.
 The CLI resolves runtime and provider paths and inspects Claude history
 before runtime initialization. Absent Codex supplies empty scan, metadata
 and priority owners without opening its cache. Claude records have their
-own arenas and never occupy Codex `LogRecord` fields. After Codex subagent
+own arenas and never occupy Codex `LogRecord` fields. Claude discovery is
+serial; cache lookup and parsing use the shared worker pool, with records and
+diagnostics collected in discovery order. After Codex subagent
 linking, `claude_corpus_add` checks canonical filename identities before
 insertion; workspace resolution then handles both providers. Exact primary
 record aliases are indexed separately, including collision-skipped records.

@@ -3,7 +3,9 @@
 #include "claude/codec.h"
 #include "cli/run.h"
 #include "runner.h"
+#include "testing/hooks.h"
 #include "util/fileio.h"
+#include "util/events.h"
 #include "cache/cache.h"
 #include <dirent.h>
 
@@ -49,6 +51,106 @@ static bool recovery_bytes(Fixture *f,const char *source_path,const char *before
 }
 static void fault(const char *point){ASSERT_EQ(0,setenv("COLOPHON_TEST_FAULT",point,1));}
 static void clear_fault(void){ASSERT_EQ(0,unsetenv("COLOPHON_TEST_FAULT"));}
+TEST(claude_pool_preserves_order_and_mixed_cache_counts){
+  Fixture f;fixture(&f);
+  for (size_t i=0;i<32;i++) { char path[1600]; snprintf(path,sizeof path,"%s/synthetic-%02zu.jsonl",f.root,i); source(path); }
+  setenv("COLOPHON_TEST_WORKERS","1",1);
+  ClaudeScan s={0};ClaudeStore store={0};snapshot(&f,false,&s,&store);
+  ASSERT_EQ(34,s.count); ASSERT_EQ(34,s.parsed); ASSERT_EQ(0,s.cached);
+  char *paths[34];
+  for(size_t i=0;i<34;i++){paths[i]=strdup(s.records[i].key.path.p);ASSERT_TRUE(paths[i]);}
+  ASSERT_EQ(ERR_OK,claude_store_commit(&store,&s,NULL).code);close_snapshot(&s,&store);
+  char changed[1600];snprintf(changed,sizeof changed,"%s/synthetic-10.jsonl",f.root);
+  write_text(changed,"{\"type\":\"user\",\"message\":{\"content\":\"Synthetic changed request\"}}\n");
+  setenv("COLOPHON_TEST_WORKERS","8",1);snapshot(&f,false,&s,&store);
+  ASSERT_EQ(34,s.count);ASSERT_EQ(33,s.cached);ASSERT_EQ(1,s.parsed);
+  for(size_t i=0;i<34;i++){ASSERT_STREQ(paths[i],s.records[i].key.path.p);free(paths[i]);}
+  close_snapshot(&s,&store);unsetenv("COLOPHON_TEST_WORKERS");
+}
+TEST(claude_pool_interleaves_unreadable_transcripts_and_directories){
+  Fixture f;fixture(&f);char first[1600],dir[1600],last[1600];
+  snprintf(first,sizeof first,"%s/a.jsonl",f.root);source(first);
+  snprintf(dir,sizeof dir,"%s/b",f.root);ASSERT_EQ(0,mkdir(dir,0700));
+  snprintf(last,sizeof last,"%s/c.jsonl",f.root);source(last);
+  const char *workers[]={"1","8"};
+  for(size_t i=0;i<2;i++) {
+    setenv("COLOPHON_TEST_WORKERS",workers[i],1);
+    fault("claude_directory_io:2,claude_log_io_first,claude_log_io_third");
+    ClaudeScan s={0};ClaudeStore store={0};snapshot(&f,false,&s,&store);
+    ASSERT_EQ(2,s.count);ASSERT_EQ(3,s.skipped_count);ASSERT_FALSE(s.roots[0].complete);
+    ASSERT_STREQ(first,s.skipped[0].path.p);ASSERT_STREQ(dir,s.skipped[1].path.p);ASSERT_STREQ(last,s.skipped[2].path.p);
+    close_snapshot(&s,&store);clear_fault();(void)cp_fault("reset");
+  }
+  unsetenv("COLOPHON_TEST_WORKERS");
+}
+TEST(claude_pool_prioritizes_earlier_work_error_over_discovery_error){
+  Fixture f;fixture(&f);
+  ClaudeScan s={0};ClaudeRoot *r=NULL;
+  ASSERT_EQ(ERR_OK,arena_alloc(&s.arena,sizeof *r,_Alignof(ClaudeRoot),(void **)&r).code);
+  Str root;ASSERT_EQ(ERR_OK,str_copy(&s.arena,str(f.root),&root).code);
+  *r=(ClaudeRoot){.path=root,.present=true,.complete=true};s.roots=r;s.root_count=1;
+  fault("claude_discovery:2,claude_turn_alloc");
+  Err e=claude_scan(&s,NULL);clear_fault();
+  ASSERT_EQ(ERR_NOMEM,e.code);ASSERT_STREQ("Claude turn allocation failed",e.message);
+  ASSERT_EQ(1,s.logs);ASSERT_EQ(0,s.count);claude_scan_destroy(&s);
+  s=(ClaudeScan){0};ASSERT_EQ(ERR_OK,arena_alloc(&s.arena,sizeof *r,_Alignof(ClaudeRoot),(void **)&r).code);
+  ASSERT_EQ(ERR_OK,str_copy(&s.arena,str(f.root),&root).code);
+  *r=(ClaudeRoot){.path=root,.present=true,.complete=true};s.roots=r;s.root_count=1;
+  fault("claude_discovery:2");e=claude_scan(&s,NULL);clear_fault();(void)cp_fault("reset");
+  ASSERT_EQ(ERR_NOMEM,e.code);ASSERT_STREQ("Claude discovery failure",e.message);
+  ASSERT_EQ(1,s.count);claude_scan_destroy(&s);
+  s=(ClaudeScan){0};
+  ASSERT_EQ(ERR_OK,arena_alloc(&s.arena,sizeof *r,_Alignof(ClaudeRoot),(void **)&r).code);
+  ASSERT_EQ(ERR_OK,str_copy(&s.arena,str(f.root),&root).code);
+  *r=(ClaudeRoot){.path=root,.present=true,.complete=true};s.roots=r;s.root_count=1;
+  fault("claude_discovery:2,claude_log_io_first");e=claude_scan(&s,NULL);clear_fault();
+  ASSERT_EQ(ERR_NOMEM,e.code);ASSERT_STREQ("Claude discovery failure",e.message);
+  ASSERT_EQ(0,s.count);ASSERT_EQ(1,s.skipped_count);ASSERT_FALSE(r->complete);
+  ASSERT_STREQ(f.one,s.skipped[0].path.p);claude_scan_destroy(&s);
+}
+TEST(claude_pool_replays_failing_job_events_without_later_job_events){
+  Fixture f;fixture(&f);
+  write_text(f.one,"{\"type\":\"user\",\"message\":{\"content\":\"Synthetic request\"},\"ignored\":NaN}\n");
+  write_text(f.two,"{\"synthetic\":\"\\ud800\"}\n");
+  ClaudeScan s={0};ClaudeRoot *r=NULL;
+  ASSERT_EQ(ERR_OK,arena_alloc(&s.arena,sizeof *r,_Alignof(ClaudeRoot),(void **)&r).code);
+  Str root;ASSERT_EQ(ERR_OK,str_copy(&s.arena,str(f.root),&root).code);
+  *r=(ClaudeRoot){.path=root,.present=true,.complete=true};s.roots=r;s.root_count=1;
+  event_flush(NULL);fault("claude_turn_alloc");setenv("COLOPHON_TEST_WORKERS","8",1);
+  Err e=claude_scan(&s,NULL);clear_fault();unsetenv("COLOPHON_TEST_WORKERS");
+  ASSERT_EQ(ERR_NOMEM,e.code);event_flush(f.base);
+  char path[1600];snprintf(path,sizeof path,"%s/native-events.jsonl",f.base);
+  size_t size;char *bytes=read_bytes(path,&size);
+  ASSERT_TRUE(strstr(bytes,"json_nonstandard"));ASSERT_FALSE(strstr(bytes,"lone_surrogate_escape"));
+  free(bytes);claude_scan_destroy(&s);
+}
+TEST(claude_pool_preserves_event_order_and_counts_across_workers){
+  Fixture f;fixture(&f);
+  write_text(f.one,"{\"type\":\"user\",\"message\":{\"content\":\"Synthetic request\"},\"ignored\":NaN}\n");
+  write_text(f.two,"{\"synthetic\":\"\\ud800\"}\n");
+  char path[1600];snprintf(path,sizeof path,"%s/native-events.jsonl",f.base);
+  char *baseline=NULL;size_t baseline_size=0;
+  const char *workers[]={"1","8"};setenv("COLOPHON_TEST_WALL_MS","123",1);
+  for(size_t i=0;i<2;i++) {
+    event_flush(NULL);setenv("COLOPHON_TEST_WORKERS",workers[i],1);
+    ClaudeScan s={0};ClaudeStore store={0};snapshot(&f,false,&s,&store);
+    event_flush(f.base);size_t size;char *bytes=read_bytes(path,&size);
+    ASSERT_TRUE(strstr(bytes,"json_nonstandard"));ASSERT_TRUE(strstr(bytes,"lone_surrogate_escape"));
+    ASSERT_TRUE(strstr(bytes,"json_nonstandard")<strstr(bytes,"lone_surrogate_escape"));
+    if (!i) {baseline=bytes;baseline_size=size;} else {ASSERT_EQ(baseline_size,size);ASSERT_TRUE(!memcmp(baseline,bytes,size));free(bytes);}
+    ASSERT_EQ(0,unlink(path));close_snapshot(&s,&store);
+  }
+  free(baseline);unsetenv("COLOPHON_TEST_WALL_MS");unsetenv("COLOPHON_TEST_WORKERS");
+}
+TEST(claude_pool_interrupt_does_not_publish_records){
+  Fixture f;fixture(&f);ClaudeScan s={0};ClaudeRoot *r=NULL;
+  ASSERT_EQ(ERR_OK,arena_alloc(&s.arena,sizeof *r,_Alignof(ClaudeRoot),(void **)&r).code);
+  Str root;ASSERT_EQ(ERR_OK,str_copy(&s.arena,str(f.root),&root).code);
+  *r=(ClaudeRoot){.path=root,.present=true,.complete=true};s.roots=r;s.root_count=1;
+  volatile sig_atomic_t flag=1;Err e=claude_scan(&s,&flag);
+  ASSERT_EQ(ERR_IO,e.code);ASSERT_STREQ("interrupted",e.message);ASSERT_EQ(0,s.count);
+  claude_scan_destroy(&s);
+}
 TEST(claude_store_all_candidate_rechecks_precede_root_mutations){
   Fixture f;fixture(&f);seed(&f);char one[1600],two[1600];installed(&f,f.one,one);installed(&f,f.two,two);
   size_t n1,n2;char *b1=read_bytes(one,&n1),*b2=read_bytes(two,&n2);

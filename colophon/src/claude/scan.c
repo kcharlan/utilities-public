@@ -9,6 +9,9 @@
 #include "util/json_number.h"
 #include "util/sort.h"
 #include "util/time.h"
+#include "util/events.h"
+#include "util/jobpool.h"
+#include "scan/scan.h"
 #include <dirent.h>
 #include <errno.h>
 #include <limits.h>
@@ -227,13 +230,42 @@ Err claude_inspect(const Args *args, ClaudeScan *s) {
   }
   return ERR_SUCCESS;
 }
+typedef struct {
+  DiscoveredLog key;
+  ClaudeRoot *root;
+  bool skip, hit;
+  Err result;
+  ClaudeRecord record;
+  EventCapture before, events;
+} ScanJob;
+typedef struct {
+  ScanJob *jobs;
+  size_t count, capacity;
+  ClaudeRoot *root;
+  EventCapture pending;
+} Walk;
+static _Thread_local Walk *walking;
+static Err queue(Walk *walk, ScanJob job) {
+  event_capture_end();
+  if (walk->count == walk->capacity) {
+    size_t n = walk->capacity ? walk->capacity * 2 : 16;
+    ScanJob *next = realloc(walk->jobs, n * sizeof *next);
+    if (!next) { event_capture_begin(&walk->pending); return err_make(ERR_NOMEM, "Claude jobs allocation failed"); }
+    walk->jobs = next; walk->capacity = n;
+  }
+  job.before = walk->pending; walk->pending = (EventCapture){0};
+  walk->jobs[walk->count++] = job;
+  event_capture_begin(&walk->pending);
+  return ERR_SUCCESS;
+}
 static Err skipped(ClaudeScan *s, Str p) {
+  if (walking) return queue(walking, (ScanJob){.key.path=p, .root=walking->root, .skip=true});
   SkippedFile value = {p, STR_LIT("unreadable")};
   return record_append(&s->arena, (void **)&s->skipped, &s->skipped_count,
                        &s->skipped_capacity, sizeof value, &value);
 }
 static Err traversal_error(ClaudeScan *s, ClaudeRoot *r, Str p) {
-  r->complete = false;
+  if (!walking) r->complete = false;
   return skipped(s, p);
 }
 /* Missing/non-directory candidates and excluded symlinks are normal locator
@@ -264,9 +296,9 @@ static int order(const void *a, const void *b, void *ctx) {
   return str_compare(*(const Str *)a, *(const Str *)b);
 }
 static Err children(ClaudeScan *s, ClaudeRoot *r, Str parent, Children *out) {
-  DIR *d = opendir(parent.p);
+  DIR *d = cp_fault("claude_directory_io") ? NULL : opendir(parent.p);
   if (!d) {
-    r->complete = false;
+    if (!walking) r->complete = false;
     return skipped(s, parent);
   }
   Err e = ERR_SUCCESS;
@@ -276,7 +308,7 @@ static Err children(ClaudeScan *s, ClaudeRoot *r, Str parent, Children *out) {
     entry = readdir(d);
     if (!entry) {
       if (errno) {
-        r->complete = false;
+        if (!walking) r->complete = false;
         e = skipped(s, parent);
       }
       break;
@@ -295,7 +327,7 @@ static Err children(ClaudeScan *s, ClaudeRoot *r, Str parent, Children *out) {
       break;
   }
   if (closedir(d) && !e.code) {
-    r->complete = false;
+    if (!walking) r->complete = false;
     e = skipped(s, parent);
   }
   if (!e.code)
@@ -315,7 +347,7 @@ static Err walk_projects(ClaudeScan *s, ClaudeRoot *r, Str p,
     Str child = list.items[i];
     struct stat st;
     if (lstat(child.p, &st)) {
-      r->complete = false;
+      if (!walking) r->complete = false;
       TRY(skipped(s, child));
       continue;
     }
@@ -328,17 +360,9 @@ static Err walk_projects(ClaudeScan *s, ClaudeRoot *r, Str p,
       continue;
     if (omap_get(seen, child))
       continue;
+    if (cp_fault("claude_discovery"))
+      return err_make(ERR_NOMEM, "Claude discovery failure");
     TRY(omap_put(seen, child, (void *)1));
-    if(st.st_size)s->logs++;
-    if (s->count == s->capacity) {
-      size_t n = s->capacity ? s->capacity * 2 : 16;
-      ClaudeRecord *next = realloc(s->records, n * sizeof *next);
-      if (!next)
-        return err_make(ERR_NOMEM, "Claude records allocation failed");
-      s->records = next;
-      s->capacity = n;
-    }
-    ClaudeRecord *record = &s->records[s->count];
     DiscoveredLog key = {.path = child,
                          .size = st.st_size,
                          .mtime_ns =
@@ -347,24 +371,7 @@ static Err walk_projects(ClaudeScan *s, ClaudeRoot *r, Str p,
                          .stat_ok = true,
                          .device = st.st_dev,
                          .inode = st.st_ino};
-    bool hit=false;
-    Err e=claude_store_get(s->store,&key,record,&hit);
-    if(!e.code&&!hit)e=claude_parse(&key,r->path,r->resume_config_dir,record);
-    else if(!e.code) {
-      record->parent_agent=record->tool_use_id=record->description=record->agent_type=(Str){0};
-      record->has_spawn_depth=false; record->spawn_depth=0;
-      e=claude_sidecar_load(record);
-    }
-    if (e.code) {
-      claude_record_destroy(record);
-      if (e.code != ERR_IO)
-        return e;
-      r->complete = false;
-      TRY(skipped(s, child));
-    } else {
-      s->count++;
-      if(hit)s->cached++;else s->parsed++;
-    }
+    TRY(queue(walking, (ScanJob){.key=key, .root=r}));
   }
   return ERR_SUCCESS;
 }
@@ -409,15 +416,60 @@ static Err walk_desktop(ClaudeScan *s, ClaudeRoot *r, Str p, int depth,
   }
   return ERR_SUCCESS;
 }
+typedef struct { ClaudeScan *scan; Walk *walk; size_t collected; } ScanWork;
+static Err scan_work(size_t i, void *context) {
+  ScanWork *w = context; ScanJob *job = &w->walk->jobs[i];
+  if (job->skip) return ERR_SUCCESS;
+  event_capture_begin(&job->events);
+  Err e = (i == 0 && cp_fault("claude_log_io_first")) ||
+          (i == 2 && cp_fault("claude_log_io_third"))
+      ? err_make(ERR_IO, "synthetic Claude read failure")
+      : claude_store_get(w->scan->store,&job->key,&job->record,&job->hit);
+  if (!e.code && !job->hit)
+    e=claude_parse(&job->key,job->root->path,job->root->resume_config_dir,&job->record);
+  else if (!e.code) {
+    job->record.parent_agent=job->record.tool_use_id=job->record.description=job->record.agent_type=(Str){0};
+    job->record.has_spawn_depth=false; job->record.spawn_depth=0;
+    e=claude_sidecar_load(&job->record);
+  }
+  event_capture_end();
+  return e;
+}
+static Err scan_collect(size_t i, Err e, void *context) {
+  ScanWork *w = context; ScanJob *job = &w->walk->jobs[i];
+  job->result=e; w->collected=i+1;
+  return e.code && e.code != ERR_IO ? e : ERR_SUCCESS;
+}
+static Err scan_publish(ClaudeScan *s, ScanJob *job) {
+  Err e=job->result;
+  event_capture_replay(&job->before);
+  if (job->skip) { job->root->complete=false; return skipped(s, job->key.path); }
+  if (job->key.size) s->logs++;
+  event_capture_replay(&job->events);
+  if (e.code == ERR_IO) { job->root->complete=false; return skipped(s, job->key.path); }
+  if (e.code) return e;
+  if (s->count == s->capacity) {
+    size_t n=s->capacity ? s->capacity*2 : 16;
+    ClaudeRecord *next=realloc(s->records,n*sizeof *next);
+    if (!next) return err_make(ERR_NOMEM,"Claude records allocation failed");
+    s->records=next; s->capacity=n;
+  }
+  s->records[s->count++]=job->record; job->record=(ClaudeRecord){0};
+  if (job->hit) s->cached++; else s->parsed++;
+  return ERR_SUCCESS;
+}
 Err claude_scan(ClaudeScan *s, volatile sig_atomic_t *flag) {
   if (s->disabled)
     return ERR_SUCCESS;
   Omap seen = {0};
   Err e = ERR_SUCCESS;
+  Walk walk = {0};
+  walking=&walk; event_capture_begin(&walk.pending);
   for (size_t i = 0; i < s->root_count && !e.code; i++) {
     ClaudeRoot *r = &s->roots[i];
+    walk.root = r;
     if (!r->present) {
-      if(!claude_path_deleted(r->path.p))TRY(traversal_error(s,r,r->path));
+      if(!claude_path_deleted(r->path.p))e=traversal_error(s,r,r->path);
       continue;
     }
     if (r->kind == CLAUDE_PROJECTS)
@@ -446,7 +498,20 @@ Err claude_scan(ClaudeScan *s, volatile sig_atomic_t *flag) {
       }
     }
   }
+  event_capture_end(); walking=NULL;
   omap_destroy(&seen);
+  Err discovery_error=e;
+  ScanWork work={.scan=s,.walk=&walk};
+  Err run_error=jobpool_run(walk.count,scan_worker_count(),flag,scan_work,scan_collect,&work,NULL);
+  e=ERR_SUCCESS;
+  for (size_t i=0; i<work.collected && !e.code; i++) e=scan_publish(s,&walk.jobs[i]);
+  if (!e.code) e=run_error;
+  if (!e.code) { event_capture_replay(&walk.pending); e=discovery_error; }
+  for (size_t i=0; i<walk.count; i++) {
+    claude_record_destroy(&walk.jobs[i].record);
+    event_capture_destroy(&walk.jobs[i].before); event_capture_destroy(&walk.jobs[i].events);
+  }
+  event_capture_destroy(&walk.pending); free(walk.jobs);
   if(!e.code)e=claude_scan_aliases(s);
   return e;
 }
