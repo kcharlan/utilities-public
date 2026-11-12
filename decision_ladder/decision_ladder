@@ -21,7 +21,7 @@ import zlib
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-VERSION = "1.1.0"
+VERSION = "1.2.0"
 DEFAULT_CONFIG = {"max_age_hours": 24}
 MAX_AGE_LIMIT = 87600
 FEED_URL = "https://benchmarkheaven.com/api/jevbench/latest"
@@ -355,12 +355,15 @@ input, select, button { font:inherit; color:var(--ink); background:var(--panel);
 .board-table td { padding:5px 8px } .board-table .name { width:240px; max-width:240px } .board-table .name .detail { overflow:hidden; text-overflow:ellipsis; white-space:nowrap } .board-table .name-line { display:flex; gap:5px; align-items:center; white-space:nowrap; overflow:hidden } .board-table .short { overflow:hidden; text-overflow:ellipsis; font-weight:600 } .board-tag { color:var(--muted); border:1px solid var(--line); border-radius:4px; padding:0 4px; font-size:.8em; flex:none } .tier-heading td { background:var(--bg); padding:0 } .tier-heading button { width:100%; text-align:left; border:0; background:none; font-weight:600 } .dominated { color:var(--muted) }
 .chart { max-height:none } .chart text { font-size:inherit } .chart .mark { stroke:var(--accent); stroke-width:1; opacity:.7; cursor:pointer } .chart .mark.published { stroke:var(--ink); stroke-width:2 } .chart .mark.dim { opacity:.15 } .chart .mark.highlight { opacity:1; stroke-width:3 }
 .selection { display:flex; flex-wrap:wrap; align-items:center; gap:8px; margin:12px 0 }
-.chip { border:1px solid var(--ink); border-radius:999px; display:inline-flex; gap:7px; align-items:center; padding:3px 4px 3px 11px; overflow-wrap:anywhere }
+.chip { border:1px solid var(--ink); border-radius:999px; display:inline-flex; gap:7px; align-items:center; padding:3px 4px 3px 11px; overflow-wrap:anywhere; cursor:grab }
+.chip.dragging { opacity:.5 } .chip.drop-target { outline:2px solid var(--accent) }
 .chip small { color:var(--muted) } .chip button { border:0; background:none; padding:0 6px }
 .picker { position:relative; display:inline-block } .pop { position:absolute; z-index:5; top:calc(100% + 6px); left:0; width:min(430px, calc(100vw - 80px)); background:var(--panel); border:1px solid var(--ink); border-radius:8px; padding:8px }
 .pop input { width:100% } .pop ul { list-style:none; margin:0; padding:0; max-height:300px; overflow-y:auto } .pop li button { width:100%; border:0; display:grid; grid-template-columns:minmax(0,1fr) auto; gap:2px 12px; text-align:left; overflow-wrap:anywhere } .pop li button.first:not(:disabled), .pop li button:hover:not(:disabled) { background:var(--dom-bg) } .pop small { color:var(--muted) } .pop p { margin:4px; color:var(--muted) }
+.clearable { position:relative; display:inline-flex } .clearable input { padding-right:28px; width:100% } .clearable .clear { position:absolute; right:2px; top:50%; transform:translateY(-50%); border:0; background:none; padding:2px 8px; color:var(--muted); min-width:24px; min-height:24px } .pop .clearable { display:flex }
 .compare { max-height:70vh; overflow:auto } .compare table { table-layout:fixed; border-collapse:separate; border-spacing:0 } .compare th, .compare td { min-width:150px; overflow-wrap:anywhere } .compare thead th { position:sticky; top:0; z-index:2; background:var(--panel) } .compare tr > :first-child { position:sticky; left:0; z-index:1; width:150px; background:var(--panel) } .compare thead tr > :first-child { z-index:3 } .compare progress { display:block; width:100%; max-width:150px; accent-color:var(--accent) } .compare-details p { max-width:75ch }
 .not-ranked td:last-child { max-width:75ch; overflow-wrap:anywhere }
+.board-table td.sort-group-column { background:var(--dom-bg) } .sort-heading td { background:var(--bg); font-weight:600 } .sort-band td { background:var(--bg) } .sort-band-start td { border-top:1px solid var(--line) } .sort-number { font-size:.75em; margin-left:3px }
 """
 DECISION_MATH_JS = r"""
 // decision-math:begin
@@ -378,9 +381,13 @@ function prepare(rows, opts) {
     label:r.name, score:opts.mode === 'whole' ? ladderCore.wholePoints(r.capability) : r.capability,
     cost:finite(r[opts.axis]) ? r[opts.axis] : null, inCaps:withinCaps(r,opts.caps)}));
 }
-function tiers(rows) {
+function tierCompare(axis='price') {
   const compareNullable = (a,b) => a == null ? (b == null ? 0 : 1) : b == null ? -1 : a-b;
-  const list = rows.slice().sort((a,b) => b.score-a.score || compareNullable(a.price,b.price) || compareNullable(a.latency,b.latency) || ladderCore.compareText(a.label,b.label));
+  const [first,second]=axis==='latency'?['latency','price']:['price','latency'];
+  return (a,b) => b.score-a.score || compareNullable(a[first],b[first]) || compareNullable(a[second],b[second]) || ladderCore.compareText(a.label,b.label);
+}
+function tiers(rows, axis='price') {
+  const list = rows.slice().sort(tierCompare(axis));
   let tier = 0, previous, size = 0;
   list.forEach((r,i) => { if (i === 0 || r.score !== previous) { tier++; previous=r.score; size=list.filter(x => x.score === r.score).length; } list[i]={...r,tier,tierSize:size}; });
   return list;
@@ -420,7 +427,7 @@ function label(kind,token) {
 }
 function whenText(iso) { const date=new Date(iso); return Number.isNaN(date.getTime()) ? iso : date.toISOString().slice(0,16).replace('T',' ')+' UTC'; }
 function findings(rows, caps, mode, axis='price') {
-  const inside=rows.filter(r=>r.inCaps), ranked=tiers(inside), front=boardFrontier(rows).filter(r=>r.status==='frontier');
+  const inside=rows.filter(r=>r.inCaps), ranked=tiers(inside,axis), front=boardFrontier(rows).filter(r=>r.status==='frontier');
   const out=[`${inside.length} ranked systems are inside the caps; ${front.length} are on the frontier.`];
   if (ranked.length) { const top=ranked.filter(r=>r.tier===1); out.push(`The top tier scores ${mode === 'whole' ? top[0].score : top[0].score.toFixed(1)}: ${top.map(r=>r.label).join(', ')}.`); }
   const steps=front.filter(r=>r.up && r.up.perPoint !== null).map(r=>({from:r.label, ...r.up})).sort((a,b)=>a.perPoint-b.perPoint);
@@ -436,6 +443,17 @@ function searchRows(rows, query) { const q=query.toLowerCase(); return rows.filt
 function listingText(token) { return token == null ? 'Not available' : label('listing',token); }
 function notRankedRows(rows, query) { return searchRows(rows.filter(r=>!r.ranked),query).sort((a,b)=>ladderCore.compareText(listingText(a.listing).toLowerCase(),listingText(b.listing).toLowerCase()) || ladderCore.compareText(a.name,b.name)); }
 function pickerRows(rows) { return rows.slice().sort((a,b)=> (a.ranked===b.ranked ? 0 : a.ranked ? -1 : 1) || (finite(b.capability)?b.capability:-Infinity)-(finite(a.capability)?a.capability:-Infinity) || ladderCore.compareText(a.name,b.name)); }
+function movePick(picks,key,targetKey) {
+  const from=picks.indexOf(key), to=picks.indexOf(targetKey);
+  if (from<0 || to<0 || from===to) return picks;
+  const result=picks.slice(); result.splice(from,1); result.splice(to,0,key); return result;
+}
+function shiftPick(picks,key,delta) {
+  const from=picks.indexOf(key);
+  if (from<0) return picks;
+  const to=Math.max(0,Math.min(picks.length-1,from+delta));
+  return movePick(picks,key,picks[to]);
+}
 function bestIn(rows,key,direction) {
   const values=rows.map(r=>r[key]).filter(finite);
   if (rows.length<2 || !values.length) return rows.map(()=>false);
@@ -448,18 +466,37 @@ function rankText(row,key,caps) {
   return row[key] ?? 'Not measured';
 }
 function rankBestIn(rows,key,caps) { return bestIn(rows.map(r=>({...r,[key]:r.ranked && withinCaps(r,caps)?r[key]:null})),key,'min'); }
+function changeText(field,value,mode) {
+  if (value == null) return 'none';
+  if (field==='capability') return mode==='whole' ? String(ladderCore.wholePoints(value)) : scoreText(value);
+  if (field==='price') return '$'+priceText(value);
+  if (field==='latency') return latencyText(value);
+  if (field==='listing') return listingText(value);
+  return String(value);
+}
+function groupValueText(key,value,mode) {
+  if (value == null) return 'No value';
+  if (key==='score') return (mode==='whole'?String(value):scoreText(value))+' points';
+  if (key==='intelligence' || key==='calibration') return scoreText(value);
+  if (key==='price') return '$'+priceText(value);
+  if (key==='latency') return latencyText(value);
+  if (key==='status') return value==='frontier'?'Frontier':value==='dominated'?'Dominated':String(value);
+  return String(value);
+}
+function changeFields(row,mode) {
+  return [['capability','Capability'],['price','Price'],['latency','Latency'],['listing','Listing'],['capability_rank','Capability rank'],['composite_rank','Composite rank']]
+    .filter(([field])=>row[field])
+    .map(([field,label])=>({label,from:changeText(field,row[field][0],mode),to:changeText(field,row[field][1],mode)}))
+    .filter(({from,to})=>from!==to);
+}
 function changesToShow(changes, mode) {
   if (!changes || changes.method) return [];
-  const fields=['listing','capability_rank','composite_rank'];
-  const formattedChange=(pair,format)=>pair && format(pair[0])!==format(pair[1]);
-  return (changes.changed || []).filter(r=>fields.some(k=>r[k] && r[k][0]!==r[k][1]) ||
-    formattedChange(r.price,priceText) || formattedChange(r.latency,latencyText) ||
-    (r.capability && r.capability.map(v=>finite(v)?(mode==='whole'?ladderCore.wholePoints(v):v.toFixed(1)):v).some((v,i,a)=>v!==a[0])));
+  return (changes.changed || []).filter(r=>changeFields(r,mode).length>0);
 }
 function visibleHistory(history, mode) {
   return history.find(c=>c.revision || c.method || c.caps || c.added.length || c.removed.length || changesToShow(c,mode).length) || null;
 }
-const api={withinCaps,capReasons,prepare,tiers,defaultExpanded,tierGroups,visibleTierRows,chartMarks,boardPartitions,boardFrontier,priceText,latencyText,secondsText,scoreText,capText,label,listingText,whenText,findings,searchRows,notRankedRows,pickerRows,bestIn,rankText,rankBestIn,changesToShow,visibleHistory};
+const api={withinCaps,capReasons,prepare,tierCompare,tiers,defaultExpanded,tierGroups,visibleTierRows,chartMarks,boardPartitions,boardFrontier,priceText,latencyText,secondsText,scoreText,capText,label,listingText,whenText,findings,searchRows,notRankedRows,pickerRows,movePick,shiftPick,bestIn,rankText,rankBestIn,changeText,groupValueText,changeFields,changesToShow,visibleHistory};
 if (typeof module !== 'undefined') module.exports=api; else window.decisionMath=api;
 }());
 // decision-math:end
@@ -475,6 +512,7 @@ const age = ladderCore.dataAge(data.last_checked, Date.now(), data.max_age_hours
 const measured = data.rows.filter(r => r.capability !== null).length;
 const ranked = data.rows.filter(r => r.ranked).length;
 const validCap=(value,fallback)=> (typeof value==='number' || (typeof value==='string' && value.trim()!=='')) && Number.isFinite(Number(value)) && Number(value)>=0 ? Number(value) : fallback;
+const heads=[['score','Capability','d'],['name','System','a'],['intelligence','Intelligence','d'],['calibration','Calibration','d'],['price','Price / 1,000','a'],['latency','Median latency','a'],['capability_rank','Capability rank','a'],['composite_rank','Composite rank','a'],['status','Frontier','a']].map(([key,label,first])=>({key,label,first,value:r=>r[key]}));
 function initial() {
   let saved = {}; try { saved=JSON.parse(location.hash ? decodeURIComponent(location.hash.slice(1)) : localStorage.getItem('decision_ladder.state') || '{}'); } catch (_) {}
   if (!saved || typeof saved !== 'object' || Array.isArray(saved)) saved={};
@@ -482,8 +520,8 @@ function initial() {
   return {board:choice(saved.board,['all','open','api'],'all'), mode:choice(saved.mode,['whole','decimal'],'whole'),
     axis:choice(saved.axis,['price','latency'],'price'), cost:validCap(saved.cost,null)===data.caps.cost?null:validCap(saved.cost,null), latency:validCap(saved.latency,null)===data.caps.latency?null:validCap(saved.latency,null),
     query:typeof saved.query==='string'?saved.query:'', outside:typeof saved.outside==='boolean'?saved.outside:false,
-    sort:choice(saved.sort,['','score','name','intelligence','calibration','price','latency','capability_rank','composite_rank','status'],''),
-    dir:choice(saved.dir,[-1,1],1), tab:choice(saved.tab,['board','compare','not-ranked'],'board'),
+    sort:ladderCore.normalizeSort(typeof saved.sort==='string' ? (saved.sort?[(saved.dir===1?'a:':'d:')+saved.sort]:[]) : saved.sort,heads.map(h=>h.key)),
+    tab:choice(saved.tab,['board','compare','not-ranked'],'board'),
     picks:Array.isArray(saved.picks)?[...new Set(saved.picks.filter(k=>typeof k==='string' && data.rows.some(r=>r.key===k)))].slice(0,8):[]};
 }
 function safeLink(value) { try { const u=new URL(value); return ['http:','https:'].includes(u.protocol)?u.href:null; } catch (_) { return null; } }
@@ -491,14 +529,19 @@ function boardLabel(board) { return board==='open'?'Open weights':board==='api'?
 function Changes({changes,mode}) {
   if (!changes) return html`<details class="changes"><summary>Changes</summary><p>No previous snapshot.</p></details>`;
   const pair=(p)=>p ? `${p[0]} → ${p[1]}` : '';
-  const cap=p=>`$${p.cost_cap_usd_per_1000} / 1,000 decisions; ${p.median_latency_cap_s}s`;
+  const cap=p=>`${p.cost_cap_usd_per_1000 == null ? 'none' : M.capText(p.cost_cap_usd_per_1000,'price')} / 1,000 decisions; ${p.median_latency_cap_s == null ? 'none' : M.capText(p.median_latency_cap_s,'latency')}`;
   return html`<details class="changes"><summary>Changes</summary>
     ${changes.revision && html`<p>Revision: ${pair(changes.revision)}</p>`}
     ${changes.method && html`<p>Scoring method changed from ${changes.method[0].label} to ${changes.method[1].label}; scores before and after are not comparable</p>`}
     ${changes.caps && html`<p>Caps: ${cap(changes.caps[0])} → ${cap(changes.caps[1])}</p>`}
     ${(changes.added||[]).map(name=>html`<p>Added: ${name}</p>`)}${(changes.removed||[]).map(name=>html`<p>Removed: ${name}</p>`)}
-    ${M.changesToShow(changes,mode).map(r=>html`<p>Changed: ${r.name} ${['capability','price','latency','listing','capability_rank','composite_rank'].filter(k=>r[k] && r[k][0]!==r[k][1]).map(k=>`${k}: ${pair(k==='capability'?r[k].map(v=>v==null?v:M.scoreText(v)):r[k])}`).join('; ')}</p>`)}
+    ${M.changesToShow(changes,mode).map(r=>html`<p>Changed: ${r.name}: ${M.changeFields(r,mode).map(({label,from,to})=>`${label} ${from} → ${to}`).join('; ')}</p>`)}
   </details>`;
+}
+function ClearableInput({value,onChange,label,placeholder,inputRef,clearOnEscape}) {
+  const localRef=useRef(null), ref=inputRef || localRef;
+  const clear=()=>{onChange('');ref.current?.focus();};
+  return html`<span class="clearable"><input type="text" aria-label=${label} placeholder=${placeholder} ref=${ref} value=${value} onInput=${e=>onChange(e.currentTarget.value)} onKeyDown=${e=>{if(clearOnEscape && e.key==='Escape'){e.preventDefault();clear();}}}/>${value ? html`<button type="button" class="clear" aria-label=${'Clear '+label} onMouseDown=${e=>e.preventDefault()} onClick=${clear}>×</button>` : null}</span>`;
 }
 function Picker({picks,onAdd}) {
   const [open,setOpen]=useState(false), [query,setQuery]=useState('');
@@ -511,17 +554,19 @@ function Picker({picks,onAdd}) {
   const pick=r=>{if(r){onAdd(r.key);input.current?.focus();}};
   const onKey=e=>{if(e.key==='Escape'){e.preventDefault();setOpen(false);button.current?.focus();} else if(e.key==='ArrowDown' || e.key==='ArrowUp'){e.preventDefault();const options=[...wrap.current.querySelectorAll('li button:not(:disabled)')], i=options.indexOf(document.activeElement), next=i<0?(e.key==='ArrowDown'?0:options.length-1):Math.max(0,Math.min(options.length-1,i+(e.key==='ArrowDown'?1:-1)));options[next]?.focus();options[next]?.scrollIntoView({block:'nearest'});} else if(e.key==='Enter' && e.target===input.current){e.preventDefault();pick(choosable[0]);}};
   return html`<div class="picker" ref=${wrap}><button type="button" ref=${button} disabled=${full} aria-expanded=${String(open)} onClick=${()=>setOpen(!open)}>${full?'Limit of 8 reached':'Add system'}</button>
-    ${open && html`<div class="pop" onKeyDown=${onKey}><input type="search" aria-label="Search systems" placeholder="Search systems" ref=${input} value=${query} onInput=${e=>setQuery(e.currentTarget.value)}/><ul>${list.map(r=>html`<li key=${r.key}><button type="button" disabled=${picks.includes(r.key)} onClick=${()=>pick(r)}><span>${r.short}</span><span>${picks.includes(r.key)?'Added':M.scoreText(r.capability)||'Not measured'}</span><small>${r.detail}</small><small>${boardLabel(r.board)}</small></button></li>`)}</ul><p>${list.length?`${list.length} of ${data.rows.length} systems.`:'No system matches that search.'}</p></div>`}</div>`;
+    ${open && html`<div class="pop" onKeyDown=${onKey}><${ClearableInput} label="Search systems" placeholder="Search systems" inputRef=${input} value=${query} onChange=${setQuery}/><ul>${list.map(r=>html`<li key=${r.key}><button type="button" disabled=${picks.includes(r.key)} onClick=${()=>pick(r)}><span>${r.short}</span><span>${picks.includes(r.key)?'Added':M.scoreText(r.capability)||'Not measured'}</span><small>${r.detail}</small><small>${boardLabel(r.board)}</small></button></li>`)}</ul><p>${list.length?`${list.length} of ${data.rows.length} systems.`:'No system matches that search.'}</p></div>`}</div>`;
 }
 function Compare({picks,setPicks}) {
+  const [dragged,setDragged]=useState(null), [target,setTarget]=useState(null);
   const rows=picks.map(key=>data.rows.find(r=>r.key===key)).filter(Boolean);
   const value=v=>v==null?'Not measured':v, score=v=>M.scoreText(v)||'Not measured';
   const remove=key=>setPicks(picks.filter(k=>k!==key));
   const rank=(r,key)=>M.rankText(r,key,data.caps);
   const specs=[['intelligence','Intelligence','max',r=>score(r.intelligence),true],['calibration','Calibration','max',r=>score(r.calibration),true],['speed','Speed','max',r=>score(r.speed),true],['cost_axis','Cost','max',r=>score(r.cost_axis),true],['capability','Capability','max',r=>score(r.capability)],['capability_rank','Capability rank','min',r=>rank(r,'capability_rank')],['composite_rank','Composite rank','min',r=>rank(r,'composite_rank')],['price','Price / 1,000 decisions','min',r=>`${r.price==null?'No price':'$'+M.priceText(r.price)} ${M.label('price',r.price_kind)}`],['latency','Median latency','min',r=>`${M.latencyText(r.latency)||'Not measured'} ${M.label('latency',r.latency_basis)}`],['latency_p95','p95 latency','min',r=>`${M.latencyText(r.latency_p95)||'Not measured'} ${M.label('latency',r.latency_basis)}`]];
-  return html`<section class="panel"><h2>Compare systems</h2><div class="selection">${rows.map(r=>html`<span class="chip">${r.short} <small>${boardLabel(r.board)}</small><button type="button" aria-label=${'Remove '+r.name} onClick=${()=>remove(r.key)}>×</button></span>`)}${rows.length>0 && html`<button type="button" onClick=${()=>setPicks([])}>Clear all</button>`}<span>${rows.length} of 8 selected</span></div>
+  return html`<section class="panel"><h2>Compare systems</h2><div class="selection">${rows.map(r=>html`<span key=${r.key} class=${'chip'+(dragged===r.key?' dragging':'')+(target===r.key?' drop-target':'')} draggable="true" onDragStart=${e=>{setDragged(r.key);e.dataTransfer.setData('text/plain',r.key);e.dataTransfer.effectAllowed='move';}} onDragOver=${e=>{e.preventDefault();setTarget(r.key);}} onDrop=${e=>{e.preventDefault();setPicks(M.movePick(picks,dragged,r.key));setDragged(null);setTarget(null);}} onDragEnd=${()=>{setDragged(null);setTarget(null);}}>${r.short} <small>${boardLabel(r.board)}</small><button type="button" aria-label=${'Remove '+r.name} onClick=${()=>remove(r.key)}>×</button></span>`)}${rows.length>0 && html`<button type="button" onClick=${()=>setPicks([])}>Clear all</button>`}<span>${rows.length} of 8 selected</span></div>
+    ${rows.length>=2 && html`<p>Drag a chip, or use the arrows in a column heading, to reorder.</p>`}
     <${Picker} picks=${picks} onAdd=${key=>setPicks([...picks,key])}/>
-    ${!rows.length ? html`<p>No systems selected. Add up to 8 to compare them side by side.</p>` : html`<div class="table-wrap compare"><table style=${{minWidth:(rows.length+1)*150+'px'}}><colgroup><col style="width:150px"/>${rows.map(()=>html`<col/>`)}</colgroup><thead><tr><th>Measure</th>${rows.map(r=>html`<th>${r.short}<span class="detail">${r.detail}</span><button type="button" aria-label=${'Remove '+r.name} onClick=${()=>remove(r.key)}>×</button></th>`)}</tr></thead><tbody>
+    ${!rows.length ? html`<p>No systems selected. Add up to 8 to compare them side by side.</p>` : html`<div class="table-wrap compare"><table style=${{minWidth:(rows.length+1)*150+'px'}}><colgroup><col style="width:150px"/>${rows.map(()=>html`<col/>`)}</colgroup><thead><tr><th>Measure</th>${rows.map((r,i)=>html`<th>${r.short}<span class="detail">${r.detail}</span><button type="button" aria-label=${'Move '+r.name+' left'} disabled=${i===0} onClick=${()=>setPicks(M.shiftPick(picks,r.key,-1))}>◀</button><button type="button" aria-label=${'Move '+r.name+' right'} disabled=${i===rows.length-1} onClick=${()=>setPicks(M.shiftPick(picks,r.key,1))}>▶</button><button type="button" aria-label=${'Remove '+r.name} onClick=${()=>remove(r.key)}>×</button></th>`)}</tr></thead><tbody>
       ${specs.map(([key,title,direction,display,progress])=>{const best=key.endsWith('_rank')?M.rankBestIn(rows,key,data.caps):M.bestIn(rows,key,direction); return html`<tr><th>${title}</th>${rows.map((r,i)=>html`<td><span class=${best[i]?'pill':''}>${display(r)}</span>${progress && Number.isFinite(r[key]) && html`<progress value=${r[key]} max="100">${score(r[key])}</progress>`}</td>`)}</tr>`;})}
       <tr><th>Measurement date</th>${rows.map(r=>html`<td>${r.measured_on ?? 'Not given'}</td>`)}</tr><tr><th>Source</th>${rows.map(r=>html`<td>${safeLink(r.source_url)?html`<a href=${safeLink(r.source_url)} rel="noopener noreferrer">Source</a>`:'Not available'}</td>`)}</tr>
     </tbody></table></div>`}
@@ -529,11 +574,12 @@ function Compare({picks,setPicks}) {
 }
 function NotRanked() {
   const [query,setQuery]=useState(''), rows=M.notRankedRows(data.rows,query);
-  return html`<section role="tabpanel" class="panel not-ranked"><h2>Not ranked</h2><label>Filter<input aria-label="Filter not ranked systems" value=${query} onInput=${e=>setQuery(e.currentTarget.value)}/></label><p>${rows.length} ${rows.length===1?'system':'systems'}</p><div class="table-wrap"><table><thead><tr><th>System</th><th>Listing</th><th>Reason</th></tr></thead><tbody>${rows.map(r=>html`<tr key=${r.key}><td>${r.short}<span class="detail">${r.detail}</span></td><td>${M.listingText(r.listing)}</td><td>${r.not_ranked_because ?? 'Not available'}</td></tr>`)}</tbody></table></div></section>`;
+  return html`<section role="tabpanel" class="panel not-ranked"><h2>Not ranked</h2><label>Filter<${ClearableInput} label="Filter not ranked systems" value=${query} onChange=${setQuery} clearOnEscape=${true}/></label><p>${rows.length} ${rows.length===1?'system':'systems'}</p><div class="table-wrap"><table><thead><tr><th>System</th><th>Listing</th><th>Reason</th></tr></thead><tbody>${rows.map(r=>html`<tr key=${r.key}><td>${r.short}<span class="detail">${r.detail}</span></td><td>${M.listingText(r.listing)}</td><td>${r.not_ranked_because ?? 'Not available'}</td></tr>`)}</tbody></table></div></section>`;
 }
-function Th({k, label, active, dir, onSort}) {
-  const onKey=e=>{if(e.key==='Enter'||e.key===' '){e.preventDefault();onSort(k);}};
-  return html`<th tabindex="0" aria-sort=${active?(dir===1?'ascending':'descending'):'none'} onClick=${()=>onSort(k)} onKeyDown=${onKey}>${label}${active?(dir===1?' ▲':' ▼'):''}</th>`;
+function Th({column, list, onSort}) {
+  const index=list.findIndex(entry=>entry.slice(2)===column.key), direction=index<0?null:list[index][0];
+  const onKey=e=>{if(e.key==='Enter'||e.key===' '){e.preventDefault();onSort(column);}};
+  return html`<th tabindex="0" aria-sort=${index===0?(direction==='a'?'ascending':'descending'):undefined} onClick=${()=>onSort(column)} onKeyDown=${onKey}>${column.label}${direction?(direction==='a'?' ▲':' ▼'):''}${direction && list.length>1?html`<small class="sort-number">${index+1}</small>`:null}</th>`;
 }
 function Chart({rows, caps, axis, edge, query, highlight, onSelect}) {
   const [narrow,setNarrow]=useState(()=>window.innerWidth<600);
@@ -565,15 +611,17 @@ useLayoutEffect(()=>{ const value=JSON.stringify(s); try { localStorage.setItem(
 const caps={cost:validCap(s.cost,data.caps.cost),latency:validCap(s.latency,data.caps.latency)};
 const prepared=M.prepare(data.rows,{board:s.board,mode:s.mode,axis:s.axis,caps});
 const edge=M.boardFrontier(prepared), byKey=new Map(edge.map(r=>[r.key,r]));
-let rows=M.searchRows(M.tiers(prepared),s.query).map(r=>({...r,status:byKey.get(r.key)?.status || ''}));
+let rows=M.searchRows(M.tiers(prepared,s.axis),s.query).map(r=>({...r,status:byKey.get(r.key)?.status || ''}));
 let {inside,outside}=M.boardPartitions(rows,frontierOnly);
-if (s.sort) { const cmp=(a,b)=>{const av=a[s.sort],bv=b[s.sort]; if(av==null)return bv==null?0:1; if(bv==null)return -1; return s.dir*ladderCore.compareValues(av,bv);}; inside.sort(cmp); outside.sort(cmp); }
+const valueOf=(row,key)=>heads.find(h=>h.key===key).value(row);
+if (s.sort.length) { inside=ladderCore.stackSort(inside,s.sort,valueOf,M.tierCompare(s.axis)); outside=ladderCore.stackSort(outside,s.sort,valueOf,M.tierCompare(s.axis)); }
 rows=inside.concat(s.outside?outside:[]);
 const opened=expanded===null?M.defaultExpanded(rows):expanded;
 const groups=M.tierGroups(rows);
-const visibleRows=s.sort?rows:M.visibleTierRows(groups,opened,!!s.query);
-const heads=[['score','Capability'],['name','System'],['intelligence','Intelligence'],['calibration','Calibration'],['price','Price / 1,000'],['latency','Median latency'],['capability_rank','Capability rank'],['composite_rank','Composite rank'],['status','Frontier']];
-const sort=k=>setS({...s,sort:k,dir:s.sort===k?-s.dir:1});
+const primary=s.sort.length?heads.find(h=>h.key===s.sort[0].slice(2)):null;
+const sortedRows=part=>{const runs=ladderCore.sortRuns(part,valueOf,primary.key), mode=ladderCore.sortRunMode(runs); return runs.flatMap((run,i)=>[...(mode==='headings'?[{sortHeading:true,text:primary.label+' '+M.groupValueText(primary.key,run.value,s.mode)+' · '+run.rows.length+' '+(run.rows.length===1?'system':'systems')}]:[]),...run.rows.map((r,j)=>({...r,band:mode==='bands' && i%2===1,bandStart:mode==='bands' && j===0}))]);};
+const visibleRows=primary?[...sortedRows(inside),...(s.outside && outside.length?[{sortHeading:true,text:'Outside the caps · '+outside.length+' '+(outside.length===1?'system':'systems')},...sortedRows(outside)]:[])]:M.visibleTierRows(groups,opened,!!s.query);
+const sort=column=>set('sort',ladderCore.clickSort(s.sort,column.key,column.first));
 return html`<main class="wrap"><h1>Decision Ladder</h1><div class="status">
 <span id="status-age" class=${age.stale ? 'age stale' : 'age'}>${age.text}</span>
 <span>Revision <b>${data.revision}</b></span><span>Method <b>${data.method.label}</b></span>
@@ -591,27 +639,29 @@ ${s.tab==='board' && html`<div role="tabpanel">
 <button disabled=${s.cost===null && s.latency===null} onClick=${()=>{setCapReset(capReset+1);setS({...s,cost:null,latency:null});}}>Use official caps</button>${(s.cost!==null || s.latency!==null) && html`<span>Custom caps</span>`}
 <label>Scoring<select aria-label="Scoring" value=${s.mode} onChange=${e=>set('mode',e.target.value)}><option value="whole">Whole points</option><option value="decimal">Decimals</option></select></label>
 <label>Chart x-axis<select aria-label="Chart x-axis" value=${s.axis} onChange=${e=>set('axis',e.target.value)}><option value="price">Price</option><option value="latency">Latency</option></select></label>
-<label>Filter<input aria-label="Filter" value=${s.query} onInput=${e=>set('query',e.target.value)}/></label></div>
+<label>Filter<${ClearableInput} label="Filter" value=${s.query} onChange=${v=>set('query',v)} clearOnEscape=${true}/></label></div>
 ${((s.cost!==null && validCap(s.cost,null)===null) || (s.latency!==null && validCap(s.latency,null)===null)) && html`<p role="status">Enter a finite, nonnegative cap. The official cap is used until the entry is valid.</p>`}</section>
 <section class="panel"><h2>Capability and ${s.axis}</h2><${Chart} rows=${prepared} caps=${caps} axis=${s.axis} edge=${edge} query=${s.query} highlight=${hovered ?? focused} onSelect=${name=>set('query',name)}/>${M.findings(prepared,caps,s.mode,s.axis).map(t=>html`<p>${t}</p>`)}</section>
 <section class="panel"><h2>Systems</h2>
-  <div class="controls"><button onClick=${()=>set('sort','')}>Tier order</button><button onClick=${()=>setExpanded(groups.map(g=>g.tier))}>Expand all</button><button onClick=${()=>setExpanded([])}>Collapse all</button>
+  <div class="controls"><button disabled=${!s.sort.length} onClick=${()=>{set('sort',[]);setExpanded(null);}}>Tier order</button><button disabled=${!!s.sort.length} onClick=${()=>setExpanded(groups.map(g=>g.tier))}>Expand all</button><button disabled=${!!s.sort.length} onClick=${()=>setExpanded([])}>Collapse all</button>
     <label class="inline"><input type="checkbox" checked=${s.outside} onChange=${e=>set('outside',e.target.checked)}/>Show systems outside the caps</label><label class="inline"><input type="checkbox" checked=${frontierOnly} onChange=${e=>setFrontierOnly(e.target.checked)}/>Frontier only</label></div>
-  <p class="raw">Within a tier: lowest price first, then lowest latency.</p>
+  <p class="raw">${s.axis==='latency'?'Within a tier: lowest latency first, then lowest price.':'Within a tier: lowest price first, then lowest latency.'}</p>
+  <p>${s.sort.length?'Sorted by '+s.sort.map(entry=>heads.find(h=>h.key===entry.slice(2)).label+' '+(entry[0]==='a'?'▲':'▼')).join(' › '):'Tier order. Click a column to sort; click again to reverse, a third time to remove it. Each column you add orders rows that tie on the ones before it.'}</p>
   <div class="table-wrap board-table"><table><thead><tr>
-    ${heads.map(([key,label])=>html`<${Th} k=${key} label=${label} active=${s.sort===key} dir=${s.dir} onSort=${sort}/>`)}
+    ${heads.map(column=>html`<${Th} column=${column} list=${s.sort} onSort=${sort}/>`)}
   </tr></thead><tbody>${!rows.length && s.query ? html`<tr><td colspan=${heads.length}>No system matches “${s.query}”. <button onClick=${()=>set('query','')}>Clear filter</button></td></tr>` : visibleRows.map(r=>{
     if (r.heading) return html`<tr class="tier-heading"><td colspan=${heads.length}><button aria-expanded=${!!(s.query || opened.includes(r.tier))} onClick=${()=>setExpanded(opened.includes(r.tier)?opened.filter(t=>t!==r.tier):[...opened,r.tier])}>${s.mode==='whole'?r.score+' points':M.scoreText(r.score)} · ${r.rows.length} ${r.rows.length===1?'system':'systems'}</button></td></tr>`;
+    if (r.sortHeading) return html`<tr class="sort-heading"><td colspan=${heads.length}>${r.text}</td></tr>`;
     const result=byKey.get(r.key);
     const status=!r.inCaps?M.capReasons(r,caps).join(', '):result?.status==='frontier'
       ?html`<span class="pill">Frontier</span>`:result?.by?html`<span class="dominated" title=${result.by.name}>Dominated</span>`:'Unavailable';
-    return html`<tr key=${r.key} tabindex="0" onMouseEnter=${()=>setHovered(r.key)} onMouseLeave=${()=>setHovered(null)} onFocus=${()=>setFocused(r.key)} onBlur=${()=>setFocused(null)} class=${'system-row tier-'+r.tier+(r.inCaps?'':' outside')}>
-      <td>${s.mode==='whole'?r.score:M.scoreText(r.capability)} ${s.mode==='whole'&&html`<span class="raw">(${M.scoreText(r.capability)})</span>`}</td>
-      <td class="name" title=${r.name}><span class="name-line"><span class="short">${r.short}</span><span class="board-tag">${boardLabel(r.board)}</span></span><span class="detail">${r.detail}</span></td>
-      <td>${M.scoreText(r.intelligence)}</td><td>${M.scoreText(r.calibration)}</td>
-      <td>${r.price==null?'':'$'+M.priceText(r.price)} ${r.price!=null&&!r.price_published?'est.':''}</td>
-      <td>${M.latencyText(r.latency)} ${r.latency_assumed?'assumed':''}</td>
-      <td>${r.capability_rank ?? ''}</td><td>${r.composite_rank ?? ''}</td><td>${status}</td>
+    return html`<tr key=${r.key} tabindex="0" onMouseEnter=${()=>setHovered(r.key)} onMouseLeave=${()=>setHovered(null)} onFocus=${()=>setFocused(r.key)} onBlur=${()=>setFocused(null)} class=${'system-row tier-'+r.tier+(r.inCaps?'':' outside')+(r.band?' sort-band':'')+(r.bandStart?' sort-band-start':'')}>
+      <td class=${(primary?.key==='score'?'sort-group-column':'')}>${s.mode==='whole'?r.score:M.scoreText(r.capability)} ${s.mode==='whole'&&html`<span class="raw">(${M.scoreText(r.capability)})</span>`}</td>
+      <td class=${'name '+(primary?.key==='name'?'sort-group-column':'')} title=${r.name}><span class="name-line"><span class="short">${r.short}</span><span class="board-tag">${boardLabel(r.board)}</span></span><span class="detail">${r.detail}</span></td>
+      <td class=${(primary?.key==='intelligence'?'sort-group-column':'')}>${M.scoreText(r.intelligence)}</td><td class=${(primary?.key==='calibration'?'sort-group-column':'')}>${M.scoreText(r.calibration)}</td>
+      <td class=${(primary?.key==='price'?'sort-group-column':'')}>${r.price==null?'':'$'+M.priceText(r.price)} ${r.price!=null&&!r.price_published?'est.':''}</td>
+      <td class=${(primary?.key==='latency'?'sort-group-column':'')}>${M.latencyText(r.latency)} ${r.latency_assumed?'assumed':''}</td>
+      <td class=${(primary?.key==='capability_rank'?'sort-group-column':'')}>${r.capability_rank ?? ''}</td><td class=${(primary?.key==='composite_rank'?'sort-group-column':'')}>${r.composite_rank ?? ''}</td><td class=${(primary?.key==='status'?'sort-group-column':'')}>${status}</td>
     </tr>`;
   })}</tbody></table></div>
 </section></div>`}
@@ -1061,6 +1111,50 @@ function compareValues(a, b) {
   return typeof a === "string" || typeof b === "string" ? compareText(String(a), String(b)) : a - b;
 }
 
+function clickSort(list, key, first) {
+  first = first === "d" ? "d" : "a";
+  var result = list.slice(), index = result.findIndex(function (entry) { return entry.slice(2) === key; });
+  if (index < 0) result.push(first + ":" + key);
+  else if (result[index].charAt(0) === first) result[index] = (first === "a" ? "d:" : "a:") + key;
+  else result.splice(index, 1);
+  return result;
+}
+function normalizeSort(list, keys) {
+  var seen = new Set();
+  return Array.isArray(list) ? list.filter(function (entry) {
+    if (typeof entry !== "string" || !/^[ad]:.+$/.test(entry)) return false;
+    var key = entry.slice(2);
+    if (keys.indexOf(key) < 0 || seen.has(key)) return false;
+    seen.add(key); return true;
+  }) : [];
+}
+function compareNullable(a, b) {
+  return a == null ? (b == null ? 0 : 1) : b == null ? -1 : compareValues(a, b);
+}
+function stackSort(items, list, valueOf, fallback) {
+  return items.map(function (item, index) { return {item: item, index: index}; }).sort(function (a, b) {
+    for (var i = 0; i < list.length; i += 1) {
+      var entry = list[i], av = valueOf(a.item, entry.slice(2)), bv = valueOf(b.item, entry.slice(2));
+      var result = compareNullable(av, bv);
+      if (result) return entry.charAt(0) === "d" && av != null && bv != null ? -result : result;
+    }
+    return (fallback ? fallback(a.item, b.item) : 0) || a.index - b.index;
+  }).map(function (entry) { return entry.item; });
+}
+function sortRuns(rows, valueOf, key) {
+  var runs = [];
+  rows.forEach(function (row) {
+    var value = valueOf(row, key), last = runs[runs.length - 1];
+    if (!last || compareNullable(last.value, value) !== 0) runs.push({value: value, rows: [row]});
+    else last.rows.push(row);
+  });
+  return runs;
+}
+function sortRunMode(runs) {
+  if (runs.every(function (run) { return run.rows.length === 1; })) return "singletons";
+  return runs.reduce(function (sum, run) { return sum + run.rows.length; }, 0) / runs.length >= 3 ? "headings" : "bands";
+}
+
 function dataAge(lastCheckedIso, nowMs, maxAgeHours) {
   var then = Date.parse(lastCheckedIso);
   if (isNaN(then)) return { text: "Data age is unknown", stale: true };
@@ -1092,7 +1186,7 @@ function logTicks(lo, hi) {
   return out;
 }
 
-var api = { FLOAT_NOISE: FLOAT_NOISE, wholePoints: wholePoints, priced: priced, dominates: dominates, compareText: compareText, frontier: frontier, makeStep: makeStep, paretoRows: paretoRows, pathValue: pathValue, compareValues: compareValues, dataAge: dataAge, linearTicks: linearTicks, logTicks: logTicks };
+var api = { FLOAT_NOISE: FLOAT_NOISE, wholePoints: wholePoints, priced: priced, dominates: dominates, compareText: compareText, frontier: frontier, makeStep: makeStep, paretoRows: paretoRows, pathValue: pathValue, compareValues: compareValues, clickSort: clickSort, normalizeSort: normalizeSort, compareNullable: compareNullable, stackSort: stackSort, sortRuns: sortRuns, sortRunMode: sortRunMode, dataAge: dataAge, linearTicks: linearTicks, logTicks: logTicks };
 if (typeof module !== "undefined") module.exports = api; else window.ladderCore = api;
 }());
 

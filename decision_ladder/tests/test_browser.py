@@ -1,9 +1,85 @@
 from datetime import datetime, timezone
+import re
 from urllib.parse import quote
 
 import pytest
 from playwright.sync_api import expect, sync_playwright
 from tools.testkit import assert_fonts_loaded, assert_no_external_resources, block_external_requests, guard_browser_errors
+
+
+def test_axis_changes_tied_tier_order_and_caption(dl, tmp_path):
+    from helpers import feed, system, snapshot
+    systems = [system(key=key, name=name, capability={'score': 8, 'eligible': True, 'within_caps': True},
+                      price={'usd_per_1000_decisions': price}, latency={'p50_s_adjusted': latency})
+               for key, name, price, latency in [('cheap', 'Synthetic cheap', 1, 4), ('fast', 'Synthetic fast', 3, 1)]]
+    payload = dl.build_payload(snapshot(feed(systems=systems)), None, {'max_age_hours': 24})
+    path = tmp_path / 'axis.html'; path.write_bytes(dl.render_page(payload))
+    with sync_playwright() as playwright:
+        browser = playwright.chromium.launch(); context = browser.new_context(service_workers='block'); context.set_offline(True)
+        blocked = block_external_requests(context); page = context.new_page()
+        with guard_browser_errors(page):
+            page.goto(path.as_uri())
+            expect(page.locator('tr.system-row').first.locator('.name')).to_have_attribute('title', 'Synthetic cheap')
+            expect(page.locator('.board-table').locator('..')).to_contain_text('Within a tier: lowest price first, then lowest latency.')
+            page.get_by_label('Chart x-axis').select_option('latency')
+            expect(page.locator('tr.system-row').first.locator('.name')).to_have_attribute('title', 'Synthetic fast')
+            expect(page.locator('.board-table').locator('..')).to_contain_text('Within a tier: lowest latency first, then lowest price.')
+            assert_no_external_resources(page, blocked)
+        context.close(); browser.close()
+
+
+def test_filters_clear_and_restore_results_and_focus(dl, tmp_path):
+    from helpers import feed, many_systems, snapshot
+    systems = many_systems(4)
+    systems[3]['ranked'] = False
+    payload = dl.build_payload(snapshot(feed(systems=systems)), None, {'max_age_hours': 24})
+    path = tmp_path / 'filters.html'; path.write_bytes(dl.render_page(payload))
+    with sync_playwright() as playwright:
+        browser = playwright.chromium.launch(); context = browser.new_context(service_workers='block'); context.set_offline(True)
+        blocked = block_external_requests(context); page = context.new_page()
+        with guard_browser_errors(page):
+            page.goto(path.as_uri())
+            board = page.get_by_label('Filter', exact=True)
+            clear = page.get_by_role('button', name='Clear Filter', exact=True)
+            expect(clear).to_have_count(0)
+            total = page.locator('tr.system-row').count()
+            board.fill('no synthetic match')
+            expect(page.locator('tr.system-row')).to_have_count(0)
+            size = clear.bounding_box(); assert size['width'] >= 24 and size['height'] >= 24
+            clear.click(); expect(board).to_have_value(''); expect(board).to_be_focused()
+            expect(page.locator('tr.system-row')).to_have_count(total)
+            page.locator('.mark').first.click(force=True)
+            expect(board).not_to_have_value('')
+            assert page.locator('.mark.dim').count() > 0
+            clear.click(); expect(page.locator('.mark.dim')).to_have_count(0)
+            board.fill('no synthetic match'); board.press('Escape')
+            expect(board).to_have_value(''); expect(page.locator('tr.system-row')).to_have_count(total)
+
+            page.get_by_role('tab', name='Compare', exact=True).click()
+            page.get_by_role('button', name='Add system').click()
+            search = page.get_by_label('Search systems', exact=True); clear = page.get_by_role('button', name='Clear Search systems')
+            expect(clear).to_have_count(0)
+            total = page.locator('.pop li').count()
+            search.fill('no synthetic match'); expect(page.locator('.pop li')).to_have_count(0)
+            clear.click(); expect(search).to_have_value(''); expect(search).to_be_focused()
+            expect(page.locator('.pop li')).to_have_count(total)
+            first_name = page.locator('.pop li button').first.locator('span').first.inner_text()
+            search.press('Enter'); expect(page.locator('.chip')).to_have_count(1)
+            expect(page.locator('.chip')).to_contain_text(first_name)
+            expect(search).to_be_focused(); search.press('Escape')
+            expect(page.locator('.pop')).to_have_count(0)
+
+            page.get_by_role('tab', name='Not ranked', exact=True).click()
+            unranked = page.get_by_label('Filter not ranked systems', exact=True); clear = page.get_by_role('button', name='Clear Filter not ranked systems')
+            expect(clear).to_have_count(0)
+            total = page.locator('.not-ranked tbody tr').count(); assert total == 1
+            unranked.fill('no synthetic match'); expect(page.locator('.not-ranked tbody tr')).to_have_count(0)
+            clear.click(); expect(unranked).to_have_value(''); expect(unranked).to_be_focused()
+            expect(page.locator('.not-ranked tbody tr')).to_have_count(total)
+            unranked.fill('no synthetic match'); unranked.press('Escape')
+            expect(unranked).to_have_value(''); expect(page.locator('.not-ranked tbody tr')).to_have_count(total)
+            assert_no_external_resources(page, blocked)
+        context.close(); browser.close()
 
 
 def test_chart_highlight_tracks_hover_and_focus_independently(dl, tmp_path):
@@ -24,7 +100,7 @@ def test_chart_highlight_tracks_hover_and_focus_independently(dl, tmp_path):
             expect(page.locator('.mark.highlight title')).to_contain_text(first_name)
             first.hover(); page.mouse.move(0, 0)
             expect(page.locator('.mark.highlight title')).to_contain_text(first_name)
-            second.hover(); page.get_by_label('Filter').focus()
+            second.hover(); page.get_by_label('Filter', exact=True).focus()
             expect(page.locator('.mark.highlight title')).to_contain_text(second_name)
             page.mouse.move(0, 0)
             expect(page.locator('.mark.highlight')).to_have_count(0)
@@ -49,8 +125,8 @@ def test_large_board_navigation_and_chart(dl, tmp_path, scheme):
             row.hover(); expect(page.locator('.mark.highlight')).to_have_count(1)
             row.focus(); expect(page.locator('.mark.highlight')).to_have_count(1)
             page.locator('.mark.highlight').click(force=True)
-            expect(page.get_by_label('Filter')).to_have_value(row.locator('.name').get_attribute('title'))
-            page.get_by_label('Filter').fill('')
+            expect(page.get_by_label('Filter', exact=True)).to_have_value(row.locator('.name').get_attribute('title'))
+            page.get_by_label('Filter', exact=True).fill('')
             page.get_by_role('button', name='Collapse all').click()
             expect(page.locator('tr.system-row')).to_have_count(0)
             expect(page.locator('tr.tier-heading button').first).to_have_attribute('aria-expanded', 'false')
@@ -64,10 +140,10 @@ def test_large_board_navigation_and_chart(dl, tmp_path, scheme):
             expect(page.get_by_role('columnheader', name='Price / 1,000')).to_have_attribute('aria-sort', 'ascending')
             assert page.get_by_role('columnheader', name='Price / 1,000').evaluate('(el) => { const e = new KeyboardEvent("keydown", {key:" ", bubbles:true, cancelable:true}); el.dispatchEvent(e); return e.defaultPrevented; }')
             expect(page.locator('tr.tier-heading')).to_have_count(0)
-            page.get_by_label('Filter').fill('no synthetic match')
+            page.get_by_label('Filter', exact=True).fill('no synthetic match')
             expect(page.get_by_text('No system matches “no synthetic match”.')).to_be_visible()
             expect(page.locator('.mark.dim')).to_have_count(300)
-            page.get_by_role('button', name='Clear filter').click()
+            page.locator('.board-table').get_by_role('button', name='Clear filter').click()
             expect(page.locator('tr.system-row')).to_have_count(300)
             page.get_by_label('Frontier only').check()
             assert 0 < page.locator('tr.system-row').count() < 300
@@ -79,9 +155,9 @@ def test_large_board_navigation_and_chart(dl, tmp_path, scheme):
 
 
 @pytest.mark.parametrize('scores,decimal_expected', [
-    ([8.0, 8.0, 8.0], 'price: 2 → 3.001'),
-    ([7.9, 8.1, 8.2], 'capability: 8.1 → 8.2'),
-    ([7.9, 8.123, 8.456], 'capability: 8.1 → 8.5'),
+    ([8.0, 8.0, 8.0], 'Price $2.00 → $3.00'),
+    ([7.9, 8.1, 8.2], 'Capability 8.1 → 8.2'),
+    ([7.9, 8.123, 8.456], 'Capability 8.1 → 8.5'),
 ])
 def test_history_uses_displayed_changes_for_each_mode(dl, tmp_path, scores, decimal_expected):
     from datetime import timedelta
@@ -98,7 +174,7 @@ def test_history_uses_displayed_changes_for_each_mode(dl, tmp_path, scores, deci
         blocked = block_external_requests(context); page = context.new_page()
         with guard_browser_errors(page):
             page.goto(path.as_uri()); page.get_by_text('Changes', exact=True).click()
-            expect(page.locator('.changes')).to_contain_text('price: 3 → 3.001' if scores[-1] == 8.456 else 'price: 2 → 3.001')
+            expect(page.locator('.changes')).to_contain_text('Capability 8 → 9' if scores[-1] == 8.456 else 'Price $2.00 → $3.00')
             page.get_by_label('Scoring').select_option('decimal')
             expect(page.locator('.changes')).to_contain_text(decimal_expected)
             assert_no_external_resources(page, blocked)
@@ -189,9 +265,9 @@ def test_board_controls_and_responsive_layout(dl, tmp_path, scheme):
             other = other_context.new_page(); other.goto(copied)
             expect(other.get_by_label('Scoring')).to_have_value('decimal')
             other_context.close()
-            page.get_by_label('Filter').fill('synthetic b')
+            page.get_by_label('Filter', exact=True).fill('synthetic b')
             expect(page.locator('tbody tr.system-row')).to_have_count(1)
-            page.get_by_label('Filter').fill('')
+            page.get_by_label('Filter', exact=True).fill('')
             page.get_by_label('Scoring').select_option('whole')
             page.get_by_role('columnheader', name='Price / 1,000').click()
             page.get_by_role('columnheader', name='Price / 1,000').click()
@@ -302,7 +378,7 @@ def test_invalid_state_and_blocked_storage(dl, tmp_path):
             expect(page.get_by_label('Board')).to_have_value('all')
             expect(page.get_by_label('Scoring')).to_have_value('whole')
             expect(page.get_by_label('Chart x-axis')).to_have_value('price')
-            expect(page.get_by_label('Filter')).to_have_value('')
+            expect(page.get_by_label('Filter', exact=True)).to_have_value('')
             expect(page.get_by_label('Cost cap')).to_have_value('')
             expect(page.get_by_label('Latency cap')).to_have_value('')
             expect(page.get_by_label('Show systems outside the caps')).not_to_be_checked()
@@ -361,7 +437,7 @@ def test_picker_keyboard_navigation_keeps_focused_option_visible(dl, tmp_path):
         with guard_browser_errors(page):
             page.goto(path.as_uri()); page.get_by_role('tab', name='Compare', exact=True).click()
             page.get_by_role('button', name='Add system').click()
-            page.get_by_label('Search systems').press('ArrowDown')
+            page.get_by_label('Search systems', exact=True).press('ArrowDown')
             for _ in range(12): page.keyboard.press('ArrowDown')
             active = page.locator('.pop li button:focus')
             expect(active).to_contain_text('Synthetic system 12')
@@ -369,6 +445,40 @@ def test_picker_keyboard_navigation_keeps_focused_option_visible(dl, tmp_path):
             assert bounds[0] >= bounds[2] - 1 and bounds[1] <= bounds[3] + 1, bounds
             page.keyboard.press('Enter')
             expect(page.locator('.chip')).to_contain_text('Synthetic system 12')
+            assert_no_external_resources(page, blocked)
+        context.close(); browser.close()
+
+
+def test_compare_reorders_and_removes_selected_systems(dl, tmp_path):
+    from helpers import feed, many_systems, snapshot
+    payload = dl.build_payload(snapshot(feed(systems=many_systems(4))), None, {'max_age_hours': 24})
+    path = tmp_path / 'reorder.html'; path.write_bytes(dl.render_page(payload))
+    with sync_playwright() as playwright:
+        browser = playwright.chromium.launch(); context = browser.new_context(service_workers='block'); context.set_offline(True)
+        blocked = block_external_requests(context); page = context.new_page()
+        with guard_browser_errors(page):
+            page.goto(path.as_uri()); page.get_by_role('tab', name='Compare', exact=True).click()
+            page.get_by_role('button', name='Add system').click()
+            for i in range(1, 5): page.locator('.pop li button').filter(has_text=f'Synthetic system {i:03}').click()
+            page.get_by_label('Search systems', exact=True).press('Escape')
+            chips = page.locator('.chip')
+            def check_order(order):
+                expect(chips).to_have_count(len(order))
+                for i, n in enumerate(order):
+                    expect(chips.nth(i)).to_contain_text(f'Synthetic system {n:03}')
+                    expect(page.locator('.compare thead th').nth(i + 1)).to_contain_text(f'Synthetic system {n:03}')
+                best = page.locator('.compare tbody tr').filter(has=page.get_by_text('Capability', exact=True)).locator('td .pill')
+                expect(best).to_have_count(1); expect(best).to_have_text('99.0')
+                assert page.locator('.compare tbody tr').filter(has=page.get_by_text('Capability', exact=True)).locator('td').nth(order.index(1)).locator('.pill').count() == 1
+            chips.nth(3).drag_to(chips.nth(0)); check_order([4, 1, 2, 3])
+            page.get_by_role('button', name='Move Synthetic system 004 right').click(); check_order([1, 4, 2, 3])
+            expect(page.get_by_role('button', name='Move Synthetic system 003 right')).to_be_disabled()
+            expect(page.get_by_role('button', name='Move Synthetic system 001 left')).to_be_disabled()
+            page.reload(); check_order([1, 4, 2, 3])
+            chips.nth(1).get_by_role('button', name='Remove Synthetic system 004').click(); check_order([1, 2, 3])
+            page.locator('.compare thead').get_by_role('button', name='Remove Synthetic system 001').click()
+            expect(chips).to_have_count(2)
+            expect(chips.nth(0)).to_contain_text('Synthetic system 002'); expect(chips.nth(1)).to_contain_text('Synthetic system 003')
             assert_no_external_resources(page, blocked)
         context.close(); browser.close()
 
@@ -401,11 +511,11 @@ def test_compare_not_ranked_and_changes_offline(dl, tmp_path):
             page.get_by_role('tab', name='Compare', exact=True).click()
             page.get_by_role('button', name='Add system').click()
             assert page.locator('.pop li button').all_text_contents()[-1].startswith('Synthetic system 9')
-            page.get_by_label('Search systems').fill('system 0')
+            page.get_by_label('Search systems', exact=True).fill('system 0')
             page.locator('.pop li button').click()
             expect(page.locator('.pop li button')).to_be_disabled()
             expect(page.locator('.pop li button')).to_contain_text('Added')
-            page.get_by_label('Search systems').fill('')
+            page.get_by_label('Search systems', exact=True).fill('')
             for i in range(1, 3): page.locator('.pop li button').filter(has_text=f'Synthetic system {i}').click()
             page.locator('.chip').get_by_role('button', name='Remove Synthetic system 1').click()
             expect(page.get_by_text('2 of 8 selected')).to_be_visible()
@@ -453,11 +563,11 @@ def test_compare_not_ranked_and_changes_offline(dl, tmp_path):
             expect(page.locator('.compare table')).to_have_count(0)
             expect(page.get_by_text('No systems selected. Add up to 8 to compare them side by side.')).to_be_visible()
             page.get_by_role('button', name='Add system').click()
-            page.get_by_label('Search systems').fill('system 9')
-            page.get_by_label('Search systems').press('ArrowDown')
-            page.get_by_label('Search systems').press('ArrowUp')
-            page.get_by_label('Search systems').press('Enter')
-            page.get_by_label('Search systems').press('Escape')
+            page.get_by_label('Search systems', exact=True).fill('system 9')
+            page.get_by_label('Search systems', exact=True).press('ArrowDown')
+            page.get_by_label('Search systems', exact=True).press('ArrowUp')
+            page.get_by_label('Search systems', exact=True).press('Enter')
+            page.get_by_label('Search systems', exact=True).press('Escape')
             expect(page.get_by_role('button', name='Add system')).to_be_focused()
             for rank in ['Capability rank', 'Composite rank']:
                 expect(page.locator('.compare tbody tr').filter(has=page.get_by_text(rank, exact=True))).to_contain_text('Not ranked: Synthetic full reason')
@@ -468,7 +578,7 @@ def test_compare_not_ranked_and_changes_offline(dl, tmp_path):
             expect(page.locator('.not-ranked')).to_contain_text('Synthetic full reason')
             expect(page.locator('.not-ranked table tbody tr')).to_have_count(1)
             expect(page.locator('.not-ranked')).to_contain_text('1 system')
-            page.get_by_label('Filter not ranked systems').fill('no match')
+            page.get_by_label('Filter not ranked systems', exact=True).fill('no match')
             expect(page.locator('.not-ranked table tbody tr')).to_have_count(0)
             expect(page.locator('.not-ranked')).to_contain_text('0 systems')
             assert_no_external_resources(page, blocked)
@@ -487,6 +597,75 @@ def test_changes_method_and_caps_notices(dl, tmp_path):
         with guard_browser_errors(page):
             page.goto(path.as_uri()); page.get_by_text('Changes', exact=True).click()
             expect(page.locator('.changes')).to_contain_text('Scoring method changed from Old synthetic method to New synthetic method; scores before and after are not comparable')
-            expect(page.locator('.changes')).to_contain_text('$3 / 1,000 decisions; 10s → $5 / 1,000 decisions; 10s')
+            expect(page.locator('.changes')).to_contain_text('$3.00 / 1,000 decisions; 10.00 s → $5.00 / 1,000 decisions; 10.00 s')
             expect(page.locator('.changes')).not_to_contain_text('Synthetic changed')
+        context.close(); browser.close()
+
+
+def test_changes_rounds_high_precision_caps_and_prices(dl, tmp_path):
+    from copy import deepcopy
+    from helpers import feed, snapshot, system
+    old = feed(capability_policy={'cost_cap_usd_per_1000': 0.123456789012345, 'median_latency_cap_s': 1.23456789012345},
+               systems=[system(price={'usd_per_1000_decisions': 0.0651234567890123})])
+    new = deepcopy(old)
+    new['capability_policy'] = {'cost_cap_usd_per_1000': 0.234567890123456, 'median_latency_cap_s': 2.34567890123456}
+    new['systems'][0]['price']['usd_per_1000_decisions'] = 0.0711234567890123
+    payload = dl.build_payload(snapshot(new), snapshot(old), {'max_age_hours': 24})
+    path = tmp_path / 'precision.html'; path.write_bytes(dl.render_page(payload))
+    with sync_playwright() as playwright:
+        browser = playwright.chromium.launch(); context = browser.new_context(service_workers='block'); context.set_offline(True)
+        blocked = block_external_requests(context); page = context.new_page()
+        with guard_browser_errors(page):
+            page.goto(path.as_uri()); page.get_by_text('Changes', exact=True).click()
+            changes = page.locator('.changes')
+            expect(changes).to_contain_text('Price $0.065 → $0.071')
+            expect(changes).to_contain_text('$0.123 / 1,000 decisions; 1.23 s → $0.235 / 1,000 decisions; 2.35 s')
+            assert not re.search(r'\d+\.\d{6,}', changes.inner_text())
+            assert_no_external_resources(page, blocked)
+        context.close(); browser.close()
+
+
+def test_multi_sort_groups_persistence_and_legacy_state(dl, tmp_path):
+    from helpers import feed, many_systems, snapshot
+    systems = many_systems(300)
+    systems[-1]['price']['usd_per_1000_decisions'] = None
+    systems[-2]['price']['usd_per_1000_decisions'] = 6
+    payload = dl.build_payload(snapshot(feed(systems=systems)), None, {'max_age_hours': 24})
+    path = tmp_path / 'sorting.html'; path.write_bytes(dl.render_page(payload))
+    with sync_playwright() as playwright:
+        browser = playwright.chromium.launch(); context = browser.new_context(service_workers='block'); context.set_offline(True)
+        blocked = block_external_requests(context); page = context.new_page()
+        with guard_browser_errors(page):
+            page.goto(path.as_uri())
+            capability = page.locator('.board-table thead th').nth(0)
+            price = page.locator('.board-table thead th').nth(4)
+            capability.click(); price.click()
+            expect(capability).to_have_attribute('aria-sort', 'descending')
+            expect(price).not_to_have_attribute('aria-sort', re.compile('.+'))
+            expect(capability.locator('.sort-number')).to_have_text('1')
+            expect(price.locator('.sort-number')).to_have_text('2')
+            expect(page.locator('.sort-heading')).not_to_have_count(0)
+            assert page.locator('.board-table tbody').evaluate('''body => {
+              let prices = [];
+              for (const row of body.rows) {
+                if (row.classList.contains('sort-heading')) { if (prices.some((x,i)=>i && x<prices[i-1])) return false; prices=[]; }
+                else if (row.classList.contains('system-row')) prices.push(Number(row.cells[4].innerText.match(/[\\d.]+/)[0]));
+              }
+              return !prices.some((x,i)=>i && x<prices[i-1]);
+            }''')
+            page.reload(); expect(capability).to_have_attribute('aria-sort', 'descending')
+            capability.click(); capability.click()
+            expect(price).to_have_attribute('aria-sort', 'ascending')
+            expect(page.locator('.sort-heading, .sort-band-start')).to_have_count(0)
+            page.get_by_label('Show systems outside the caps').check()
+            expect(page.locator('.sort-heading')).to_contain_text('Outside the caps · 2 systems')
+            expect(page.locator('tr.system-row').last.locator('.name')).to_have_attribute('title', 'Synthetic system 300')
+            price.click()
+            expect(page.locator('tr.system-row').last.locator('.name')).to_have_attribute('title', 'Synthetic system 300')
+            page.get_by_role('button', name='Tier order').click()
+            assert 25 <= page.locator('tr.system-row').count() <= 60
+            expect(page.locator('tr.tier-heading button').first).to_have_attribute('aria-expanded', 'true')
+            page.goto(path.as_uri() + '#' + quote('{"sort":"price","dir":-1}')); page.reload()
+            expect(price).to_have_attribute('aria-sort', 'descending')
+            assert_no_external_resources(page, blocked)
         context.close(); browser.close()

@@ -9,6 +9,16 @@ new Function('module', 'ladderCore', code)(module, createRequire(import.meta.url
 const m = module.exports;
 const row = (name, capability, price, latency, extra={}) => ({key:name, name, ranked:true, board:'api', capability, price, latency, ...extra});
 const caps = {cost:5, latency:10};
+test('pick moves preserve input and handle directions, boundaries and missing keys', () => {
+  const picks=['a','b','c','d'];
+  assert.deepEqual(m.movePick(picks,'d','a'),['d','a','b','c']);
+  assert.deepEqual(m.movePick(picks,'a','c'),['b','c','a','d']);
+  for (const [key,target] of [['x','a'],['a','x'],['a','a']]) assert.deepEqual(m.movePick(picks,key,target),picks);
+  assert.deepEqual(m.shiftPick(picks,'b',-1),['b','a','c','d']);
+  assert.deepEqual(m.shiftPick(picks,'b',1),['a','c','b','d']);
+  for (const [key,delta] of [['a',-1],['d',1],['x',1]]) assert.deepEqual(m.shiftPick(picks,key,delta),picks);
+  assert.deepEqual(picks,['a','b','c','d']);
+});
 test('not ranked rows sort by displayed listing then name and filter by name', () => {
   const rows=[row('Synthetic Z',1,1,1,{ranked:false,listing:'z-list'}),row('Synthetic B',1,1,1,{ranked:false,listing:'a-list'}),row('Synthetic A',1,1,1,{ranked:false,listing:'a-list'}),row('Synthetic ranked',1,1,1)];
   assert.deepEqual(m.notRankedRows(rows,'').map(r=>r.name),['Synthetic A','Synthetic B','Synthetic Z']);
@@ -22,6 +32,13 @@ test('tier numbers remain stable when searching ranked rows', () => {
   assert.deepEqual(m.tierGroups(m.tiers(rows)).map(g=>[g.tier,g.rows.length]),[[1,1],[2,1]]);
   assert.deepEqual(m.visibleTierRows(m.tierGroups(m.tiers(rows)),[1],false).map(r=>r.heading?'heading':r.name),['heading','Synthetic top','heading']);
   assert.deepEqual(m.chartMarks([{key:'a',name:'Synthetic A',cost:1},{key:'b',name:'Synthetic B',cost:1}],'A','b').map(r=>r.key),['a','b']);
+});
+test('tier order follows the selected axis without changing tier identity', () => {
+  const rows=m.prepare([row('Synthetic cheap',9,1,4),row('Synthetic fast',9,3,1),row('Synthetic lower',8,2,2)],{board:'all',mode:'whole',axis:'price',caps});
+  assert.deepEqual(m.tiers(rows,'price').map(r=>[r.name,r.tier]),[['Synthetic cheap',1],['Synthetic fast',1],['Synthetic lower',2]]);
+  assert.deepEqual(m.tiers(rows,'latency').map(r=>[r.name,r.tier]),[['Synthetic fast',1],['Synthetic cheap',1],['Synthetic lower',2]]);
+  assert.deepEqual(rows.slice(0,2).sort(m.tierCompare('latency')).map(r=>r.name),['Synthetic fast','Synthetic cheap']);
+  assert.match(m.findings(rows,caps,'whole','latency')[1],/Synthetic fast, Synthetic cheap/);
 });
 test('chart marks describe axis provenance, match, highlight and size', () => {
   const rows=[{key:'a',name:'Synthetic A',cost:1,price_published:true,latency_assumed:true},
@@ -124,4 +141,23 @@ test('changes compare displayed price and latency in both scoring modes', () => 
       assert.equal(m.changesToShow({changed:[{[field]:[hidden[0],null]}]},mode).length,1);
     }
   }
+});
+test('change fields format each endpoint and omit differences hidden by formatting', () => {
+  for (const mode of ['whole','decimal']) {
+    for (const [field,value,expected] of [['capability',8.26,mode==='whole'?'8':'8.3'],['price',0.0651234567890123,'$0.065'],['latency',1.23456789012345,'1.23 s'],['listing','synthetic-listing','synthetic listing'],['capability_rank',4,'4'],['composite_rank',3,'3']]) {
+      assert.equal(m.changeText(field,value,mode),expected);
+      assert.equal(m.changeText(field,null,mode),'none');
+      assert.equal(m.changeText(field,undefined,mode),'none');
+    }
+    assert.deepEqual(m.changeFields({capability:[8.1,9.2],price:[0.065,0.071],latency:[1,2],listing:['synthetic-old','synthetic-new'],capability_rank:[4,3],composite_rank:[null,2]},mode),[
+      {label:'Capability',from:mode==='whole'?'8':'8.1',to:mode==='whole'?'9':'9.2'},
+      {label:'Price',from:'$0.065',to:'$0.071'}, {label:'Latency',from:'1.00 s',to:'2.00 s'},
+      {label:'Listing',from:'synthetic old',to:'synthetic new'}, {label:'Capability rank',from:'4',to:'3'},
+      {label:'Composite rank',from:'none',to:'2'}]);
+    assert.deepEqual(m.changeFields({price:[2.001,2.002],latency:[3.001,3.002]},mode),[]);
+  }
+});
+
+test('group labels format each sort value and missing values', () => {
+  for (const [key,value,mode,expected] of [['score',85,'whole','85 points'],['score',85.24,'decimal','85.2 points'],['intelligence',4.25,'whole','4.3'],['calibration',4.25,'whole','4.3'],['price',1,'whole','$1.00'],['latency',1,'whole','1.00 s'],['status','frontier','whole','Frontier'],['status','dominated','whole','Dominated'],['status','other','whole','other'],['name','Synthetic A','whole','Synthetic A'],['capability_rank',2,'whole','2'],['composite_rank',3,'whole','3'],['price',null,'whole','No value']]) assert.equal(m.groupValueText(key,value,mode),expected);
 });

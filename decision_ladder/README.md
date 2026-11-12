@@ -11,7 +11,8 @@ and a capability board and chart. The Changes panel compares the newest snapshot
 with the last snapshot that differs in displayed data for the selected scoring
 mode. When the scoring method changes, earlier and later scores are not
 comparable. Not ranked lists excluded systems, their listing and reasons, with
-a text filter.
+a text filter. The Board and Not ranked filters can be cleared with their ×
+button or Escape; the Compare picker search also has a clear button.
 
 ## Setup
 
@@ -36,10 +37,19 @@ snapshot is used when available.
 ## Tiers and caps
 
 The board groups ranked systems into Capability tiers, rounding to whole points
-by default; decimal mode uses the feed's scores. Within a tier, price, latency,
-and name determine order. Tiers expand until at least 25 systems are shown;
-later tiers start collapsed. Adjustable cost and median latency caps default to
-the feed's official limits. Systems missing either value are outside the caps.
+by default; decimal mode uses the feed's scores. Within a tier, the selected
+chart axis sorts first, followed by the other measure and then name. Tiers expand
+until at least 25 systems are shown; later tiers start collapsed. Adjustable cost
+and median latency caps default to the feed's official limits. Systems missing
+either value are outside the caps.
+
+Click a board column heading to add it as a sort key, click again to reverse
+it, and a third time to remove it. Later keys order ties in earlier keys;
+remove and add a key again to move it last. Tier order restores the default.
+Sorted rows group by the first key's exact values, using headings or alternating
+bands where useful; a key with only distinct values shows no dividers. Rows
+outside the caps remain separate from those inside.
+
 The frontier shows systems not dominated on Capability and the selected price
 or latency axis; it is descriptive and does not create a weighted score.
 Frontier-only filtering is off by default.
@@ -61,6 +71,7 @@ official caps and methodology come from the feed.
 Compare shows up to eight selected systems and their axis scores, official
 ranks, prices, latency, sources and measurement details. Best-value marks
 identify the highest or lowest selected values in each row; they add no score.
+Drag selected chips or use the arrows in column headings to reorder the systems.
 
 ## Runtime home
 
