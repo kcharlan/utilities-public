@@ -8,6 +8,7 @@ const october26 = require('../docs/ai_model_timeline_update_sources_2026_10_26.j
 const october28 = require('../docs/ai_model_timeline_update_sources_2026_10_28.json');
 const november06 = require('../docs/ai_model_timeline_update_sources_2026_11_06.json');
 const november10 = require('../docs/ai_model_timeline_update_sources_2026_11_10.json');
+const november12 = require('../docs/ai_model_timeline_update_sources_2026_11_12.json');
 
 for (const width of [1440, 375]) {
   for (const target of ['http', 'file']) {
@@ -61,11 +62,11 @@ for (const width of [1440, 375]) {
       page.on('pageerror', error => errors.push(error.message));
       page.on('console', message => { if (message.type() === 'error') errors.push(message.text()); });
       await page.goto(target === 'http' ? '/ai-model-timeline.html' : pathToFileURL(path.join(__dirname, '..', 'ai-model-timeline.html')).href);
-      await expect(page.locator('header')).toContainText('601 notable model releases from 128 labs');
+      await expect(page.locator('header')).toContainText('610 notable model releases from 130 labs');
       await page.getByRole('button', { name: 'Month', exact: true }).click();
       await expect(page.locator('#period-label')).toHaveText('November 2026');
       await page.getByRole('button', { name: 'Report', exact: true }).click();
-      const novemberRows = [...november06.additions, ...november10.additions].filter(row => row.date.startsWith('2026-11'));
+      const novemberRows = [...november06.additions, ...november10.additions, ...november12.additions].filter(row => row.date.startsWith('2026-11'));
       await expect(page.locator('#report tr.release')).toHaveCount(novemberRows.length);
       for (const row of novemberRows) {
         const release = page.locator('#report tr.release').filter({ has: page.getByRole('cell', { name: row.model, exact: true }) });
@@ -119,7 +120,7 @@ for (const width of [1440, 375]) {
       await expect(page.locator('#tooltip')).toContainText('external user access were not established');
       await page.getByRole('button', { name: 'Custom', exact: false }).click();
       await page.getByRole('button', { name: 'Latest release', exact: true }).click();
-      await expect(page.locator('#custom-to')).toHaveValue(november10.latestRelease);
+      await expect(page.locator('#custom-to')).toHaveValue(november12.latestRelease);
       expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
       expect(errors).toEqual([]);
     });
@@ -131,8 +132,8 @@ for (const width of [1440, 375]) {
     page.on('pageerror', error => errors.push(error.message));
     page.on('console', message => { if (message.type() === 'error') errors.push(message.text()); });
     await page.goto('/ai-model-timeline.html');
-    await expect(page.locator('header')).toContainText('November 10, 2026');
-    await expect(page.locator('header')).toContainText('checked November 10, 2026');
+    await expect(page.locator('header')).toContainText('November 11, 2026');
+    await expect(page.locator('header')).toContainText('checked November 12, 2026');
     await page.getByRole('button', { name: 'Month', exact: true }).click();
     await page.getByRole('button', { name: 'Previous period' }).click();
     await page.getByLabel('Filter labs or models').fill('Muse Wonder');

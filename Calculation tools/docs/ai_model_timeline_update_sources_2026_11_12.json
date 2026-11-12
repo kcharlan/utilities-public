@@ -1,0 +1,122 @@
+{
+  "checked": "2026-11-12",
+  "latestRelease": "2026-11-11",
+  "baselineManifest": "ai_model_timeline_update_sources_2026_11_10.json",
+  "preservedHistoricalRows": 601,
+  "additions": [
+    {
+      "model": "Qwen4-Max-Preview",
+      "lab": "Alibaba (Qwen)",
+      "date": "2026-11-11",
+      "tier": "flagship",
+      "note": "Multimodal flagship preview for coding, reasoning, and agents, accepting text, images, and video with 1M context. Token Plan access only; no pay-as-you-go. Preview runs November 11–25 (UTC+8), after which this checkpoint will be retired.",
+      "source": "https://docs.qwencloud.com/developer-guides/getting-started/latest-model"
+    },
+    {
+      "model": "Gemini Decision 1",
+      "lab": "Google",
+      "date": "2026-11-11",
+      "tier": "specialty",
+      "note": "Non-generative multimodal decision model behind the Gemini Decisions API in Google AI Studio. Scores bounded choices and rubrics across text, images, audio, video, and PDFs, returning probabilities and confidence scores rather than generated answers.",
+      "source": "https://blog.google/innovation-and-ai/technology/developers-tools/gemini-decisions-api/"
+    },
+    {
+      "model": "PAN 2",
+      "lab": "MBZUAI (IFM)",
+      "date": "2026-11-11",
+      "tier": "specialty",
+      "note": "Open world model for physical intelligence. Given a starting scene and an action described in words, simulates a video of what happens next for action-conditioned planning and simulative reasoning.",
+      "source": "https://mbzuai.ac.ae/news-events/news/the-institute-foundation-models-unveils-pan-2-open-world-model-physical"
+    },
+    {
+      "model": "BotPsy-0.8B",
+      "lab": "Tether AI Research",
+      "date": "2026-11-11",
+      "tier": "open-weights",
+      "note": "QVAC open-weight 0.8B on-device agent model for API and tool use, including multi-step everyday tasks. Designed for deployment on user-controlled hardware; benchmark comparisons in the launch are Tether's own measurements.",
+      "source": "https://tether.io/news/tethers-800m-ai-agent-beats-models-2-5x-its-size-on-everyday-phone-tasks/"
+    },
+    {
+      "model": "Bielik-11B-v3.1 DFlash",
+      "lab": "SpeakLeash / Cyfronet AGH",
+      "date": "2026-11-11",
+      "tier": "specialty",
+      "note": "Apache-2.0 draft model for speculative decoding with Bielik-11B-v3.1-Instruct. Requires the target model and a compatible inference server; not a standalone language model. Publisher's scheduled November 11 release is corroborated by public weights.",
+      "source": "https://huggingface.co/speakleash/Bielik-11B-v3.1-DFlash"
+    },
+    {
+      "model": "ERNIE-Wizshot-ME (documented API availability)",
+      "lab": "Baidu",
+      "date": "2026-11-11",
+      "tier": "specialty",
+      "note": "Qianfan video-generation model driven by character images, text, and audio, emphasizing facial micro-expressions. Uses the November 11 API-documentation date as an availability milestone; the exact first public launch date was not established.",
+      "source": "https://cloud.baidu.com/doc/qianfan-api/s/8mwbylac7"
+    },
+    {
+      "model": "ERNIE 5.5 Flash Preview (hosted release)",
+      "lab": "Baidu",
+      "date": "2026-11-10",
+      "tier": "mid",
+      "note": "First post-trained checkpoint of ERNIE 5.5 Flash Base: 280B total and 14B active parameters, with 1M context for coding, agents, and knowledge work. Uses November 10 UTC OpenRouter listing; Baidu's announcement is November 11. Qianfan API is available; post-trained weights are promised later, distinct from the existing Base weights.",
+      "source": "https://ernie.baidu.com/release/ernie-5-5-flash-preview/"
+    },
+    {
+      "model": "ERNIE-Light-DT-1.0 (hosted release)",
+      "lab": "Baidu",
+      "date": "2026-11-10",
+      "tier": "mid",
+      "note": "Long-context text and reasoning model using Baidu Sparse Attention and feedback-based history compression. Uses the November 10 UTC OpenRouter listing, with 1M context and up to 128K output; also available through Qianfan.",
+      "source": "https://openrouter.ai/baidu/ernie-light-dt-1.0-intl"
+    },
+    {
+      "model": "Bielik-11B-v3.1-Instruct",
+      "lab": "SpeakLeash / Cyfronet AGH",
+      "date": "2026-11-10",
+      "tier": "open-weights",
+      "note": "Apache-2.0 11B multilingual model supporting 56 languages, with function calling, structured output, and a reasoning mode. Public weights corroborate the publisher's November 10 release date; separate from the DFlash companion and planned Bielik-One decision family.",
+      "source": "https://www.bielik.ai/en/blog/launching-bielik-11b-v31-dflash-and-the-bielik-one-family"
+    }
+  ],
+  "corrections": [],
+  "dateEvidence": [
+    {
+      "models": ["ERNIE 5.5 Flash Preview (hosted release)", "ERNIE-Light-DT-1.0 (hosted release)"],
+      "sourceURLs": ["https://openrouter.ai/api/v1/models", "https://ernie.baidu.com/research/", "https://cloud.baidu.com/product/qianfan_home/model_3.html?track=home_banner"],
+      "result": "OpenRouter's public catalog gives created=1794333533 (2026-11-10T17:58:53Z) for baidu/ernie-5.5-flash-preview:free and created=1794331260 (2026-11-10T17:21:00Z) for baidu/ernie-light-dt-1.0-intl. These are explicitly hosted-listing milestones, earlier than Baidu's November 11 Flash announcement. Do not infer open post-trained weights from the existing Base release."
+    },
+    {
+      "models": ["Bielik-11B-v3.1-Instruct", "Bielik-11B-v3.1 DFlash"],
+      "sourceURLs": ["https://www.bielik.ai/en/blog/launching-bielik-11b-v31-dflash-and-the-bielik-one-family", "https://huggingface.co/speakleash/Bielik-11B-v3.1-Instruct", "https://huggingface.co/speakleash/Bielik-11B-v3.1-DFlash"],
+      "result": "Use the publisher's November 10 and 11 release dates, corroborated by available model cards and weights."
+    },
+    {
+      "models": ["ERNIE-Wizshot-ME (documented API availability)"],
+      "sourceURLs": ["https://cloud.baidu.com/doc/qianfan-api/s/8mwbylac7", "https://cloud.baidu.com/product/qianfan_home/model_3.html?track=home_banner"],
+      "result": "API documentation updated November 11 exposes ernie-wizshot-me, and the publisher's three-model launch page confirms it is online. Record documented availability, not an inferred exact launch date or later keynote date."
+    }
+  ],
+  "exclusions": [
+    {
+      "candidate": "Bielik-One family",
+      "reason": "Scheduled for November 12 in the November 10 announcement, but public model availability was not corroborated in the publisher's current Hugging Face listings. Do not convert a schedule into a completed release.",
+      "sources": ["https://www.bielik.ai/en/blog/launching-bielik-11b-v31-dflash-and-the-bielik-one-family", "https://huggingface.co/speakleash"]
+    },
+    {
+      "candidate": "Kimi K3.1 Pro Highspeed on Amazon Bedrock; MiniMax H3-Image November 11 coverage; P-H3-Image",
+      "reason": "Additional distribution or coverage of existing rows. P-H3-Image's original November 3 release is already recorded; MiniMax H3-Image weights are recorded November 10. Keep original milestones.",
+      "sources": ["https://blog.jiufeng.ai/releases/2026-11", "https://huggingface.co/MiniMaxAI/MiniMax-H3-Image", "https://www.pruna.ai/blog/oss-p-h3-image-launch"]
+    },
+    {
+      "candidate": "Qwen4 27B / Flash / Plus and ERNIE 5.5 Flash Preview open weights",
+      "reason": "The verified Qwen launch is Max Preview only; post-trained ERNIE weights remain promised. No separate completed release is established by the sources checked.",
+      "sources": ["https://docs.qwencloud.com/developer-guides/getting-started/latest-model", "https://ernie.baidu.com/zh/release/ernie-5-5-flash-preview/"]
+    }
+  ],
+  "sourceSweep": [
+    {
+      "lab": "November 10–12 and earlier gap cross-check",
+      "sourceURLs": ["https://www.llm-releases.com/", "https://blog.jiufeng.ai/releases", "https://inference360.ai/releases", "https://aireleasetracker.com/latest", "https://ernie.baidu.com/research/", "https://huggingface.co/speakleash", "https://www.pruna.ai/blog/oss-p-h3-image-launch"],
+      "result": "Compared release trackers against the existing 601 rows, then verified additions with publisher announcements, model cards, API docs, and the public hosting catalog. Retained original dates for already represented releases and documented uncertainty for API-only milestones."
+    }
+  ]
+}
