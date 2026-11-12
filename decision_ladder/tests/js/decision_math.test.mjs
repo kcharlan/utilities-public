@@ -9,6 +9,16 @@ new Function('module', 'ladderCore', code)(module, createRequire(import.meta.url
 const m = module.exports;
 const row = (name, capability, price, latency, extra={}) => ({key:name, name, ranked:true, board:'api', capability, price, latency, ...extra});
 const caps = {cost:5, latency:10};
+test('pick moves preserve input and handle directions, boundaries and missing keys', () => {
+  const picks=['a','b','c','d'];
+  assert.deepEqual(m.movePick(picks,'d','a'),['d','a','b','c']);
+  assert.deepEqual(m.movePick(picks,'a','c'),['b','c','a','d']);
+  for (const [key,target] of [['x','a'],['a','x'],['a','a']]) assert.deepEqual(m.movePick(picks,key,target),picks);
+  assert.deepEqual(m.shiftPick(picks,'b',-1),['b','a','c','d']);
+  assert.deepEqual(m.shiftPick(picks,'b',1),['a','c','b','d']);
+  for (const [key,delta] of [['a',-1],['d',1],['x',1]]) assert.deepEqual(m.shiftPick(picks,key,delta),picks);
+  assert.deepEqual(picks,['a','b','c','d']);
+});
 test('not ranked rows sort by displayed listing then name and filter by name', () => {
   const rows=[row('Synthetic Z',1,1,1,{ranked:false,listing:'z-list'}),row('Synthetic B',1,1,1,{ranked:false,listing:'a-list'}),row('Synthetic A',1,1,1,{ranked:false,listing:'a-list'}),row('Synthetic ranked',1,1,1)];
   assert.deepEqual(m.notRankedRows(rows,'').map(r=>r.name),['Synthetic A','Synthetic B','Synthetic Z']);

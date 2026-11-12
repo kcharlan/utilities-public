@@ -428,6 +428,40 @@ def test_picker_keyboard_navigation_keeps_focused_option_visible(dl, tmp_path):
         context.close(); browser.close()
 
 
+def test_compare_reorders_and_removes_selected_systems(dl, tmp_path):
+    from helpers import feed, many_systems, snapshot
+    payload = dl.build_payload(snapshot(feed(systems=many_systems(4))), None, {'max_age_hours': 24})
+    path = tmp_path / 'reorder.html'; path.write_bytes(dl.render_page(payload))
+    with sync_playwright() as playwright:
+        browser = playwright.chromium.launch(); context = browser.new_context(service_workers='block'); context.set_offline(True)
+        blocked = block_external_requests(context); page = context.new_page()
+        with guard_browser_errors(page):
+            page.goto(path.as_uri()); page.get_by_role('tab', name='Compare', exact=True).click()
+            page.get_by_role('button', name='Add system').click()
+            for i in range(1, 5): page.locator('.pop li button').filter(has_text=f'Synthetic system {i:03}').click()
+            page.get_by_label('Search systems', exact=True).press('Escape')
+            chips = page.locator('.chip')
+            def check_order(order):
+                expect(chips).to_have_count(len(order))
+                for i, n in enumerate(order):
+                    expect(chips.nth(i)).to_contain_text(f'Synthetic system {n:03}')
+                    expect(page.locator('.compare thead th').nth(i + 1)).to_contain_text(f'Synthetic system {n:03}')
+                best = page.locator('.compare tbody tr').filter(has=page.get_by_text('Capability', exact=True)).locator('td .pill')
+                expect(best).to_have_count(1); expect(best).to_have_text('99.0')
+                assert page.locator('.compare tbody tr').filter(has=page.get_by_text('Capability', exact=True)).locator('td').nth(order.index(1)).locator('.pill').count() == 1
+            chips.nth(3).drag_to(chips.nth(0)); check_order([4, 1, 2, 3])
+            page.get_by_role('button', name='Move Synthetic system 004 right').click(); check_order([1, 4, 2, 3])
+            expect(page.get_by_role('button', name='Move Synthetic system 003 right')).to_be_disabled()
+            expect(page.get_by_role('button', name='Move Synthetic system 001 left')).to_be_disabled()
+            page.reload(); check_order([1, 4, 2, 3])
+            chips.nth(1).get_by_role('button', name='Remove Synthetic system 004').click(); check_order([1, 2, 3])
+            page.locator('.compare thead').get_by_role('button', name='Remove Synthetic system 001').click()
+            expect(chips).to_have_count(2)
+            expect(chips.nth(0)).to_contain_text('Synthetic system 002'); expect(chips.nth(1)).to_contain_text('Synthetic system 003')
+            assert_no_external_resources(page, blocked)
+        context.close(); browser.close()
+
+
 def test_compare_not_ranked_and_changes_offline(dl, tmp_path):
     from copy import deepcopy
     systems = [{'key': str(i), 'name': f'Synthetic system {i}', 'board': 'api', 'ranked': i != 9,

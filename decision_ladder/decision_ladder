@@ -355,7 +355,8 @@ input, select, button { font:inherit; color:var(--ink); background:var(--panel);
 .board-table td { padding:5px 8px } .board-table .name { width:240px; max-width:240px } .board-table .name .detail { overflow:hidden; text-overflow:ellipsis; white-space:nowrap } .board-table .name-line { display:flex; gap:5px; align-items:center; white-space:nowrap; overflow:hidden } .board-table .short { overflow:hidden; text-overflow:ellipsis; font-weight:600 } .board-tag { color:var(--muted); border:1px solid var(--line); border-radius:4px; padding:0 4px; font-size:.8em; flex:none } .tier-heading td { background:var(--bg); padding:0 } .tier-heading button { width:100%; text-align:left; border:0; background:none; font-weight:600 } .dominated { color:var(--muted) }
 .chart { max-height:none } .chart text { font-size:inherit } .chart .mark { stroke:var(--accent); stroke-width:1; opacity:.7; cursor:pointer } .chart .mark.published { stroke:var(--ink); stroke-width:2 } .chart .mark.dim { opacity:.15 } .chart .mark.highlight { opacity:1; stroke-width:3 }
 .selection { display:flex; flex-wrap:wrap; align-items:center; gap:8px; margin:12px 0 }
-.chip { border:1px solid var(--ink); border-radius:999px; display:inline-flex; gap:7px; align-items:center; padding:3px 4px 3px 11px; overflow-wrap:anywhere }
+.chip { border:1px solid var(--ink); border-radius:999px; display:inline-flex; gap:7px; align-items:center; padding:3px 4px 3px 11px; overflow-wrap:anywhere; cursor:grab }
+.chip.dragging { opacity:.5 } .chip.drop-target { outline:2px solid var(--accent) }
 .chip small { color:var(--muted) } .chip button { border:0; background:none; padding:0 6px }
 .picker { position:relative; display:inline-block } .pop { position:absolute; z-index:5; top:calc(100% + 6px); left:0; width:min(430px, calc(100vw - 80px)); background:var(--panel); border:1px solid var(--ink); border-radius:8px; padding:8px }
 .pop input { width:100% } .pop ul { list-style:none; margin:0; padding:0; max-height:300px; overflow-y:auto } .pop li button { width:100%; border:0; display:grid; grid-template-columns:minmax(0,1fr) auto; gap:2px 12px; text-align:left; overflow-wrap:anywhere } .pop li button.first:not(:disabled), .pop li button:hover:not(:disabled) { background:var(--dom-bg) } .pop small { color:var(--muted) } .pop p { margin:4px; color:var(--muted) }
@@ -437,6 +438,17 @@ function searchRows(rows, query) { const q=query.toLowerCase(); return rows.filt
 function listingText(token) { return token == null ? 'Not available' : label('listing',token); }
 function notRankedRows(rows, query) { return searchRows(rows.filter(r=>!r.ranked),query).sort((a,b)=>ladderCore.compareText(listingText(a.listing).toLowerCase(),listingText(b.listing).toLowerCase()) || ladderCore.compareText(a.name,b.name)); }
 function pickerRows(rows) { return rows.slice().sort((a,b)=> (a.ranked===b.ranked ? 0 : a.ranked ? -1 : 1) || (finite(b.capability)?b.capability:-Infinity)-(finite(a.capability)?a.capability:-Infinity) || ladderCore.compareText(a.name,b.name)); }
+function movePick(picks,key,targetKey) {
+  const from=picks.indexOf(key), to=picks.indexOf(targetKey);
+  if (from<0 || to<0 || from===to) return picks;
+  const result=picks.slice(); result.splice(from,1); result.splice(to,0,key); return result;
+}
+function shiftPick(picks,key,delta) {
+  const from=picks.indexOf(key);
+  if (from<0) return picks;
+  const to=Math.max(0,Math.min(picks.length-1,from+delta));
+  return movePick(picks,key,picks[to]);
+}
 function bestIn(rows,key,direction) {
   const values=rows.map(r=>r[key]).filter(finite);
   if (rows.length<2 || !values.length) return rows.map(()=>false);
@@ -470,7 +482,7 @@ function changesToShow(changes, mode) {
 function visibleHistory(history, mode) {
   return history.find(c=>c.revision || c.method || c.caps || c.added.length || c.removed.length || changesToShow(c,mode).length) || null;
 }
-const api={withinCaps,capReasons,prepare,tiers,defaultExpanded,tierGroups,visibleTierRows,chartMarks,boardPartitions,boardFrontier,priceText,latencyText,secondsText,scoreText,capText,label,listingText,whenText,findings,searchRows,notRankedRows,pickerRows,bestIn,rankText,rankBestIn,changeText,changeFields,changesToShow,visibleHistory};
+const api={withinCaps,capReasons,prepare,tiers,defaultExpanded,tierGroups,visibleTierRows,chartMarks,boardPartitions,boardFrontier,priceText,latencyText,secondsText,scoreText,capText,label,listingText,whenText,findings,searchRows,notRankedRows,pickerRows,movePick,shiftPick,bestIn,rankText,rankBestIn,changeText,changeFields,changesToShow,visibleHistory};
 if (typeof module !== 'undefined') module.exports=api; else window.decisionMath=api;
 }());
 // decision-math:end
@@ -530,14 +542,16 @@ function Picker({picks,onAdd}) {
     ${open && html`<div class="pop" onKeyDown=${onKey}><${ClearableInput} label="Search systems" placeholder="Search systems" inputRef=${input} value=${query} onChange=${setQuery}/><ul>${list.map(r=>html`<li key=${r.key}><button type="button" disabled=${picks.includes(r.key)} onClick=${()=>pick(r)}><span>${r.short}</span><span>${picks.includes(r.key)?'Added':M.scoreText(r.capability)||'Not measured'}</span><small>${r.detail}</small><small>${boardLabel(r.board)}</small></button></li>`)}</ul><p>${list.length?`${list.length} of ${data.rows.length} systems.`:'No system matches that search.'}</p></div>`}</div>`;
 }
 function Compare({picks,setPicks}) {
+  const [dragged,setDragged]=useState(null), [target,setTarget]=useState(null);
   const rows=picks.map(key=>data.rows.find(r=>r.key===key)).filter(Boolean);
   const value=v=>v==null?'Not measured':v, score=v=>M.scoreText(v)||'Not measured';
   const remove=key=>setPicks(picks.filter(k=>k!==key));
   const rank=(r,key)=>M.rankText(r,key,data.caps);
   const specs=[['intelligence','Intelligence','max',r=>score(r.intelligence),true],['calibration','Calibration','max',r=>score(r.calibration),true],['speed','Speed','max',r=>score(r.speed),true],['cost_axis','Cost','max',r=>score(r.cost_axis),true],['capability','Capability','max',r=>score(r.capability)],['capability_rank','Capability rank','min',r=>rank(r,'capability_rank')],['composite_rank','Composite rank','min',r=>rank(r,'composite_rank')],['price','Price / 1,000 decisions','min',r=>`${r.price==null?'No price':'$'+M.priceText(r.price)} ${M.label('price',r.price_kind)}`],['latency','Median latency','min',r=>`${M.latencyText(r.latency)||'Not measured'} ${M.label('latency',r.latency_basis)}`],['latency_p95','p95 latency','min',r=>`${M.latencyText(r.latency_p95)||'Not measured'} ${M.label('latency',r.latency_basis)}`]];
-  return html`<section class="panel"><h2>Compare systems</h2><div class="selection">${rows.map(r=>html`<span class="chip">${r.short} <small>${boardLabel(r.board)}</small><button type="button" aria-label=${'Remove '+r.name} onClick=${()=>remove(r.key)}>×</button></span>`)}${rows.length>0 && html`<button type="button" onClick=${()=>setPicks([])}>Clear all</button>`}<span>${rows.length} of 8 selected</span></div>
+  return html`<section class="panel"><h2>Compare systems</h2><div class="selection">${rows.map(r=>html`<span key=${r.key} class=${'chip'+(dragged===r.key?' dragging':'')+(target===r.key?' drop-target':'')} draggable="true" onDragStart=${e=>{setDragged(r.key);e.dataTransfer.setData('text/plain',r.key);e.dataTransfer.effectAllowed='move';}} onDragOver=${e=>{e.preventDefault();setTarget(r.key);}} onDrop=${e=>{e.preventDefault();setPicks(M.movePick(picks,dragged,r.key));setDragged(null);setTarget(null);}} onDragEnd=${()=>{setDragged(null);setTarget(null);}}>${r.short} <small>${boardLabel(r.board)}</small><button type="button" aria-label=${'Remove '+r.name} onClick=${()=>remove(r.key)}>×</button></span>`)}${rows.length>0 && html`<button type="button" onClick=${()=>setPicks([])}>Clear all</button>`}<span>${rows.length} of 8 selected</span></div>
+    ${rows.length>=2 && html`<p>Drag a chip, or use the arrows in a column heading, to reorder.</p>`}
     <${Picker} picks=${picks} onAdd=${key=>setPicks([...picks,key])}/>
-    ${!rows.length ? html`<p>No systems selected. Add up to 8 to compare them side by side.</p>` : html`<div class="table-wrap compare"><table style=${{minWidth:(rows.length+1)*150+'px'}}><colgroup><col style="width:150px"/>${rows.map(()=>html`<col/>`)}</colgroup><thead><tr><th>Measure</th>${rows.map(r=>html`<th>${r.short}<span class="detail">${r.detail}</span><button type="button" aria-label=${'Remove '+r.name} onClick=${()=>remove(r.key)}>×</button></th>`)}</tr></thead><tbody>
+    ${!rows.length ? html`<p>No systems selected. Add up to 8 to compare them side by side.</p>` : html`<div class="table-wrap compare"><table style=${{minWidth:(rows.length+1)*150+'px'}}><colgroup><col style="width:150px"/>${rows.map(()=>html`<col/>`)}</colgroup><thead><tr><th>Measure</th>${rows.map((r,i)=>html`<th>${r.short}<span class="detail">${r.detail}</span><button type="button" aria-label=${'Move '+r.name+' left'} disabled=${i===0} onClick=${()=>setPicks(M.shiftPick(picks,r.key,-1))}>◀</button><button type="button" aria-label=${'Move '+r.name+' right'} disabled=${i===rows.length-1} onClick=${()=>setPicks(M.shiftPick(picks,r.key,1))}>▶</button><button type="button" aria-label=${'Remove '+r.name} onClick=${()=>remove(r.key)}>×</button></th>`)}</tr></thead><tbody>
       ${specs.map(([key,title,direction,display,progress])=>{const best=key.endsWith('_rank')?M.rankBestIn(rows,key,data.caps):M.bestIn(rows,key,direction); return html`<tr><th>${title}</th>${rows.map((r,i)=>html`<td><span class=${best[i]?'pill':''}>${display(r)}</span>${progress && Number.isFinite(r[key]) && html`<progress value=${r[key]} max="100">${score(r[key])}</progress>`}</td>`)}</tr>`;})}
       <tr><th>Measurement date</th>${rows.map(r=>html`<td>${r.measured_on ?? 'Not given'}</td>`)}</tr><tr><th>Source</th>${rows.map(r=>html`<td>${safeLink(r.source_url)?html`<a href=${safeLink(r.source_url)} rel="noopener noreferrer">Source</a>`:'Not available'}</td>`)}</tr>
     </tbody></table></div>`}
