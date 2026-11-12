@@ -335,27 +335,117 @@ PAGE_CSS = r"""
  --line:#2c3946; --accent:#5cc9bd; --warn:#f0c060; --warn-bg:#3a2e12; --front:#6fd39b; --front-bg:#163324; --dom-bg:#212b36;
  --s1:#6fb1f5; --s2:#f08a63; --s3:#b697e8; --s4:#5cc9bd; --s5:#ea86bd; --s6:#c9cd5a; --s7:#9aa9f0; --s8:#e0ac68; color-scheme:dark; } }
 * { box-sizing:border-box } body { margin:0; background:var(--bg); color:var(--ink); font:15px/1.45 var(--font); padding:20px 16px 40px }
-.wrap { max-width:1180px; margin:auto } h1 { font-size:26px; margin:0 0 12px } .status { display:flex; flex-wrap:wrap; gap:8px 18px; color:var(--muted) }
+.wrap { max-width:1180px; margin:auto; overflow-wrap:anywhere } h1 { font-size:26px; margin:0 0 12px } .status { display:flex; flex-wrap:wrap; gap:8px 18px; color:var(--muted) }
 .status b { color:var(--ink) } .age { background:var(--front-bg); color:var(--front); border-radius:999px; padding:2px 10px; font-weight:600 }
 .age.stale { background:var(--warn-bg); color:var(--warn) } code { background:var(--panel); border:1px solid var(--line); padding:2px 6px }
 a { color:var(--accent) } footer { margin-top:40px; color:var(--muted); border-top:1px solid var(--line) }
+.panel { background:var(--panel); border:1px solid var(--line); border-radius:10px; margin-top:18px; padding:16px; min-width:0 }
+.controls { display:flex; flex-wrap:wrap; gap:12px; align-items:end } label { display:flex; flex-direction:column; gap:3px; color:var(--muted) }
+input, select, button { font:inherit; color:var(--ink); background:var(--panel); border:1px solid var(--line); border-radius:5px; padding:6px; max-width:100% } button { cursor:pointer }
+.inline { flex-direction:row; align-items:center } .table-wrap { overflow-x:auto; max-width:100% } table { border-collapse:collapse; width:100%; min-width:900px } th,td { border-bottom:1px solid var(--line); padding:8px; text-align:left; vertical-align:top } th { cursor:pointer } tbody tr:nth-child(even) { background:var(--bg) } tbody tr.outside { opacity:.55 } .tier-band { border-left:4px solid var(--accent) } .raw,.detail { color:var(--muted); font-size:.85em } .detail { display:block; overflow-wrap:anywhere } .pill { background:var(--front-bg); color:var(--front); border-radius:999px; padding:2px 6px; white-space:nowrap } .name { overflow-wrap:anywhere; max-width:240px } .chart { width:100%; height:auto; max-height:400px } .chart text { fill:var(--muted); font-size:11px } .chart .grid { stroke:var(--line) } .chart .cap-line { stroke:var(--warn); stroke-width:2 } .chart .shade { fill:var(--warn); opacity:.08 } .chart .edge { fill:none; stroke:var(--front); stroke-width:2 } .chart .mark { stroke:var(--accent); stroke-width:2; fill:var(--panel) } .chart .mark.frontier { fill:var(--accent) } .chart .mark.modelled { stroke-dasharray:3 2 } .legend { color:var(--muted); overflow-wrap:anywhere }
+.tier-even .tier-band { border-color:var(--s2) }
+"""
+DECISION_MATH_JS = r"""
+// decision-math:begin
+(function () {
+const finite = v => typeof v === 'number' && Number.isFinite(v);
+function withinCaps(row, caps) { return finite(row.price) && finite(row.latency) && row.price <= caps.cost && row.latency <= caps.latency; }
+function capReasons(row, caps) {
+  const reasons = [];
+  if (!finite(row.price)) reasons.push('no price'); else if (row.price > caps.cost) reasons.push('price above the cap');
+  if (!finite(row.latency)) reasons.push('no latency'); else if (row.latency > caps.latency) reasons.push('latency above the cap');
+  return reasons;
+}
+function prepare(rows, opts) {
+  return rows.filter(r => r.ranked && finite(r.capability) && (opts.board === 'all' || r.board === opts.board)).map(r => ({...r,
+    label:r.name, score:opts.mode === 'whole' ? ladderCore.wholePoints(r.capability) : r.capability,
+    cost:finite(r[opts.axis]) ? r[opts.axis] : null, inCaps:withinCaps(r,opts.caps)}));
+}
+function tiers(rows) {
+  const compareNullable = (a,b) => a == null ? (b == null ? 0 : 1) : b == null ? -1 : a-b;
+  const list = rows.slice().sort((a,b) => b.score-a.score || compareNullable(a.price,b.price) || compareNullable(a.latency,b.latency) || ladderCore.compareText(a.label,b.label));
+  let tier = 0, previous, size = 0;
+  list.forEach((r,i) => { if (i === 0 || r.score !== previous) { tier++; previous=r.score; size=list.filter(x => x.score === r.score).length; } list[i]={...r,tier,tierSize:size}; });
+  return list;
+}
+function boardFrontier(rows) { return ladderCore.paretoRows(rows.filter(r => r.inCaps)); }
+function priceText(v) { return finite(v) ? v.toFixed(v < .01 ? 4 : v < 1 ? 3 : 2) : ''; }
+function latencyText(v) { return finite(v) ? (v < 1 ? Math.round(v*1000)+' ms' : v.toFixed(2)+' s') : ''; }
+function findings(rows, caps, mode) {
+  const inside=rows.filter(r=>r.inCaps), ranked=tiers(inside), front=boardFrontier(rows).filter(r=>r.status==='frontier');
+  const out=[`${inside.length} ranked systems are inside the caps; ${front.length} are on the frontier.`];
+  if (ranked.length) { const top=ranked.filter(r=>r.tier===1); out.push(`The top tier scores ${mode === 'whole' ? top[0].score : top[0].score.toFixed(1)}: ${top.map(r=>r.label).join(', ')}.`); }
+  const steps=front.filter(r=>r.up && r.up.perPoint !== null).map(r=>({from:r.label, ...r.up})).sort((a,b)=>a.perPoint-b.perPoint);
+  if (steps.length) { const describe=s=>`${s.from} to ${s.to.label} (${s.perPoint.toFixed(3)} per point)`; out.push(`The cheapest frontier step per point is ${describe(steps[0])}; the most expensive is ${describe(steps[steps.length-1])}.`); }
+  return out;
+}
+function searchRows(rows, query) { const q=query.toLowerCase(); return rows.filter(r=>r.name.toLowerCase().includes(q)); }
+const api={withinCaps,capReasons,prepare,tiers,boardFrontier,priceText,latencyText,findings,searchRows};
+if (typeof module !== 'undefined') module.exports=api; else window.decisionMath=api;
+}());
+// decision-math:end
 """
 APP_JS = r"""
 (function () {
 const data = JSON.parse(document.getElementById('payload').textContent);
 const { h, render } = preact;
+const { useState, useLayoutEffect } = preactHooks;
 const html = htm.bind(h);
+const M = decisionMath;
 const age = ladderCore.dataAge(data.last_checked, Date.now(), data.max_age_hours);
 const measured = data.rows.filter(r => r.capability !== null).length;
 const ranked = data.rows.filter(r => r.ranked).length;
-render(html`<main class="wrap"><h1>Decision Ladder</h1><div class="status">
+function initial() {
+  let saved = {}; try { saved=JSON.parse(location.hash ? decodeURIComponent(location.hash.slice(1)) : localStorage.getItem('decision_ladder.state') || '{}'); } catch (_) {}
+  return {board:'all', mode:'whole', axis:'price', cost:data.caps.cost, latency:data.caps.latency, query:'', outside:false, sort:'', dir:1, ...saved};
+}
+function Chart({rows, caps, axis, edge}) {
+  const positive=rows.map(r=>r.cost).filter(v=>Number.isFinite(v) && v>0), cap=axis==='price'?caps.cost:caps.latency;
+  if (cap>0) positive.push(cap);
+  if (!positive.length) return html`<p>No positive values are available for the logarithmic chart.</p>`;
+  const lo=Math.min(...positive)/1.4, hi=Math.max(...positive)*1.4, scores=rows.map(r=>r.score), min=Math.min(...scores,0)-1, max=Math.max(...scores,1)+1;
+  const x=v=>40+(Math.log(v)-Math.log(lo))/(Math.log(hi)-Math.log(lo))*500, y=v=>245-(v-min)/(max-min)*220;
+  const marks=rows.filter(r=>r.cost>0), ids=new Set(edge.filter(r=>r.status==='frontier').map(r=>r.key));
+  const path=edge.filter(r=>r.status==='frontier' && r.cost>0).map((r,i)=>(i?' H':'M')+x(r.cost)+(i?' V':',')+y(r.score)).join('');
+  return html`<div><svg class="chart" viewBox="0 0 560 285" role="img" aria-label=${'Capability by '+axis}>
+    ${cap>0 && html`<rect class="shade" x=${x(cap)} y="15" width=${540-x(cap)} height="230"/><line class="cap-line" x1=${x(cap)} x2=${x(cap)} y1="15" y2="245"/><text x=${x(cap)} y="12">Cap ${cap}</text>`}
+    ${ladderCore.linearTicks(min,max).map(v=>html`<g><line class="grid" x1="40" x2="540" y1=${y(v)} y2=${y(v)}/><text x="35" y=${y(v)+4} text-anchor="end">${v}</text></g>`)}
+    ${ladderCore.logTicks(lo,hi).map(v=>html`<g><line class="grid" x1=${x(v)} x2=${x(v)} y1="15" y2="245"/><text x=${x(v)} y="265" text-anchor="middle">${v}</text></g>`)}
+    <path class="edge" d=${path}/>${marks.map(r=>{ const cls='mark '+(ids.has(r.key)?'frontier ':'')+((axis==='price'?!r.price_published:r.latency_assumed)?'modelled':''); const title=`${r.name}: Capability ${r.capability.toFixed(1)}, $${M.priceText(r.price)}, ${M.latencyText(r.latency)}`; return r.board==='open' ? html`<circle class=${cls} cx=${x(r.cost)} cy=${y(r.score)} r="5"><title>${title}</title></circle>` : html`<rect class=${cls} x=${x(r.cost)-5} y=${y(r.score)-5} width="10" height="10"><title>${title}</title></rect>`; })}</svg>
+    <p class="legend">Circle: open weights; square: hosted API. Filled: frontier. Dashed outline: modelled value. Zero and unavailable values cannot be plotted on a logarithmic axis.</p></div>`;
+}
+function App() {
+const [s,setS]=useState(initial), set=(key,value)=>setS({...s,[key]:value});
+useLayoutEffect(()=>{ const value=JSON.stringify(s); try { localStorage.setItem('decision_ladder.state',value); history.replaceState(null,'','#'+encodeURIComponent(value)); } catch (_) {} },[s]);
+const caps={cost:Number(s.cost),latency:Number(s.latency)};
+const prepared=M.prepare(data.rows,{board:s.board,mode:s.mode,axis:s.axis,caps});
+const edge=M.boardFrontier(prepared), byKey=new Map(edge.map(r=>[r.key,r]));
+let rows=M.tiers(M.searchRows(prepared,s.query)).map(r=>({...r,status:byKey.get(r.key)?.status || ''}));
+let inside=rows.filter(r=>r.inCaps), outside=rows.filter(r=>!r.inCaps);
+if (s.sort) { const cmp=(a,b)=>{const av=a[s.sort],bv=b[s.sort]; if(av==null)return bv==null?0:1; if(bv==null)return -1; return s.dir*ladderCore.compareValues(av,bv);}; inside.sort(cmp); outside.sort(cmp); }
+rows=inside.concat(s.outside?outside:[]);
+const heads=[['score','Capability'],['name','System'],['intelligence','Intelligence'],['calibration','Calibration'],['price','Price / 1,000'],['latency','Median latency'],['capability_rank','Capability rank'],['composite_rank','Composite rank'],['status','Frontier']];
+const sort=k=>setS({...s,sort:k,dir:s.sort===k?-s.dir:1});
+return html`<main class="wrap"><h1>Decision Ladder</h1><div class="status">
 <span id="status-age" class=${age.stale ? 'age stale' : 'age'}>${age.text}</span>
 <span>Revision <b>${data.revision}</b></span><span>Method <b>${data.method.label}</b></span>
 <span>Official caps <b>$${data.caps.cost} / 1,000 decisions; ${data.caps.latency}s</b></span>
 <span><b>${measured}</b> measured · <b>${ranked}</b> ranked</span><code>decision_ladder refresh</code></div>
+<section class="panel"><div class="controls">
+<label>Board<select aria-label="Board" value=${s.board} onChange=${e=>set('board',e.target.value)}><option value="all">All</option><option value="open">Open weights</option><option value="api">Hosted API</option></select></label>
+<label>Cost cap<input aria-label="Cost cap" type="number" min="0" step="any" value=${s.cost} onInput=${e=>set('cost',e.target.value)}/></label>
+<label>Latency cap<input aria-label="Latency cap" type="number" min="0" step="any" value=${s.latency} onInput=${e=>set('latency',e.target.value)}/></label>
+<button onClick=${()=>setS({...s,cost:data.caps.cost,latency:data.caps.latency})}>Use official caps</button>
+<label>Scoring<select aria-label="Scoring" value=${s.mode} onChange=${e=>set('mode',e.target.value)}><option value="whole">Whole points</option><option value="decimal">Decimals</option></select></label>
+<label>Chart x-axis<select aria-label="Chart x-axis" value=${s.axis} onChange=${e=>set('axis',e.target.value)}><option value="price">Price</option><option value="latency">Latency</option></select></label>
+<label>Filter<input aria-label="Filter" value=${s.query} onInput=${e=>set('query',e.target.value)}/></label></div></section>
+<section class="panel"><h2>Capability and ${s.axis}</h2><${Chart} rows=${prepared} caps=${caps} axis=${s.axis} edge=${edge}/>${M.findings(prepared,caps,s.mode).map(t=>html`<p>${t}</p>`)}</section>
+<section class="panel"><h2>Systems</h2><div class="controls"><button onClick=${()=>set('sort','')}>Tier order</button><label class="inline"><input type="checkbox" checked=${s.outside} onChange=${e=>set('outside',e.target.checked)}/>Show systems outside the caps</label></div><div class="table-wrap"><table><thead><tr>${heads.map(([key,label])=>html`<th tabindex="0" onClick=${()=>sort(key)} onKeyDown=${e=>{if(e.key==='Enter'||e.key===' ')sort(key)}}>${label}</th>`)}</tr></thead><tbody>${rows.map(r=>{const result=byKey.get(r.key); return html`<tr key=${r.key} class=${'tier-'+r.tier+(r.tier%2===0?' tier-even':'')+(r.inCaps?'':' outside')}><td class="tier-band">${s.mode==='whole'?r.score:r.capability.toFixed(1)} ${s.mode==='whole'&&html`<span class="raw">(${r.capability.toFixed(1)})</span>`}</td><td class="name">${r.short}<span class="detail">${r.detail}</span><span class="pill">${r.board==='open'?'Open weights':'Hosted API'}</span></td><td>${r.intelligence ?? ''}</td><td>${r.calibration ?? ''}</td><td>${r.price==null?'':'$'+M.priceText(r.price)} ${r.price!=null&&!r.price_published?'est.':''}</td><td>${M.latencyText(r.latency)} ${r.latency_assumed?'assumed':''}</td><td>${r.capability_rank ?? ''}</td><td>${r.composite_rank ?? ''}</td><td>${!r.inCaps?M.capReasons(r,caps).join(', '):result?.status==='frontier'?html`<span class="pill">Frontier</span>`:result?.by?'Dominated by '+result.by.label:'Unavailable'}</td></tr>`;})}</tbody></table></div></section>
 <footer><p>Data: <a href="https://benchmarkheaven.com/">JevBench by Benchmark Heaven</a></p>
 <p>Costs are estimates unless published; adjusted latency may rely on assumptions. The feed has no confidence intervals.</p>
-<p>Built ${data.built_at} · ${data.app.name} ${data.app.version}</p></footer></main>`, document.getElementById('app'));
+<p>Built ${data.built_at} · ${data.app.name} ${data.app.version}</p></footer></main>`;
+}
+render(html`<${App}/>`, document.getElementById('app'));
 })();
 """
 HTML_TEMPLATE = """<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Decision Ladder</title><!-- frontend-vendor --><style>{{CSS}}</style></head><body><div id="app"></div><script type="application/json" id="payload">{{PAYLOAD}}</script>{{SCRIPTS}}</body></html>"""
@@ -839,11 +929,11 @@ HTML_TEMPLATE = HTML_TEMPLATE.replace("<!-- frontend-vendor -->", FRONTEND_VENDO
 
 
 def render_page(payload):
-    assets = {"PAGE_CSS": PAGE_CSS, "APP_JS": APP_JS}
+    assets = {"PAGE_CSS": PAGE_CSS, "DECISION_MATH_JS": DECISION_MATH_JS, "APP_JS": APP_JS}
     for name, text in assets.items():
         if "</script" in text.lower():
             raise ValueError(f"{name} contains a closing script tag")
-    parts = {"{{CSS}}": PAGE_CSS, "{{SCRIPTS}}": f"<script>{APP_JS}</script>",
+    parts = {"{{CSS}}": PAGE_CSS, "{{SCRIPTS}}": f"<script>{DECISION_MATH_JS}</script><script>{APP_JS}</script>",
              "{{PAYLOAD}}": json.dumps(payload, separators=(",", ":")).replace("<", "\\u003c")}
     out, rest = [], HTML_TEMPLATE
     for marker in sorted(parts, key=HTML_TEMPLATE.index):
