@@ -6,6 +6,59 @@ from playwright.sync_api import expect, sync_playwright
 from tools.testkit import assert_fonts_loaded, assert_no_external_resources, block_external_requests, guard_browser_errors
 
 
+@pytest.mark.parametrize('scores,decimal_expected', [
+    ([8.0, 8.0, 8.0], 'price: 2 → 3.001'),
+    ([7.9, 8.1, 8.2], 'capability: 8.1 → 8.2'),
+])
+def test_history_uses_displayed_changes_for_each_mode(dl, tmp_path, scores, decimal_expected):
+    from datetime import timedelta
+    from helpers import feed, system
+    now = datetime(2026, 1, 1, tzinfo=timezone.utc)
+    for i, (score, price) in enumerate(zip(scores, [2, 3, 3.001])):
+        data = feed(systems=[system(capability={'score': score, 'eligible': True, 'within_caps': True},
+                                    price={'usd_per_1000_decisions': price}, latency={'p50_s_adjusted': 2})])
+        dl.save_snapshot(tmp_path, {'feed': data, 'sha256': 'synthetic'}, now + timedelta(seconds=i))
+    path = tmp_path / 'history.html'
+    dl.build_page(tmp_path, path)
+    with sync_playwright() as playwright:
+        browser = playwright.chromium.launch(); context = browser.new_context(service_workers='block'); context.set_offline(True)
+        blocked = block_external_requests(context); page = context.new_page()
+        with guard_browser_errors(page):
+            page.goto(path.as_uri()); page.get_by_text('Changes', exact=True).click()
+            expect(page.locator('.changes')).to_contain_text('price: 2 → 3.001')
+            page.get_by_label('Scoring').select_option('decimal')
+            expect(page.locator('.changes')).to_contain_text(decimal_expected)
+            assert_no_external_resources(page, blocked)
+        context.close(); browser.close()
+
+
+def test_reference_and_unknown_boards_are_truthful(dl, tmp_path):
+    from helpers import feed, system, snapshot
+    systems = [system(key=board, name='Synthetic ' + board, board=board,
+                      capability={'score': 8, 'eligible': True, 'within_caps': True},
+                      price={'usd_per_1000_decisions': 2}, latency={'p50_s_adjusted': 2})
+               for board in ['open', 'api', 'reference', 'synthetic-unknown']]
+    payload = dl.build_payload(snapshot(feed(systems=systems)), None, {'max_age_hours': 24}); payload['built_at'] = 'synthetic'
+    path = tmp_path / 'boards.html'; path.write_bytes(dl.render_page(payload))
+    with sync_playwright() as playwright:
+        browser = playwright.chromium.launch(); context = browser.new_context(service_workers='block'); context.set_offline(True)
+        blocked = block_external_requests(context); page = context.new_page()
+        with guard_browser_errors(page):
+            page.goto(path.as_uri())
+            expect(page.locator('tbody tr')).to_have_count(4)
+            expect(page.locator('tbody tr').filter(has_text='Synthetic reference')).to_contain_text('Reference')
+            expect(page.locator('tbody tr').filter(has_text='Synthetic synthetic-unknown')).to_contain_text('synthetic-unknown')
+            expect(page.locator('circle.mark')).to_have_count(1)
+            expect(page.locator('rect.mark')).to_have_count(1)
+            expect(page.locator('polygon.mark')).to_have_count(2)
+            expect(page.locator('.legend')).to_contain_text('Reference and other boards')
+            page.get_by_label('Board').select_option('api')
+            expect(page.locator('tbody tr')).to_have_count(1)
+            expect(page.locator('tbody tr')).to_contain_text('Synthetic api')
+            assert_no_external_resources(page, blocked)
+        context.close(); browser.close()
+
+
 @pytest.mark.parametrize('scheme', ['light', 'dark'])
 def test_board_controls_and_responsive_layout(dl, tmp_path, scheme):
     systems = []

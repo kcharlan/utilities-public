@@ -49,7 +49,10 @@ The Compare tab shows up to eight chosen systems and their axis scores, official
 ranks, prices, latency, sources and measurement details. Not ranked lists the
 feed's excluded systems and reasons. The Changes panel compares the newest
 snapshot with the last snapshot that differs in displayed data. When the scoring
-method changes, earlier and later scores are not comparable. Price estimates
+mode changes, the comparison uses the newest visible difference in that mode.
+Reference and other boards appear in All with diamond chart markers; their board
+labels retain their identity. When the scoring method changes, earlier and later
+scores are not comparable. Price estimates
 are marked `est.` and assumed latency is marked `assumed`; dashed chart markers
 indicate modelled values.
 

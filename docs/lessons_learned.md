@@ -1,5 +1,12 @@
 # Lessons learned
 
+## Display-aware history and board fallbacks
+
+Choose a history baseline using the same formatting and scoring mode as the
+display; a raw change can be invisible and hide an earlier visible change.
+Test consecutive snapshots in each mode. Treat unknown categories as themselves
+instead of assigning a known category's label or chart encoding by default.
+
 ## Grouped cleanup and ignored paths
 
 Apply path exclusions before a grouped result is counted or capped, and apply

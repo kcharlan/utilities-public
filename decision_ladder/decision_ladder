@@ -394,7 +394,10 @@ function changesToShow(changes, mode) {
     formattedChange(r.price,priceText) || formattedChange(r.latency,latencyText) ||
     (r.capability && r.capability.map(v=>finite(v)?(mode==='whole'?ladderCore.wholePoints(v):v.toFixed(1)):v).some((v,i,a)=>v!==a[0])));
 }
-const api={withinCaps,capReasons,prepare,tiers,boardFrontier,priceText,latencyText,findings,searchRows,changesToShow};
+function visibleHistory(history, mode) {
+  return history.find(c=>c.revision || c.method || c.caps || c.added.length || c.removed.length || changesToShow(c,mode).length) || null;
+}
+const api={withinCaps,capReasons,prepare,tiers,boardFrontier,priceText,latencyText,findings,searchRows,changesToShow,visibleHistory};
 if (typeof module !== 'undefined') module.exports=api; else window.decisionMath=api;
 }());
 // decision-math:end
@@ -422,6 +425,7 @@ function initial() {
     picks:Array.isArray(saved.picks)?[...new Set(saved.picks.filter(k=>typeof k==='string' && data.rows.some(r=>r.key===k)))].slice(0,8):[]};
 }
 function safeLink(value) { try { const u=new URL(value); return ['http:','https:'].includes(u.protocol)?u.href:null; } catch (_) { return null; } }
+function boardLabel(board) { return board==='open'?'Open weights':board==='api'?'Hosted API':board==='reference'?'Reference':board || 'Unknown board'; }
 function Changes({changes,mode}) {
   if (!changes) return html`<details class="changes"><summary>Changes</summary><p>No previous snapshot.</p></details>`;
   const pair=(p)=>p ? `${p[0]} → ${p[1]}` : '';
@@ -470,8 +474,8 @@ function Chart({rows, caps, axis, edge}) {
     <rect class="shade" x=${capX} y="15" width=${540-capX} height="230"/><line class="cap-line" x1=${capX} x2=${capX} y1="15" y2="245"/><text class="cap-label" x=${capX} y="12">Cap ${cap}</text>
     ${ladderCore.linearTicks(min,max).map(v=>html`<g><line class="grid" x1="40" x2="540" y1=${y(v)} y2=${y(v)}/><text x="35" y=${y(v)+4} text-anchor="end">${v}</text></g>`)}
     ${ladderCore.logTicks(lo,hi).filter(v=>v>0).map(v=>html`<g><line class="grid" x1=${x(v)} x2=${x(v)} y1="15" y2="245"/><text x=${x(v)} y="265" text-anchor="middle">${v}</text></g>`)}
-    <path class="edge" d=${path}/>${marks.map(r=>{ const cls='mark '+(ids.has(r.key)?'frontier ':'')+((axis==='price'?!r.price_published:r.latency_assumed)?'modelled':''); const title=`${r.name}: Capability ${r.capability.toFixed(1)}, $${M.priceText(r.price)}, ${M.latencyText(r.latency)}`; return r.board==='open' ? html`<circle class=${cls} cx=${x(r.cost)} cy=${y(r.score)} r="5"><title>${title}</title></circle>` : html`<rect class=${cls} x=${x(r.cost)-5} y=${y(r.score)-5} width="10" height="10"><title>${title}</title></rect>`; })}</svg>
-    <p class="legend">Circle: open weights; square: hosted API. Filled: frontier. Dashed outline: modelled value. Zero and unavailable values cannot be plotted on a logarithmic axis; a zero cap is shown at the left edge.</p></div>`;
+    <path class="edge" d=${path}/>${marks.map(r=>{ const cls='mark '+(ids.has(r.key)?'frontier ':'')+((axis==='price'?!r.price_published:r.latency_assumed)?'modelled':''); const title=`${r.name}: Capability ${r.capability.toFixed(1)}, $${M.priceText(r.price)}, ${M.latencyText(r.latency)}`; const px=x(r.cost), py=y(r.score); return r.board==='open' ? html`<circle class=${cls} cx=${px} cy=${py} r="5"><title>${title}</title></circle>` : r.board==='api' ? html`<rect class=${cls} x=${px-5} y=${py-5} width="10" height="10"><title>${title}</title></rect>` : html`<polygon class=${cls} points=${`${px},${py-6} ${px+6},${py} ${px},${py+6} ${px-6},${py}`}><title>${title}</title></polygon>`; })}</svg>
+    <p class="legend">Circle: open weights; square: hosted API; diamond: Reference and other boards. Filled: frontier. Dashed outline: modelled value. Zero and unavailable values cannot be plotted on a logarithmic axis; a zero cap is shown at the left edge.</p></div>`;
 }
 function App() {
 const [s,setS]=useState(initial), set=(key,value)=>setS({...s,[key]:value});
@@ -489,7 +493,7 @@ return html`<main class="wrap"><h1>Decision Ladder</h1><div class="status">
 <span id="status-age" class=${age.stale ? 'age stale' : 'age'}>${age.text}</span>
 <span>Revision <b>${data.revision}</b></span><span>Method <b>${data.method.label}</b></span>
 <span>Official caps <b>$${data.caps.cost} / 1,000 decisions; ${data.caps.latency}s</b></span>
-<span><b>${measured}</b> measured · <b>${ranked}</b> ranked</span><code>decision_ladder refresh</code><${Changes} changes=${data.changes} mode=${s.mode}/></div>
+<span><b>${measured}</b> measured · <b>${ranked}</b> ranked</span><code>decision_ladder refresh</code><${Changes} changes=${data.change_history ? M.visibleHistory(data.change_history,s.mode) : data.changes} mode=${s.mode}/></div>
 <nav class="controls"><button onClick=${()=>set('tab','board')}>Board</button><button onClick=${()=>set('tab','compare')}>Compare</button><button onClick=${()=>set('tab','not-ranked')}>Not ranked</button></nav>
 ${s.tab==='compare' && html`<${Compare} picks=${s.picks} setPicks=${v=>set('picks',v)}/>`}
 ${s.tab==='not-ranked' && html`<section class="panel not-ranked"><h2>Not ranked</h2>${data.rows.filter(r=>!r.ranked).map(r=>html`<article><h3>${r.name}</h3><p>Listing: ${r.listing ?? 'Not available'}</p><p>${r.not_ranked_because ?? 'Not available'}</p></article>`)}</section>`}
@@ -515,7 +519,7 @@ ${(validCap(s.cost,null)===null || validCap(s.latency,null)===null) && html`<p r
       ?html`<span class="pill">Frontier</span>`:result?.by?'Dominated by '+result.by.label:'Unavailable';
     return html`<tr key=${r.key} class=${'tier-'+r.tier+(r.tier%2===0?' tier-even':'')+(r.inCaps?'':' outside')}>
       <td class="tier-band">${s.mode==='whole'?r.score:r.capability.toFixed(1)} ${s.mode==='whole'&&html`<span class="raw">(${r.capability.toFixed(1)})</span>`}</td>
-      <td class="name">${r.short}<span class="detail">${r.detail}</span><span class="pill">${r.board==='open'?'Open weights':'Hosted API'}</span></td>
+      <td class="name">${r.short}<span class="detail">${r.detail}</span><span class="pill">${boardLabel(r.board)}</span></td>
       <td>${r.intelligence ?? ''}</td><td>${r.calibration ?? ''}</td>
       <td>${r.price==null?'':'$'+M.priceText(r.price)} ${r.price!=null&&!r.price_published?'est.':''}</td>
       <td>${M.latencyText(r.latency)} ${r.latency_assumed?'assumed':''}</td>
@@ -1032,7 +1036,14 @@ def build_page(home, output):
     if not paths:
         raise StoreError("no snapshot to build from")
     snapshot = read_snapshot(paths[0])
-    payload = build_payload(snapshot, _last_real_change(paths[1:], snapshot), load_config())
+    payload = build_payload(snapshot, None, load_config())
+    payload["change_history"] = []
+    for path in paths[1:]:
+        try:
+            payload["change_history"].append(diff_rows(read_snapshot(path), snapshot))
+        except StoreError as error:
+            _complain(f"{error}; skipping it for the list of changes")
+    payload["changes"] = next((diff for diff in payload["change_history"] if _shows_a_change(diff)), None)
     payload["built_at"] = datetime.now(timezone.utc).isoformat()
     atomic_write_bytes(output, render_page(payload))
 
