@@ -21,6 +21,14 @@ In Zsh, returning a failure from an EXIT trap does not replace the original succ
 
 Zsh's `path` array is tied to `PATH`; using `local path` for a cleanup loop can make external commands unavailable. Use a non-special variable name and exercise the real command lookup in a synthetic regression, including both successful and failed primary operations.
 
+## 2026-11-12: Preserve Preact sibling state when showing a banner
+
+Storage Monitor's Findings filters reset after every Trash because, with Preact
+and htm, `value && html...` leaves an empty text node when `value` is `''` or
+`0`. When the element appears, Preact can pair it with the next unkeyed sibling
+of the same type and remount that sibling's whole subtree, losing its state. Use
+`cond ? html... : null`, and key siblings that must keep their state.
+
 ## 2026-11-11: Listed on the website is not installable
 
 On 2026-11-10 a Homebrew formula PR merged at 17:23 EST, the website
@@ -2485,3 +2493,9 @@ When eligibility depends on a later report-wide probe, carry that eligibility fr
 ### Storage Monitor system-root contracts and index scale
 
 Synthetic root replacement concealed an unsupported macOS `confstr` key, silently dropping the per-user temporary and cache roots. Keep report and action tests synthetic, but separately check the read-only system lookup against `getconf` without enumerating the real directory. Small synthetic indexes also concealed repeated full-table protection queries and quadratic candidate deduplication; retain a representative large-index timing regression alongside correctness checks.
+
+## 2026-11-12: Guard every browser storage consumer
+
+A guarded Findings preference could not prevent a blocked-storage error from the
+separate theme initializer. Guard each storage read and write, preserve an OS
+preference fallback, and test the dashboard with storage methods throwing.

@@ -253,7 +253,7 @@ def test_findings_groups_age_filter_and_scan_details(monkeypatch, tmp_path):
             page.goto(url, wait_until="networkidle")
             assert page.get_by_text("Invalid Storage Monitor config: synthetic error").is_visible()
             assert page.get_by_text("Caches", exact=False).count() > 0
-            for heading in ("Caches · 3.0 KB", "Developer · 512 B", "Temp · 256 B", "Agent leftovers · 256 B", "Trash · 256 B", "Review-only user data · 256 B"):
+            for heading in ("Caches · 3.0 KB", "Developer · 512 B", "Temp · 256 B", "Agent leftovers · 256 B", "Trash · 256 B", "User data · 256 B"):
                 assert page.get_by_text(heading, exact=True).is_visible()
             assert page.get_by_text("2 more not shown (3.0 KB)").is_visible()
             assert page.get_by_text("412 d").is_visible()
@@ -273,6 +273,45 @@ def test_findings_groups_age_filter_and_scan_details(monkeypatch, tmp_path):
             assert page.get_by_text("Trashable now: 1.0 KB").is_visible()
             assert page.get_by_text("In Trash: 256 B").is_visible()
             assert page.get_by_text("Review: 3.3 KB").is_visible()
+        browser.close()
+
+
+def test_findings_category_chips_filter_and_persist(monkeypatch, tmp_path):
+    monkeypatch.setenv("STORAGE_MONITOR_HOME", str(tmp_path / "runtime"))
+    module = load_launcher(PROJECT_ROOT / "storage_monitor")
+    rows = [
+        {"path": f"/synthetic/{label.replace(' ', '-')}", "label": label, "category": category, "risk": "low", "allocated_bytes": 1024, "estimated_reclaim_bytes": 1024, "actionable": True, "stale": stale, "actions": ([{"kind": "execute", "label": "Move to Trash", "action_token": "synthetic-token"}] if label == "Old developer" else [])}
+        for category, label, stale in (("dev_artifact", "Old developer", True), ("dev_artifact", "Fresh developer", False), ("cache", "Synthetic cache", True), ("stale_installer", "Synthetic installer", True), ("model_store", "Synthetic store", False), ("model_cache", "Synthetic model cache", True), ("user_files", "Synthetic files", True))
+    ]
+    report = {**SYNTHETIC_REPORT_ROWS, "findings": {"items": rows, "truncated": {"temp": {"count": 2, "bytes": 2048}}}}
+    with live_server(module.app) as url, sync_playwright() as playwright:
+        browser = playwright.chromium.launch(headless=True)
+        page = browser.new_page()
+        route_dashboard_api(page)
+        page.route("**/api/state", lambda route: route.fulfill(json={"scan_status": {"running": False}, "report": report}))
+        page.route("**/api/actions/execute", lambda route: route.fulfill(json={"ok": True, "label": "Moved to Trash", "source_path": "/synthetic/Old-developer"}))
+        page.on("dialog", lambda dialog: dialog.accept())
+        with guard_browser_errors(page):
+            page.goto(url, wait_until="networkidle")
+            assert page.get_by_text("Developer · 2.0 KB", exact=True).locator("..").get_by_text("Old developer", exact=True).is_visible()
+            assert page.get_by_text("Developer · 2.0 KB", exact=True).bounding_box()["y"] < page.get_by_text("Caches · 1.0 KB", exact=True).bounding_box()["y"]
+            assert page.get_by_text("Installers · 1.0 KB", exact=True).locator("..").get_by_text("Synthetic installer", exact=True).is_visible()
+            assert page.get_by_text("Models · 2.0 KB", exact=True).locator("..").get_by_text("Synthetic model cache", exact=True).is_visible()
+            page.get_by_role("button", name="Developer 2 · 2.0 KB", exact=True).click()
+            assert page.get_by_role("button", name="Developer 2 · 2.0 KB", exact=True).get_attribute("aria-pressed") == "true"
+            assert not page.get_by_text("Synthetic cache", exact=True).is_visible()
+            page.get_by_label("Stale only").check()
+            assert page.get_by_role("button", name="Developer 1 · 1.0 KB", exact=True).is_visible()
+            assert page.evaluate("localStorage.getItem('sm-findings-group')") == "Developer"
+            page.reload(wait_until="networkidle")
+            assert page.get_by_role("button", name="Developer 2 · 2.0 KB", exact=True).get_attribute("aria-pressed") == "true"
+            assert not page.get_by_text("Synthetic cache", exact=True).is_visible()
+            page.get_by_label("Stale only").check()
+            page.get_by_role("button", name="Trash", exact=True).click()
+            page.get_by_text("Nothing left in Developer with these filters.").wait_for()
+            assert page.get_by_role("button", name="Developer 0", exact=True).get_attribute("aria-pressed") == "true"
+            page.get_by_role("button", name="App leftovers → 1", exact=True).click()
+            assert page.get_by_text("Synthetic leftover", exact=True).is_visible()
         browser.close()
 
 
@@ -394,6 +433,40 @@ def test_finding_trash_requires_confirmation(monkeypatch, tmp_path):
         browser.close()
 
 
+def test_status_banner_keeps_view_state(monkeypatch, tmp_path):
+    monkeypatch.setenv("STORAGE_MONITOR_HOME", str(tmp_path / "runtime"))
+    rows = [
+        {"path": "/synthetic/trash", "label": "Synthetic trashable", "category": "dev_artifact", "stale": True, "actionable": True, "risk": "low", "actions": [{"kind": "execute", "label": "Move to Trash", "action_token": "synthetic-token"}]},
+        {"path": "/synthetic/stale", "label": "Synthetic stale", "category": "dev_artifact", "stale": True, "risk": "low", "actions": []},
+        {"path": "/synthetic/fresh", "label": "Synthetic fresh", "category": "cache", "stale": False, "risk": "low", "actions": []},
+    ]
+    report = {**SYNTHETIC_REPORT_ROWS, "findings": {"items": rows}}
+    module = load_launcher(PROJECT_ROOT / "storage_monitor")
+    with live_server(module.app) as url, sync_playwright() as playwright:
+        browser = playwright.chromium.launch(headless=True)
+        page = browser.new_page()
+        route_dashboard_api(page)
+        page.route("**/api/state", lambda route: route.fulfill(json={"scan_status": {"running": False, "phase": "complete", "progress": 1}, "report": report}))
+        page.route("**/api/actions/execute", lambda route: route.fulfill(json={"ok": True, "label": "Moved to Trash", "source_path": "/synthetic/trash"}))
+        page.route("**/api/reveal", lambda route: route.fulfill(status=400, json={"detail": "synthetic reveal error"}))
+        page.on("dialog", lambda dialog: dialog.accept())
+        with guard_browser_errors(page, expected=["Failed to load resource: the server responded with a status of 400 (Bad Request)"]):
+            page.goto(url, wait_until="networkidle")
+            page.get_by_label("Stale only").check()
+            assert not page.get_by_text("Synthetic fresh", exact=True).is_visible()
+            page.get_by_role("button", name="Trash", exact=True).click()
+            page.get_by_text("Moved to Trash", exact=False).first.wait_for()
+            assert page.get_by_label("Stale only").is_checked()
+            assert not page.get_by_text("Synthetic fresh", exact=True).is_visible()
+            assert not page.get_by_text("Synthetic trashable", exact=True).is_visible()
+            assert page.get_by_text("Synthetic stale", exact=True).is_visible()
+            page.locator(".tab").filter(has_text="Large Files").click()
+            page.get_by_role("button", name="Reveal", exact=True).click()
+            page.get_by_text("synthetic reveal error", exact=False).first.wait_for()
+            assert page.get_by_text("Synthetic large file", exact=True).is_visible()
+        browser.close()
+
+
 def test_temp_group_confirmation_shows_rule_and_only_sends_on_accept(monkeypatch, tmp_path):
     monkeypatch.setenv("STORAGE_MONITOR_HOME", str(tmp_path / "runtime"))
     monkeypatch.setitem(SYNTHETIC_REPORT_ROWS, "findings", {"items": [{
@@ -424,6 +497,25 @@ def test_temp_group_confirmation_shows_rule_and_only_sends_on_accept(monkeypatch
             page.get_by_text("Moved to Trash", exact=False).first.wait_for()
             assert all("/synthetic/temp" in message and "2 entries" in message and "3 days" in message for message in dialogs)
             assert requests == [{"action_token": "synthetic-group", "elevate": False}]
+        browser.close()
+
+
+def test_dashboard_works_when_browser_storage_is_blocked(monkeypatch, tmp_path):
+    monkeypatch.setenv("STORAGE_MONITOR_HOME", str(tmp_path / "runtime"))
+    module = load_launcher(PROJECT_ROOT / "storage_monitor")
+    with live_server(module.app) as url, sync_playwright() as playwright:
+        browser = playwright.chromium.launch(headless=True)
+        page = browser.new_page(color_scheme="light")
+        page.add_init_script("Storage.prototype.getItem = Storage.prototype.setItem = () => { throw new Error('storage blocked'); };")
+        route_dashboard_api(page)
+        with guard_browser_errors(page):
+            page.goto(url, wait_until="networkidle")
+            assert page.evaluate("document.documentElement.dataset.theme") == "light"
+            page.get_by_label("Toggle dark mode").click()
+            assert page.evaluate("document.documentElement.dataset.theme") == "dark"
+            page.get_by_role("button", name="Caches 1", exact=True).click()
+            assert page.get_by_role("button", name="Caches 1", exact=True).get_attribute("aria-pressed") == "true"
+            page.emulate_media(color_scheme="dark")
         browser.close()
 
 
