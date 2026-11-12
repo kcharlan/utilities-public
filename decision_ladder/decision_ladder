@@ -388,8 +388,10 @@ function findings(rows, caps, mode, axis='price') {
 function searchRows(rows, query) { const q=query.toLowerCase(); return rows.filter(r=>r.name.toLowerCase().includes(q)); }
 function changesToShow(changes, mode) {
   if (!changes || changes.method) return [];
-  const fields=['price','latency','listing','capability_rank','composite_rank'];
+  const fields=['listing','capability_rank','composite_rank'];
+  const formattedChange=(pair,format)=>pair && format(pair[0])!==format(pair[1]);
   return (changes.changed || []).filter(r=>fields.some(k=>r[k] && r[k][0]!==r[k][1]) ||
+    formattedChange(r.price,priceText) || formattedChange(r.latency,latencyText) ||
     (r.capability && r.capability.map(v=>finite(v)?(mode==='whole'?ladderCore.wholePoints(v):v.toFixed(1)):v).some((v,i,a)=>v!==a[0])));
 }
 const api={withinCaps,capReasons,prepare,tiers,boardFrontier,priceText,latencyText,findings,searchRows,changesToShow};
@@ -437,12 +439,14 @@ function Compare({picks,setPicks}) {
   const rows=picks.map(key=>data.rows.find(r=>r.key===key)).filter(Boolean);
   const axes=[['intelligence','Intelligence'],['calibration','Calibration'],['speed','Speed'],['cost_axis','Cost']];
   const value=v=>v==null?'Not measured':v;
+  const score=v=>Number.isFinite(v)?v.toFixed(1):'Not measured';
   return html`<section class="panel"><h2>Compare systems</h2><p>Choose up to 8 systems.</p>
     <label>Search systems<input aria-label="Search systems" value=${query} onInput=${e=>setQuery(e.target.value)}/></label>
     <div class="picker">${M.searchRows(data.rows,query).map(r=>html`<label class="inline"><input type="checkbox" checked=${picks.includes(r.key)} disabled=${picks.length>=8&&!picks.includes(r.key)} onChange=${e=>setPicks(e.target.checked?[...picks,r.key]:picks.filter(k=>k!==r.key))}/>${r.name}</label>`)}</div>
     <div class="table-wrap compare"><table><thead><tr><th>Measure</th>${rows.map(r=>html`<th>${r.name}</th>`)}</tr></thead><tbody>
-      ${axes.map(([key,label])=>html`<tr><th>${label}</th>${rows.map(r=>html`<td>${value(r[key])} ${Number.isFinite(r[key])&&html`<progress value=${r[key]} max="100">${r[key]}</progress>`}</td>`)}</tr>`)}
-      ${[['capability','Capability'],['capability_rank','Capability rank'],['composite_rank','Composite rank']].map(([key,label])=>html`<tr><th>${label}</th>${rows.map(r=>html`<td>${value(r[key])}</td>`)}</tr>`)}
+      ${axes.map(([key,label])=>html`<tr><th>${label}</th>${rows.map(r=>html`<td>${score(r[key])} ${Number.isFinite(r[key])&&html`<progress value=${r[key]} max="100">${score(r[key])}</progress>`}</td>`)}</tr>`)}
+      <tr><th>Capability</th>${rows.map(r=>html`<td>${score(r.capability)}</td>`)}</tr>
+      ${[['capability_rank','Capability rank'],['composite_rank','Composite rank']].map(([key,label])=>html`<tr><th>${label}</th>${rows.map(r=>html`<td>${value(r[key])}</td>`)}</tr>`)}
       <tr><th>Price / 1,000 decisions</th>${rows.map(r=>html`<td>${r.price==null?'No price':'$'+M.priceText(r.price)} ${r.price_kind||''}</td>`)}</tr>
       <tr><th>Median latency</th>${rows.map(r=>html`<td>${M.latencyText(r.latency)||'Not measured'} ${r.latency_basis||''}</td>`)}</tr>
       <tr><th>p95 latency</th>${rows.map(r=>html`<td>${M.latencyText(r.latency_p95)||'Not measured'} ${r.latency_basis||''}</td>`)}</tr>

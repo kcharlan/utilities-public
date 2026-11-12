@@ -2495,3 +2495,11 @@ A seconds-only snapshot filename silently overwrote distinct fetches made in the
 URL and browser storage values are untrusted even in an offline page. Validate each field before using it, and save URL state independently of storage so a blocked storage API does not disable copied links. A logarithmic chart cannot place zero on its axis: show a zero cap at the plot boundary, shade the positive range and explain the placement. Format small positive step values with enough precision to avoid reporting them as zero, including the axis units.
 
 Number input `min` attributes do not prevent users entering negative or incomplete values. Apply the same validation to live state as restored state before deriving chart coordinates, and build logarithmic domains without overflowing at finite numeric extremes.
+
+### 2026-11-12 — Filter changes using displayed precision
+
+When a change panel reports differences in displayed numbers, compare the same
+formatted values the page shows. Raw price or latency differences can otherwise
+produce a change whose two displayed endpoints look identical. Test invisible
+rounding differences, visible differences, and transitions to and from missing
+values in every display mode; keep unrounded values for calculations and meters.

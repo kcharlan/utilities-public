@@ -56,3 +56,13 @@ test('changes respect displayed score precision and method changes suppress rows
   assert.equal(m.changesToShow({changed:[{capability:[8.21,8.24]}]},'decimal').length,0);
   assert.equal(m.changesToShow({...change,method:[{label:'A'},{label:'B'}]},'decimal').length,0);
 });
+test('changes compare displayed price and latency in both scoring modes', () => {
+  for (const mode of ['whole','decimal']) {
+    for (const [field, hidden, visible] of [['price',[2.001,2.002],[2.001,2.02]],['latency',[3.001,3.002],[3.001,3.02]]]) {
+      assert.equal(m.changesToShow({changed:[{[field]:hidden}]},mode).length,0);
+      assert.equal(m.changesToShow({changed:[{[field]:visible}]},mode).length,1);
+      assert.equal(m.changesToShow({changed:[{[field]:[null,hidden[0]]}]},mode).length,1);
+      assert.equal(m.changesToShow({changed:[{[field]:[hidden[0],null]}]},mode).length,1);
+    }
+  }
+});

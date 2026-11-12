@@ -158,8 +158,8 @@ def test_compare_not_ranked_and_changes_offline(dl, tmp_path):
     systems = [{'key': str(i), 'name': f'Synthetic system {i}', 'board': 'api', 'ranked': i != 9,
                 'listing': 'Synthetic listing', 'not_ranked_because': 'Synthetic full reason',
                 'source_url': 'javascript:alert(1)' if i == 1 else 'https://example.com/synthetic',
-                'axes': {'intelligence': 45 if i == 0 else None, 'calibration': None, 'speed': 20, 'cost': 0},
-                'capability': {'score': 8.1, 'rank': 2, 'eligible': True, 'within_caps': True},
+                'axes': {'intelligence': 45.123456789 if i == 0 else None, 'calibration': None, 'speed': 20, 'cost': 0},
+                'capability': {'score': 8.123456789, 'rank': 2, 'eligible': True, 'within_caps': True},
                 'rank': 3, 'price': {'kind': 'estimate', 'usd_per_1000_decisions': None if i == 1 else 2, 'basis': 'Synthetic price basis'},
                 'latency': {'p50_s_adjusted': 3, 'p95_s_adjusted': 4, 'latency_basis': 'synthetic', 'adjustment': 'Synthetic adjustment'},
                 'draw': {'measured_on': '2026-01-01'}} for i in range(10)]
@@ -190,7 +190,10 @@ def test_compare_not_ranked_and_changes_offline(dl, tmp_path):
             expect(page.locator('.compare')).to_contain_text('No price')
             expect(page.locator('.compare')).to_contain_text('Synthetic price basis')
             expect(page.locator('.compare')).to_contain_text('Synthetic adjustment')
-            expect(page.locator('.compare progress[value="45"][max="100"]')).to_have_count(1)
+            expect(page.locator('.compare')).to_contain_text('45.1')
+            expect(page.locator('.compare')).not_to_contain_text('45.123456789')
+            expect(page.locator('.compare')).not_to_contain_text('8.123456789')
+            expect(page.locator('.compare progress[value="45.123456789"][max="100"]')).to_have_count(1)
             expect(page.locator('.compare progress[value="0"][max="100"]')).to_have_count(8)
             expect(page.locator('.compare')).to_contain_text('8.1')
             expect(page.locator('.compare')).to_contain_text('$2.00 estimate')
