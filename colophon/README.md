@@ -59,6 +59,8 @@ Version 0.5.5 announces each launch phase on the terminal before it starts.
 
 Version 0.5.6 announces Codex log scanning before opening its cache.
 
+Version 0.5.7 speeds up Claude cache lookups and reconciliation.
+
 The page's All/Codex/Claude/OpenCode/Antigravity switch preserves filters and uses green/blue/violet/pink
 provider marks, split overview bars and metric-based calendar colors.
 Claude continuation commands are offered only for supported primary CLI

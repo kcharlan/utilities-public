@@ -21,6 +21,7 @@ struct ClaudeStored {
   Str location;
   ClaudeRecord record;
   bool retained, candidate;
+  struct ClaudeStored *next_same_path;
 };
 static Str str(const char *s){return (Str){s,(uint32_t)strlen(s)};}
 static Err join(Arena *a,Str parent,const char *name,Str *out){
@@ -80,13 +81,24 @@ Err claude_store_inspect(const char *home,ClaudeScan *s,bool rebuild,ClaudeStore
   TRY(str_copy(&store->arena,str(home),&store->home));
   if(s->disabled)return ERR_SUCCESS;
   Str path;TRY(join(&store->arena,store->home,"cache-claude",&path));TRY(inventory(store,s,path,false,0));
-  TRY(join(&store->arena,store->home,"claude-retained",&path));return inventory(store,s,path,true,0);
+  TRY(join(&store->arena,store->home,"claude-retained",&path));TRY(inventory(store,s,path,true,0));
+  for(size_t i=store->count;i>0;i--){
+    ClaudeStored *entry=&store->entries[i-1];
+    ClaudeStored **head=omap_get(&store->path_index,entry->record.key.path);
+    if(!head){
+      TRY(arena_alloc(&store->arena,sizeof *head,_Alignof(ClaudeStored *),(void **)&head));
+      *head=NULL;TRY(omap_put(&store->path_index,entry->record.key.path,head));
+    }
+    entry->next_same_path=*head;*head=entry;
+  }
+  return ERR_SUCCESS;
 }
 Err claude_store_get(ClaudeStore *store,const DiscoveredLog *key,ClaudeRecord *out,bool *hit){
   *out=(ClaudeRecord){0};*hit=false;if(!store||store->rebuild)return ERR_SUCCESS;
-  for(size_t i=0;i<store->count;i++){
-    ClaudeStored *entry=&store->entries[i];ClaudeRecord *r=&entry->record;
-    if(entry->retained||!r->reader_facts||!str_equal(r->key.path,key->path)||r->key.size!=key->size||r->key.mtime_ns!=key->mtime_ns)continue;
+  ClaudeStored **head=omap_get(&store->path_index,key->path);
+  for(ClaudeStored *entry=head?*head:NULL;entry;entry=entry->next_same_path){
+    ClaudeRecord *r=&entry->record;
+    if(entry->retained||!r->reader_facts||r->key.size!=key->size||r->key.mtime_ns!=key->mtime_ns)continue;
     int fd=open(key->path.p,O_RDONLY|O_NONBLOCK);if(fd<0)return io("fingerprint open");
     char tail[65];Err e=reader_fingerprint(fd,key->size,tail);close(fd);if(e.code)return e;
     if(memcmp(tail,r->reader.tail_sha256,65))continue;
@@ -94,10 +106,6 @@ Err claude_store_get(ClaudeStore *store,const DiscoveredLog *key,ClaudeRecord *o
     if(e.code)return e;out->key.device=key->device;out->key.inode=key->inode;*hit=true;return ERR_SUCCESS;
   }
   return ERR_SUCCESS;
-}
-static bool live_path(const ClaudeScan *s,Str path){
-  for(size_t i=0;i<s->count;i++)if(!s->records[i].retained&&str_equal(s->records[i].key.path,path))return true;
-  return false;
 }
 static Err append(ClaudeScan *s,const ClaudeRecord *r){
   if(s->count==s->capacity){size_t n=s->capacity?s->capacity*2:16;void *p=realloc(s->records,n*sizeof *s->records);if(!p)return err_make(ERR_NOMEM,"Claude records allocation failed");s->records=p;s->capacity=n;}
@@ -108,26 +116,38 @@ static Err append(ClaudeScan *s,const ClaudeRecord *r){
 }
 Err claude_store_reconcile(ClaudeStore *store,ClaudeScan *s,volatile sig_atomic_t *flag){
   if(s->disabled)return ERR_SUCCESS;
-  if(stopped(flag))return err_make(ERR_IO,"interrupted");
+  Omap live={0},all={0};Err result=ERR_SUCCESS;
+  if(stopped(flag)){result=err_make(ERR_IO,"interrupted");goto done;}
+  for(size_t i=0;i<s->count;i++){
+    ClaudeRecord *r=&s->records[i];
+    if(!omap_get(&all,r->key.path)){result=omap_put(&all,r->key.path,s);if(result.code)goto done;}
+    if(!r->retained&&!omap_get(&live,r->key.path)){result=omap_put(&live,r->key.path,s);if(result.code)goto done;}
+  }
   /* Live paths (including zero-byte snapshots) supersede retained at composition
    * time, but their stored copies are removed only by successful commit. */
   for(unsigned pass=0;pass<2;pass++)for(size_t i=0;i<store->count;i++){
-    if(stopped(flag))return err_make(ERR_IO,"interrupted");
+    if(stopped(flag)){result=err_make(ERR_IO,"interrupted");goto done;}
     ClaudeStored *entry=&store->entries[i];ClaudeRecord *r=&entry->record;
-    if(entry->retained!=(pass==1)||live_path(s,r->key.path))continue;
+    if(entry->retained!=(pass==1)||omap_get(&live,r->key.path))continue;
     if(entry->retained){
-      bool seen=false;
-      for(size_t j=0;j<s->count;j++)seen|=str_equal(s->records[j].key.path,r->key.path);
-      for(size_t j=0;j<store->count;j++)if(store->entries[j].retained&&str_equal(store->entries[j].record.key.path,r->key.path)&&store->entries[j].record.key.mtime_ns>r->key.mtime_ns)seen=true;
-      if(!seen)TRY(append(s,r));
+      bool seen=omap_get(&all,r->key.path)!=NULL;
+      ClaudeStored **head=omap_get(&store->path_index,r->key.path);
+      for(ClaudeStored *other=head?*head:NULL;other;other=other->next_same_path)
+        if(other->retained&&other->record.key.mtime_ns>r->key.mtime_ns)seen=true;
+      if(!seen){
+        result=append(s,r);if(result.code)goto done;
+        if(!omap_get(&all,r->key.path)){result=omap_put(&all,r->key.path,s);if(result.code)goto done;}
+      }
       continue;
     }
     ClaudeRoot *root=selected(s,r->search_root);
     if(root&&root->complete&&claude_path_deleted(r->key.path.p)){
-      entry->candidate=true;TRY(append(s,r));
+      entry->candidate=true;result=append(s,r);if(result.code)goto done;
+      if(!omap_get(&all,r->key.path)){result=omap_put(&all,r->key.path,s);if(result.code)goto done;}
     }
   }
-  return ERR_SUCCESS;
+done:
+  omap_destroy(&all);omap_destroy(&live);return result;
 }
 static Err directory(ClaudeStore *store,const char *kind,Str root,Str *out){
   Str base;TRY(join(&store->arena,store->home,kind,&base));TRY(ensure_runtime_home(base.p));
@@ -212,5 +232,5 @@ Err claude_store_commit(ClaudeStore *store,ClaudeScan *s,volatile sig_atomic_t *
 }
 void claude_store_destroy(ClaudeStore *store){
   for(size_t i=0;i<store->count;i++)claude_record_destroy(&store->entries[i].record);
-  arena_destroy(&store->arena);*store=(ClaudeStore){0};
+  omap_destroy(&store->path_index);arena_destroy(&store->arena);*store=(ClaudeStore){0};
 }
