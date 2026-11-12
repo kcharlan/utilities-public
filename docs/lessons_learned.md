@@ -2489,3 +2489,7 @@ Synthetic root replacement concealed an unsupported macOS `confstr` key, silentl
 ## 2026-11-12: Preserve snapshot order within a timestamp
 
 A seconds-only snapshot filename silently overwrote distinct fetches made in the same second. Allocate an ordered suffix for collisions, including identical clock values, and test retention when more snapshots share that timestamp than the store keeps.
+
+## 2026-11-12: Validate persisted page state and preserve chart boundaries
+
+URL and browser storage values are untrusted even in an offline page. Validate each field before using it, and save URL state independently of storage so a blocked storage API does not disable copied links. A logarithmic chart cannot place zero on its axis: show a zero cap at the plot boundary, shade the positive range and explain the placement. Format small positive step values with enough precision to avoid reporting them as zero, including the axis units.

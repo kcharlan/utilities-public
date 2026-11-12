@@ -40,3 +40,12 @@ test('decimal mode, latency axis, caps and tied sorting use real values', () => 
   assert.match(m.findings(prepared,caps,'decimal')[0],/3 ranked systems/);
   assert.deepEqual(m.searchRows(prepared,'MISSING'),[]);
 });
+test('findings preserve small positive steps and identify axis units', () => {
+  const rows = [row('Synthetic A',1,1,1),row('Synthetic B',2,1.0001,1.0001)];
+  for (const [axis, unit] of [['price','dollars per 1,000 decisions per point'],['latency','seconds per point']]) {
+    const prepared=m.prepare(rows,{board:'all',mode:'whole',axis,caps});
+    const text=m.findings(prepared,caps,'whole',axis).join(' ');
+    assert.match(text,/0\.0001/);
+    assert.ok(text.includes(unit));
+  }
+});

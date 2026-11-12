@@ -1,4 +1,5 @@
 from datetime import datetime, timezone
+from urllib.parse import quote
 
 import pytest
 from playwright.sync_api import expect, sync_playwright
@@ -26,6 +27,10 @@ def test_board_controls_and_responsive_layout(dl, tmp_path, scheme):
             page.goto(path.as_uri())
             expect(page.locator('tbody tr')).to_have_count(3)
             expect(page.locator('tbody tr.tier-1')).to_have_count(3)
+            names = page.locator('tbody .name')
+            assert names.all_text_contents()[0].startswith('Synthetic ' + 'x' * 150)
+            assert names.all_text_contents()[1].startswith('Synthetic b')
+            assert names.all_text_contents()[2].startswith('Synthetic c')
             page.get_by_label('Cost cap').fill('1.5')
             expect(page.locator('tbody tr')).to_have_count(1)
             expect(page.locator('.mark.frontier')).to_have_count(1)
@@ -38,23 +43,66 @@ def test_board_controls_and_responsive_layout(dl, tmp_path, scheme):
             expect(page.locator('tbody tr')).to_have_count(1)
             page.reload(); expect(page.get_by_label('Board')).to_have_value('open')
             page.get_by_label('Board').select_option('all')
+            price_line = page.locator('.cap-line').get_attribute('x1')
+            expect(page.locator('.cap-label')).to_have_text('Cap 5')
             page.get_by_label('Chart x-axis').select_option('latency')
             expect(page.locator('.cap-line')).to_have_count(1)
+            expect(page.locator('.cap-label')).to_have_text('Cap 10')
+            assert page.locator('.cap-line').get_attribute('x1') != price_line
             expect(page.locator('.mark.modelled')).to_have_count(1)
             page.get_by_label('Scoring').select_option('decimal')
             expect(page.locator('tbody tr.tier-1')).to_have_count(1)
             copied = page.url
-            other = context.new_page(); other.goto(copied)
+            other_context = browser.new_context(service_workers='block'); other_context.set_offline(True)
+            block_external_requests(other_context)
+            other = other_context.new_page(); other.goto(copied)
             expect(other.get_by_label('Scoring')).to_have_value('decimal')
-            other.close()
+            other_context.close()
             page.get_by_label('Filter').fill('synthetic b')
             expect(page.locator('tbody tr')).to_have_count(1)
             page.get_by_label('Filter').fill('')
+            page.get_by_label('Scoring').select_option('whole')
             page.get_by_text('Price / 1,000', exact=True).click()
+            page.get_by_text('Price / 1,000', exact=True).click()
+            assert page.locator('tbody .name').all_text_contents()[0].startswith('Synthetic c')
             page.get_by_role('button', name='Tier order').click()
+            assert page.locator('tbody .name').all_text_contents()[0].startswith('Synthetic ' + 'x' * 150)
+            for axis, label in [('price', 'Cost cap'), ('latency', 'Latency cap')]:
+                page.get_by_label('Chart x-axis').select_option(axis)
+                page.get_by_label(label).fill('0')
+                expect(page.locator('.cap-label')).to_have_text('Cap 0')
+                assert page.locator('.cap-line').get_attribute('x1') == '40'
+                assert page.locator('.shade').get_attribute('width') == '500'
+                page.get_by_role('button', name='Use official caps').click()
             assert page.evaluate('document.documentElement.scrollWidth <= innerWidth')
             assert page.locator('tbody b').count() == 0
             assert_no_external_resources(page, blocked)
+        context.close(); browser.close()
+
+
+def test_invalid_state_and_blocked_storage(dl, tmp_path):
+    feed = {'revision': 'synthetic', 'method': {'label': 'Synthetic'}, 'capability_policy': {'cost_cap_usd_per_1000': 5, 'median_latency_cap_s': 10}, 'systems': []}
+    snap = {'fetched_at': '2026-01-01T00:00:00+00:00', 'last_checked': '2026-01-01T00:00:00+00:00', 'feed': feed}
+    payload = dl.build_payload(snap, None, {'max_age_hours': 24}); payload['built_at'] = 'synthetic'
+    path = tmp_path / 'state.html'; path.write_bytes(dl.render_page(payload))
+    with sync_playwright() as playwright:
+        browser = playwright.chromium.launch(); context = browser.new_context(service_workers='block')
+        context.set_offline(True); block_external_requests(context)
+        context.add_init_script("Object.defineProperty(Storage.prototype, 'setItem', {value(){throw new Error('blocked')}})")
+        page = context.new_page()
+        with guard_browser_errors(page):
+            invalid = '{"query":null,"board":"bad","mode":[],"axis":"bad","cost":-1,"latency":null,"outside":"yes","sort":"bad","dir":0}'
+            page.goto(path.as_uri() + '#' + quote(invalid))
+            expect(page.get_by_label('Board')).to_have_value('all')
+            expect(page.get_by_label('Scoring')).to_have_value('whole')
+            expect(page.get_by_label('Chart x-axis')).to_have_value('price')
+            expect(page.get_by_label('Filter')).to_have_value('')
+            expect(page.get_by_label('Cost cap')).to_have_value('5')
+            expect(page.get_by_label('Latency cap')).to_have_value('10')
+            expect(page.get_by_label('Show systems outside the caps')).not_to_be_checked()
+            page.get_by_label('Board').select_option('open')
+            expect(page.get_by_label('Board')).to_have_value('open')
+            assert 'open' in page.url
         context.close(); browser.close()
 
 
