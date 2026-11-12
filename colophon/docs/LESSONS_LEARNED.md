@@ -1,5 +1,8 @@
 # Lessons learned
 
+Announce Codex scanning before opening its cache: discovery and cache checks
+can take time even when every log is warm, before parsing progress appears.
+
 OpenCode 2.1 stopped repeating a message's id and type inside its JSON payload;
 they live only in `session_message` columns. Requiring the embedded copies made
 every real message malformed, and session rollups silently stood in for request
