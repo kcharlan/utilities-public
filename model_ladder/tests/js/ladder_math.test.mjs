@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { createRequire } from "node:module";
 
 const BEGIN = "// ladder-math:begin";
 const END = "// ladder-math:end";
@@ -17,7 +18,8 @@ function loadMath() {
   if (ends[0] <= begins[0]) throw new Error("ladder-math end marker comes before the begin marker");
   const code = lines.slice(begins[0] + 1, ends[0]).join("\n");
   const module = { exports: {} };
-  new Function("module", code)(module);
+  const ladderCore = createRequire(import.meta.url)("../../../tools/frontend_vendor/ladder_core.js");
+  new Function("module", "ladderCore", code)(module, ladderCore);
   return module.exports;
 }
 

@@ -63,7 +63,7 @@ Project-specific validation commands, applied with the Testing Scope above. A co
   - `uv run --no-python-downloads --script tools/check_uv_headers.py` and `uv run --no-project --no-python-downloads --with pytest pytest tools/tests/test_check_uv_headers.py tools/tests/test_run_project_tests.py -q -p no:cacheprovider`.
   - Guard code changes also require the full `tax2`, `data_format_converter`, `benchmark-llm`, and `cognitive_switchyard` suites, using the registered runner.
 - Shared frontend kit (`tools/frontend_vendor/`, `tools/sync_frontend_vendor.mjs`, and offline helpers in `tools/testkit.py`):
-  - `node tools/sync_frontend_vendor.mjs --all --check` and `node --test tools/tests/sync_frontend_vendor.test.mjs tools/tests/svg_charts.test.mjs`.
+  - `node tools/sync_frontend_vendor.mjs --all --check` and `node --test tools/tests/ladder_core.test.mjs tools/tests/sync_frontend_vendor.test.mjs tools/tests/svg_charts.test.mjs`.
   - `uv run --no-project --no-python-downloads --with pytest pytest tools/tests/test_testkit_offline.py tools/tests/test_sync_frontend_indent.py tools/tests/test_run_project_tests.py tools/tests/test_check_uv_headers.py -q -p no:cacheprovider` and `uv run --no-python-downloads --script tools/check_uv_headers.py`.
   - Run the complete suites of consumers embedding changed kit items or using changed test helpers.
 - Local server guard:
