@@ -63,6 +63,9 @@ model_ladder [refresh|build] [--no-refresh] [--no-open] [--output PATH] [--versi
 | `--output PATH` | Write the page there instead of the runtime home. |
 | `--version` | Print the version. |
 
+Each slow step announces itself on stdout before it starts. Stderr carries only
+problems.
+
 If a fetch fails (no key, network error, HTTP error, quota used up) and a
 snapshot exists, the command says why and builds from the snapshot; the page
 shows the age of the data it actually holds. It exits non-zero only when there

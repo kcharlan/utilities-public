@@ -159,12 +159,22 @@ def test_cli_quota_line_survives_missing_headers(env, capsys):
     assert "Fetched 2 models (1 scored)." in capsys.readouterr().out
 
 
-def test_cli_prints_output_path_and_passes_it(env, tmp_path, capsys):
+def test_cli_prints_output_path_and_passes_it(env, tmp_path, capsys, monkeypatch):
     env.seed(1)
+
+    def build(home, output):
+        captured = capsys.readouterr()
+        assert captured.out == "Building the page…\n"
+        assert captured.err == ""
+        env.built.append((home, output))
+
+    monkeypatch.setattr(env.ml, "build_page", build)
     assert env.run() == 0
     home, output = env.built[0]
     assert output == tmp_path / "ml-home" / "model_ladder.html"
-    assert str(output) in capsys.readouterr().out
+    captured = capsys.readouterr()
+    assert captured.out == f"{output}\n"
+    assert captured.err == ""
 
 
 def test_cli_output_option(env, tmp_path, capsys):
