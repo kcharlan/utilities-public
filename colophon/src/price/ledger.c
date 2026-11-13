@@ -320,6 +320,23 @@ static yyjson_mut_val *rate_block(yyjson_mut_doc *doc,const PriceRates *rates,bo
     }
     return value;
 }
+static Err recording_lookup(ModelsDevIndex *index,Arena *arena,Str source,CatalogLookup *out) {
+    *out=(CatalogLookup){0};PricingTargets targets;
+    Err error=codex_models_dev_pricing_targets(index->rules,arena,source,&targets);if(error.code)return error;
+    for(size_t i=0;i<targets.count;i++){error=models_dev_pricing(index,STR_LIT("openai"),targets.model[i],out);if(error.code||out->model)return error;}
+    return ERR_SUCCESS;
+}
+static Err recording_source_add(ModelsDevIndex *index,Arena *arena,Omap *sources,Str key,Str candidate,bool override) {
+    Str *previous=omap_get(sources,key);
+    if(previous) {
+        CatalogLookup old={0},next={0};Err error=recording_lookup(index,arena,*previous,&old);if(error.code)return error;
+        error=recording_lookup(index,arena,candidate,&next);if(error.code)return error;
+        if(old.model&&!next.model)return ERR_SUCCESS;
+        if(!!old.model==!!next.model&&!override&&(!str_equal(candidate,key)||str_equal(*previous,key)))return ERR_SUCCESS;
+    }
+    Str *copy;Err error=arena_alloc(arena,sizeof *copy,_Alignof(Str),(void **)&copy);if(error.code)return error;
+    *copy=candidate;return omap_put(sources,key,copy);
+}
 Err record_catalog_rates(const PriceHistory *history,ModelsDevIndex *index,int64_t fetched_at_ms,
                          yyjson_val *recording_ids,int64_t now_ms,yyjson_doc **out,Omap *skipped) {
     *out=NULL;Omap sources={0};Arena arena={0};OmapEntry **sorted=NULL;
@@ -327,29 +344,23 @@ Err record_catalog_rates(const PriceHistory *history,ModelsDevIndex *index,int64
     if(!doc)return err_make(ERR_NOMEM,"catalog recording allocation");
     yyjson_mut_val *rows=yyjson_mut_arr(doc);yyjson_mut_doc_set_root(doc,rows);
     if(!rows){error=err_make(ERR_NOMEM,"catalog recording allocation");goto done;}
-    /* History keys must be valid, but catalog pricing needs a name actually
-     * present in the catalog. Prefer an exact key row over aliases. */
+    /* Keep the valid history key separate from a source that resolves to a row. */
     for(OmapEntry *entry=index->models.first;entry;entry=entry->next) {
-        CatalogModel *model=entry->value;Str normalized,*copy;
+        CatalogModel *model=entry->value;Str normalized;
         error=models_dev_normalize(index,model->model_id,&normalized);if(error.code)goto done;
-        if(omap_get(&sources,normalized)&&!str_equal(model->model_id,normalized))continue;
-        error=arena_alloc(&arena,sizeof *copy,_Alignof(Str),(void **)&copy);if(error.code)goto done;
-        *copy=model->model_id;error=omap_put(&sources,normalized,copy);if(error.code)goto done;
+        error=recording_source_add(index,&arena,&sources,normalized,model->model_id,false);if(error.code)goto done;
     }
     for(OmapEntry *entry=history->groups.first;entry;entry=entry->next) {
-        if(omap_get(&sources,entry->key))continue;
-        Str *copy;error=arena_alloc(&arena,sizeof *copy,_Alignof(Str),(void **)&copy);if(error.code)goto done;
-        *copy=entry->key;error=omap_put(&sources,entry->key,copy);if(error.code)goto done;
+        error=recording_source_add(index,&arena,&sources,entry->key,entry->key,false);if(error.code)goto done;
     }
     if(!yyjson_is_obj(recording_ids)){error=err_make(ERR_INVALID,"invalid recording ids");goto done;}
     yyjson_obj_iter it=yyjson_obj_iter_with(recording_ids);yyjson_val *key;
     while((key=yyjson_obj_iter_next(&it))) {
-        Str *copy;if(!yyjson_is_str(yyjson_obj_iter_get_val(key))){error=err_make(ERR_INVALID,"invalid recording id");goto done;}
+        if(!yyjson_is_str(yyjson_obj_iter_get_val(key))){error=err_make(ERR_INVALID,"invalid recording id");goto done;}
         Str recording_key=string(key);
         /* Override keys carry their own explicit pricing source. */
-        if(omap_get(&sources,recording_key)&&!(recording_key.n>=8&&!memcmp(recording_key.p,"catalog:",8)))continue;
-        error=arena_alloc(&arena,sizeof *copy,_Alignof(Str),(void **)&copy);if(error.code)goto done;
-        *copy=string(yyjson_obj_iter_get_val(key));error=omap_put(&sources,recording_key,copy);if(error.code)goto done;
+        bool override=recording_key.n>=8&&!memcmp(recording_key.p,"catalog:",8);
+        error=recording_source_add(index,&arena,&sources,recording_key,string(yyjson_obj_iter_get_val(key)),override);if(error.code)goto done;
     }
     if(sources.size>SIZE_MAX/sizeof *sorted){error=err_make(ERR_NOMEM,"catalog recording overflow");goto done;}
     sorted=malloc((sources.size?sources.size:1)*sizeof *sorted);if(!sorted){error=err_make(ERR_NOMEM,"catalog recording allocation");goto done;}
@@ -361,10 +372,8 @@ Err record_catalog_rates(const PriceHistory *history,ModelsDevIndex *index,int64
     if(!time_format_rfc3339(effective_ms,effective)||!time_format_rfc3339(now_ms,recorded)){error=err_make(ERR_INVALID,"invalid catalog recording clock");goto done;}
     for(size_t i=0;i<count;i++) {
         if(!ledger_model_key_valid(index->rules,sorted[i]->key)){error=omap_put(skipped,sorted[i]->key,(void *)1);if(error.code)goto done;continue;}
-        Str model=*(Str *)sorted[i]->value;PricingTargets targets;
-        error=codex_models_dev_pricing_targets(index->rules,&arena,model,&targets);if(error.code)goto done;
-        CatalogLookup lookup={0};
-        for(size_t j=0;j<targets.count;j++){error=models_dev_pricing(index,STR_LIT("openai"),targets.model[j],&lookup);if(error.code)goto done;if(lookup.model)break;}
+        Str model=*(Str *)sorted[i]->value;CatalogLookup lookup={0};
+        error=recording_lookup(index,&arena,model,&lookup);if(error.code)goto done;
         if(!lookup.model)continue;
         const HistoryGroup *group=history_entries_for(history,sorted[i]->key);
         bool same_date=false;
