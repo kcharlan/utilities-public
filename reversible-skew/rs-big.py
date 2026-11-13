@@ -33,6 +33,16 @@ def parse_size(s: str) -> int:
         return int(val * mult[unit])
     raise argparse.ArgumentTypeError(f"Unknown unit '{unit}' in '{s}'")
 
+def parse_rle_max_run(s: str) -> int:
+    try:
+        value = int(s)
+    except ValueError:
+        raise argparse.ArgumentTypeError(f"Invalid run length: '{s}'")
+    if not 1 <= value <= 255:
+        raise argparse.ArgumentTypeError("--rle-max-run must be between 1 and 255")
+    return value
+
+
 # --- BWT + inverse (LF-mapping) ---
 def bwt_transform(data: bytes):
     n = len(data)
@@ -265,7 +275,8 @@ if __name__ == '__main__':
     t.add_argument('-i','--input', required=True)
     t.add_argument('-o','--output',required=True)
     t.add_argument('-b','--block-size', type=parse_size, default='4M')
-    t.add_argument('--rle-max-run', type=int, default=255)
+    t.add_argument('--rle-max-run', type=parse_rle_max_run, default=255,
+                   help='Max RLE run length (1-255; default 255)')
     t.add_argument('-w','--whole-file', action='store_true')
     t.add_argument('-v','--verbose', action='store_true')
 

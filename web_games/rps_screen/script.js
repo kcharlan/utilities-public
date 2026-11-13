@@ -339,6 +339,9 @@ function startSimulation(resetWins = false) {
 
     // Reset Wins if requested (Manual Restart)
     if (resetWins) {
+        BALANCING.active = false;
+        BALANCING.handicapType = null;
+        handicapEl.style.display = 'none';
         winCounts[TYPES.ROCK] = 0;
         winCounts[TYPES.PAPER] = 0;
         winCounts[TYPES.SCISSORS] = 0;

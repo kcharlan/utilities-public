@@ -19,7 +19,7 @@ A walkthrough for tracking MLS playoff races, analyzing scenarios, and understan
 ./mls_tracker --no-browser
 ```
 
-MLS Tracker starts a local web server bound to `127.0.0.1` and opens the corresponding browser URL. The default is `http://127.0.0.1:8501`; `--port` changes it.
+MLS Tracker starts a local web server bound to `127.0.0.1` and opens the corresponding browser URL. The default preferred port is 8501; `--port` changes the preferred port. If it is in use, the tool tries the next 19 ports and logs a warning when it moves.
 
 ### First-Time Setup
 
@@ -219,7 +219,7 @@ Firefox are not automated by this project.
 
 | Flag | Short | Default | Description |
 |------|-------|---------|-------------|
-| `--port` | `-p` | 8501 | Server port |
+| `--port` | `-p` | 8501 | Preferred server port |
 | `--no-browser` | — | off | Don't open browser automatically |
 
 ### Clinch / Elimination Logic

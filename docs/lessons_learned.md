@@ -1,5 +1,17 @@
 # Lessons learned
 
+## Reset derived session state together
+
+When a manual restart clears the totals that drive a handicap, clear the active
+handicap and its indicator too. Test automatic round restarts separately so they
+retain session state.
+
+## Validate encoded field limits at the command boundary
+
+Reject values outside a stream field's representable range before opening files.
+Exercise both boundaries and a long synthetic run: an oversized limit can appear
+to work until serialization reaches data that actually uses it.
+
 ## Render the same fields used to select a change
 
 Filtering history at display precision is insufficient if the panel then renders
@@ -2580,3 +2592,16 @@ scroll it into view, and test navigation beyond the list's visible height.
 Pointer hover and keyboard focus can coexist on different rows. Track their
 ownership separately so leaving one row or blurring another does not clear an
 active chart highlight; test transitions between both inputs in a browser.
+
+## 2026-11-13: Test occupied preferred ports
+
+Local servers must use the selected free port consistently for the server,
+browser URL, and logs. Hold a synthetic listener open in a regression test to
+catch passing the occupied preferred port through to the server.
+
+## 2026-11-13: Check report scope and visible controls against behavior
+
+Git Fleet's dependency scope claimed external includes were retained even though
+the parser skips them, and its detail header offered an unwired scan button.
+Test report descriptions against the actual boundary and check rendered controls
+as well as their supporting APIs.

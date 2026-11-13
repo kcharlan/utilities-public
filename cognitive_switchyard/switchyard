@@ -6,7 +6,6 @@
 #     "pydantic",
 #     "uvicorn",
 #     "wsproto",
-#     "aiosqlite",
 #     "PyYAML",
 # ]
 # ///

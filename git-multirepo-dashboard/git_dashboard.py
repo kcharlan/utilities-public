@@ -48,7 +48,7 @@ except ImportError:  # pragma: no cover - Windows
 
 # ── Constants ─────────────────────────────────────────────────────────────────
 DEFAULT_PORT = 8300
-VERSION = "0.3.9"
+VERSION = "0.3.10"
 
 # Populated by build_tools_dict() during preflight; global so /api/status can
 # return it without re-running which() on every request.
@@ -4400,18 +4400,7 @@ const htmlTag = htm.bind(preact.h);
                         color: 'var(--text-primary)', width: '320px',
                       }} /><button class=${"btn btn-secondary"} onClick=${handleSavePath} disabled=${saving}>${saving ? 'Saving…' : 'Save'}</button>`
                 )}</div>`
-            )}</div><button style=${{
-              background: 'none',
-              border: '1px solid var(--border-default)',
-              borderRadius: 'var(--radius-sm)',
-              cursor: 'pointer',
-              fontFamily: 'var(--font-body)',
-              fontSize: '13px',
-              color: 'var(--text-secondary)',
-              padding: '6px 14px',
-              transition: 'border-color var(--transition-fast), color var(--transition-fast)',
-              marginTop: '24px',
-            }} onClick=${() => {}} title=${"Scan Now (not yet wired)"}>Scan Now</button></div>`
+            )}</div></div>`
       );
     }
 
@@ -6448,7 +6437,7 @@ def dependency_report_scope() -> dict:
             "pep723": "Python .py/.pyw and suffixless shebang candidates; metadata only in the leading comment/blank-line prelude. "
                       "PEP 723 reference grammar; unclosed blocks ignored; duplicate script blocks, malformed TOML and invalid dependencies reported as inventory errors.",
         },
-        "groups": "Python manifest kinds coexist. Requirements includes retain physical source paths (including external includes). "
+        "groups": "Python manifest kinds coexist. Requirements includes inside the repository retain their physical source paths; includes that resolve outside the repository are skipped. "
                   "PEP 621 optional dependencies and string dependency-group entries are included; include-group tables and Poetry groups are not expanded. "
                   "Adjacent uv.lock supplies unique registry versions only, not declarations. "
                   "Node dependencies/devDependencies, Cargo dependencies/dev-dependencies, Composer require/require-dev (excluding platform entries), Go requirements and conventional Bundler gem declarations are included.",

@@ -96,7 +96,7 @@ denied ownership fails closed. Native Linux execution has not been verified.
 
 ## Tech Stack
 
-- **Backend:** Python 3.12 through 3.15, FastAPI, uvicorn, aiosqlite, PyYAML
+- **Backend:** Python 3.12 through 3.15, FastAPI, uvicorn, PyYAML, standard-library SQLite
 - **Frontend:** Single-file embedded Preact SPA (no runtime asset downloads)
 - **State:** SQLite + file-as-state directories
 - **uv-managed:** Single entry point (`switchyard`) with a PEP 723 header; uv resolves dependencies on first run (requires [uv](https://docs.astral.sh/uv/), `brew install uv`)
