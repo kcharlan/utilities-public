@@ -1,5 +1,11 @@
 # Lessons learned
 
+## Keep static metadata in step with runtime content
+
+The AI timeline updated its browser title at runtime but left the HTML title
+stale. Check the static title against the latest dataset date as well, so it is
+correct before scripts execute and for readers that do not execute them.
+
 ## Reset derived session state together
 
 When a manual restart clears the totals that drive a handicap, clear the active
