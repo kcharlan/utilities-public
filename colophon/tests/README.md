@@ -7,7 +7,7 @@ statuses, structured-over-raw tool counts, and known-record diagnostics.
 
 Antigravity reader units and `test_antigravity.py` create only invented UUID
 databases/annotations in external private scratch. `fixtures/antigravity/`
-retains public enum and model-oracle reference data.
+retains public enum reference data.
 The reader tests cover wire bounds/types/unknown fields and repeated integers,
 empty/zero-step databases, malformed-record isolation, transaction rollback,
 independent metadata identities, archive defaults/precedence/fallback, surface

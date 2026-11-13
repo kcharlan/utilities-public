@@ -68,6 +68,8 @@ database disappears or cannot be read. Live databases replace retained records;
 the ledger stores no transcript turns, though a fallback title may come from
 the first request.
 
+Version 0.7.2 learns Antigravity model numbers from observed response names and retained ledger events, with explicit markers for unknown numbers.
+
 Version 0.7.1 keeps structurally valid Antigravity records when individual
 used fields are malformed, reports field mismatches, and reads structurally
 compatible OpenCode databases without a migration-date warning.

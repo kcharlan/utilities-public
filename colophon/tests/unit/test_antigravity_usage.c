@@ -98,30 +98,25 @@ TEST(antigravity_usage_all_locations_partial_merge_and_invalid_isolation) {
 TEST(antigravity_model_info_fallback) {
     Arena a={0};JsonWriter info={0},metadata={0},u={0};Str raw,normalized;
     msg(&info,8,STR_LIT("synthetic-model-name"));msg(&info,12,STR_LIT("synthetic-chat-model-name"));msg(&metadata,24,bytes(&info));
-    ASSERT_EQ(ERR_OK,antigravity_model(&a,(Str){0},(Str){0},bytes(&metadata),(Str){0},&raw,&normalized).code);
+    ASSERT_EQ(ERR_OK,antigravity_model(&a,(Str){0},(Str){0},bytes(&metadata),(Str){0},NULL,&raw,&normalized).code);
     ASSERT_TRUE(str_equal(STR_LIT("synthetic-chat-model-name"),raw));
-    num(&u,1,235);ASSERT_EQ(ERR_OK,antigravity_model(&a,(Str){0},bytes(&u),bytes(&metadata),STR_LIT("synthetic-previous"),&raw,&normalized).code);
+    num(&u,1,235);ASSERT_EQ(ERR_OK,antigravity_model(&a,(Str){0},bytes(&u),bytes(&metadata),STR_LIT("synthetic-previous"),NULL,&raw,&normalized).code);
     ASSERT_TRUE(str_equal(STR_LIT("synthetic-chat-model-name"),raw));
-    jsonw_free(&u);num(&u,1,246);ASSERT_EQ(ERR_OK,antigravity_model(&a,(Str){0},bytes(&u),bytes(&metadata),(Str){0},&raw,&normalized).code);
-    ASSERT_TRUE(str_equal(STR_LIT("gemini-2.5-pro"),raw));
-    ASSERT_EQ(ERR_OK,antigravity_model(&a,STR_LIT("synthetic-response"),bytes(&u),bytes(&metadata),(Str){0},&raw,&normalized).code);
+    jsonw_free(&u);num(&u,1,246);ASSERT_EQ(ERR_OK,antigravity_model(&a,(Str){0},bytes(&u),bytes(&metadata),(Str){0},NULL,&raw,&normalized).code);
+    ASSERT_TRUE(str_equal(STR_LIT("synthetic-chat-model-name"),raw));
+    ASSERT_EQ(ERR_OK,antigravity_model(&a,STR_LIT("synthetic-response"),bytes(&u),bytes(&metadata),(Str){0},NULL,&raw,&normalized).code);
     ASSERT_TRUE(str_equal(STR_LIT("synthetic-response"),raw));
     jsonw_free(&info);jsonw_free(&metadata);msg(&info,8,STR_LIT("synthetic-model-only"));msg(&metadata,24,bytes(&info));
-    ASSERT_EQ(ERR_OK,antigravity_model(&a,(Str){0},(Str){0},bytes(&metadata),(Str){0},&raw,&normalized).code);ASSERT_TRUE(str_equal(STR_LIT("synthetic-model-only"),raw));
+    ASSERT_EQ(ERR_OK,antigravity_model(&a,(Str){0},(Str){0},bytes(&metadata),(Str){0},NULL,&raw,&normalized).code);ASSERT_TRUE(str_equal(STR_LIT("synthetic-model-only"),raw));
     jsonw_free(&info);jsonw_free(&metadata);msg(&info,20,STR_LIT("synthetic-display"));msg(&info,23,STR_LIT("synthetic-vertex"));msg(&info,25,STR_LIT("synthetic-url"));msg(&metadata,24,bytes(&info));
-    ASSERT_EQ(ERR_OK,antigravity_model(&a,(Str){0},(Str){0},bytes(&metadata),STR_LIT("synthetic-previous"),&raw,&normalized).code);ASSERT_TRUE(str_equal(STR_LIT("synthetic-previous"),raw));
-    ASSERT_EQ(ERR_OK,antigravity_model(&a,(Str){0},(Str){0},bytes(&metadata),(Str){0},&raw,&normalized).code);ASSERT_TRUE(str_equal(STR_LIT("antigravity/unattributed"),raw));
+    ASSERT_EQ(ERR_OK,antigravity_model(&a,(Str){0},(Str){0},bytes(&metadata),STR_LIT("synthetic-previous"),NULL,&raw,&normalized).code);ASSERT_TRUE(str_equal(STR_LIT("synthetic-previous"),raw));
+    ASSERT_EQ(ERR_OK,antigravity_model(&a,(Str){0},(Str){0},bytes(&metadata),(Str){0},NULL,&raw,&normalized).code);ASSERT_TRUE(str_equal(STR_LIT("antigravity/unattributed"),raw));
     jsonw_free(&info);jsonw_free(&metadata);jsonw_free(&u);arena_destroy(&a);
 }
-TEST(antigravity_models_all_enum_oracle_expectations_and_normalization) {
-    FILE *file=fopen("tests/fixtures/antigravity/model-oracle.json","rb");ASSERT_TRUE(file);ASSERT_EQ(0,fseek(file,0,SEEK_END));long length=ftell(file);ASSERT_TRUE(length>0);rewind(file);
-    char *input=malloc((size_t)length);ASSERT_TRUE(input);ASSERT_EQ((size_t)length,fread(input,1,(size_t)length,file));fclose(file);
-    JsonRead r=json_read((Str){input,(uint32_t)length},STRICT,JSON_CONSTANTS_REJECT,"synthetic.model_oracle");ASSERT_EQ(JSON_OK,r.status);
-    yyjson_val *rows=yyjson_obj_get(yyjson_doc_get_root(r.doc),"rows"),*row;size_t i,n;ASSERT_EQ(1691,yyjson_arr_size(rows));
-    yyjson_arr_foreach(rows,i,n,row){PyNum number={0};ASSERT_TRUE(json_number(yyjson_obj_get(row,"number"),"synthetic.enum",&number));Str got=antigravity_model_enum(number.i);yyjson_val *want=yyjson_obj_get(row,"slug");ASSERT_TRUE(str_equal((Str){yyjson_get_str(want),(uint32_t)yyjson_get_len(want)},got));}
+TEST(antigravity_model_normalization) {
     const char *cases[][2]={{" gemini-pro-default ","gemini-3.1-pro-preview"},{"gemini-pro-agent-thinking","gemini-3.1-pro-preview"},{"gemini-3.1-pro-high","gemini-3.1-pro-preview"},{"gemini-3.7-flash-safety-le","gemini-3.7-flash"},{"synthetic-tiered","synthetic"},{"synthetic-low","synthetic"},{"synthetic-thinking","synthetic"},{"synthetic-medium","synthetic"},{"synthetic-high","synthetic"},{"synthetic-trial","synthetic"},{"gpt-oss-120b-medium","gpt-oss-120b"}};
     Arena a={0};for(size_t j=0;j<sizeof cases/sizeof *cases;j++){Str out;ASSERT_EQ(ERR_OK,antigravity_normalize_model(&a,(Str){cases[j][0],(uint32_t)strlen(cases[j][0])},&out).code);ASSERT_TRUE(str_equal((Str){cases[j][1],(uint32_t)strlen(cases[j][1])},out));}
-    arena_destroy(&a);json_read_free(&r);free(input);
+    arena_destroy(&a);
 }
 TEST(antigravity_usage_step_matching_clocks_ttft_and_outside_ownership) {
     for(size_t cross=0;cross<2;cross++) {
@@ -251,4 +246,58 @@ TEST(antigravity_clock_empty_defaults_and_split_singular_timestamp) {
     JsonWriter parent={0},part={0};num(&part,1,1);msg(&parent,4,bytes(&part));jsonw_free(&part);num(&part,2,500000000);msg(&parent,4,bytes(&part));jsonw_free(&part);num(&part,1,2);msg(&parent,4,bytes(&part));
     at=(MaybeMs){0};ASSERT_EQ(ERR_OK,antigravity_clock(&a,bytes(&parent),4,&at).code);ASSERT_TRUE(at.present);ASSERT_EQ(2500,at.value);
     jsonw_free(&parent);jsonw_free(&part);arena_destroy(&a);
+}
+
+TEST(antigravity_learns_model_number_across_conversations) {
+    Arena a={0};JsonWriter u={0},meta={0};num(&u,1,9999);num(&u,2,5);Str numbered=own(&a,&u);
+    msg(&meta,9,numbered);AntigravityStep step={.idx=1,.metadata=own(&a,&meta)};
+    AntigravityBlob gen={.data=generator(&a,numbered,STR_LIT("synthetic-model-a"))};
+    AntigravitySession raw[2]={{.id=STR_LIT("synthetic-learning-target"),.steps=&step,.step_count=1},
+      {.id=STR_LIT("synthetic-learning-source"),.generators=&gen,.generator_count=1}},*rows[]={raw,raw+1};
+    Corpus c={0};AntigravityStore s={0};PricingReport p={0};SessionModel *first=compose(&s,&c,rows,2,&p);
+    ASSERT_EQ(1,first->unit_count);ASSERT_TRUE(str_equal(STR_LIT("synthetic-model-a"),first->units[0].model_raw));
+    destroy(&s,&c,&p);arena_destroy(&a);
+}
+
+TEST(antigravity_learned_numbers_fallback_conflicts_and_ledger) {
+    for(size_t mode=0;mode<6;mode++){
+        Arena a={0};JsonWriter u={0},meta={0};num(&u,1,9999);num(&u,2,5);Str numbered=own(&a,&u);
+        msg(&meta,9,numbered);AntigravityStep step={.idx=1,.metadata=own(&a,&meta)};
+        AntigravityBlob gens[4]={{.data=generator(&a,numbered,STR_LIT("synthetic-model-a"))},
+          {.data=generator(&a,numbered,STR_LIT("synthetic-model-a-high"))},
+          {.data=generator(&a,numbered,STR_LIT("synthetic-model-b"))},
+          {.data=generator(&a,usage(&a,7,0,-1,-1,(Str){0},(Str){0},(Str){0}),STR_LIT("synthetic-previous"))}};
+        if(mode==0)gens[1]=gens[3];if(mode==3)gens[1]=gens[2];
+        if(mode==5)gens[0].data=generator(&a,numbered,STR_LIT("antigravity/synthetic-model"));
+        AntigravitySession raw={.id=STR_LIT("synthetic-learning"),.steps=&step,.step_count=1,
+          .generators=gens,.generator_count=mode==0?2:mode==1?0:mode==2?3:mode==3?2:mode==5?1:0},*rows[]={&raw};
+        Corpus c={0};AntigravityStore s={.sessions=rows,.session_count=1};PricingReport p={0};
+        ASSERT_EQ(ERR_OK,antigravity_corpus_add(&s,123456,&c).code);PriorityTurns priority={0};ASSERT_EQ(ERR_OK,compose_usage(&c,&priority).code);
+        AntigravityLedgerEvent saved={.has_model_number=true,.model_number=9999,.model_raw=STR_LIT("synthetic-model-a")};
+        AntigravityLedgerRecord record={.events=&saved,.event_count=1};AntigravityLedgerRecord *records[]={&record};AntigravityLedger ledger={.records=records,.count=1,.capacity=1};
+        ASSERT_EQ(ERR_OK,antigravity_compose(&s,&c,NULL,&p,mode==4?&ledger:NULL).code);
+        SessionModel *first=omap_get(&c.sessions,raw.id);ASSERT_TRUE(first->unit_count>0);
+        Str expected=mode==1?STR_LIT("antigravity/model-9999"):mode==5?STR_LIT("antigravity/synthetic-model"):STR_LIT("synthetic-model-a");
+        ASSERT_TRUE(str_equal(expected,first->units[first->unit_count-1].model_raw));
+        antigravity_ledger_destroy(&ledger);destroy(&s,&c,&p);arena_destroy(&a);
+    }
+}
+
+TEST(antigravity_retained_numbered_markers_use_live_learning) {
+    for(size_t mode=0;mode<4;mode++){
+        Arena a={0};JsonWriter u={0};num(&u,1,9999);num(&u,2,5);Str numbered=own(&a,&u);
+        AntigravityBlob gens[2]={{.data=generator(&a,numbered,STR_LIT("synthetic-model-a"))},{.data=generator(&a,numbered,STR_LIT("synthetic-model-a"))}};
+        AntigravitySession live={.id=STR_LIT("synthetic-live"),.generators=gens,.generator_count=mode==1?0:mode==3?2:1},*rows[]={&live};
+        Str original=mode==2?STR_LIT("antigravity/unattributed"):mode==3?STR_LIT("synthetic-original"):STR_LIT("antigravity/model-9999");
+        AntigravityLedgerEvent saved={.has_model_number=true,.model_number=9999,.model_raw=original,.tokens={5}};
+        AntigravityLedgerRecord record={.header={.id=STR_LIT("synthetic-retained"),.provider=PROVIDER_ANTIGRAVITY,.title_full=STR_LIT("Synthetic retained")},.events=&saved,.event_count=1};
+        AntigravityLedgerRecord *records[]={&record};AntigravityLedger ledger={.records=records,.count=1,.capacity=1};
+        AntigravityStore s={.sessions=rows,.session_count=1};Corpus c={0};PricingReport p={0};
+        ASSERT_EQ(ERR_OK,antigravity_corpus_add(&s,123456,&c).code);ASSERT_EQ(ERR_OK,antigravity_ledger_corpus_add(&ledger,&s,&c).code);
+        PriorityTurns priority={0};ASSERT_EQ(ERR_OK,compose_usage(&c,&priority).code);ASSERT_EQ(ERR_OK,antigravity_compose(&s,&c,NULL,&p,&ledger).code);
+        Str expected=mode==1||mode==3?original:STR_LIT("synthetic-model-a");
+        ASSERT_EQ(1,record.header.unit_count);ASSERT_TRUE(str_equal(expected,record.header.units[0].model_raw));ASSERT_TRUE(str_equal(expected,record.header.units[0].model));
+        ASSERT_TRUE(str_equal(original,saved.model_raw));ASSERT_EQ(9999,saved.model_number);ASSERT_TRUE(saved.has_model_number);
+        antigravity_ledger_destroy(&ledger);destroy(&s,&c,&p);arena_destroy(&a);
+    }
 }

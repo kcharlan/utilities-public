@@ -373,3 +373,5 @@ field changed or a nested timestamp was malformed. Validate the outer wire
 structure, then check each consumed field and preserve unrelated facts; keep
 malformed clock tests that prevent accidental epoch defaults. Diagnostics must
 identify the used message and field without inspecting unknown fields.
+
+- Antigravity model numbers can change independently of a bundled table. Learn normalized names across all sessions before attribution, and keep generated unknown markers out of that evidence.

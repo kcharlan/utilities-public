@@ -137,8 +137,10 @@ rebuilds session/turn/bucket summaries, including empty sessions.
 
 The reader emits source counts/status/reasons, ignored environment names and
 diagnostics alongside corpus sessions and capability-gated UI actions. Model
-attribution uses response slug, meaningful usage enum, step chat_model_name then
-model_name, most recent attributed conversation model, or an unattributed marker.
+attribution uses response slug, a number-to-name map learned across generators
+and ledger events, step chat_model_name then model_name, the most recent
+attributed conversation model, or a marker identifying an unknown number.
+Without a number the final marker is antigravity/unattributed.
 Pricing uses independently available bundled/catalog estimates with Antigravity
 identities, normalized effort/routing suffixes and unknown-model unpriced notes.
 The moving gemini-pro-default alias assumes gemini-3.1-pro-preview; Vertex-only
@@ -170,7 +172,7 @@ reader. Missing legacy provider fields mean Codex. Source filtering applies
 to overview totals, session lists, descendants and direct subagent links.
 The snapshot log count always includes Codex and Claude logs, regardless of the
 switch; accepted OpenCode and Antigravity database counts are shown separately. The footer
-displays the embedded payload's release version (`colophon 0.7.1`).
+displays the embedded payload's release version (`colophon 0.7.2`).
 
 Codex uses green, Claude blue, OpenCode violet and Antigravity pink. In All, KPI share rules and workspace
 bars split by provider; calendar cells use the provider with the greater
@@ -260,7 +262,7 @@ An empty value selects the default `~/.claude` config root. Its
 `COLOPHON_HOME` selects the private runtime home (default `~/.colophon`);
 tilde expansion is supported. `COLOPHON_PRICING_URL` defaults to
 `https://models.dev/api.json`. Help and version exit without initializing
-runtime state. Version is currently `colophon 0.7.1`.
+runtime state. Version is currently `colophon 0.7.2`.
 
 | Flag | Behavior |
 | --- | --- |

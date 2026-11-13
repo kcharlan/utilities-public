@@ -43,7 +43,7 @@ tools and their private workflow are not included here.
 
 ## Antigravity evidence and acceptance
 
-The [public enum and model-oracle fixtures](../tests/fixtures/antigravity/README.md)
+The [public enum fixtures](../tests/fixtures/antigravity/README.md)
 record the retained reference data and its provenance. The wire reader validates
 structure and checks consumed fields independently.
 [Token rules](token_rules.md#antigravity-accounting-and-oracle-provenance-050)
