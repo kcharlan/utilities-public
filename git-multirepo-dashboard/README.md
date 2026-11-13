@@ -137,7 +137,7 @@ usage: git_dashboard [-h] [--port N] [--no-browser] [--scan PATH]
 -y, --yes           Accepted for backward compatibility; currently has no effect
 ```
 
-`GIT_DASHBOARD_NO_BROWSER=1` also suppresses browser launch. The server binds only to `127.0.0.1`.
+`GIT_DASHBOARD_NO_BROWSER=1` also suppresses browser launch. The server binds only to `127.0.0.1`. It rejects any request whose `Host` is not `127.0.0.1:<port>` or `localhost:<port>`, and any request other than GET or HEAD whose `Origin` is not the server's own origin.
 
 ## Data and configuration
 

@@ -1131,8 +1131,7 @@ interpreter used by an installed standalone zipapp.
 For isolated Hosts visual acceptance, create a new or empty directory outside
 all repository checkouts, then from `model_sentinel/` run `python -m
 tests.hosts_validation_fixture /private/tmp/synthetic-hosts-runtime` in a virtual
-environment. Agents use the utility venv for this ad hoc command, after running
-`~/.claude/shared/agent-tools.sh ensure`. The builder
+environment. The builder
 rejects occupied and repository-contained paths, including filesystem aliases,
 and prints the resolved runtime path. Use it as `MODEL_SENTINEL_HOME` for
 `browse --no-open --view hosts --port 0`. Its newest capture is intentionally

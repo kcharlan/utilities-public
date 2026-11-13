@@ -1,7 +1,7 @@
 # Git Fleet: Current Design Reference
 
 **Status:** Implemented and maintained
-**Last reconciled with code:** 2026-10-18
+**Last reconciled with code:** 2026-11-13
 
 This document records the durable architecture and behavioral contracts of Git Fleet. It replaces the original implementation-oriented specification, whose bootstrap, schema, and milestone descriptions had diverged from the completed application. `git_dashboard.py` remains the executable source of truth.
 
@@ -31,7 +31,7 @@ git-multirepo-dashboard/
 
 `git_dashboard.py` has a canonical uv shebang and PEP 723 dependency block:
 
-- Python 3.12+
+- Python 3.12 through 3.15 (`>=3.12,<3.16`)
 - FastAPI
 - uvicorn with standard extras
 - aiosqlite
@@ -40,7 +40,9 @@ git-multirepo-dashboard/
 
 There is no application-managed virtual environment and no runtime frontend build. uv resolves and caches Python dependencies. The Preact and htm SPA, CSS, fonts, and SVG charts are embedded in the launcher and served in `HTML_TEMPLATE`; browser assets work offline.
 
-The FastAPI application binds to `127.0.0.1`. Port 8300 is preferred, but startup probes as many as 20 consecutive ports and uses the first available one. Automatic browser launch can be disabled with `--no-browser`, `GIT_DASHBOARD_NO_BROWSER`, or test mode.
+The FastAPI application binds to `127.0.0.1`. Port 8300 is preferred, but startup probes as many as 20 consecutive ports and uses the first available one. Automatic browser launch can be disabled with `--no-browser`, `GIT_DASHBOARD_NO_BROWSER`, or test mode (`UTILITIES_TESTING`).
+
+Every request passes `LocalOriginGuard`. The `Host` header must be exactly `127.0.0.1:<port>` or `localhost:<port>` for the bound port, and any method other than GET or HEAD must also carry a single `Origin` header equal to `http://<that host>`; anything else receives `403 Forbidden`. GET and HEAD routes never change stored state, and no CORS headers are sent.
 
 ## Runtime state
 
@@ -59,9 +61,9 @@ Startup performs these steps:
 
 1. Parse `--port`, `--no-browser`, `--scan`, `--trust-repo-tools` (enables the Bundler and cargo checks, which are skipped by default), and the backward-compatible no-op `--yes` flag.
 2. Require Python 3.12 or newer and Git in `PATH`.
-3. Discover optional ecosystem tools and require at least one of `npm`, `go`, `cargo`, `bundle`, `composer`, or `pip-audit`.
-4. Create and migrate the SQLite database.
-5. If `--scan PATH` is supplied, recursively discover and register repositories below the path.
+3. Discover optional ecosystem tools and require at least one of `npm`, `go`, `cargo`, `bundle`, `composer`, or `pip-audit`. `govulncheck`, `cargo-audit`, `cargo-outdated`, and `bundler-audit` are looked up only when their parent tool is present.
+4. Create and migrate the SQLite database, then mark scans left `running` by an earlier process as failed.
+5. If `--scan PATH` is supplied, recursively discover and register repositories below the path. A path that is not a directory prints a warning and startup continues.
 6. Select a free loopback port, optionally schedule browser launch, register signal handlers, and start uvicorn.
 
 Missing individual ecosystem tools do not stop startup. Their paths or null values are exposed by `GET /api/status` for the UI's tool-status banner. The application does not prompt for confirmation.
@@ -138,26 +140,30 @@ All repository-owned tables reference `repositories` with cascading deletion. AP
 
 ## Repository discovery and runtime classification
 
-Discovery walks a selected root recursively, pruning hidden directories and common generated directories such as `.venv`, `node_modules`, `dist`, and `build`. It recognizes a repository when a `.git` entry exists, verifies/deduplicates the top level with `git rev-parse --show-toplevel`, groups linked worktrees by `git rev-parse --git-common-dir` (preferring the main checkout, otherwise the first linked worktree found), and stops descending below that repository.
+Discovery walks a selected root recursively, pruning hidden directories and common generated directories such as `.venv`, `node_modules`, `dist`, and `build`. It recognizes a repository when a `.git` entry exists, verifies/deduplicates the top level with `git rev-parse --show-toplevel`, groups linked worktrees found in the same discovery by `git rev-parse --git-common-dir` (preferring the main checkout, otherwise the first linked worktree found), and stops descending below that repository.
 
 Runtime classification checks root-level manifests for Python, Node.js, Go, Rust, Ruby, PHP, and Docker. Multiple non-Docker ecosystems yield `mixed`; Docker combined with one language does not. Without a manifest, a shell-file majority yields `shell`, root `index.html` yields `html`, and the fallback is `unknown`.
 
-Registration is idempotent for an existing absolute path. The path-repair endpoint changes the registered path without changing the path-derived ID.
+Registration (`--scan` and `POST /api/repos`) resolves the default branch from local references without contacting the remote: `refs/remotes/origin/HEAD`, then a local `main` or `master`, then the current branch, and finally `main`. Each branch scan resolves it again and stores a changed value.
+
+Registration is idempotent for an existing absolute path and leaves the existing row unchanged. The path-repair endpoint changes the registered path without changing the path-derived ID.
 
 ## Scan model
+
+Every Git command is an argument-vector subprocess run with `--no-optional-locks`, `core.fsmonitor=false`, and `core.hooksPath=/dev/null`, and a 30-second timeout.
 
 ### Quick scan
 
 `POST /api/fleet/refresh` executes live Git queries for every registered repository with a concurrency limit of eight:
 
-- validate the work tree
-- parse porcelain status
-- read the latest commit
-- read the current branch
+- skip a repository whose path is not a directory, leaving its stored state untouched
+- parse `git status --porcelain=v1`, preserving its leading status columns
+- read the latest commit (null fields when there are no commits)
+- read the current branch with `git symbolic-ref`, which names an unborn branch and is null for a detached HEAD
 
 Results update `working_state` without erasing error fields created by broader scans. `GET /api/fleet` reads that stored state and joins branches, dependencies, 13-week sparklines, and fleet KPIs into the response without starting work.
 
-`present_quick_status` defines the presentation rule for fleet and repository detail; `test_repo_detail_quick_status_matches_fleet` covers its boundary cases.
+`present_quick_status` defines the presentation rule for fleet and repository detail: a missing path reports a clean state with zero counts and no error, a stored quick-scan error reports null dirty flag and counts with the error text, and otherwise the stored values are returned. Fleet also nulls the branch and commit fields of a missing path. `test_repo_detail_quick_status_matches_fleet` covers its boundary cases.
 
 A failed status command records its error and leaves the dirty flag and counts unknown; the card shows a status-failed badge instead of Clean. A later successful quick scan clears that error. Worktree deletions and type changes count as modified files.
 
@@ -169,7 +175,7 @@ The history scanner parses `git log --all` with ISO dates and short statistics a
 
 ### Branches
 
-The branch scanner replaces the stored local-branch snapshot after a successful Git command. A branch with no commit date is stale; otherwise a non-default branch becomes stale after 30 days. The detail API computes commits-ahead and diff statistics live against the configured default branch.
+The branch scanner first refreshes the repository's default branch (see above), then replaces the stored local-branch snapshot after a successful `git for-each-ref refs/heads`. A branch with no commit date is stale; otherwise a non-default branch becomes stale after 30 days. The detail API computes commits-ahead and diff statistics (`git diff --no-ext-diff --shortstat`) live against the stored default branch.
 
 ### Fleet orchestration
 
@@ -177,11 +183,11 @@ The branch scanner replaces the stored local-branch snapshot after a successful 
 
 The background task processes repositories sequentially. A full scan runs history, branch, and dependency scans; a dependency scan runs only dependency work. Progress is buffered through an `asyncio.Queue` and streamed by `GET /api/fleet/scan/{scan_id}/progress`. After 60 seconds without an event, an active scan sends a keepalive; a stream without a live scan closes. The active scan marker is cleared in a `finally` block; startup marks interrupted running scans as failed.
 
-Missing repository paths and per-repository failures are recorded and do not prevent remaining repositories from being attempted. The scan is `completed` when the fleet is empty or at least one repository succeeds; total failure is `failed`.
+A full scan stores a missing repository path or a per-repository failure in `scan_error` and clears it on success; a dependency scan skips missing paths and only logs failures. Neither prevents remaining repositories from being attempted, and `repos_scanned` counts successes. The scan is `completed` when the fleet is empty or at least one repository succeeds; total failure is `failed`.
 
 ## Dependency model
 
-Manifest discovery walks through depth three and skips hidden, virtual-environment, generated, and vendored directories. It recognizes:
+Manifest discovery walks through depth three and skips hidden, virtual-environment, generated, and vendored directories, symbolic links, and files larger than 2 MiB (`MAX_DEP_FILE_SIZE`). It recognizes:
 
 | File | Manager |
 | --- | --- |
@@ -204,9 +210,11 @@ Parsing is intentionally lightweight:
 - Bundler recognizes conventional `gem` declarations.
 - Composer reads require and require-dev while excluding PHP/platform extensions.
 
-Dependency parsing and blocking health checks run in `analyze_repo_deps` through `asyncio.to_thread`, keeping API and SSE work responsive. The analyzer returns enriched declarations, an incomplete-analysis flag, missing tool objects, and manifest inventory. A checker crash invalidates coverage only for its manager; other managers continue.
+Dependency parsing and blocking health checks run in `analyze_repo_deps` through `asyncio.to_thread`, keeping API and SSE work responsive. The analyzer returns enriched declarations, an incomplete-analysis flag, missing tool objects, and manifest inventory. The flag, persisted as `dep_check_error`, is set by a manifest error, a checker crash, a missing tool for a discovered manager, or any declaration left unchecked in either state. A checker crash invalidates coverage only for its manager; other managers continue.
 
 Coverage is independent: `outdated_state` is `checked`, `floating`, or `unchecked`; `vuln_state` is `checked` or `unchecked`. Exit status, result shape, and row evidence must support a checked result. Missing evidence gets a retained reason. Advisory evidence has highest severity precedence, followed by proven major/outdated results; remaining incomplete coverage yields `unchecked`, and complete clean coverage yields `ok`. Finalization is idempotent and preserves checker-selected floating and direct-reference display values. Only exact PEP 440 Python parser versions and Go parser versions default current versions; other managers obtain concrete versions from tools.
+
+Cargo and Bundler tools can run repository-controlled code, so without `--trust-repo-tools` neither their outdated nor their audit commands run: those declarations are still parsed and stored, unchecked in both states with a `Skipped: enable --trust-repo-tools …` note. When a non-Python tool is not installed its check is skipped and finalization records `<state>: no evaluation evidence`; a missing pip-audit records `pip-audit: tool unavailable`. The commands are `npm outdated --json`, `npm audit --json`, `go list -m -u -json all`, `govulncheck -json ./...`, `cargo-outdated --format json`, `cargo-audit --json`, `bundle outdated --parseable`, `bundler-audit check --format json`, `composer outdated --all --format=json`, and `composer audit --format=json`. Each times out after 120 seconds, except govulncheck (300); PyPI requests time out after 15 seconds.
 
 Non-Python orchestrators group declarations by the resolved parent of `source_path`; only legacy empty sources fall back to the repository root. Each inner checker keeps its existing signature and receives its manifest directory as the working directory. npm current versions prefer the outdated row, supported adjacent package-lock v1/v2/v3 entries, then installed package metadata. Listed rows need a latest comparison; absent rows need a concrete version plus a successful bounded `npm view` comparison (30 seconds). Lock evidence never substitutes for that comparison. Audit error objects, missing/invalid vulnerability mappings or affected-node lists and unexpected statuses invalidate npm audit coverage; `ENOLOCK` records the lockfile requirement. Both clean and vulnerable audit coverage require a concrete direct-node lock version matching the displayed current version; a mismatch retains current/outdated evidence and an unchecked vulnerability reason. If no current version exists, concrete audited lock evidence may supply it. Findings additionally require the declaration's `node_modules/<name>` location in the audit entry's `nodes` list. Same-name nested findings cannot establish a direct declaration's vulnerability.
 
@@ -214,7 +222,7 @@ Go `list` needs a valid row for the declaration; absent and replaced modules rem
 
 The shared npm lock reader selects `npm-shrinkwrap.json` before `package-lock.json`, using the same layouts 1–3 and direct-node parser for outdated version evidence and audit attribution. An unreadable, malformed or unsupported selected shrinkwrap returns no lock evidence and never silently falls back to package-lock. See [npm lock precedence](https://docs.npmjs.com/cli/v11/configuring-npm/npm-shrinkwrap-json/), the [virtual-tree audit implementation](https://raw.githubusercontent.com/npm/cli/latest/workspaces/arborist/lib/arborist/index.js), and [audit affected-node serialization](https://raw.githubusercontent.com/npm/cli/latest/workspaces/arborist/lib/vuln.js).
 
-`parse_deps_for_repo(repo_path, manifests_out=None)` populates an inventory of `{path, kind, dependencies, error}` records. Paths are resolved repository-relative POSIX paths or absolute paths for external includes. Requirements recursion shares resolved-path inventory and visited state: declarations retain their physically declaring `source_file`, each file counts only its own declarations, and empty, included, and failed files survive. `dep_manifests` persists the inventory atomically with coverage; errors set `DepAnalysis.any_error`. Empty files need no dependency group. Python outdated checks call the PyPI JSON API; other ecosystems use the tools listed in the README.
+`parse_deps_for_repo(repo_path, manifests_out=None)` populates an inventory of `{path, kind, dependencies, error}` records. Paths are resolved repository-relative POSIX paths. A requirements include must resolve to a regular file inside the repository no larger than 2 MiB: an include that escapes the repository is skipped without an inventory record, and a missing, non-regular, or oversized one records an error. Requirements recursion shares resolved-path inventory and visited state: declarations retain their physically declaring `source_file`, each file counts only its own declarations, and empty, included, and failed files survive. `dep_manifests` persists the inventory atomically with coverage; errors set `DepAnalysis.any_error`. Empty files need no dependency group. Python outdated checks call the PyPI JSON API; other ecosystems use the tools listed in the README.
 
 ### Python health evaluation and scope
 
@@ -254,6 +262,8 @@ The local SPA consumes these JSON and streaming endpoints:
 | GET | `/api/analytics/dep-overlap` | Identities with at least two manifest declaration uses |
 
 `/api/status` also returns `dependency_scope`, the report's scan-boundary metadata. Discovery depth and skipped directories come from the scanner's runtime constants. `/api/repos/{id}/deps` and its scan endpoint retain the grouped-list response, with declared specifications, versions, independent states, notes and timestamps on each package.
+
+Unknown repository IDs return 404. `POST /api/repos` takes `{"path"}` and returns `{registered, repos}`, or 400 for a path that is not a directory; `PATCH` takes `{"path"}` and returns 400 unless it is an existing directory; `DELETE` returns 204. `/history`, `/api/analytics/heatmap`, and `/api/analytics/allocation` take `days` (defaults 90, 365, and 90). `/commits` takes `page`, `per_page` (default 25, clamped to 1–100), and an optional `branch`; without one it lists all refs. A branch must be in the stored branch snapshot, otherwise the response is 400 `Unknown branch`; it is passed to Git after `--end-of-options` and before `--`, so it cannot be read as an option or a path. `/commits` also returns 404 when the repository path is missing.
 
 ### Dependency overlap response
 

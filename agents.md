@@ -47,7 +47,7 @@ This applies the global test rule (full suite, every category) to a monorepo:
 - Don't commit or open a PR with known test failures.
 
 ## Repo Shape (High-Level)
-- Native macOS: `brew_version` (Swift CLI and menu bar app; deliberate exception to UI Shapes).
+- Native macOS: `brew_version` (Swift CLI and menu bar app; deliberate exception to UI Shapes), `anker_charge_monitor` and `telltale` (Swift menu bar apps), and `colophon` (C command-line tool that writes a built page).
 - Python/CLI/local web tools: `tax2`, `data_format_converter`, `transcription`, `mls-tracker`, `apple-health-extract`, `md-json`, `doc_linearizer`, `div_conv`, etc.
 - Browser-first single-file apps: `web_games/gorilla`, `web_games/multibody_sim`, `web_games/rps_screen`, plus HTML calculators under `Calculation tools`.
 - Docker stacks and services: `docker/actual-data`, `docker/excalidraw`, `docker/llm_collector`, `docker/llm_proxy`, `docker/mermaid`, `docker/n8n-poc`, `docker/webserver`.
@@ -125,8 +125,8 @@ Project-specific validation commands, applied with the Testing Scope above. A co
   - `PYTHONDONTWRITEBYTECODE=1 "$MARKET_ATLAS_TEST_PYTHON" -B -m unittest discover -s data -p 'test_*.py' -v` (full compiler suite including retained real-input reproduction; interpreter must be the prepared venv).
   - Installed browser acceptance requires separate live authorization and uses `http://127.0.0.1:7711/calculators/backtest/index.html`, checking response bytes as well as application behavior. Preserve the shared folder routing.
 - Shared temp-leak checker (`tools/check_no_temp_leaks.sh`, used by the Brew Version, Anker and Telltale Makefiles):
-  - `tools/tests/test_check_no_temp_leaks.sh` (checker cases with a fake TMPDIR and Darwin temp dir, and both Makefiles' `test` and harness targets with a fake `swift`).
-  - Changes to the checker also require the complete `brew_version` and `anker_charge_monitor` suites above.
+  - `tools/tests/test_check_no_temp_leaks.sh` (checker cases with a fake TMPDIR and Darwin temp dir, and the Brew Version and Anker Makefiles' `test` and harness targets with a fake `swift`; Telltale's wiring is tested inside its own suite by `telltale/Tests/ReleaseChecks/test_make_temp_wiring.sh`).
+  - Changes to the checker also require the complete `brew_version`, `anker_charge_monitor` and `telltale` suites above.
 - Bash assertion guard: after editing any tracked Bash script, run `bash tools/tests/test_bash_assertions.sh` (fails on a standalone `[[ ... ]]` line in a `set -e` script, which macOS Bash 3.2 never treats as a failure).
 - Static deployment/fleet audit tooling:
   - `zsh tools/tests/test_check_home_residue.zsh` (synthetic home residue audit cases).
