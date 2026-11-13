@@ -273,7 +273,8 @@ TEST(antigravity_learned_numbers_fallback_conflicts_and_ledger) {
           .generators=gens,.generator_count=mode==0?2:mode==1?0:mode==2?3:mode==3?2:mode==5?1:0},*rows[]={&raw};
         Corpus c={0};AntigravityStore s={.sessions=rows,.session_count=1};PricingReport p={.rules=&test_rules};
         ASSERT_EQ(ERR_OK,antigravity_corpus_add(&s,123456,&c).code);PriorityTurns priority={0};ASSERT_EQ(ERR_OK,compose_usage(&test_rules,&c,&priority).code);
-        AntigravityLedgerEvent saved={.has_model_number=true,.model_number=9999,.model_raw=STR_LIT("synthetic-model-a")};
+        /* Mode 4 models an observed response, so it can teach the binding. */
+        AntigravityLedgerEvent saved={.has_model_number=true,.model_number=9999,.model_raw=STR_LIT("synthetic-model-a"),.model_source="response"};
         AntigravityLedgerRecord record={.events=&saved,.event_count=1};AntigravityLedgerRecord *records[]={&record};AntigravityLedger ledger={.records=records,.count=1,.capacity=1};
         ASSERT_EQ(ERR_OK,antigravity_compose(&s,&c,NULL,&p,mode==4?&ledger:NULL).code);
         SessionModel *first=omap_get(&c.sessions,raw.id);ASSERT_TRUE(first->unit_count>0);
@@ -300,4 +301,47 @@ TEST(antigravity_retained_numbered_markers_use_live_learning) {
         ASSERT_TRUE(str_equal(original,saved.model_raw));ASSERT_EQ(9999,saved.model_number);ASSERT_TRUE(saved.has_model_number);
         antigravity_ledger_destroy(&ledger);destroy(&s,&c,&p);arena_destroy(&a);
     }
+}
+
+TEST(antigravity_previous_number_must_match) {
+    for (size_t same=0;same<2;same++) {
+        Arena a={0};JsonWriter u={0},meta={0};num(&u,1,9991);num(&u,2,5);Str first=own(&a,&u);
+        num(&u,1,same?9991:9992);num(&u,2,7);msg(&meta,9,own(&a,&u));
+        AntigravityStep step={.idx=1,.metadata=own(&a,&meta)};
+        AntigravityBlob gen={.data=generator(&a,first,STR_LIT("synthetic-model-a"))};
+        AntigravitySession raw={.id=STR_LIT("synthetic-number-owner"),.generators=&gen,.generator_count=1,.steps=&step,.step_count=1},*rows[]={&raw};
+        Corpus c={0};AntigravityStore s={0};PricingReport p={.rules=&test_rules};SessionModel *m=compose(&s,&c,rows,1,&p);
+        ASSERT_EQ(2,m->unit_count);ASSERT_TRUE(str_equal(same?STR_LIT("synthetic-model-a"):STR_LIT("antigravity/model-9992"),m->units[1].model_raw));
+        destroy(&s,&c,&p);arena_destroy(&a);
+    }
+}
+
+TEST(antigravity_ledger_learning_requires_response_source) {
+    const char *sources[]={NULL,"previous","response","unknown"};
+    for(size_t i=0;i<4;i++) {
+        Arena a={0};JsonWriter u={0},meta={0};num(&u,1,9998);num(&u,2,5);msg(&meta,9,own(&a,&u));
+        AntigravityStep step={.idx=1,.metadata=own(&a,&meta)};
+        AntigravitySession raw={.id=STR_LIT("synthetic-ledger-target"),.steps=&step,.step_count=1},*rows[]={&raw};
+        Corpus c={0};AntigravityStore s={.sessions=rows,.session_count=1};PricingReport p={.rules=&test_rules};
+        ASSERT_EQ(ERR_OK,antigravity_corpus_add(&s,123456,&c).code);PriorityTurns priority={0};ASSERT_EQ(ERR_OK,compose_usage(&test_rules,&c,&priority).code);
+        AntigravityLedgerEvent saved={.has_model_number=true,.model_number=9998,.model_raw=STR_LIT("synthetic-observed"),.model_source=sources[i]};
+        AntigravityLedgerRecord record={.events=&saved,.event_count=1};AntigravityLedgerRecord *records[]={&record};AntigravityLedger ledger={.records=records,.count=1,.capacity=1};
+        ASSERT_EQ(ERR_OK,antigravity_compose(&s,&c,NULL,&p,&ledger).code);
+        SessionModel *m=omap_get(&c.sessions,raw.id);ASSERT_EQ(1,m->unit_count);
+        ASSERT_TRUE(str_equal(i==2?STR_LIT("synthetic-observed"):STR_LIT("antigravity/model-9998"),m->units[0].model_raw));
+        antigravity_ledger_destroy(&ledger);destroy(&s,&c,&p);arena_destroy(&a);
+    }
+}
+
+TEST(antigravity_number_rule_precedes_previous) {
+    Arena a={0};JsonWriter u={0},meta={0};num(&u,1,9991);num(&u,2,5);Str first=own(&a,&u);
+    num(&u,1,9992);num(&u,2,7);msg(&meta,9,own(&a,&u));
+    AntigravityStep step={.idx=1,.metadata=own(&a,&meta)};
+    AntigravityBlob gen={.data=generator(&a,first,STR_LIT("synthetic-model-a"))};
+    AntigravitySession raw={.id=STR_LIT("synthetic-rule-owner"),.generators=&gen,.generator_count=1,.steps=&step,.step_count=1},*rows[]={&raw};
+    const char *json="{\"schema\":1,\"antigravity_model_numbers\":{\"9992\":\"synthetic-rule\"}}";
+    PricingRules rules=test_rules;rules.user=yyjson_read(json,strlen(json),0);ASSERT_TRUE(rules.user!=NULL);
+    Corpus c={0};AntigravityStore s={0};PricingReport p={.rules=&rules};SessionModel *m=compose(&s,&c,rows,1,&p);
+    ASSERT_EQ(2,m->unit_count);ASSERT_TRUE(str_equal(STR_LIT("synthetic-rule"),m->units[1].model_raw));
+    destroy(&s,&c,&p);yyjson_doc_free(rules.user);arena_destroy(&a);
 }

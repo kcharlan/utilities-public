@@ -400,3 +400,7 @@ carry the canonical provider with the rates: it also selects the pricing policy.
 Catalog aliases and history validation must agree on key normalization even
 when the catalog omits a canonical target. Exercise missing targets and invalid
 recording IDs alongside valid entries so one bad key cannot reject the batch.
+
+Antigravity model names inherited from earlier records are not observations of
+number bindings. Persist the name source and keep its associated number separate
+so a later numbered request cannot teach an unrelated name.

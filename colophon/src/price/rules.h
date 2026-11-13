@@ -5,6 +5,7 @@
 typedef struct { yyjson_doc *defaults,*user; bool user_invalid; } PricingRules;
 Err pricing_rules_load(const char *path,PricingRules *out);
 void pricing_rules_destroy(PricingRules *rules);
+Str rules_antigravity_model_number(const PricingRules *rules,uint64_t number);
 Str rules_alias(const PricingRules *rules,const char *scope,Str name);
 double rules_codex_fast(const PricingRules *rules,Str name);
 bool rules_codex_cutoff(const PricingRules *rules,Str name,int64_t *ms);

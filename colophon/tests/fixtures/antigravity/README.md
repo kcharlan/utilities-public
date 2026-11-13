@@ -2,8 +2,7 @@
 
 `enums.json` independently records the fully qualified CortexStepStatus,
 CortexStepType and CortexTrajectorySource definitions from the public
-Antigravity 2.26.0 language_server binary, SHA-256
-`6f7e5004629070ac0c4651a1dc29030eaadcd5dc68fa9edf170047d7f8424f4d`.
+Antigravity language_server.
 Status/type/source mapping is exercised through corpus projection; unknown
 integer enum values remain valid raw facts with the documented reducer default.
 

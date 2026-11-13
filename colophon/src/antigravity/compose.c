@@ -49,7 +49,7 @@ static Err identify(Collection *c,Event *event,const Str ids[3]) {
     }
     return ERR_SUCCESS;
 }
-static Err emit(Collection *c,SessionModel *s,Str usage,Str response,const AntigravityStep *step,Str chat,Str *previous,bool *eligible) {
+static Err emit(Collection *c,SessionModel *s,Str usage,Str response,const AntigravityStep *step,Str chat,AntigravityPrevious *previous,bool *eligible) {
     const uint32_t fields[]={2,5,4,3,9,10};uint64_t tokens[6]={0};bool positive=false,reasoning=false;
     for(size_t i=0;i<6;i++){bool present=ag_wire_uint(&c->store->field_mismatches,AG_USAGE,usage,fields[i],&tokens[i])==AG_FOUND;
         if(present){if(tokens[i]>INT64_MAX){c->store->invalid_numbers++;return ERR_SUCCESS;}}
@@ -68,19 +68,19 @@ static Err emit(Collection *c,SessionModel *s,Str usage,Str response,const Antig
     Event *e;TRY(arena_alloc(&c->arena,sizeof *e,alignof(Event),(void**)&e));
     *e=(Event){.order=c->count++,.session=s,.reasoning=reasoning};memcpy(e->tokens,tokens,sizeof tokens);
     e->unit=(UsageUnit){.session_id=s->id,.source=STR_LIT("antigravity"),.display_turn=step?step->turn:(Str){0}};
-    TRY(antigravity_model_typed(c->rules,&c->store->field_mismatches,&c->arena,response,usage,step?step->metadata:(Str){0},*previous,&c->numbers,&e->unit.model_raw,&e->unit.model));
-    if(e->unit.model_raw.n&&!model_marker(e->unit.model_raw))*previous=e->unit.model_raw;
+    const char *source=NULL;TRY(antigravity_model_typed(c->rules,&c->store->field_mismatches,&c->arena,response,usage,step?step->metadata:(Str){0},*previous,&c->numbers,&e->unit.model_raw,&e->unit.model,&source));
+    if(strcmp(source,"previous")&&strcmp(source,"marker")){uint64_t number=0;bool has=ag_wire_uint(NULL,AG_USAGE,usage,1,&number)==AG_FOUND;*previous=(AntigravityPrevious){e->unit.model_raw,has,number};}
     MaybeMs at={0};if(step){const uint32_t clocks[]={8,7,1};for(size_t i=0;i<3&&!at.present;i++)TRY(antigravity_clock_typed(&c->store->field_mismatches,AG_STEP_METADATA,&c->arena,step->metadata,clocks[i],&at));e->step_clock=at.present;}
     if(!at.present){Str start={0};TRY(antigravity_message_merge_typed(&c->store->field_mismatches,AG_CHAT_MODEL,&c->arena,chat,9,&start));TRY(antigravity_clock_typed(&c->store->field_mismatches,AG_CHAT_START,&c->arena,start,4,&at));}
     if(!at.present){at=s->start_ms;c->store->unknown_clocks++;}
     e->unit.at_ms=e->unit.timestamp_ms=at;
     if(c->last)c->last->next=e;else c->first=e;c->last=e;
-    AntigravityLedgerEvent saved={.order=e->order,.reasoning=e->reasoning,.step_clock=e->step_clock,.at_ms=e->unit.at_ms,.model_raw=e->unit.model_raw};memcpy(saved.tokens,e->tokens,sizeof saved.tokens);
+    AntigravityLedgerEvent saved={.order=e->order,.reasoning=e->reasoning,.step_clock=e->step_clock,.at_ms=e->unit.at_ms,.model_raw=e->unit.model_raw,.model_source=source};memcpy(saved.tokens,e->tokens,sizeof saved.tokens);
     const uint32_t id_fields[]={11,12,7};for(size_t i=0;i<3;i++)ag_wire_bytes(&c->store->field_mismatches,AG_USAGE,usage,id_fields[i],&saved.ids[i]);
     uint64_t model=0;saved.has_model_number=ag_wire_uint(&c->store->field_mismatches,AG_USAGE,usage,1,&model)==AG_FOUND;if(saved.has_model_number)saved.model_number=(int64_t)model;
     TRY(antigravity_ledger_capture(c->ledger,s,saved));return identify(c,e,saved.ids);
 }
-static Err collect_location(Collection *c,SessionModel *s,Str message,uint32_t direct,uint32_t retries,Str response,const AntigravityStep *step,Str chat,Str *previous,bool *eligible) {
+static Err collect_location(Collection *c,SessionModel *s,Str message,uint32_t direct,uint32_t retries,Str response,const AntigravityStep *step,Str chat,AntigravityPrevious *previous,bool *eligible) {
     Str u={0};TRY(antigravity_message_merge_typed(&c->store->field_mismatches,direct==4?AG_CHAT_MODEL:AG_STEP_METADATA,&c->arena,message,direct,&u));
     if(u.p)TRY(emit(c,s,u,response,step,chat,previous,eligible));
     AgCursor cursor={.input=message};AgField f;
@@ -116,7 +116,7 @@ static Err learn_generators(Collection *c,AntigravitySession *r) {
     }return ERR_SUCCESS;
 }
 static Err session(Collection *c,AntigravitySession *r,SessionModel *s) {
-    Omap executions={0},indices={0},turns={0},first_generators={0};Err e=ERR_SUCCESS;Str previous={0};
+    Omap executions={0},indices={0},turns={0},first_generators={0};Err e=ERR_SUCCESS;AntigravityPrevious previous={0};
     for(size_t i=0;!e.code&&i<r->step_count;i++){
         AntigravityStep *step=&r->steps[i];char key[32];e=omap_put(&indices,index_key(step->idx,key),step);
         Str id=scalar(&c->store->field_mismatches,AG_STEP_METADATA,step->metadata,12);if(!e.code&&id.n&&!omap_get(&executions,id))e=omap_put(&executions,id,step);
@@ -142,7 +142,7 @@ Err antigravity_compose(AntigravityStore *store,Corpus *corpus,ModelsDevIndex *i
     PricingReport scratch={.rules=index?index->rules:NULL};bool local=!report;if(local)report=&scratch;
     Collection c={.store=store,.ledger=ledger,.index=index,.rules=report->rules};Err error=ERR_SUCCESS;
     store->cross_session_duplicates=store->requests_without_usage=store->invalid_numbers=store->unknown_clocks=store->ledger_shrunk=0;
-    if(ledger)for(size_t i=0;!error.code&&i<ledger->count;i++){AntigravityLedgerRecord *r=ledger->records[i];if(r->unreadable)continue;for(size_t j=0;!error.code&&j<r->event_count;j++){AntigravityLedgerEvent *e=&r->events[j];if(e->has_model_number)error=learn(&c,(uint64_t)e->model_number,e->model_raw);}}
+    if(ledger)for(size_t i=0;!error.code&&i<ledger->count;i++){AntigravityLedgerRecord *r=ledger->records[i];if(r->unreadable)continue;for(size_t j=0;!error.code&&j<r->event_count;j++){AntigravityLedgerEvent *e=&r->events[j];if(e->has_model_number&&e->model_source&&!strcmp(e->model_source,"response"))error=learn(&c,(uint64_t)e->model_number,e->model_raw);}}
     for(size_t i=0;!error.code&&i<store->session_count;i++)if(store->sessions[i]->corpus_accepted)error=learn_generators(&c,store->sessions[i]);
     for(size_t i=0;!error.code&&i<store->session_count;i++){
         AntigravitySession *r=store->sessions[i];if(!r->corpus_accepted)continue;
@@ -157,7 +157,7 @@ Err antigravity_compose(AntigravityStore *store,Corpus *corpus,ModelsDevIndex *i
             e->unit=(UsageUnit){.session_id=r->header.id,.source=STR_LIT("antigravity"),.at_ms=saved->at_ms,.timestamp_ms=saved->at_ms,.model_raw=saved->model_raw};
             if(saved->has_model_number&&model_marker(saved->model_raw)){
                 char key[32];int n=snprintf(key,sizeof key,"%llu",(unsigned long long)(uint64_t)saved->model_number);
-                Str *learned=omap_get(&c.numbers,(Str){key,(uint32_t)n});if(learned)e->unit.model_raw=*learned;
+                Str rule=rules_antigravity_model_number(c.rules,(uint64_t)saved->model_number);Str *learned=omap_get(&c.numbers,(Str){key,(uint32_t)n});if(rule.n)e->unit.model_raw=rule;else if(learned)e->unit.model_raw=*learned;
             }
             error=antigravity_normalize_model(c.rules,&c.arena,e->unit.model_raw,&e->unit.model);if(error.code)break;
             if(c.last)c.last->next=e;else c.first=e;c.last=e;error=identify(&c,e,saved->ids);

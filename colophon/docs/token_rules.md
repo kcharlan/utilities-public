@@ -304,3 +304,8 @@ on an invalid field and emits `pricing_rules_errors`; defaults stay in force.
 The rules are loaded for each run before composition, so edits apply to retained
 raw observations on the next warm run. Catalog-first identity and existing dated
 price-history priority policies continue to take precedence.
+
+Numbered Antigravity usage resolves response name, runtime number rule, learned
+name, step model info, same-number previous name, then an explicit marker.
+Unnumbered usage retains previous-name fallback. Only observed response names
+teach number bindings; inherited names and unmarked legacy ledger events do not.

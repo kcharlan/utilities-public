@@ -9,6 +9,7 @@ typedef struct {
     bool reasoning,step_clock;
     MaybeMs at_ms;
     Str model_raw,ids[3];
+    const char *model_source;
     int64_t model_number;
     bool has_model_number;
 } AntigravityLedgerEvent;

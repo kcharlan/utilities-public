@@ -835,3 +835,36 @@ def test_rejected_ledger_prefix_does_not_supply_model_learning(native):
     assert payload["diagnostics"]["antigravity_ledger_unreadable"] == [str(record)]
     assert record.read_bytes() == damaged
     assert payload["sessions"][0]["buckets"][0][1] == f"antigravity/model-{number}"
+
+
+def test_antigravity_number_provenance_survives_two_runs(native):
+    path = database(native)
+    named = proto_field(1, 9991) + proto_field(2, 5)
+    other = proto_field(1, 9992) + proto_field(2, 7)
+    chat = proto_field(4, named) + proto_field(19, "synthetic-model-a")
+    with sqlite3.connect(path) as db:
+        db.execute("INSERT INTO gen_metadata VALUES(0,?)", (proto_field(1, chat),))
+        db.execute("INSERT INTO steps VALUES(1,1,1,?,?,0)", (proto_field(9, other), b""))
+    for _ in range(2):
+        result = native.build("--no-claude", "--no-opencode")
+        assert result.returncode == 0, result.stderr
+    record, = (native.runtime / "antigravity-ledger").rglob("*.json")
+    event, = [e for e in json.loads(record.read_text())["events"] if e["model_number"] == 9992]
+    assert event["model_raw"] == "antigravity/model-9992"
+    assert event["model_source"] == "marker"
+    row, = native.payload()["sessions"]
+    assert next(b for b in row["buckets"] if b[1] == "synthetic-model-a")[3] == 5
+
+
+def test_antigravity_number_rule_overrides_unknown_number(native):
+    path = database(native)
+    native.runtime.mkdir(exist_ok=True)
+    (native.runtime / "pricing-rules.json").write_text(json.dumps({"schema": 1, "antigravity_model_numbers": {"9992": "synthetic-rule"}}))
+    usage = proto_field(1, 9992) + proto_field(2, 7)
+    with sqlite3.connect(path) as db:
+        db.execute("INSERT INTO steps VALUES(1,1,1,?,?,0)", (proto_field(9, usage), b""))
+    result = native.build("--no-claude", "--no-opencode")
+    assert result.returncode == 0, result.stderr
+    record, = (native.runtime / "antigravity-ledger").rglob("*.json")
+    event, = json.loads(record.read_text())["events"]
+    assert (event["model_raw"], event["model_source"]) == ("synthetic-rule", "rule")

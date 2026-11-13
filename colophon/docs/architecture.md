@@ -255,3 +255,7 @@ corresponding default array. Invalid user documents contribute no rules. Raw
 observations remain in parse caches, so the next run recomposes with current rules
 without changing cache formats. Catalog identity and dated history keep their
 existing precedence over fallback aliases and policy.
+
+Antigravity ledger schema 1 records model-name provenance independently from
+model number. Missing or unknown provenance is not an observed response; live
+records are rewritten with provenance while retained records stay readable.
