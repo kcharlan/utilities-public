@@ -1486,3 +1486,32 @@ def test_missing_canonical_catalog_target_uses_canonical_history(native):
     payload = native.payload()
     assert "synthetic-base" in payload["models"]
     assert payload["sessions"][0]["own_usage"]["cost_usd"] == pytest.approx(0.0042)
+
+def test_present_catalog_default_alias_records_history_and_resists_repricing(native):
+    native.runtime.mkdir(mode=0o700)
+    catalog = {"openai": {"models": {"gpt-5.6": {"id": "gpt-5.6", "cost": {"input": 20, "output": 20}}}}}
+    cache = native.runtime / "pricing-cache.json"
+    def save_catalog():
+        cache.write_text(json.dumps({"schema": 1, "url": native.env["COLOPHON_PRICING_URL"], "fetched_at_ms": 1767225600000, "catalog": catalog}))
+    save_catalog()
+    native.write_session([
+        row("session_meta", {"id": SESSION, "cwd": "/synthetic/kite", "source": "cli"}, 0),
+        row("turn_context", {"model": "gpt-5.6", "turn_id": "synthetic-turn"}, 1),
+        row("event_msg", {"type": "task_started", "turn_id": "synthetic-turn"}, 1),
+        row("event_msg", {"type": "token_count", "turn_id": "synthetic-turn", "info": {"last_token_usage": usage(1000, 0, 100), "total_token_usage": usage(1000, 0, 100)}}, 3),
+    ])
+    result = native.build()
+    assert result.returncode == 0, result.stderr
+    ledger = native.runtime / "price-history.json"
+    entries = json.loads(ledger.read_text())["entries"]
+    recorded = [e for e in entries if e["model"] == "gpt-5.6-sol" and e["source"] == "catalog"]
+    assert len(recorded) == 1
+    assert recorded[0]["effective_from"] == "2026-01-01T00:00:00Z"
+    assert recorded[0]["per_million"]["input"] == 20
+    assert native.payload()["sessions"][0]["own_usage"]["cost_usd"] == pytest.approx(0.022)
+    catalog["openai"]["models"]["gpt-5.6"]["cost"] = {"input": 100, "output": 100}
+    save_catalog()
+    result = native.build()
+    assert result.returncode == 0, result.stderr
+    assert native.payload()["sessions"][0]["own_usage"]["cost_usd"] == pytest.approx(0.022)
+    assert json.loads(ledger.read_text())["entries"] == entries

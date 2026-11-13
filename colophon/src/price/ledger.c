@@ -327,13 +327,17 @@ Err record_catalog_rates(const PriceHistory *history,ModelsDevIndex *index,int64
     if(!doc)return err_make(ERR_NOMEM,"catalog recording allocation");
     yyjson_mut_val *rows=yyjson_mut_arr(doc);yyjson_mut_doc_set_root(doc,rows);
     if(!rows){error=err_make(ERR_NOMEM,"catalog recording allocation");goto done;}
+    /* History keys must be valid, but catalog pricing needs a name actually
+     * present in the catalog. Prefer an exact key row over aliases. */
     for(OmapEntry *entry=index->models.first;entry;entry=entry->next) {
         CatalogModel *model=entry->value;Str normalized,*copy;
         error=models_dev_normalize(index,model->model_id,&normalized);if(error.code)goto done;
+        if(omap_get(&sources,normalized)&&!str_equal(model->model_id,normalized))continue;
         error=arena_alloc(&arena,sizeof *copy,_Alignof(Str),(void **)&copy);if(error.code)goto done;
-        *copy=normalized;error=omap_put(&sources,normalized,copy);if(error.code)goto done;
+        *copy=model->model_id;error=omap_put(&sources,normalized,copy);if(error.code)goto done;
     }
     for(OmapEntry *entry=history->groups.first;entry;entry=entry->next) {
+        if(omap_get(&sources,entry->key))continue;
         Str *copy;error=arena_alloc(&arena,sizeof *copy,_Alignof(Str),(void **)&copy);if(error.code)goto done;
         *copy=entry->key;error=omap_put(&sources,entry->key,copy);if(error.code)goto done;
     }
@@ -341,8 +345,11 @@ Err record_catalog_rates(const PriceHistory *history,ModelsDevIndex *index,int64
     yyjson_obj_iter it=yyjson_obj_iter_with(recording_ids);yyjson_val *key;
     while((key=yyjson_obj_iter_next(&it))) {
         Str *copy;if(!yyjson_is_str(yyjson_obj_iter_get_val(key))){error=err_make(ERR_INVALID,"invalid recording id");goto done;}
+        Str recording_key=string(key);
+        /* Override keys carry their own explicit pricing source. */
+        if(omap_get(&sources,recording_key)&&!(recording_key.n>=8&&!memcmp(recording_key.p,"catalog:",8)))continue;
         error=arena_alloc(&arena,sizeof *copy,_Alignof(Str),(void **)&copy);if(error.code)goto done;
-        *copy=string(yyjson_obj_iter_get_val(key));error=omap_put(&sources,string(key),copy);if(error.code)goto done;
+        *copy=string(yyjson_obj_iter_get_val(key));error=omap_put(&sources,recording_key,copy);if(error.code)goto done;
     }
     if(sources.size>SIZE_MAX/sizeof *sorted){error=err_make(ERR_NOMEM,"catalog recording overflow");goto done;}
     sorted=malloc((sources.size?sources.size:1)*sizeof *sorted);if(!sorted){error=err_make(ERR_NOMEM,"catalog recording allocation");goto done;}
