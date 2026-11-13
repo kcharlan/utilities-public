@@ -1,6 +1,7 @@
 #ifndef CP_ACCOUNTING_RESOLVER_H
 #define CP_ACCOUNTING_RESOLVER_H
 #include "parser.h"
+#include "price/rules.h"
 #include "util/omap.h"
 typedef enum { DEP_NONE, DEP_MISSING, DEP_RESOLVED } DependencyStatus;
 typedef struct {
@@ -12,6 +13,7 @@ typedef struct {
   Str kind, session_id;
 } ResolverDiagnostic;
 struct InheritedResolver {
+  const PricingRules *rules;
   Arena arena;
   Omap streams, memo, dependencies, resolving;
   ResolverDiagnostic *diagnostics;

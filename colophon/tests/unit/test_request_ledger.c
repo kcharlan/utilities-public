@@ -49,7 +49,7 @@ static void ledger_fixture(LedgerFixture *f, const char *const *const *files, si
     }
     f->count = count;
     ASSERT_EQ(ERR_OK, corpus_build(input, count, &f->metadata, 0, &f->ids, &f->corpus).code);
-    ASSERT_EQ(ERR_OK, compose_usage(&f->corpus, &f->priority).code);
+    ASSERT_EQ(ERR_OK, compose_usage(&test_rules,&f->corpus, &f->priority).code);
 }
 static void ledger_fixture_destroy(LedgerFixture *f) {
     corpus_destroy(&f->corpus);

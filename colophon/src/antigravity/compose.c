@@ -17,7 +17,7 @@ struct Event {
 };
 typedef struct NameCount NameCount;
 struct NameCount {NameCount *next;Str name,raw;size_t count;};
-typedef struct {Arena arena;Omap aliases,numbers,counts;Event *first,*last;size_t count;AntigravityStore *store;AntigravityLedger *ledger;ModelsDevIndex *index;} Collection;
+typedef struct {Arena arena;Omap aliases,numbers,counts;Event *first,*last;size_t count;AntigravityStore *store;AntigravityLedger *ledger;ModelsDevIndex *index;const PricingRules *rules;} Collection;
 static Str scalar(AgMismatches *m,AgMessageType type,Str s,uint32_t n) {Str v={0};ag_wire_text(m,type,s,n,&v);return v;}
 static bool model_marker(Str name) {
     if(str_equal(name,STR_LIT("antigravity/unattributed")))return true;
@@ -68,7 +68,7 @@ static Err emit(Collection *c,SessionModel *s,Str usage,Str response,const Antig
     Event *e;TRY(arena_alloc(&c->arena,sizeof *e,alignof(Event),(void**)&e));
     *e=(Event){.order=c->count++,.session=s,.reasoning=reasoning};memcpy(e->tokens,tokens,sizeof tokens);
     e->unit=(UsageUnit){.session_id=s->id,.source=STR_LIT("antigravity"),.display_turn=step?step->turn:(Str){0}};
-    TRY(antigravity_model_typed(&c->store->field_mismatches,&c->arena,response,usage,step?step->metadata:(Str){0},*previous,&c->numbers,&e->unit.model_raw,&e->unit.model));
+    TRY(antigravity_model_typed(c->rules,&c->store->field_mismatches,&c->arena,response,usage,step?step->metadata:(Str){0},*previous,&c->numbers,&e->unit.model_raw,&e->unit.model));
     if(e->unit.model_raw.n&&!model_marker(e->unit.model_raw))*previous=e->unit.model_raw;
     MaybeMs at={0};if(step){const uint32_t clocks[]={8,7,1};for(size_t i=0;i<3&&!at.present;i++)TRY(antigravity_clock_typed(&c->store->field_mismatches,AG_STEP_METADATA,&c->arena,step->metadata,clocks[i],&at));e->step_clock=at.present;}
     if(!at.present){Str start={0};TRY(antigravity_message_merge_typed(&c->store->field_mismatches,AG_CHAT_MODEL,&c->arena,chat,9,&start));TRY(antigravity_clock_typed(&c->store->field_mismatches,AG_CHAT_START,&c->arena,start,4,&at));}
@@ -93,8 +93,8 @@ static Err learn(Collection *c,uint64_t number,Str raw) {
     raw=token_model_trim(raw);
     if(!raw.n||model_marker(raw))return ERR_SUCCESS;
     Str name={0};ClaudeLookup lookup={0};TRY(claude_models_dev_lookup(&c->arena,c->index,raw,&lookup));
-    if(!lookup.catalog.model){Str stripped;TRY(antigravity_strip_routing(&c->arena,raw,&stripped));TRY(claude_models_dev_lookup(&c->arena,c->index,stripped,&lookup));}
-    if(lookup.catalog.model)name=lookup.catalog.identity;else TRY(antigravity_normalize_model(&c->arena,raw,&name));if(!name.n)return ERR_SUCCESS;
+    if(!lookup.catalog.model){Str stripped;TRY(antigravity_strip_routing(c->rules,&c->arena,raw,&stripped));TRY(claude_models_dev_lookup(&c->arena,c->index,stripped,&lookup));}
+    if(lookup.catalog.model)name=lookup.catalog.identity;else TRY(antigravity_normalize_model(c->rules,&c->arena,raw,&name));if(!name.n)return ERR_SUCCESS;
     char buf[32];int len=snprintf(buf,sizeof buf,"%llu",(unsigned long long)number);Str key={buf,(uint32_t)len};
     NameCount *head=omap_get(&c->counts,key),*item=head,*last=NULL;
     while(item&&!str_equal(item->name,name)){last=item;item=item->next;}
@@ -139,10 +139,10 @@ static Err session(Collection *c,AntigravitySession *r,SessionModel *s) {
     omap_destroy(&executions);omap_destroy(&indices);omap_destroy(&turns);omap_destroy(&first_generators);return e;
 }
 Err antigravity_compose(AntigravityStore *store,Corpus *corpus,ModelsDevIndex *index,PricingReport *report,AntigravityLedger *ledger) {
-    PricingReport scratch={0};bool local=!report;if(local)report=&scratch;
-    Collection c={.store=store,.ledger=ledger,.index=index};Err error=ERR_SUCCESS;
+    PricingReport scratch={.rules=index?index->rules:NULL};bool local=!report;if(local)report=&scratch;
+    Collection c={.store=store,.ledger=ledger,.index=index,.rules=report->rules};Err error=ERR_SUCCESS;
     store->cross_session_duplicates=store->requests_without_usage=store->invalid_numbers=store->unknown_clocks=store->ledger_shrunk=0;
-    if(ledger)for(size_t i=0;!error.code&&i<ledger->count;i++){AntigravityLedgerRecord *r=ledger->records[i];for(size_t j=0;!error.code&&j<r->event_count;j++){AntigravityLedgerEvent *e=&r->events[j];if(e->has_model_number)error=learn(&c,(uint64_t)e->model_number,e->model_raw);}}
+    if(ledger)for(size_t i=0;!error.code&&i<ledger->count;i++){AntigravityLedgerRecord *r=ledger->records[i];if(r->unreadable)continue;for(size_t j=0;!error.code&&j<r->event_count;j++){AntigravityLedgerEvent *e=&r->events[j];if(e->has_model_number)error=learn(&c,(uint64_t)e->model_number,e->model_raw);}}
     for(size_t i=0;!error.code&&i<store->session_count;i++)if(store->sessions[i]->corpus_accepted)error=learn_generators(&c,store->sessions[i]);
     for(size_t i=0;!error.code&&i<store->session_count;i++){
         AntigravitySession *r=store->sessions[i];if(!r->corpus_accepted)continue;
@@ -159,7 +159,7 @@ Err antigravity_compose(AntigravityStore *store,Corpus *corpus,ModelsDevIndex *i
                 char key[32];int n=snprintf(key,sizeof key,"%llu",(unsigned long long)(uint64_t)saved->model_number);
                 Str *learned=omap_get(&c.numbers,(Str){key,(uint32_t)n});if(learned)e->unit.model_raw=*learned;
             }
-            error=antigravity_normalize_model(&c.arena,e->unit.model_raw,&e->unit.model);if(error.code)break;
+            error=antigravity_normalize_model(c.rules,&c.arena,e->unit.model_raw,&e->unit.model);if(error.code)break;
             if(c.last)c.last->next=e;else c.first=e;c.last=e;error=identify(&c,e,saved->ids);
         }
     }

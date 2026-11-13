@@ -11,7 +11,7 @@
 #include <sys/stat.h>
 #include <unistd.h>
 
-Err atomic_write(const char *path, const void *bytes, size_t length) {
+static Err atomic_publish(const char *path, const void *bytes, size_t length,bool create_only) {
     if(!path || !*path || (length && !bytes))return err_make(ERR_INVALID,"invalid atomic write");
     const char *slash=strrchr(path,'/'), *name=slash?slash+1:path;
     if(!*name)return err_make(ERR_INVALID,"empty atomic filename");
@@ -46,7 +46,10 @@ Err atomic_write(const char *path, const void *bytes, size_t length) {
 #endif
     if(close(fd) && error.code==ERR_OK)error=err_make(ERR_IO,"temporary close failed: %s",strerror(errno));
     if(error.code==ERR_OK && cp_fault("atomic_replace"))error=err_make(ERR_IO,"Synthetic replace failure");
+    else if(error.code==ERR_OK && create_only){if(link(temp,path)&&errno!=EEXIST)error=err_make(ERR_IO,"temporary link failed: %s",strerror(errno));}
     else if(error.code==ERR_OK && rename(temp,path))error=err_make(ERR_IO,"temporary rename failed: %s",strerror(errno));
-    if(error.code!=ERR_OK)unlink(temp);
+    if(error.code!=ERR_OK||create_only)unlink(temp);
     free(temp);return error;
 }
+Err atomic_write(const char *path,const void *bytes,size_t length){return atomic_publish(path,bytes,length,false);}
+Err atomic_create(const char *path,const void *bytes,size_t length){return atomic_publish(path,bytes,length,true);}

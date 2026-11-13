@@ -17,7 +17,7 @@ TEST(accounting_normalization_memo_owns_results_after_input_teardown) {
     {.tag=TOKEN_B,.timestamp=STR_LIT("2030-01-07T12:00:00Z"),.model={first,sizeof first-1}},
     {.tag=TOKEN_B,.timestamp=STR_LIT("2030-01-07T12:00:00Z"),.model={second,sizeof second-1}}};
   TokenStream stream={.observations=observations,.count=2};AccountingResult result={0};
-  InheritedResolver resolver={0};
+  InheritedResolver resolver={.rules=&test_rules};
   ASSERT_EQ(ERR_OK,accounting_parse(&stream,&resolver,&result).code);ASSERT_EQ(2,result.row_count);
   resolver_destroy(&resolver);
   ASSERT_TRUE(result.rows[0].model.p==result.rows[1].model.p);
@@ -39,7 +39,7 @@ TEST(accounting_replay_reset_and_unresolved_provenance_survive_scratch_teardown)
   accounting_result_destroy(&result);
   stream.prepass=(TokenMeta){.session_id=STR_LIT("synthetic-child"),
     .forked_from_id=STR_LIT("synthetic-missing"),.fork_ts=STR_LIT("2030-01-07T12:00:00Z")};
-  InheritedResolver resolver={0};
+  InheritedResolver resolver={.rules=&test_rules};
   ASSERT_EQ(ERR_OK,accounting_parse(&stream,&resolver,&result).code);resolver_destroy(&resolver);
   ASSERT_TRUE(result.unresolved);ASSERT_EQ(1,result.buffered_count);
   ASSERT_TRUE(result.buffered_sources[0]==&observation);
@@ -85,7 +85,7 @@ TEST(
   ASSERT_EQ(0, test_codec_roundtrip(&record).code);
   TokenObservation before = record.token_stream.observations[0];
   AccountingResult first = {0}, second = {0};
-  InheritedResolver resolver = {0};
+  InheritedResolver resolver={.rules=&test_rules};
   ASSERT_EQ(
       0,
       resolver_add(&resolver, STR_LIT("synthetic"), &record.token_stream).code);

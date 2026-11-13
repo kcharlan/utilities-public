@@ -14,7 +14,7 @@ my %files = (page_template => 'page_template.html', font_css => 'font.css',
              page_css => 'page.css', page_js => 'page.js', ofl => 'OFL.txt',
              curated_bundled => 'curated_bundled.json', curated_price_history => 'curated_price_history.json',
              curated_bundled_claude => 'curated_bundled_claude.json',
-             ccusage_fast_multiplier_overrides => 'ccusage_fast_multiplier_overrides.json');
+             pricing_rules => 'pricing_rules.json');
 sub read_bytes {
     my ($name) = @_;
     open my $file, '<:raw', "$FindBin::Bin/../assets/$name" or die "$name: $!\n";

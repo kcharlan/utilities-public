@@ -64,7 +64,7 @@ TEST(compose_borrows_immutable_cached_stream_and_priority_until_destroy) {
                            .first_seen_ms = 1};
   ASSERT_EQ(ERR_OK,
             omap_put(&priority.turns, STR_LIT("synthetic-turn"), entry).code);
-  ASSERT_EQ(ERR_OK, compose_usage(&corpus, &priority).code);
+  ASSERT_EQ(ERR_OK, compose_usage(&test_rules,&corpus, &priority).code);
   SessionModel *s = corpus.sessions.first->value;
   ASSERT_EQ(1, s->unit_count);
   ASSERT_EQ(7, s->units[0].input);
@@ -76,7 +76,7 @@ TEST(compose_borrows_immutable_cached_stream_and_priority_until_destroy) {
   ASSERT_EQ(0, (uintptr_t)s->own_usage % alignof(UsageSummary));
   ASSERT_EQ(0, (uintptr_t)s->buckets % alignof(UsageBucket));
   ASSERT_EQ(7, s->own_usage->input);
-  ASSERT_EQ(ERR_OK, compose_usage(&corpus, &priority).code);
+  ASSERT_EQ(ERR_OK, compose_usage(&test_rules,&corpus, &priority).code);
   ASSERT_EQ(1, s->unit_count);
   ASSERT_EQ(7, s->units[0].input);
   ASSERT_TRUE(s->units[0].priority == entry);
@@ -118,7 +118,7 @@ TEST(compose_unit_alignment_for_different_identifier_lengths) {
     Corpus corpus = {0};
     PriorityTurns priority = {0};
     ASSERT_EQ(ERR_OK, omap_put(&corpus.sessions, id, &session).code);
-    ASSERT_EQ(ERR_OK, compose_usage(&corpus, &priority).code);
+    ASSERT_EQ(ERR_OK, compose_usage(&test_rules,&corpus, &priority).code);
     ASSERT_EQ(1, session.unit_count);
     ASSERT_EQ(0, (uintptr_t)session.units % alignof(UsageUnit));
     corpus_destroy(&corpus);

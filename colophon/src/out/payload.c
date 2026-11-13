@@ -157,7 +157,7 @@ static void claude_diagnostics(JsonWriter *w,const ClaudeScan *c){
 void payload_empty(JsonWriter *w,const PayloadInputs *in){
     PayloadIds ids={0};Err identity_error=payload_ids_init(in->corpus,in->source_codex_home,&ids);
     if(identity_error.code){w->error=identity_error;payload_ids_destroy(&ids);return;}
-    jsonw_raw(w,"{\"schema\":1,\"meta\":{\"version\":\"0.7.3\",\"generated_at_ms\":");jsonw_i64(w,in->snapshot_ms);
+    jsonw_raw(w,"{\"schema\":1,\"meta\":{\"version\":\"0.8.0\",\"generated_at_ms\":");jsonw_i64(w,in->snapshot_ms);
     jsonw_raw(w,",\"generated_tz\":");text(w,in->timezone);jsonw_raw(w,",\"codex_home\":");text(w,in->codex_home);
     jsonw_raw(w,",\"counts\":{\"logs\":");jsonw_i64(w,(int64_t)in->logs);
     jsonw_raw(w,",\"parsed\":");jsonw_i64(w,(int64_t)in->parsed);
@@ -200,6 +200,7 @@ void payload_empty(JsonWriter *w,const PayloadInputs *in){
     jsonw_raw(w,",\"priority_without_multiplier\":");pricing_diagnostic_json(w,p?&p->priority_without_multiplier:&no_map,"input_tokens",false,false);
     jsonw_raw(w,",\"unrecorded_catalog_rates\":");pricing_diagnostic_json(w,p?&p->unrecorded:&no_map,NULL,false,true);
     jsonw_raw(w,",\"ledger\":");if(in->ledger)runtime_ledger_json(w,in->ledger);else jsonw_raw(w,"[]");
+    jsonw_raw(w,",\"pricing_rules_errors\":");jsonw_raw(w,p&&p->rules&&p->rules->user_invalid?"[\"Invalid pricing rules document\"]":"[]");
     jsonw_raw(w,",\"untimed_usage\":");pricing_diagnostic_json(w,p?&p->untimed:&no_map,"tokens",false,false);
     jsonw_raw(w,",\"workspaces_file\":");payload_corpus_strings(w,in->workspace_errors?in->workspace_errors:&empty);jsonw_raw(w,",\"catalog\":[");
     if(in->catalog)for(CatalogMessage *message=in->catalog->messages;message;message=message->next){if(message!=in->catalog->messages)jsonw_raw(w,",");jsonw_string(w,message->text);}jsonw_raw(w,"],\"trace_db\":");payload_corpus_strings(w,in->corpus?&in->corpus->trace_messages:&empty);jsonw_raw(w,",\"page_size_bytes\":");

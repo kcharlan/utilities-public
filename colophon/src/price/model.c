@@ -101,7 +101,7 @@ static bool digits(Str text, size_t *at, size_t count, bool ascii) {
   }
   return true;
 }
-Str normalize_codex_model(Str value) {
+Str normalize_codex_model(const PricingRules *rules,Str value) {
   value = token_model_trim(value);
   size_t next = 7;
   uint32_t cp;
@@ -110,13 +110,8 @@ Str normalize_codex_model(Str value) {
     value.p += 7;
     value.n -= 7;
   }
-  if (str_equal(value, STR_LIT("gpt-5.6")) ||
-      str_equal(value, STR_LIT("gpt-daybreak-blue-latest")))
-    return STR_LIT("gpt-5.6-sol");
-  if (str_equal(value, STR_LIT("gpt-reserve")))
-    return STR_LIT("gpt-5.6-luna");
-  if (str_equal(value, STR_LIT("gpt-daybreak-red-latest")))
-    return STR_LIT("gpt-5.6-cyber");
+  Str alias=rules_alias(rules,"codex",value);
+  if(alias.p)return alias;
   if (curated(value))
     return value;
   bool ascii = true;
@@ -143,20 +138,15 @@ Str normalize_codex_model(Str value) {
   }
   return value;
 }
-double codex_api_fast_multiplier(Str model) {
-  Str key=normalize_codex_model(model);
-  if (str_equal(key,STR_LIT("gpt-5.5"))) return 2.5;
-  const Str models[]={STR_LIT("gpt-5.4"),STR_LIT("gpt-5.4-mini"),STR_LIT("gpt-5.6-sol"),
-    STR_LIT("gpt-5.6-terra"),STR_LIT("gpt-5.6-luna"),STR_LIT("gpt-6-astra")};
-  for (size_t i=0;i<sizeof models/sizeof *models;i++) if (str_equal(key,models[i])) return 2.0;
-  return 0;
+double codex_api_fast_multiplier(const PricingRules *rules,Str model) {
+  return rules_codex_fast(rules,normalize_codex_model(rules,model));
 }
-Err normalize_codex_model_memo(Arena *arena,Omap *memo,Str raw,Str *out) {
+Err normalize_codex_model_memo(const PricingRules *rules,Arena *arena,Omap *memo,Str raw,Str *out) {
   Str *cached=omap_get(memo,raw);
   if(cached){*out=*cached;return ERR_SUCCESS;}
   Err e=arena_alloc(arena,sizeof *cached,_Alignof(Str),(void **)&cached);
   if(e.code)return e;
-  e=str_copy(arena,normalize_codex_model(raw),cached);if(e.code)return e;
+  e=str_copy(arena,normalize_codex_model(rules,raw),cached);if(e.code)return e;
   e=omap_put(memo,raw,cached);if(!e.code)*out=*cached;return e;
 }
 typedef struct { Str value, identity; } Candidate;

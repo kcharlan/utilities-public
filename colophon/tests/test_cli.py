@@ -773,7 +773,7 @@ def test_help_and_version_create_no_runtime(native):
         assert text in help_result.stdout
     version = native.invoke("--version")
     assert version.returncode == 0
-    assert version.stdout == "colophon 0.7.3\n"
+    assert version.stdout == "colophon 0.8.0\n"
     assert not native.runtime.exists()
 
 def test_sandbox_allows_active_reads_and_scratch_only_writes(tmp_path):
@@ -1073,6 +1073,175 @@ def test_thread_settings_priority_applies_fast_multiplier(native):
     # Standard cost is 0.015; the curated Astra priority multiplier is 2.
     assert session["own_usage"]["cost_usd"] == pytest.approx(0.03)
     assert any(bucket[2] == "priority" for bucket in session["buckets"])
+
+def test_pricing_rules_apply_on_warm_run(native):
+    turn = "synthetic-rules-turn"
+    native.write_session([
+        row("session_meta", {"id": SESSION, "cwd": "/synthetic/kite", "source": "cli"}, 0),
+        row("turn_context", {"model": "synthetic-rules-alias", "turn_id": turn}, 1),
+        row("event_msg", {"type": "thread_settings_applied", "thread_settings": {"service_tier": "priority"}}, 1),
+        row("event_msg", {"type": "task_started", "turn_id": turn}, 2),
+        row("event_msg", {"type": "token_count", "turn_id": turn, "info": {
+            "last_token_usage": usage(1_000, 0, 100), "total_token_usage": usage(1_000, 0, 100)}}, 3),
+    ])
+    native.runtime.mkdir()
+    catalog = {"openai": {"models": {}}, "google": {"models": {
+        "synthetic-fast-model": {"id": "synthetic-fast-model", "cost": {"input": 1, "output": 2}}
+    }}}
+    (native.runtime / "pricing-cache.json").write_text(json.dumps({
+        "schema": 1, "url": native.env["COLOPHON_PRICING_URL"], "fetched_at_ms": 1, "catalog": catalog}))
+    source = native.claude_session(rows=[{"type": "assistant", "timestamp": "2026-01-02T12:00:00Z",
+        "message": {"model": "google/synthetic-fast-model", "usage": {
+            "input_tokens": 1000, "output_tokens": 100, "speed": "fast"}}}])
+    source.write_text(json.dumps(json.loads(source.read_text()), separators=(",", ":")) + "\n")
+    result = native.build()
+    assert result.returncode == 0, result.stderr
+    sessions = {s["provider"]: s for s in native.payload()["sessions"]}
+    assert sessions["codex"]["own_usage"]["cost_usd"] is None
+    assert sessions["claude"]["own_usage"]["cost_usd"] == pytest.approx(0.0012)
+    rules = {"schema": 1, "aliases": {"codex": {"synthetic-rules-alias": "gpt-6-astra"}},
+             "claude_fast": {"exact": {"synthetic-fast-model": 3.0}}}
+    (native.runtime / "pricing-rules.json").write_text(json.dumps(rules))
+    result = native.build()
+    assert result.returncode == 0, result.stderr
+    sessions = {s["provider"]: s for s in native.payload()["sessions"]}
+    assert sessions["codex"]["own_usage"]["cost_usd"] == pytest.approx(0.03)
+    assert sessions["claude"]["own_usage"]["cost_usd"] == pytest.approx(0.0036)
+
+def test_pricing_rules_template_is_private_and_preserved(native):
+    native.session()
+    result = native.build()
+    assert result.returncode == 0, result.stderr
+    path = native.runtime / "pricing-rules.json"
+    assert json.loads(path.read_text()) == {"schema": 1}
+    assert mode(path) == 0o600
+    custom = b'{"schema":1,"aliases":{"codex":{"synthetic-a":"synthetic-b"}}}\n'
+    path.write_bytes(custom)
+    result = native.build()
+    assert result.returncode == 0, result.stderr
+    assert path.read_bytes() == custom
+
+def test_invalid_pricing_rules_leave_default_prices_intact(native):
+    turn = "synthetic-invalid-rules-turn"
+    native.write_session([
+        row("session_meta", {"id": SESSION, "cwd": "/synthetic/kite", "source": "cli"}, 0),
+        row("turn_context", {"model": "synthetic-invalid-rules-alias", "turn_id": turn}, 1),
+        row("event_msg", {"type": "thread_settings_applied", "thread_settings": {"service_tier": "priority"}}, 1),
+        row("event_msg", {"type": "task_started", "turn_id": turn}, 2),
+        row("event_msg", {"type": "token_count", "turn_id": turn, "info": {
+            "last_token_usage": usage(1_000, 0, 100), "total_token_usage": usage(1_000, 0, 100)}}, 3),
+    ])
+    result = native.build()
+    assert result.returncode == 0, result.stderr
+    baseline = native.payload()["sessions"][0]["own_usage"]["cost_usd"]
+    assert baseline is None
+    rules = {"schema": 1, "aliases": {"codex": {"synthetic-invalid-rules-alias": "gpt-6-astra"}},
+             "codex_cutoffs_ms": {"synthetic-invalid": "not a timestamp"}}
+    (native.runtime / "pricing-rules.json").write_text(json.dumps(rules))
+    result = native.build()
+    assert result.returncode == 0, result.stderr
+    payload = native.payload()
+    assert payload["sessions"][0]["own_usage"]["cost_usd"] is None
+    assert payload["diagnostics"]["pricing_rules_errors"]
+    del rules["codex_cutoffs_ms"]
+    (native.runtime / "pricing-rules.json").write_text(json.dumps(rules))
+    result = native.build()
+    assert result.returncode == 0, result.stderr
+    assert native.payload()["sessions"][0]["own_usage"]["cost_usd"] == pytest.approx(0.03)
+
+def test_synthetic_codex_fast_rule_changes_untimed_price(native):
+    turn = "synthetic-untimed-rules-turn"
+    record = row("token_usage_record", {"thread_id": SESSION, "session_id": SESSION,
+        "response_id": "synthetic-untimed-response", "turn_id": turn,
+        "usage": usage(1000, 0, 100), "thread_token_usage": usage(1000, 0, 100)}, 3)
+    record["timestamp"] = "2026-01-02 12:00:00Z"
+    native.write_session([
+        row("session_meta", {"id": SESSION, "cwd": "/synthetic/kite", "source": "cli"}, 0),
+        row("turn_context", {"model": "synthetic-fast-codex", "turn_id": turn}, 1),
+        row("event_msg", {"type": "thread_settings_applied", "thread_settings": {"service_tier": "priority"}}, 1),
+        row("event_msg", {"type": "task_started", "turn_id": turn}, 2), record,
+    ])
+    native.runtime.mkdir()
+    catalog = {"openai": {"models": {"synthetic-fast-codex": {
+        "id": "synthetic-fast-codex", "cost": {"input": 1, "output": 2}}}}}
+    (native.runtime / "pricing-cache.json").write_text(json.dumps({"schema": 1,
+        "url": native.env["COLOPHON_PRICING_URL"], "fetched_at_ms": 1, "catalog": catalog}))
+    result = native.build()
+    assert result.returncode == 0, result.stderr
+    assert native.payload()["sessions"][0]["own_usage"]["cost_usd"] == pytest.approx(0.0012)
+    (native.runtime / "pricing-rules.json").write_text(json.dumps({"schema": 1,
+        "codex_fast": {"multipliers": {"synthetic-fast-codex": 3}}}))
+    result = native.build()
+    assert result.returncode == 0, result.stderr
+    assert native.payload()["sessions"][0]["own_usage"]["cost_usd"] == pytest.approx(0.0036)
+
+def test_synthetic_cutoff_changes_undated_record_rate(native):
+    turn = "synthetic-cutoff-turn"
+    record = row("token_usage_record", {"thread_id": SESSION, "session_id": SESSION,
+        "response_id": "synthetic-cutoff-response", "turn_id": turn,
+        "completed_at_ms": 1767355200000, "usage": usage(1000, 0, 100),
+        "thread_token_usage": usage(1000, 0, 100)}, 3)
+    record["timestamp"] = "2026-01-02 12:00:00Z"
+    native.write_session([
+        row("session_meta", {"id": SESSION, "cwd": "/synthetic/kite", "source": "cli"}, 0),
+        row("turn_context", {"model": "synthetic-cutoff-model", "turn_id": turn}, 1),
+        row("event_msg", {"type": "task_started", "turn_id": turn}, 2), record,
+    ])
+    native.runtime.mkdir()
+    entries = [{"model": "synthetic-cutoff-model", "effective_from": date, "source": "manual",
+        "per_million": {"input": rate, "cached_input": 0, "cache_write": 0, "output": 2 * rate}}
+        for date, rate in [("2026-01-01T00:00:00Z", 1), ("2026-01-03T00:00:00Z", 3)]]
+    (native.runtime / "price-history.json").write_text(json.dumps({"schema": 1, "entries": entries}))
+    result = native.build()
+    assert result.returncode == 0, result.stderr
+    assert native.payload()["sessions"][0]["own_usage"]["cost_usd"] == pytest.approx(0.0012)
+    (native.runtime / "pricing-rules.json").write_text(json.dumps({"schema": 1,
+        "codex_cutoffs_ms": {"synthetic-cutoff-model": 1767484800000}}))
+    result = native.build()
+    assert result.returncode == 0, result.stderr
+    assert native.payload()["sessions"][0]["own_usage"]["cost_usd"] == pytest.approx(0.0036)
+
+def test_user_alias_does_not_invalidate_existing_history(native):
+    turn = "synthetic-history-alias-turn"
+    native.write_session([
+        row("session_meta", {"id": SESSION, "cwd": "/synthetic/kite", "source": "cli"}, 0),
+        row("turn_context", {"model": "synthetic-history-model", "turn_id": turn}, 1),
+        row("event_msg", {"type": "task_started", "turn_id": turn}, 2),
+        row("event_msg", {"type": "token_count", "turn_id": turn, "info": {
+            "last_token_usage": usage(1000, 0, 100), "total_token_usage": usage(1000, 0, 100)}}, 3),
+    ])
+    native.runtime.mkdir()
+    entry = {"model": "synthetic-history-model", "effective_from": "2026-01-01T00:00:00Z",
+             "source": "manual", "per_million": {"input": 1, "cached_input": 0,
+             "cache_write": 0, "output": 2}}
+    (native.runtime / "price-history.json").write_text(json.dumps({"schema": 1, "entries": [entry]}))
+    (native.runtime / "pricing-rules.json").write_text(json.dumps({"schema": 1,
+        "aliases": {"codex": {"synthetic-history-model": "synthetic-other-model"}}}))
+    result = native.build()
+    assert result.returncode == 0, result.stderr
+    payload = native.payload()
+    assert payload["meta"]["costs"]["available"]
+    assert payload["sessions"][0]["own_usage"]["cost_usd"] == pytest.approx(0.0012)
+
+def test_user_claude_provider_prefix_disambiguates_catalog(native):
+    native.runtime.mkdir()
+    model = "synthetic-route-model"
+    catalog = {"openai": {"models": {}}, "google": {"models": {
+        model: {"id": model, "cost": {"input": 1, "output": 2}}}},
+        "anthropic": {"models": {model: {"id": model, "cost": {"input": 3, "output": 4}}}}}
+    (native.runtime / "pricing-cache.json").write_text(json.dumps({"schema": 1,
+        "url": native.env["COLOPHON_PRICING_URL"], "fetched_at_ms": 1, "catalog": catalog}))
+    source = native.claude_session(rows=[{"type": "assistant", "timestamp": "2026-01-02T12:00:00Z",
+        "message": {"model": model, "usage": {"input_tokens": 1000, "output_tokens": 100}}}])
+    source.write_text(json.dumps(json.loads(source.read_text()), separators=(",", ":")) + "\n")
+    result = native.build()
+    assert result.returncode == 0, result.stderr
+    assert native.payload()["sessions"][0]["own_usage"]["cost_usd"] is None
+    (native.runtime / "pricing-rules.json").write_text(json.dumps({"schema": 1,
+        "claude_provider_prefixes": {"synthetic-route-": "google"}}))
+    result = native.build()
+    assert result.returncode == 0, result.stderr
+    assert native.payload()["sessions"][0]["own_usage"]["cost_usd"] == pytest.approx(0.0012)
 
 def test_ledger_mirror_counts_once_and_snapshot_only_request_counts(native):
     turn = "synthetic-ledger-turn"

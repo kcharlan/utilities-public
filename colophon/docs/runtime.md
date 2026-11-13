@@ -172,7 +172,7 @@ reader. Missing legacy provider fields mean Codex. Source filtering applies
 to overview totals, session lists, descendants and direct subagent links.
 The snapshot log count always includes Codex and Claude logs, regardless of the
 switch; accepted OpenCode and Antigravity database counts are shown separately. The footer
-displays the embedded payload's release version (`colophon 0.7.3`). Catalog
+displays the embedded payload's release version (`colophon 0.8.0`). Catalog
 names take precedence over fallback aliases; valid canonical IDs select one
 target, while existing Codex history keys remain unchanged.
 
@@ -264,7 +264,7 @@ An empty value selects the default `~/.claude` config root. Its
 `COLOPHON_HOME` selects the private runtime home (default `~/.colophon`);
 tilde expansion is supported. `COLOPHON_PRICING_URL` defaults to
 `https://models.dev/api.json`. Help and version exit without initializing
-runtime state. Version is currently `colophon 0.7.3`.
+runtime state. Version is currently `colophon 0.8.0`.
 
 | Flag | Behavior |
 | --- | --- |
@@ -433,6 +433,7 @@ files older than one hour are cleaned from the runtime home.
 | `antigravity-ledger/` | Last observed Antigravity session headers and usage events, grouped by the hash of the resolved Gemini root. |
 | `claude-retained/` | Claude facts retained after proved source deletion; no automatic age limit. |
 | `price-history.json` | Editable user ledger, created with schema 1 and empty entries. |
+| `pricing-rules.json` | Optional schema 1 pricing overrides, created empty without replacing an existing file. |
 | `pricing-cache.json` | Shared multi-provider catalog, URL, ETag and successful fetch timestamp. |
 | `priority-turns.json` | Sticky detected priority-turn metadata and first-seen times. |
 | `workspaces.json` | Optional workspace aliases. |
@@ -443,6 +444,20 @@ Prior Python releases used the same ledger, catalog, priority memory, aliases
 and default page. Native retains compatibility and a separate parse cache.
 Select a different native home for independent state; the application does
 not migrate existing private state. Commands sharing a home must run sequentially.
+`pricing-rules.json` starts as `{"schema":1}` with mode 0600. The embedded
+`assets/pricing_rules.json` shows the supported keys: provider-scoped `aliases`,
+`antigravity_routing_suffixes`, `codex_fast` (`multipliers`, `max_input_tokens`,
+`uncapped`), `codex_cutoffs_ms`, and `claude_fast` (`exact`, `normalized_prefix`).
+Claude catalog routing also uses `claude_provider_exact`,
+`claude_provider_families`, `claude_provider_prefixes`, and
+`claude_catalog_aliases`; the latter supplies fallback model names for the
+`kimi-for-coding` provider.
+Objects merge by key and arrays replace the corresponding default array. Values
+must have the same types as the defaults; multipliers and the cap must be positive,
+and cutoffs are integer milliseconds. Invalid documents are ignored in full and
+reported in `diagnostics.pricing_rules_errors`. Edits are read on the next run;
+no executable rebuild or cache clearing is needed. Existing dated price-history
+entries retain their precedence.
 Ledger recording checks for edits before replacement, but a concurrent edit
 after the check can still be overwritten. There is no ledger lock spanning
 the read/check/replace operation.

@@ -144,7 +144,7 @@ static Err index_normalized(ModelsDevIndex *out) {
 }
 static Err claude_index_provider(ModelsDevIndex *out,Str id,yyjson_val *provider,bool wrapper,size_t position) {
     ModelsDevIndex *child=omap_get(&out->claude_providers,id);Err e;
-    if(!child){e=arena_alloc(&out->arena,sizeof *child,_Alignof(ModelsDevIndex),(void **)&child);if(e.code)return e;*child=(ModelsDevIndex){0};e=omap_put(&out->claude_providers,id,child);if(e.code)return e;}
+    if(!child){e=arena_alloc(&out->arena,sizeof *child,_Alignof(ModelsDevIndex),(void **)&child);if(e.code)return e;*child=(ModelsDevIndex){.rules=out->rules};e=omap_put(&out->claude_providers,id,child);if(e.code)return e;}
     e=str_copy(&child->arena,id,&child->provider_id);if(e.code)return e;
     e=index_provider_models(child,provider,wrapper,position);return e.code?e:index_normalized(child);
 }
@@ -211,7 +211,7 @@ Err models_dev_normalize(ModelsDevIndex *index,Str raw,Str *out) {
     Str *cached=omap_get(&index->normalizations,raw);if(cached){*out=*cached;return ERR_SUCCESS;}
     CatalogLookup lookup={0};Err e=models_dev_pricing(index,STR_LIT("openai"),raw,&lookup);if(e.code)return e;
     e=arena_alloc(&index->arena,sizeof *cached,_Alignof(Str),(void **)&cached);if(e.code)return e;
-    e=str_copy(&index->arena,lookup.model?lookup.identity:normalize_codex_model(raw),cached);if(e.code)return e;
+    e=str_copy(&index->arena,lookup.model?lookup.identity:normalize_codex_model(index->rules,raw),cached);if(e.code)return e;
     e=omap_put(&index->normalizations,raw,cached);if(!e.code)*out=*cached;return e;
 }
 Err models_dev_pricing(ModelsDevIndex *index,Str provider,Str raw,CatalogLookup *out) {
@@ -265,7 +265,7 @@ void catalog_lookup_json(JsonWriter *w,const CatalogLookup *lookup) {
     jsonw_raw(w,",\"per_million\":");rates_json(w,m->rates,m->present,false);
     jsonw_raw(w,",\"long_context\":");if(m->has_extended)rates_json(w,m->extended,m->extended_present,true);else jsonw_raw(w,"null");jsonw_raw(w,"}");
 }
-Err codex_models_dev_pricing_targets(Arena *arena,Str raw,PricingTargets *out) {
+Err codex_models_dev_pricing_targets(const PricingRules *rules,Arena *arena,Str raw,PricingTargets *out) {
     *out=(PricingTargets){0};Str trimmed=token_model_trim(raw);
     if(!trimmed.n)return ERR_SUCCESS;
     size_t slash=price_literal_parts(trimmed,STR_LIT("/"),STR_LIT(""),false);
@@ -277,7 +277,7 @@ Err codex_models_dev_pricing_targets(Arena *arena,Str raw,PricingTargets *out) {
         size_t first=price_literal_parts(model,STR_LIT("/"),STR_LIT(""),false),last=price_literal_parts(model,STR_LIT("/"),STR_LIT(""),true);
         if(first!=0&&last!=model.n-1)out->model[out->count++]=model;
     } else out->model[out->count++]=model;
-    Str normalized=normalize_codex_model(model);
+    Str normalized=normalize_codex_model(rules,model);
     if(!str_equal(normalized,model))out->model[out->count++]=normalized;
     return ERR_SUCCESS;
 }
@@ -288,13 +288,13 @@ static double scale_token(double value) {
     int length=snprintf(spelling,sizeof spelling,"%s%.*se%d",decimal.negative?"-":"",decimal.length,decimal.digits,decimal.exponent+6);
     return length>0&&(size_t)length<sizeof spelling?strtod(spelling,NULL):NAN;
 }
-Err resolve_rates(Str raw,ModelsDevIndex *index,PriceEntry *out,bool *found) {
+Err resolve_rates(const PricingRules *rules,Str raw,ModelsDevIndex *index,PriceEntry *out,bool *found) {
     *found=false;*out=(PriceEntry){0};
     Str key;Err normalization_error=index?models_dev_normalize(index,raw,&key):ERR_SUCCESS;
-    if(!index)key=normalize_codex_model(raw);
+    if(!index)key=normalize_codex_model(rules,raw);
     if(normalization_error.code)return normalization_error;
     if(str_equal(key,STR_LIT("unknown")))return ERR_SUCCESS;
-    Arena arena={0};PricingTargets targets;Err error=codex_models_dev_pricing_targets(&arena,raw,&targets);
+    Arena arena={0};PricingTargets targets;Err error=codex_models_dev_pricing_targets(rules,&arena,raw,&targets);
     JsonRead bundled={0};
     if(error.code)goto done;
     Str trimmed=token_model_trim(raw);

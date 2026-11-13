@@ -382,3 +382,17 @@ Alias normalization before catalog lookup can erase a distinct priced model,
 including a name learned from a numeric identifier. Retain the observed spelling
 through attribution, resolve exact catalog names first, and keep historical
 pricing keys independent of evolving catalog identities.
+
+Pricing rule overrides must be applied during recomposition, not persisted in
+raw parse caches. A warm-run regression should cover a configurable alias, an
+untimed Codex multiplier and an undated-record cutoff separately from historical
+priority, whose stored policy takes precedence. Invalid-document tests must pair
+an observable valid override with an invalid field and show both atomic rejection
+and the effect of that override when used alone.
+
+Provider-routing prefixes must retain the pricing matcher’s grapheme boundaries:
+a combining character immediately after a prefix does not select that provider.
+
+Reject an entire ledger record as learning evidence when decoding fails, even
+if its leading events decoded successfully. When catalog aliases cross providers,
+carry the canonical provider with the rates: it also selects the pricing policy.

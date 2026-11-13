@@ -569,3 +569,31 @@ def test_unchanged_claude_cache_preserves_mtime(tmp_path):
     before = cached.stat().st_mtime_ns
     assert run.build().returncode == 0
     assert cached.stat().st_mtime_ns == before
+
+
+@pytest.mark.parametrize("target,model,expected_key", [
+    ("google/synthetic-canonical-target", "k3[1m]", "claude:google/synthetic-canonical-target"),
+    ("openai/gpt-5.6-sol", "k3[1m]", "claude:openai/gpt-5.6-sol"),
+    ("openai/gpt-5.6-sol", "openai/gpt-5.6-sol", "claude:openai/gpt-5.6-sol"),
+])
+def test_claude_catalog_alias_preserves_canonical_provider_and_pricing(tmp_path, target, model, expected_key):
+    native = NativeRun(tmp_path)
+    native.runtime.mkdir()
+    provider, name = target.split("/")
+    cost = {"input": 7, "output": 9, "context_over_200k": {"input": 23},
+            "tiers": [{"tier": {"type": "context", "size": 41}, "input": 23}]}
+    catalog = {"openai": {"models": {}}, "kimi-for-coding": {"models": {
+        "k3": {"id": "k3", "canonical_model_id": target, "cost": {"input": 1, "output": 2}}}}}
+    catalog.setdefault(provider, {"models": {}})["models"][name] = {"id": name, "cost": cost}
+    (native.runtime / "pricing-cache.json").write_text(json.dumps({
+        "schema": 1, "url": native.env["COLOPHON_PRICING_URL"], "fetched_at_ms": 1, "catalog": catalog}))
+    source = native.claude_session(rows=[{"type": "assistant", "timestamp": "2026-01-02T12:00:00Z",
+        "message": {"model": model, "usage": {"input_tokens": 1000, "output_tokens": 100}}}])
+    source.write_text(json.dumps(json.loads(source.read_text()), separators=(",", ":")) + "\n")
+    result = native.build("--no-opencode", "--no-antigravity")
+    assert result.returncode == 0, result.stderr
+    payload = native.payload()
+    assert expected_key in payload["models"]
+    # Google uses its catalog tier; OpenAI uses the bundled context boundary.
+    expected = 0.0239 if provider == "google" else 0.0079
+    assert payload["sessions"][0]["own_usage"]["cost_usd"] == pytest.approx(expected)

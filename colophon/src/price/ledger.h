@@ -12,7 +12,7 @@ typedef struct {
 } LedgerCheck;
 /* Validation entries borrow input. Message bytes belong to check.arena.
  * Caller retains input through consumption and always destroys the check. */
-Err validate_ledger(yyjson_val *document,bool curated,LedgerCheck *out);
+Err validate_ledger(const PricingRules *rules,yyjson_val *document,bool curated,LedgerCheck *out);
 void ledger_check_destroy(LedgerCheck *check);
 void ledger_check_json(JsonWriter *writer,const LedgerCheck *check);
 bool ledger_json_equal(yyjson_val *left,yyjson_val *right,bool omit_notes);
@@ -38,7 +38,7 @@ Err record_catalog_rates(const PriceHistory *history,ModelsDevIndex *index,
                          int64_t fetched_at_ms,yyjson_val *recording_ids,int64_t now_ms,
                          yyjson_doc **out);
 typedef struct {Arena arena;bool appended;Str warning;} LedgerAppend;
-Err append_user_ledger(const char *path,yyjson_val *new_entries,bool start_present,
+Err append_user_ledger(const PricingRules *rules,const char *path,yyjson_val *new_entries,bool start_present,
                        int64_t start_mtime_ns,LedgerAppend *out);
 void ledger_append_destroy(LedgerAppend *append);
 typedef struct LedgerDiagnostic {Str level,message;struct LedgerDiagnostic *next;} LedgerDiagnostic;
@@ -52,7 +52,7 @@ typedef struct {
 } RuntimeLedger;
 /* Owns generic dictionary entries and diagnostic text until payload/summary
  * rendering finishes. Load parses runtime bytes once with constant rejection. */
-Err runtime_ledger_load(const char *path,RuntimeLedger *out);
+Err runtime_ledger_load(const PricingRules *rules,const char *path,RuntimeLedger *out);
 Err runtime_ledger_history(const RuntimeLedger *ledger,yyjson_val *new_entries,PriceHistory *out);
 Err runtime_ledger_warning(RuntimeLedger *ledger,const char *path,Str warning);
 void runtime_ledger_json(JsonWriter *writer,const RuntimeLedger *ledger);

@@ -129,7 +129,7 @@ static bool thread_priority_at(const Omap *by_turn, Str key, uint64_t line) {
     on = starts->items[i].on;
   return on;
 }
-static Err append(Corpus *c, SessionModel *s, const Omap *display,
+static Err append(const PricingRules *rules,Corpus *c, SessionModel *s, const Omap *display,
                   const Omap *priority, const Omap *thread_priority,
                   Omap *normalizations, UsageUnit u) {
   Str identity = {0};
@@ -151,7 +151,7 @@ static Err append(Corpus *c, SessionModel *s, const Omap *display,
   u.priority_tier = u.priority != NULL;
   if (!u.priority && thread_priority_at(thread_priority, identity.n ? identity : STR_LIT(""), u.line))
     u.priority_tier = true;
-  TRY(normalize_codex_model_memo(&c->usage_arena,normalizations,u.model_raw,&u.model));
+  TRY(normalize_codex_model_memo(rules,&c->usage_arena,normalizations,u.model_raw,&u.model));
   if (s->unit_count == s->unit_capacity) {
     size_t capacity = s->unit_capacity ? s->unit_capacity * 2 : 8;
     if (capacity < s->unit_capacity)
@@ -509,7 +509,7 @@ static int pair_event_order(const void *left, const void *right, void *context) 
   uint64_t a = ((const PairEvent *)left)->line, b = ((const PairEvent *)right)->line;
   return (a > b) - (a < b);
 }
-Err compose_usage(Corpus *c, const PriorityTurns *priority) {
+Err compose_usage(const PricingRules *rules,Corpus *c, const PriorityTurns *priority) {
   compose_destroy(c);
   size_t count = c->skipped_count;
   size_t rejected = 0;
@@ -524,7 +524,7 @@ Err compose_usage(Corpus *c, const PriorityTurns *priority) {
   }
   LogRecord **records = calloc(count ? count : 1, sizeof *records);
   AccountingResult *results = calloc(count ? count : 1, sizeof *results);
-  InheritedResolver resolver = {0};
+  InheritedResolver resolver = {.rules=rules};
   Omap indexes = {0}, by_path = {0}, normalizations={0};
   Err error = ERR_SUCCESS;
   if (!records || !results) {
@@ -696,7 +696,7 @@ Err compose_usage(Corpus *c, const PriorityTurns *priority) {
                           .output = ledger.usage.output,
                           .reasoning = {ledger.has_reasoning, ledger.usage.reasoning},
                           .source = STR_LIT("record")};
-        error = append(c, s, &display, &indexes, &thread_priority[file], &normalizations, unit);
+        error = append(rules,c, s, &display, &indexes, &thread_priority[file], &normalizations, unit);
         if (error.code)
           goto session_done;
       }
@@ -784,7 +784,7 @@ Err compose_usage(Corpus *c, const PriorityTurns *priority) {
             .output = row->tokens.output,
             .reasoning = {row->tokens.has_reasoning, row->tokens.reasoning},
             .source = row->bare ? STR_LIT("bare") : STR_LIT("token_count")};
-        error = append(c, s, &display, &indexes, &thread_priority[file], &normalizations, unit);
+        error = append(rules,c, s, &display, &indexes, &thread_priority[file], &normalizations, unit);
         if (error.code)
           break;
       }

@@ -74,7 +74,7 @@ TEST(antigravity_corpus_empty_usage_reinitialized_after_compose_destroy) {
     AntigravityStep step=user();AntigravitySession raw={.id=STR_LIT("synthetic-empty-usage"),.steps=&step,.step_count=1},*rows[]={&raw};
     Corpus c={0};AntigravityStore s={0};SessionModel *p=project(&s,&c,rows,1,5000);PriorityTurns priority={0};
     for(size_t i=0;i<3;i++) {
-        ASSERT_EQ(ERR_OK,compose_usage(&c,&priority).code);
+        ASSERT_EQ(ERR_OK,compose_usage(&test_rules,&c,&priority).code);
         ASSERT_EQ(ERR_OK,antigravity_compose(&s,&c,NULL,NULL,NULL).code);
         ASSERT_EQ(ERR_OK,compose_refresh_costs(&c,false).code);
         ASSERT_TRUE(p->own_usage&&p->outside_usage&&p->turns[0].usage);

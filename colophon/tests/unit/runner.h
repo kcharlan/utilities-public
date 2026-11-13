@@ -3,6 +3,9 @@
 
 #include <stdint.h>
 #include <string.h>
+#include "price/rules.h"
+
+extern PricingRules test_rules;
 
 typedef struct TestCase {
     const char *name;

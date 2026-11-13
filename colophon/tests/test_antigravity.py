@@ -90,6 +90,43 @@ def test_antigravity_catalog_exact_name_wins_over_preview_alias(native):
     assert row["buckets"][0][1] == "gemini-3.1-pro-high"
     assert row["own_usage"]["cost_usd"] == pytest.approx((50 * 3 + 7 * 5) / 1e6)
 
+def test_antigravity_learned_number_uses_exact_catalog_name(native):
+    db_path = cached_pricing(native, unknown=False)
+    path = native.runtime / "pricing-cache.json"
+    cache = json.loads(path.read_text())
+    cache["catalog"]["google"]["models"]["gemini-3.1-pro-high"] = {
+        "id": "gemini-3.1-pro-high", "cost": {"input": 3, "output": 5}}
+    path.write_text(json.dumps(cache))
+    numbered = proto_field(1, 9999) + proto_field(2, 42) + proto_field(3, 7)
+    metadata = proto_field(1, proto_field(1, 1767355200)) + proto_field(9, numbered)
+    learned = proto_field(1, proto_field(4, proto_field(1, 9999)) + proto_field(19, "gemini-3.1-pro-high"))
+    with sqlite3.connect(db_path) as db:
+        db.execute("UPDATE steps SET metadata=? WHERE idx=0", (metadata,))
+        db.execute("DELETE FROM gen_metadata")
+        db.execute("INSERT INTO gen_metadata VALUES(0,?)", (learned,))
+    result = native.build("--no-claude", "--no-opencode")
+    assert result.returncode == 0, result.stderr
+    row, = native.payload()["sessions"]
+    assert row["buckets"][0][1] == "gemini-3.1-pro-high"
+    assert row["own_usage"]["cost_usd"] == pytest.approx((42 * 3 + 7 * 5) / 1e6)
+
+@pytest.mark.parametrize("exact", [False, True])
+def test_user_antigravity_alias_follows_catalog_lookup(native, exact):
+    cached_pricing(native, unknown=False, model="synthetic-custom-high")
+    cache_path = native.runtime / "pricing-cache.json"
+    cache = json.loads(cache_path.read_text())
+    if exact:
+        cache["catalog"]["google"]["models"]["synthetic-custom-high"] = {
+            "id": "synthetic-custom-high", "cost": {"input": 3, "output": 5}}
+        cache_path.write_text(json.dumps(cache))
+    (native.runtime / "pricing-rules.json").write_text(json.dumps({"schema": 1,
+        "aliases": {"antigravity": {"synthetic-custom": "gemini-3.1-pro-preview"}}}))
+    result = native.build("--no-claude", "--no-opencode")
+    assert result.returncode == 0, result.stderr
+    row, = native.payload()["sessions"]
+    assert row["buckets"][0][1] == ("synthetic-custom-high" if exact else "gemini-3.1-pro-preview")
+    assert row["own_usage"]["cost_usd"] == pytest.approx((50 * 3 + 7 * 5) / 1e6 if exact else .001173)
+
 @pytest.mark.parametrize("key", ["synthetic-opaque-key", 7, None])
 def test_antigravity_trajectory_key_types_preserve_workspace_creation_and_parent(native, key):
     child_id = "00000000-0000-4000-8000-000000000002"
@@ -774,3 +811,27 @@ def test_antigravity_invalid_ledger_metadata_is_untouched_even_with_live_databas
     assert record.read_bytes() == bad
     assert str(record) in native.payload()["diagnostics"]["antigravity_ledger_unreadable"]
     assert "transcript_deleted" not in native.payload()["sessions"][0]["flags"]
+
+
+def test_rejected_ledger_prefix_does_not_supply_model_learning(native):
+    path = database(native)
+    number = 991199
+    usage = proto_field(1, number) + proto_field(2, 42)
+    named = proto_field(4, usage) + proto_field(19, "synthetic-rejected-ledger-model")
+    with sqlite3.connect(path) as db:
+        db.execute("INSERT INTO gen_metadata VALUES(0,?)", (proto_field(1, named),))
+    result = native.build("--no-claude", "--no-opencode")
+    assert result.returncode == 0, result.stderr
+    record, = (native.runtime / "antigravity-ledger").rglob("*.json")
+    value = json.loads(record.read_text())
+    value["events"].append({"synthetic_invalid": True})
+    record.write_text(json.dumps(value))
+    damaged = record.read_bytes()
+    with sqlite3.connect(path) as db:
+        db.execute("UPDATE gen_metadata SET data=?", (proto_field(1, proto_field(4, usage)),))
+    result = native.build("--no-claude", "--no-opencode")
+    assert result.returncode == 0, result.stderr
+    payload = native.payload()
+    assert payload["diagnostics"]["antigravity_ledger_unreadable"] == [str(record)]
+    assert record.read_bytes() == damaged
+    assert payload["sessions"][0]["buckets"][0][1] == f"antigravity/model-{number}"

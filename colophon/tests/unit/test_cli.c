@@ -60,7 +60,7 @@ TEST(cli_original_progress_format_cases){
 }
 TEST(cli_original_diagnostic_summary_counts_data_names_and_structured_totals){
     Corpus corpus={0};ScanResult scan={0};CodexMetadata metadata={0};RuntimeLedger ledger={.available=true};
-    CatalogResult catalog={0};PricingReport pricing={0};CorpusStrings errors={0};
+    CatalogResult catalog={0};PricingReport pricing={.rules=&test_rules};CorpusStrings errors={0};
     __int128 one=1,two=2;ASSERT_EQ(ERR_OK,omap_put(&corpus.unknown_types,STR_LIT("total"),&one).code);
     ASSERT_EQ(ERR_OK,omap_put(&corpus.unknown_types,STR_LIT("files"),&two).code);
     corpus.malformed.total=3;corpus.truncated.total=3;corpus.recovered.total=3;

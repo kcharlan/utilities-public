@@ -199,12 +199,10 @@ Fast pricing is the secondary-reference extension from ccusage v20.0.33,
 commit `1308c416a7da73b63463f953a51b5ae29fb784a4`:
 `rust/crates/ccusage-core/src/cost.rs` (L110–115),
 `pricing.rs::SpeedMultiplierOverrides.multiplier_for` (L944–980), and its
-models.dev loader (L1309–1311). The committed
-`assets/ccusage_fast_multiplier_overrides.json` is copied verbatim from
-that pin. Exact keys, family aliases, date suffixes and provider/dotted
+models.dev loader (L1309–1311). The `claude_fast` object in `assets/pricing_rules.json` retains the exact values from the override asset at that pin. Exact keys, family aliases, date suffixes and provider/dotted
 parts resolve before normalized-prefix matching; an unmatched fast model
 uses multiplier 1. Fast applies to the complete Claude request estimate.
-The verbatim override asset SHA-256 is
+The original verbatim override asset SHA-256 was
 `f055ffafcf93bc164a0fe071bb462d17c5d888ddf2314ce876cba12fd1f67c42`.
 Codex retains its separate rate ledger, candidate lookup and priority rules.
 
@@ -291,3 +289,14 @@ ledger-independence regressions. Rebuilding from surviving rollups can recover
 removed-message residuals; deleted sessions contribute nothing. Rollup equality
 holds for complete valid synthetic inputs without shortfalls and is not an
 assertion about malformed or incomplete sources.
+
+## Pricing rule overrides
+
+The embedded `assets/pricing_rules.json` holds provider-scoped aliases,
+Antigravity routing suffixes, Codex fast policy and cutoffs, and the ccusage
+Claude fast values and Claude provider-family routing. The optional runtime `pricing-rules.json` merges
+objects by key and replaces arrays. Validation rejects the entire user document
+on an invalid field and emits `pricing_rules_errors`; defaults stay in force.
+The rules are loaded for each run before composition, so edits apply to retained
+raw observations on the next warm run. Catalog-first identity and existing dated
+price-history priority policies continue to take precedence.

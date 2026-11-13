@@ -1,0 +1,100 @@
+{
+  "schema": 1,
+  "aliases": {
+    "codex": {
+      "gpt-5.6": "gpt-5.6-sol",
+      "gpt-daybreak-blue-latest": "gpt-5.6-sol",
+      "gpt-reserve": "gpt-5.6-luna",
+      "gpt-daybreak-red-latest": "gpt-5.6-cyber"
+    },
+    "claude": {
+      "gpt-reserve": "gpt-5.6-luna",
+      "gpt-5.6": "gpt-5.6-sol",
+      "gpt-5.3-spark": "gpt-5.3-codex-spark"
+    },
+    "antigravity": {
+      "gemini-pro-default": "gemini-3.1-pro-preview",
+      "gemini-pro-agent": "gemini-3.1-pro-preview",
+      "gemini-3.1-pro": "gemini-3.1-pro-preview",
+      "gemini-3.1-pro-high": "gemini-3.1-pro-preview",
+      "gemini-3.1-pro-low": "gemini-3.1-pro-preview",
+      "gemini-3.7-flash-safety-le": "gemini-3.7-flash"
+    }
+  },
+  "antigravity_routing_suffixes": [
+    "-tiered",
+    "-low",
+    "-thinking",
+    "-medium",
+    "-high",
+    "-trial"
+  ],
+  "codex_fast": {
+    "multipliers": {
+      "gpt-5.5": 2.5,
+      "gpt-5.4": 2,
+      "gpt-5.4-mini": 2,
+      "gpt-5.6-sol": 2,
+      "gpt-5.6-terra": 2,
+      "gpt-5.6-luna": 2,
+      "gpt-6-astra": 2
+    },
+    "max_input_tokens": 272000,
+    "uncapped": [
+      "gpt-6-astra"
+    ]
+  },
+  "codex_cutoffs_ms": {
+    "gpt-5.6-sol": 1787270400000,
+    "gpt-5.6-terra": 1785369600000,
+    "gpt-5.6-luna": 1785369600000
+  },
+  "claude_fast": {
+    "exact": {
+      "gpt-5.6-sol": 2.0,
+      "gpt-5.6-terra": 2.0,
+      "gpt-5.6-luna": 2.0,
+      "gpt-5.5": 2.5,
+      "gpt-5.4": 2.0,
+      "gpt-5.3-codex": 2.0,
+      "gpt-6-astra": 2.0,
+      "gpt-6-sol": 2.0,
+      "gpt-6.1-sol": 2.0,
+      "gpt-6-luna": 2.0
+    },
+    "normalized_prefix": {
+      "claude-opus-4-6": 6.0,
+      "claude-opus-4-7": 6.0,
+      "claude-opus-4-8": 2.0
+    }
+  },
+  "claude_provider_exact": {
+    "kimi-for-coding": "kimi-for-coding",
+    "k3": "kimi-for-coding",
+    "k3[1m]": "kimi-for-coding"
+  },
+  "claude_provider_families": {
+    "o1": "openai",
+    "o3": "openai",
+    "o4": "openai"
+  },
+  "claude_provider_prefixes": {
+    "claude-": "anthropic",
+    "gpt-": "openai",
+    "chatgpt-": "openai",
+    "text-embedding-": "openai",
+    "gemini-": "google",
+    "gemma-": "google",
+    "deep-research-": "google",
+    "veo-": "google",
+    "lyria-": "google",
+    "k3-": "kimi-for-coding",
+    "kimi-": "moonshot",
+    "moonshot-": "moonshot",
+    "minimax-": "minimax",
+    "deepseek-": "deepseek"
+  },
+  "claude_catalog_aliases": {
+    "k3[1m]": "k3"
+  }
+}

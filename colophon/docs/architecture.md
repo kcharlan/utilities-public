@@ -241,3 +241,12 @@ latest preceding start for its turn in the same file. Resuming the same turn
 under a different setting changes later rows without changing earlier rows.
 Turnless units check the empty id. Trace-database and sticky priority evidence
 still apply; thread settings supply the priority tier without a trace entry.
+
+Pricing rules are immutable per-run documents. The runtime owner loads the
+embedded defaults and validates the optional user document before composition;
+accounting, catalog and provider pricing borrow that owner until rendering ends.
+Object entries override individual defaults, while configured arrays replace the
+corresponding default array. Invalid user documents contribute no rules. Raw
+observations remain in parse caches, so the next run recomposes with current rules
+without changing cache formats. Catalog identity and dated history keep their
+existing precedence over fallback aliases and policy.

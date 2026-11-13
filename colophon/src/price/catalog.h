@@ -12,7 +12,7 @@ typedef struct {
     bool has_context_tier;
     int64_t context_tier_size;
 } CatalogModel;
-typedef struct { Arena arena; Omap models, normalized, lookups, normalizations, claude_providers; Str provider_id; } ModelsDevIndex;
+typedef struct { Arena arena; Omap models, normalized, lookups, normalizations, claude_providers; Str provider_id; const PricingRules *rules; } ModelsDevIndex;
 typedef struct { const CatalogModel *model; Str identity, provider; bool canonical_applied; } CatalogLookup;
 Err models_dev_index(yyjson_val *catalog,ModelsDevIndex *out);
 Err models_dev_pricing(ModelsDevIndex *index,Str provider,Str raw,CatalogLookup *out);
@@ -22,8 +22,8 @@ Err models_dev_normalize(ModelsDevIndex *index,Str raw,Str *out);
 void models_dev_destroy(ModelsDevIndex *index);
 void catalog_lookup_json(JsonWriter *writer,const CatalogLookup *lookup);
 typedef struct { Str model[2]; size_t count; } PricingTargets;
-Err codex_models_dev_pricing_targets(Arena *arena,Str raw,PricingTargets *out);
-Err resolve_rates(Str raw,ModelsDevIndex *index,PriceEntry *out,bool *found);
+Err codex_models_dev_pricing_targets(const PricingRules *rules,Arena *arena,Str raw,PricingTargets *out);
+Err resolve_rates(const PricingRules *rules,Str raw,ModelsDevIndex *index,PriceEntry *out,bool *found);
 void price_entry_json(JsonWriter *writer,const PriceEntry *entry);
 void price_entry_fields_json(JsonWriter *writer,const PriceEntry *entry);
 /* Sole raw catalog decoder. Invalid input yields *out=NULL without a fatal

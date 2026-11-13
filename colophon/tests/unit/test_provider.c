@@ -35,7 +35,7 @@ TEST(compose_skips_opencode_and_prices_authored_units) {
                     .provider = PROVIDER_OPENCODE, .records = foreign,
                     .record_count = 1, .turns = &turn, .turn_count = 1};
   ASSERT_EQ(ERR_OK, omap_put(&c.sessions, s.id, &s).code);
-  ASSERT_EQ(ERR_OK, compose_usage(&c, &priority).code);
+  ASSERT_EQ(ERR_OK, compose_usage(&test_rules,&c, &priority).code);
   ASSERT_EQ(0, s.unit_count);
   UsageUnit units[] = {
       {.display_turn = turn.id, .model = STR_LIT("synthetic-model"),
