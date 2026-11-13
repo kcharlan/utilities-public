@@ -12,6 +12,7 @@ typedef struct {
     bool primary;
     OpencodeDatabaseStatus status;
     size_t accepted_sessions, accepted_messages;
+    CorpusStrings unrecognized_tables, unrecognized_migration_keys;
     Arena arena; /* Successful database facts; private staging until COMMIT. */
 } OpencodeDatabase;
 typedef struct { __int128 input, output, reasoning, cache_read, cache_write; } OpencodeTokens;

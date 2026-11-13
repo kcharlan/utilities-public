@@ -58,11 +58,12 @@ static void provider_summary(Provider provider,const PayloadInputs *in) {
 }
 static __int128 oc_map_count(const Omap *map){__int128 n=0;for(OmapEntry *q=map->first;q;q=q->next)n+=*(uint64_t *)q->value;return n;}
 static void oc_diagnostics(const OpencodeStore *s,bool *first){
-    if(!s)return;size_t schema=0,unreadable=0,invalid=0;
-    for(size_t i=0;i<s->database_count;i++){schema+=s->databases[i].status==OC_DB_UNSUPPORTED;unreadable+=s->databases[i].status==OC_DB_UNREADABLE;}
+    if(!s)return;size_t schema=0,unreadable=0,invalid=0,tables=0,keys=0;
+    for(size_t i=0;i<s->database_count;i++){schema+=s->databases[i].status==OC_DB_UNSUPPORTED;unreadable+=s->databases[i].status==OC_DB_UNREADABLE;tables+=s->databases[i].unrecognized_tables.count!=0;keys+=s->databases[i].unrecognized_migration_keys.count!=0;}
     for(size_t i=0;i<s->session_count;i++)invalid+=s->sessions[i]->invalid_numbers!=0;
     const OpencodeUsageReport *u=s->usage;
     diagnostic("opencode_schema_errors",schema,first);diagnostic("opencode_unreadable_databases",unreadable,first);
+    diagnostic("opencode_unrecognized_tables",tables,first);diagnostic("opencode_unrecognized_migration_keys",keys,first);
     diagnostic("opencode_session_id_collisions",s->corpus_collisions.count,first);diagnostic("opencode_duplicate_sessions",s->duplicate_count,first);
     diagnostic("opencode_orphaned_subagents",s->orphaned_subagents.count,first);diagnostic("opencode_spawn_conflicts",s->ambiguous_spawns.count,first);diagnostic("opencode_unknown_clocks",s->unknown_clocks.count,first);
     diagnostic("opencode_invalid_numbers",invalid+(u?u->invalid_count:0),first);
@@ -117,7 +118,11 @@ Err summary_run(const char *output,size_t size,const PayloadInputs *in) {
         for(size_t i=0;i<s->ignored_environment_count;i++){fputs("colophon: ignored environment ",stderr);oc_line(s->ignored_environment[i]);fputs("; use --antigravity-home PATH\n",stderr);}
     }
     if(in->opencode&&!in->opencode->disabled)for(size_t i=0;i<in->opencode->database_count;i++){
-        const OpencodeDatabase *d=&in->opencode->databases[i];if(!d->reason.n)continue;
+        const OpencodeDatabase *d=&in->opencode->databases[i];
+        const CorpusStrings *lists[]={&d->unrecognized_tables,&d->unrecognized_migration_keys};
+        const char *labels[]={"opencode_unrecognized_tables","opencode_unrecognized_migration_keys"};
+        for(size_t k=0;k<2;k++)if(lists[k]->count){fprintf(stderr,"colophon: %s ",labels[k]);oc_line(d->path);fputs(": ",stderr);for(size_t j=0;j<lists[k]->count;j++){if(j)fputs(", ",stderr);oc_line(lists[k]->items[j]);}fputc('\n',stderr);}
+        if(!d->reason.n)continue;
         fputs("colophon: opencode database ",stderr);oc_line(d->path);fprintf(stderr," (%s): ",opencode_database_status(d->status));oc_line(d->reason);fputc('\n',stderr);
     }
     const Omap *untimed=&in->pricing->untimed;

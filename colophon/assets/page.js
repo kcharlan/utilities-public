@@ -623,6 +623,8 @@
         antigravity_orphaned_subagents: "Antigravity subagent sessions have no admitted parent; their sessions remain included.",
         antigravity_session_id_collisions: "Antigravity sessions conflicting with another provider's public session ID were excluded.",
         opencode_schema_errors: "OpenCode database schema is unsupported; these databases were skipped.",
+        opencode_unrecognized_tables: "OpenCode tables are not read; session totals may stand in for content moved into them.",
+        opencode_unrecognized_migration_keys: "OpenCode migration keys are not recognized; supported data was still read.",
         opencode_unknown_message_types: "OpenCode's message format may have changed; unknown messages are not interpreted.",
         opencode_unknown_content_types: "OpenCode's content format may have changed; unknown parts are not interpreted.",
         opencode_requests_without_usage: "Requests without usable token usage, including explicit zero usage. No tokens are inferred from session totals.",

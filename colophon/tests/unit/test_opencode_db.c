@@ -187,7 +187,9 @@ TEST(opencode_db_schema_guards) {
     for(size_t i=0;i<sizeof changes/sizeof *changes;i++){
         OpencodeFixture f;opencode_fixture_open(&f);opencode_fixture_session(&f,"synthetic-session");opencode_fixture_sql(&f,changes[i]);
         OpencodeStore s={0};add(&s,&f);read_store(&s);ASSERT_EQ(1,s.database_count);
-        bool ok=i>=7;ASSERT_EQ(ok?OC_DB_OK:OC_DB_UNSUPPORTED,s.databases[0].status);ASSERT_EQ(ok?1:0,s.session_count);
+        bool ok=i==4||i==5||i>=7;ASSERT_EQ(ok?OC_DB_OK:OC_DB_UNSUPPORTED,s.databases[0].status);ASSERT_EQ(ok?1:0,s.session_count);
+        if(i==4){ASSERT_EQ(1,s.databases[0].unrecognized_tables.count);ASSERT_TRUE(str_equal(s.databases[0].unrecognized_tables.items[0],STR_LIT("session_v3")));}
+        if(i==5){ASSERT_EQ(1,s.databases[0].unrecognized_migration_keys.count);ASSERT_TRUE(str_equal(s.databases[0].unrecognized_migration_keys.items[0],STR_LIT("migration.synthetic-future")));}
         if(!ok)ASSERT_TRUE(s.databases[0].reason.n);
         opencode_store_destroy(&s);opencode_fixture_close(&f);
     }
@@ -219,6 +221,17 @@ TEST(opencode_db_schema_guards) {
             opencode_store_destroy(&s);opencode_fixture_close(&f);
         }
     }
+}
+TEST(opencode_db_unknown_schema_names_are_reported) {
+    OpencodeFixture f;opencode_fixture_open(&f);opencode_fixture_session(&f,"synthetic-session");
+    opencode_fixture_sql(&f,"CREATE TABLE session_synthetic_extra (value);INSERT INTO kv VALUES ('migration.synthetic-next','{}',1,1)");
+    OpencodeStore s={0};add(&s,&f);read_store(&s);
+    ASSERT_EQ(OC_DB_OK,s.databases[0].status);ASSERT_EQ(1,s.session_count);
+    ASSERT_EQ(1,s.databases[0].unrecognized_tables.count);
+    ASSERT_TRUE(str_equal(s.databases[0].unrecognized_tables.items[0],STR_LIT("session_synthetic_extra")));
+    ASSERT_EQ(1,s.databases[0].unrecognized_migration_keys.count);
+    ASSERT_TRUE(str_equal(s.databases[0].unrecognized_migration_keys.items[0],STR_LIT("migration.synthetic-next")));
+    opencode_store_destroy(&s);opencode_fixture_close(&f);
 }
 TEST(opencode_db_deduplication_commits_only_successful_databases) {
     OpencodeFixture bad,good;opencode_fixture_open(&bad);opencode_fixture_open(&good);

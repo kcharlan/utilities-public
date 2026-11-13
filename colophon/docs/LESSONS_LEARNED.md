@@ -1,5 +1,10 @@
 # Lessons learned
 
+Unknown OpenCode session tables and migration keys do not prove that required
+read sources changed. Report their names without opening extra tables, while
+continuing to reject missing required columns and incomplete legacy migrations.
+Keep the diagnostics in the same staged arena as the accepted database facts.
+
 Retain Antigravity usage before deduplication, including raw request identity
 bytes, so deleted databases can still participate in global alias merging. Live
 events must be collected first and diagnostics for a shrinking live database

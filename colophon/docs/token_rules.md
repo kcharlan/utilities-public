@@ -252,6 +252,9 @@ A valid positive recorded cost without usable tokens remains a cost-only unit;
 zero-token/zero-cost rows need no unit. Positive-token recorded-zero rows are
 priced. OpenCode costs are catalog estimates recorded by OpenCode, independent
 of Colophon's Codex ledger and Claude pricing; no model catalog is consulted.
+Unknown session-prefixed tables are not read; if usage moves there, the existing
+session rollup residual represents recorded totals without request attribution.
+The schema diagnostic identifies the unread table, not its contents.
 
 Raw fresh input, cache read and cache write sum into unit input. Cache read and
 write also retain their separate fields; one-hour write is zero. Raw output

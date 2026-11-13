@@ -172,7 +172,7 @@ reader. Missing legacy provider fields mean Codex. Source filtering applies
 to overview totals, session lists, descendants and direct subagent links.
 The snapshot log count always includes Codex and Claude logs, regardless of the
 switch; accepted OpenCode and Antigravity database counts are shown separately. The footer
-displays the embedded payload's release version (`colophon 0.8.2`). Catalog
+displays the embedded payload's release version (`colophon 0.8.3`). Catalog
 names take precedence over fallback aliases; valid canonical IDs select one
 target, while existing Codex history keys remain unchanged.
 
@@ -264,7 +264,7 @@ An empty value selects the default `~/.claude` config root. Its
 `COLOPHON_HOME` selects the private runtime home (default `~/.colophon`);
 tilde expansion is supported. `COLOPHON_PRICING_URL` defaults to
 `https://models.dev/api.json`. Help and version exit without initializing
-runtime state. Version is currently `colophon 0.8.2`.
+runtime state. Version is currently `colophon 0.8.3`.
 
 | Flag | Behavior |
 | --- | --- |
@@ -294,7 +294,12 @@ win duplicate IDs, and successful siblings remain usable after a source failure.
 owns that preview database. Desktop-specific discovery is not verified.
 
 Only structurally compatible v2 databases are read; legacy JSON, v1-only
-schemas and incomplete/unfamiliar migrations are unsupported. The latest migration
+schemas and incomplete or malformed legacy migrations are unsupported. Unknown
+session-prefixed tables or views and migration keys are reported per database in
+the CLI and footer without rejecting supported data. Their contents are not read.
+If a future OpenCode moves content into an unread table, sessions fall back to
+recorded session totals through the existing rollup path; the diagnostic names
+the unread table. The latest migration
 is reported without a date-based compatibility warning. A message's id and type come
 from its `session_message` columns; OpenCode 2.1 payloads omit them, and older
 payloads that embed them must carry a non-empty id and the column's type.

@@ -117,6 +117,13 @@ static void opencode_diagnostics(JsonWriter *w,const OpencodeStore *s){
             if(!first)jsonw_raw(w,",");first=false;jsonw_raw(w,"{\"path\":");jsonw_string(w,d->path);jsonw_raw(w,",\"reason\":");jsonw_string(w,d->reason);jsonw_raw(w,"}");}
         jsonw_raw(w,"]");
     }
+    const char *unknown_keys[]={"opencode_unrecognized_tables","opencode_unrecognized_migration_keys"};
+    for(int k=0;k<2;k++){
+        jsonw_raw(w,",");text(w,unknown_keys[k]);jsonw_raw(w,": [");bool first=true;
+        if(s)for(size_t i=0;i<s->database_count;i++){const OpencodeDatabase *d=&s->databases[i];const CorpusStrings *names=k?&d->unrecognized_migration_keys:&d->unrecognized_tables;if(!names->count)continue;
+            if(!first)jsonw_raw(w,",");first=false;jsonw_raw(w,"{\"path\":");jsonw_string(w,d->path);jsonw_raw(w,",\"names\":");payload_corpus_strings(w,names);jsonw_raw(w,"}");}
+        jsonw_raw(w,"]");
+    }
     jsonw_raw(w,",\"opencode_session_id_collisions\":");oc_contexts(w,s,s?&s->corpus_collisions:NULL,"session id belongs to another provider");
     jsonw_raw(w,",\"opencode_orphaned_subagents\":");oc_contexts(w,s,s?&s->orphaned_subagents:NULL,"parent missing or cyclic");
     jsonw_raw(w,",\"opencode_spawn_conflicts\":");oc_contexts(w,s,s?&s->ambiguous_spawns:NULL,"multiple parent tool spawns");
@@ -157,7 +164,7 @@ static void claude_diagnostics(JsonWriter *w,const ClaudeScan *c){
 void payload_empty(JsonWriter *w,const PayloadInputs *in){
     PayloadIds ids={0};Err identity_error=payload_ids_init(in->corpus,in->source_codex_home,&ids);
     if(identity_error.code){w->error=identity_error;payload_ids_destroy(&ids);return;}
-    jsonw_raw(w,"{\"schema\":1,\"meta\":{\"version\":\"0.8.2\",\"generated_at_ms\":");jsonw_i64(w,in->snapshot_ms);
+    jsonw_raw(w,"{\"schema\":1,\"meta\":{\"version\":\"0.8.3\",\"generated_at_ms\":");jsonw_i64(w,in->snapshot_ms);
     jsonw_raw(w,",\"generated_tz\":");text(w,in->timezone);jsonw_raw(w,",\"codex_home\":");text(w,in->codex_home);
     jsonw_raw(w,",\"counts\":{\"logs\":");jsonw_i64(w,(int64_t)in->logs);
     jsonw_raw(w,",\"parsed\":");jsonw_i64(w,(int64_t)in->parsed);
