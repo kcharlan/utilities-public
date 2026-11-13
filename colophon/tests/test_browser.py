@@ -265,10 +265,10 @@ def test_opencode_source_hash_descendants_actions_and_version(page, native):
         row["children"] = [child["id"], foreign["id"]]
         payload["subagents"].update({child["id"]: child, foreign["id"]: foreign})
     payload = opencode_page(native, mutate)
-    assert payload["meta"]["version"] == "0.8.0"
+    assert payload["meta"]["version"] == "0.8.3"
     with guard_browser_errors(page):
         requests = open_native(page, native.page)
-        expect(page.locator('[data-version]')).to_have_text("colophon 0.8.0")
+        expect(page.locator('[data-version]')).to_have_text("colophon 0.8.3")
         page.goto(native.page.as_uri() + "#v=session&p=all&a=1&h=0&sort=cost&src=opencode&s=" + OPENCODE_SESSION)
         reader = page.locator("[data-reader]")
         expect(reader).to_have_attribute("data-provider", "opencode")
@@ -410,12 +410,19 @@ def test_opencode_source_states_structured_diagnostics_and_preview(page, native,
             {"path": "/synthetic/bad.db", "status": "unreadable", "reason": "Synthetic read failure"},
             {"path": "/synthetic/opencode-next.db", "status": "skipped", "reason": "Synthetic preview skip"}])
         payload["diagnostics"].update(opencode_unknown_message_types={"synthetic-future": 3},
+            opencode_unrecognized_tables=[{"path": "/synthetic/good.db", "names": ["session_synthetic_extra"]}],
+            opencode_unrecognized_migration_keys=[{"path": "/synthetic/good.db", "names": ["migration.synthetic-next"]}],
             opencode_requests_without_usage={"synthetic-provider": 2}, opencode_cost_without_tokens=1,
             opencode_rollup_residuals={"synthetic-session": {"session": "synthetic-session", "database": "/synthetic/good.db", "input": 4, "cost": None, "date": CLOCK, "date_basis": "session_start"}})
     opencode_page(native, mutate)
     with guard_browser_errors(page):
         requests = open_native(page, native.page)
         footer = page.locator('#colophon-footer')
+        for key, name in [("opencode_unrecognized_tables", "session_synthetic_extra"), ("opencode_unrecognized_migration_keys", "migration.synthetic-next")]:
+            panel = footer.locator(f'[data-diagnostic="{key}"]')
+            panel.evaluate("e => e.open = true")
+            expect(panel).to_contain_text("/synthetic/good.db")
+            expect(panel).to_contain_text(name)
         expect(footer.locator('[data-diagnostic="opencode_unknown_message_types"] summary')).to_contain_text("3")
         expect(footer.locator('[data-diagnostic="opencode_requests_without_usage"] summary')).to_contain_text("2")
         expect(footer.locator('[data-diagnostic="opencode_rollup_residuals"] summary')).to_contain_text("1")

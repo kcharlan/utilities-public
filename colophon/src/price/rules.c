@@ -4,6 +4,7 @@
 #include "util/fileio.h"
 #include "util/json_number.h"
 #include <errno.h>
+#include <stdio.h>
 #include <math.h>
 #include <stdlib.h>
 #include <string.h>
@@ -27,6 +28,7 @@ static bool validate(yyjson_doc *doc){
     while((key=yyjson_obj_iter_next(&it))){if(!text_value(key))return false;const char *s=yyjson_get_str(key);v=yyjson_obj_iter_get_val(key);
         if(!strcmp(s,"schema"))continue;
         if(!strcmp(s,"aliases")){if(!yyjson_is_obj(v))return false;yyjson_obj_iter sub=yyjson_obj_iter_with(v);yyjson_val *k;while((k=yyjson_obj_iter_next(&sub))){if(!text_value(k))return false;const char *scope=yyjson_get_str(k);if(strcmp(scope,"codex")&&strcmp(scope,"claude")&&strcmp(scope,"antigravity"))return false;if(!map(yyjson_obj_iter_get_val(k),0))return false;}continue;}
+        if(!strcmp(s,"antigravity_model_numbers")){if(!map(v,0))return false;yyjson_obj_iter nums=yyjson_obj_iter_with(v);yyjson_val *k;while((k=yyjson_obj_iter_next(&nums))){const char *p=yyjson_get_str(k);for(;*p;p++)if(*p<'0'||*p>'9')return false;}continue;}
         if(!strcmp(s,"antigravity_routing_suffixes")){if(!array(v))return false;continue;}
         if(!strcmp(s,"codex_cutoffs_ms")){if(!map(v,2))return false;continue;}
         if(!strcmp(s,"claude_provider_exact")||!strcmp(s,"claude_provider_families")||!strcmp(s,"claude_provider_prefixes")||!strcmp(s,"claude_catalog_aliases")){if(!map(v,0))return false;continue;}
@@ -53,6 +55,7 @@ Err pricing_rules_load(const char *path,PricingRules *out){
 void pricing_rules_destroy(PricingRules *r){yyjson_doc_free(r->defaults);yyjson_doc_free(r->user);*r=(PricingRules){0};}
 yyjson_val *rules_section(const PricingRules *r,const char *section,bool user){if(!r)return NULL;yyjson_doc *d=user?r->user:r->defaults;return d?get(yyjson_doc_get_root(d),section):NULL;}
 static yyjson_val *lookup(const PricingRules *r,const char *section,const char *field,Str key){for(int i=1;i>=0;i--){yyjson_val *v=rules_section(r,section,i);if(field)v=get(v,field);v=obj_get_last(v,key);if(v)return v;}return NULL;}
+Str rules_antigravity_model_number(const PricingRules *r,uint64_t number){char key[32];int n=snprintf(key,sizeof key,"%llu",(unsigned long long)number);yyjson_val *v=lookup(r,"antigravity_model_numbers",NULL,(Str){key,(uint32_t)n});return yyjson_is_str(v)?(Str){yyjson_get_str(v),(uint32_t)yyjson_get_len(v)}:(Str){0};}
 Str rules_alias(const PricingRules *r,const char *scope,Str name){yyjson_val *v=lookup(r,"aliases",scope,name);return yyjson_is_str(v)?(Str){yyjson_get_str(v),(uint32_t)yyjson_get_len(v)}:(Str){0};}
 double rules_codex_fast(const PricingRules *r,Str name){yyjson_val *v=lookup(r,"codex_fast","multipliers",name);PyNum n;return v&&number(v,false,&n)?(n.is_float?n.f:(double)n.i):0;}
 bool rules_codex_cutoff(const PricingRules *r,Str name,int64_t *ms){yyjson_val *v=lookup(r,"codex_cutoffs_ms",NULL,name);PyNum n;if(!v||!number(v,true,&n))return false;*ms=n.i;return true;}

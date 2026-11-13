@@ -19,15 +19,18 @@ Err antigravity_normalize_model(const PricingRules *rules,Arena *arena,Str raw,S
     alias=pricing_alias(rules,lower);if(alias.n)s=alias;
     return str_copy(arena,s,out);
 }
-Err antigravity_model_typed(const PricingRules *rules,AgMismatches *m,Arena *arena,Str response,Str usage,Str metadata,Str previous,const Omap *numbers,Str *raw,Str *normalized) {
+Err antigravity_model_typed(const PricingRules *rules,AgMismatches *m,Arena *arena,Str response,Str usage,Str metadata,AntigravityPrevious previous,const Omap *numbers,Str *raw,Str *normalized,const char **source) {
     Str value=token_model_trim(response);uint64_t model=0;
-    bool has_model=!value.n&&ag_wire_uint(m,AG_USAGE,usage,1,&model)==AG_FOUND;
+    bool has_model=ag_wire_uint(m,AG_USAGE,usage,1,&model)==AG_FOUND;
+    *source=value.n?"response":NULL;
+    if(!value.n&&has_model){value=rules_antigravity_model_number(rules,model);if(value.n)*source="rule";}
     char key[32];int n=snprintf(key,sizeof key,"%llu",(unsigned long long)model);
-    if(!value.n&&has_model&&numbers){Str *learned=omap_get(numbers,(Str){key,(uint32_t)n});if(learned)value=*learned;}
-    if(!value.n){Str info={0};TRY(antigravity_message_merge_typed(m,AG_STEP_METADATA,arena,metadata,24,&info));value=text(m,info,12);if(!value.n)value=text(m,info,8);}
-    if(!value.n)value=previous;
+    if(!value.n&&has_model&&numbers){Str *learned=omap_get(numbers,(Str){key,(uint32_t)n});if(learned){value=*learned;*source="learned";}}
+    if(!value.n){Str info={0};TRY(antigravity_message_merge_typed(m,AG_STEP_METADATA,arena,metadata,24,&info));value=text(m,info,12);if(!value.n)value=text(m,info,8);if(value.n)*source="step";}
+    if(!value.n&&(!has_model||(previous.has_number&&previous.number==model))&&previous.name.n){value=previous.name;*source="previous";}
     if(!value.n&&has_model){char marker[64];int len=snprintf(marker,sizeof marker,"antigravity/model-%llu",(unsigned long long)model);TRY(str_copy(arena,(Str){marker,(uint32_t)len},&value));}
     if(!value.n)value=STR_LIT("antigravity/unattributed");
+    if(!*source)*source="marker";
     *raw=value;return antigravity_normalize_model(rules,arena,value,normalized);
 }
-Err antigravity_model(const PricingRules *rules,Arena *arena,Str response,Str usage,Str metadata,Str previous,const Omap *numbers,Str *raw,Str *normalized){return antigravity_model_typed(rules,NULL,arena,response,usage,metadata,previous,numbers,raw,normalized);}
+Err antigravity_model(const PricingRules *rules,Arena *arena,Str response,Str usage,Str metadata,Str previous,const Omap *numbers,Str *raw,Str *normalized){const char *source;return antigravity_model_typed(rules,NULL,arena,response,usage,metadata,(AntigravityPrevious){.name=previous},numbers,raw,normalized,&source);}

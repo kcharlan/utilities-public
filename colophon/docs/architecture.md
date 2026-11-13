@@ -13,7 +13,7 @@ catalog/priority/pricing → payload/page:
 | `src/scan/` (including `logname.c`), `src/cache/` | Classify plain/compressed log names, discover logs, reuse or reparse native cache entries, stage and commit cache updates. |
 | `src/claude/` | Inspect source presence read-only, enumerate resolved search roots with provenance/completeness, parse Claude prompts/turns/tools, and insert provider-tagged sessions. Compose pinned Claude usage/advisor rows through file-local replacement and original-path winner reconciliation; a narrow C bridge delegates Foundation JSON validity and oversized number coercion to the system runtime. |
 | `src/meta/` | Load Codex metadata through read-only SQLite connections. |
-| `src/opencode/db.{c,h}` | Read OpenCode v2 snapshots through a credential-excluding SQLite authorizer, structural/migration guards and per-database staging. Own raw session/message/tool facts, row identity and clocks, independent token/cost validity and unknown/malformed diagnostics; no retained parse cache. |
+| `src/opencode/db.{c,h}` | Read OpenCode v2 snapshots through a credential-excluding SQLite authorizer, structural/migration guards and per-database staging. Unknown session table/view and migration key names are staged as diagnostics without reading extra tables. Own raw session/message/tool facts, row identity and clocks, independent token/cost validity and unknown/malformed diagnostics; no retained parse cache. |
 | `src/opencode/corpus.{c,h}` | Project accepted OpenCode sessions into shared display models. Keep row-clock fork exclusions and source TurnFacts in the store, map messages to display-turn keys for usage, and link an OpenCode-only acyclic parent graph. |
 | `src/opencode/scan.{c,h}` | Resolve default/environment/explicit paths, order/deduplicate database candidates, skip migration previews, and establish read-only source presence before runtime creation. |
 | `src/opencode/compose.{c,h}` | Author recorded usage/cost units and raw-component residuals, retaining contextual shortfalls and invalid-number facts. |
@@ -27,6 +27,11 @@ catalog/priority/pricing → payload/page:
 | `src/price/` | Fetch/cache catalog, validate and record history, retain priority evidence, compose usage and dated costs. |
 | `src/out/` | Serialize payload and embed it in the offline page. |
 | `src/cli/`, `src/util/` | Coordinate lifecycle, progress, browser/summary, atomic I/O, events, the shared job pool, Unicode and stable sort. |
+
+Catalog normalization retains a rowless canonical identity for missing
+same-provider targets. History recording validates every key independently,
+collecting rejected keys for the payload and CLI diagnostics while continuing
+with valid entries; catalog rate lookup still requires a real row.
 
 Catalog work starts before scanning and joins before pricing. The CLI reads
 ledger state and detects edits before appending newly observed rates; this
@@ -250,3 +255,7 @@ corresponding default array. Invalid user documents contribute no rules. Raw
 observations remain in parse caches, so the next run recomposes with current rules
 without changing cache formats. Catalog identity and dated history keep their
 existing precedence over fallback aliases and policy.
+
+Antigravity ledger schema 1 records model-name provenance independently from
+model number. Missing or unknown provenance is not an observed response; live
+records are rewritten with provenance while retained records stay readable.

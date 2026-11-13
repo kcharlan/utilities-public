@@ -41,6 +41,54 @@ def source(payload):
     return payload["meta"]["sources"]["opencode"]
 
 
+@pytest.mark.parametrize("sql,key,name", [
+    ("CREATE TABLE session_synthetic_extra (value TEXT)", "opencode_unrecognized_tables", "session_synthetic_extra"),
+    ("CREATE VIEW session_synthetic_view AS SELECT 1", "opencode_unrecognized_tables", "session_synthetic_view"),
+    ("INSERT INTO kv VALUES ('migration.synthetic-next','{}',0,0)", "opencode_unrecognized_migration_keys", "migration.synthetic-next"),
+])
+def test_opencode_unknown_schema_names_are_diagnostic(native, sql, key, name):
+    path = database(native)
+    assert native.build().returncode == 0
+    before = native.payload()["sessions"]
+    with sqlite3.connect(path) as db:
+        db.execute(sql)
+    result = native.build()
+    assert result.returncode == 0, result.stderr
+    payload = native.payload()
+    assert payload["sessions"] == before
+    assert payload["diagnostics"]["opencode_schema_errors"] == []
+    assert payload["diagnostics"][key] == [{"path": str(path), "names": [name]}]
+    assert key + "=1" in result.stderr
+    assert str(path) in result.stderr and name in result.stderr
+    assert "SYNTHETIC_UNREAD_CANARY" not in json.dumps(payload)
+    for file in native.runtime.rglob("*"):
+        if file.is_file():
+            assert b"SYNTHETIC_UNREAD_CANARY" not in file.read_bytes()
+
+
+def test_opencode_missing_required_column_remains_fatal(native):
+    path = database(native)
+    with sqlite3.connect(path) as db:
+        db.execute("ALTER TABLE session_v2 DROP COLUMN tokens_output")
+    assert native.build().returncode == 0
+    payload = native.payload()
+    assert payload["sessions"] == []
+    assert payload["diagnostics"]["opencode_schema_errors"][0]["path"] == str(path)
+
+
+def test_opencode_unknown_session_table_contents_remain_private(native):
+    path = database(native)
+    with sqlite3.connect(path) as db:
+        db.execute("CREATE TABLE session_synthetic_private (value TEXT)")
+        db.execute("INSERT INTO session_synthetic_private VALUES ('SYNTHETIC_UNREAD_CANARY')")
+    assert native.build().returncode == 0
+    assert len(native.payload()["sessions"]) == 1
+    assert "SYNTHETIC_UNREAD_CANARY" not in json.dumps(native.payload())
+    for file in native.runtime.rglob("*"):
+        if file.is_file():
+            assert b"SYNTHETIC_UNREAD_CANARY" not in file.read_bytes()
+
+
 def test_opencode_only_build_counts_cost_actions_and_private_runtime(native):
     path = database(native)
     native.codex.rmdir()
@@ -497,7 +545,7 @@ def test_opencode_missing_explicit_file_is_absent_and_never_created(native):
     assert source(payload)["status"] == "absent"
     assert source(payload)["databases"][0]["status"] == "absent"
     assert not missing.exists()
-    assert payload["meta"]["version"] == "0.8.0"
+    assert payload["meta"]["version"] == "0.8.3"
 
 
 def test_opencode_status_prefers_structural_rejection_over_unreadable(native):

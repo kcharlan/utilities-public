@@ -73,6 +73,13 @@ Version 0.7.2 learns Antigravity model numbers from observed response names and 
 Version 0.7.3 resolves catalog model names and canonical identities before
 falling back to built-in aliases, while retaining existing Codex price history keys.
 
+Version 0.8.3 reports unknown OpenCode session tables and migration keys without
+discarding compatible databases. Antigravity model numbers come only from
+observed response names and optional runtime number rules.
+
+Version 0.8.1 stabilizes price-history keys when catalog aliases point to
+missing models and reports invalid recording keys without blocking other rates.
+
 Version 0.8.0 loads pricing aliases, fast multipliers and cutoffs from embedded
 defaults and optional `pricing-rules.json` overrides in the runtime home. Edits
 take effect on the next run without rebuilding or clearing the parse cache.

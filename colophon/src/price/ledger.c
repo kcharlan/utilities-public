@@ -73,9 +73,9 @@ static bool instant(yyjson_val *v,int64_t *out) {
     }
     return time_parse_rfc3339(s,"price.effective_from",out);
 }
-static bool model_valid(const PricingRules *rules,yyjson_val *v) {
+bool ledger_model_key_valid(const PricingRules *rules,Str model) {
     PricingRules defaults={.defaults=rules?rules->defaults:NULL};
-    Str model=string(v);if(!model.n||!token_model_trim(model).n)return false;
+    if(!model.n||!token_model_trim(model).n)return false;
     if(model.n>=8&&!memcmp(model.p,"catalog:",8)) {
         size_t bar=SIZE_MAX;for(size_t i=8;i<model.n;i++)if(model.p[i]=='|')bar=i;
         if(bar==SIZE_MAX||bar==8||bar==model.n-1)return false;
@@ -84,6 +84,7 @@ static bool model_valid(const PricingRules *rules,yyjson_val *v) {
     }
     return str_equal(normalize_codex_model(&defaults,model),model);
 }
+static bool model_valid(const PricingRules *rules,yyjson_val *v) {return ledger_model_key_valid(rules,string(v));}
 typedef struct {PyNum number;bool valid;} LedgerNumber;
 static bool ledger_number(LedgerCheck *check,yyjson_val *v,const char *site,PyNum *out) {
     if(check->numeric_error.code)return false;
@@ -319,29 +320,47 @@ static yyjson_mut_val *rate_block(yyjson_mut_doc *doc,const PriceRates *rates,bo
     }
     return value;
 }
+static Err recording_lookup(ModelsDevIndex *index,Arena *arena,Str source,CatalogLookup *out) {
+    *out=(CatalogLookup){0};PricingTargets targets;
+    Err error=codex_models_dev_pricing_targets(index->rules,arena,source,&targets);if(error.code)return error;
+    for(size_t i=0;i<targets.count;i++){error=models_dev_pricing(index,STR_LIT("openai"),targets.model[i],out);if(error.code||out->model)return error;}
+    return ERR_SUCCESS;
+}
+static Err recording_source_add(ModelsDevIndex *index,Arena *arena,Omap *sources,Str key,Str candidate,bool override) {
+    Str *previous=omap_get(sources,key);
+    if(previous) {
+        CatalogLookup old={0},next={0};Err error=recording_lookup(index,arena,*previous,&old);if(error.code)return error;
+        error=recording_lookup(index,arena,candidate,&next);if(error.code)return error;
+        if(old.model&&!next.model)return ERR_SUCCESS;
+        if(!!old.model==!!next.model&&!override&&(!str_equal(candidate,key)||str_equal(*previous,key)))return ERR_SUCCESS;
+    }
+    Str *copy;Err error=arena_alloc(arena,sizeof *copy,_Alignof(Str),(void **)&copy);if(error.code)return error;
+    *copy=candidate;return omap_put(sources,key,copy);
+}
 Err record_catalog_rates(const PriceHistory *history,ModelsDevIndex *index,int64_t fetched_at_ms,
-                         yyjson_val *recording_ids,int64_t now_ms,yyjson_doc **out) {
+                         yyjson_val *recording_ids,int64_t now_ms,yyjson_doc **out,Omap *skipped) {
     *out=NULL;Omap sources={0};Arena arena={0};OmapEntry **sorted=NULL;
     yyjson_mut_doc *doc=yyjson_mut_doc_new(NULL);Err error=ERR_SUCCESS;
     if(!doc)return err_make(ERR_NOMEM,"catalog recording allocation");
     yyjson_mut_val *rows=yyjson_mut_arr(doc);yyjson_mut_doc_set_root(doc,rows);
     if(!rows){error=err_make(ERR_NOMEM,"catalog recording allocation");goto done;}
+    /* Keep the valid history key separate from a source that resolves to a row. */
     for(OmapEntry *entry=index->models.first;entry;entry=entry->next) {
-        CatalogModel *model=entry->value;Str normalized,*copy;
+        CatalogModel *model=entry->value;Str normalized;
         error=models_dev_normalize(index,model->model_id,&normalized);if(error.code)goto done;
-        error=arena_alloc(&arena,sizeof *copy,_Alignof(Str),(void **)&copy);if(error.code)goto done;
-        *copy=normalized;error=omap_put(&sources,normalized,copy);if(error.code)goto done;
+        error=recording_source_add(index,&arena,&sources,normalized,model->model_id,false);if(error.code)goto done;
     }
     for(OmapEntry *entry=history->groups.first;entry;entry=entry->next) {
-        Str *copy;error=arena_alloc(&arena,sizeof *copy,_Alignof(Str),(void **)&copy);if(error.code)goto done;
-        *copy=entry->key;error=omap_put(&sources,entry->key,copy);if(error.code)goto done;
+        error=recording_source_add(index,&arena,&sources,entry->key,entry->key,false);if(error.code)goto done;
     }
     if(!yyjson_is_obj(recording_ids)){error=err_make(ERR_INVALID,"invalid recording ids");goto done;}
     yyjson_obj_iter it=yyjson_obj_iter_with(recording_ids);yyjson_val *key;
     while((key=yyjson_obj_iter_next(&it))) {
-        Str *copy;if(!yyjson_is_str(yyjson_obj_iter_get_val(key))){error=err_make(ERR_INVALID,"invalid recording id");goto done;}
-        error=arena_alloc(&arena,sizeof *copy,_Alignof(Str),(void **)&copy);if(error.code)goto done;
-        *copy=string(yyjson_obj_iter_get_val(key));error=omap_put(&sources,string(key),copy);if(error.code)goto done;
+        if(!yyjson_is_str(yyjson_obj_iter_get_val(key))){error=err_make(ERR_INVALID,"invalid recording id");goto done;}
+        Str recording_key=string(key);
+        /* Override keys carry their own explicit pricing source. */
+        bool override=recording_key.n>=8&&!memcmp(recording_key.p,"catalog:",8);
+        error=recording_source_add(index,&arena,&sources,recording_key,string(yyjson_obj_iter_get_val(key)),override);if(error.code)goto done;
     }
     if(sources.size>SIZE_MAX/sizeof *sorted){error=err_make(ERR_NOMEM,"catalog recording overflow");goto done;}
     sorted=malloc((sources.size?sources.size:1)*sizeof *sorted);if(!sorted){error=err_make(ERR_NOMEM,"catalog recording allocation");goto done;}
@@ -352,10 +371,9 @@ Err record_catalog_rates(const PriceHistory *history,ModelsDevIndex *index,int64
     char effective[21],recorded[21];
     if(!time_format_rfc3339(effective_ms,effective)||!time_format_rfc3339(now_ms,recorded)){error=err_make(ERR_INVALID,"invalid catalog recording clock");goto done;}
     for(size_t i=0;i<count;i++) {
-        Str model=*(Str *)sorted[i]->value;PricingTargets targets;
-        error=codex_models_dev_pricing_targets(index->rules,&arena,model,&targets);if(error.code)goto done;
-        CatalogLookup lookup={0};
-        for(size_t j=0;j<targets.count;j++){error=models_dev_pricing(index,STR_LIT("openai"),targets.model[j],&lookup);if(error.code)goto done;if(lookup.model)break;}
+        if(!ledger_model_key_valid(index->rules,sorted[i]->key)){error=omap_put(skipped,sorted[i]->key,(void *)1);if(error.code)goto done;continue;}
+        Str model=*(Str *)sorted[i]->value;CatalogLookup lookup={0};
+        error=recording_lookup(index,&arena,model,&lookup);if(error.code)goto done;
         if(!lookup.model)continue;
         const HistoryGroup *group=history_entries_for(history,sorted[i]->key);
         bool same_date=false;
@@ -556,4 +574,4 @@ done:
 void runtime_ledger_json(JsonWriter *w,const RuntimeLedger *ledger) {
     jsonw_raw(w,"[");if(ledger)for(LedgerDiagnostic *diagnostic=ledger->diagnostics;diagnostic;diagnostic=diagnostic->next){if(diagnostic!=ledger->diagnostics)jsonw_raw(w,",");jsonw_raw(w,"{\"level\":");jsonw_string(w,diagnostic->level);jsonw_raw(w,",\"message\":");jsonw_string(w,diagnostic->message);jsonw_raw(w,"}");}jsonw_raw(w,"]");
 }
-void runtime_ledger_destroy(RuntimeLedger *ledger) {ledger_check_destroy(&ledger->check);yyjson_doc_free(ledger->curated);yyjson_doc_free(ledger->document);yyjson_doc_free(ledger->entries);arena_destroy(&ledger->arena);*ledger=(RuntimeLedger){0};}
+void runtime_ledger_destroy(RuntimeLedger *ledger) {ledger_check_destroy(&ledger->check);yyjson_doc_free(ledger->curated);yyjson_doc_free(ledger->document);yyjson_doc_free(ledger->entries);omap_destroy(&ledger->skipped_keys);arena_destroy(&ledger->arena);*ledger=(RuntimeLedger){0};}

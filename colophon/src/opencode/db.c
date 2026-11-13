@@ -1,6 +1,7 @@
 #define _DARWIN_C_SOURCE
 #include "db.h"
 #include "compose.h"
+#include "corpus/subagents.h"
 #include "meta/metadata.h"
 #include "parse/record.h"
 #include "testing/hooks.h"
@@ -244,7 +245,7 @@ static Err schema_columns(sqlite3 *db,Table *table) {
         e=err_make(ERR_INVALID,"OpenCode %s missing required column %s",table->name,table->columns[i].name);
     return e;
 }
-static Err schema_guard(sqlite3 *db,OpencodeDatabase *info,Table *tables,size_t n) {
+static Err schema_guard(sqlite3 *db,OpencodeDatabase *info,Arena *arena,Table *tables,size_t n) {
     sqlite3_stmt *st=NULL;Err e=prepare(db,"SELECT name,type FROM sqlite_master WHERE type IN ('table','view')",&st);
     int rc=SQLITE_DONE;bool legacy=false;Omap found={0};
     static const char *const generations[]={"session","session_v2","session_message","session_share","session_inbox","session_pending"};
@@ -255,7 +256,7 @@ static Err schema_guard(sqlite3 *db,OpencodeDatabase *info,Table *tables,size_t 
         if(equal(name,"session"))legacy=true;
         if(name.n>=7&&!memcmp(name.p,"session",7)){
             bool allowed=false;for(size_t i=0;i<sizeof generations/sizeof *generations;i++)if(equal(name,generations[i]))allowed=true;
-            if(!allowed)e=err_make(ERR_INVALID,"unrecognized OpenCode session generation table");
+            if(!allowed){Str copy={0};e=str_copy(arena,name,&copy);if(!e.code)e=corpus_strings_add(arena,&info->unrecognized_tables,copy);}
         }
         for(size_t i=0;!e.code&&i<n;i++)if(equal(name,tables[i].name)){
             if(!equal(kind,"table"))e=err_make(ERR_INVALID,"OpenCode query source is not a table");
@@ -275,14 +276,14 @@ static Err schema_guard(sqlite3 *db,OpencodeDatabase *info,Table *tables,size_t 
         if(rc==SQLITE_ROW){
             Str id={0};e=sql_text(st,0,&id);
             if(!e.code&&!id.n)e=err_make(ERR_INVALID,"invalid OpenCode migration id");
-            if(!e.code){e=str_copy(&info->arena,id,&info->latest_migration);}
+            if(!e.code){e=str_copy(arena,id,&info->latest_migration);}
         }else if(rc!=SQLITE_DONE)e=sql_error(db);
     }
     sqlite3_finalize(st);st=NULL;
     if(!e.code)e=prepare(db,"SELECT key FROM kv WHERE key LIKE 'migration.%'",&st);
     while(!e.code&&(rc=sqlite3_step(st))==SQLITE_ROW){
         Str key={0};e=sql_text(st,0,&key);
-        if(!e.code&&!equal(key,"migration.v1-v2"))e=err_make(ERR_INVALID,"unrecognized OpenCode migration key");
+        if(!e.code&&!equal(key,"migration.v1-v2")){Str copy={0};e=str_copy(arena,key,&copy);if(!e.code)e=corpus_strings_add(arena,&info->unrecognized_migration_keys,copy);}
     }
     if(!e.code&&rc!=SQLITE_DONE)e=sql_error(db);sqlite3_finalize(st);st=NULL;
     if(!e.code&&legacy){
@@ -478,7 +479,7 @@ static Err read_database(OpencodeStore *stage,OpencodeDatabase *info,size_t inde
     Table tables[]={TABLE("session_v2",session_columns),TABLE("session_message",message_columns),TABLE("project",project_columns),TABLE("migration",migration_columns),TABLE("kv",kv_columns)};
     if(!e.code)sqlite3_progress_handler(db,1000,progress,(void *)stop);
     if(!e.code)e=execute(db,"BEGIN");
-    if(!e.code)e=schema_guard(db,info,tables,sizeof tables/sizeof *tables);
+    if(!e.code)e=schema_guard(db,info,&stage->arena,tables,sizeof tables/sizeof *tables);
     if(!e.code)e=read_sessions(db,tables,stage,info,index,stop);
     if(!e.code)e=read_messages(db,&tables[1],stage,stop);
     if(!e.code&&stop&&cp_fault("opencode.cancel.commit"))*stop=1;
@@ -500,7 +501,7 @@ Err opencode_store_read(OpencodeStore *store,volatile sig_atomic_t *stop) {
         if(!S_ISREG(st.st_mode)){info->status=OC_DB_SKIPPED;TRY(str_copy(&store->arena,STR_LIT("database is not a regular file"),&info->reason));continue;}
         OpencodeStore stage={0};Err e=read_database(&stage,info,i,stop);
         if(e.code){
-            stage_destroy(&stage);arena_destroy(&info->arena);info->latest_migration=(Str){0};
+            stage_destroy(&stage);arena_destroy(&info->arena);info->latest_migration=(Str){0};info->unrecognized_tables=(CorpusStrings){0};info->unrecognized_migration_keys=(CorpusStrings){0};
             if(e.code==ERR_NOMEM||(stop&&*stop))return e;
             info->status=e.code==ERR_INVALID?OC_DB_UNSUPPORTED:OC_DB_UNREADABLE;
             TRY(str_copy(&store->arena,text(e.message),&info->reason));continue;
@@ -527,16 +528,13 @@ Err opencode_store_read(OpencodeStore *store,volatile sig_atomic_t *stop) {
             if(omap_get(&store->session_ids,s->id)!=s)session_maps_destroy(s);
         }
         omap_destroy(&stage.session_ids);
-        /* Transfer the staging arena separately from migration metadata. */
+        /* Transfer the staged facts and schema diagnostics together. */
         if(!e.code){
-            /* Migration metadata was allocated before facts; preserve it in the
-             * store arena before replacing the database's arena owner. */
-            Str migration={0};e=str_copy(&store->arena,info->latest_migration,&migration);
-            if(!e.code){arena_destroy(&info->arena);info->latest_migration=migration;info->arena=stage.arena;stage.arena=(Arena){0};}
+            arena_destroy(&info->arena);info->arena=stage.arena;stage.arena=(Arena){0};
         }
         if(e.code){
             /* Already-published pointers need the staging owner even on NOMEM. */
-            arena_destroy(&info->arena);info->latest_migration=(Str){0};info->arena=stage.arena;
+            arena_destroy(&info->arena);info->arena=stage.arena;
             return e;
         }
     }
