@@ -8,16 +8,18 @@ A local dashboard for exploring MLS playoff races across both conferences. It pu
 ./mls_tracker
 ```
 
-Requires [uv](https://docs.astral.sh/uv/) (`brew install uv`); the launcher uses a PEP 723 inline-metadata header. The first run resolves its dependencies (fastapi, uvicorn, requests) into uv's shared cache — that invocation may briefly hit the network; subsequent runs are fast. A browser tab opens automatically to `http://127.0.0.1:8501`.
+Requires [uv](https://docs.astral.sh/uv/) (`brew install uv`); the launcher uses a PEP 723 inline-metadata header. The first run resolves its dependencies (fastapi, uvicorn, requests) into uv's shared cache — that invocation may briefly hit the network; subsequent runs are fast. A browser tab opens automatically at the selected local port (8501 by default).
 
 The backend needs internet access to fetch standings and team metadata from ESPN. The frontend assets are embedded and do not require CDN access. The backend embeds ESPN team logos in its responses. Logos are cached in memory by URL for a week, separately from the 5-minute data cache and the refresh button, so a failed download keeps the previous logo. A logo is blank when its fetch fails with no earlier copy, or when it would push all logos past the 8 MiB total limit.
 
 ### Options
 
 ```
---port PORT, -p PORT    Port to serve on (default: 8501)
+--port PORT, -p PORT    Preferred port to serve on (default: 8501)
 --no-browser            Don't open browser automatically
 ```
+
+If the preferred port is in use, the tool tries the next 19 ports and logs a warning when it moves.
 
 ## Features
 

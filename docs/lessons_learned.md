@@ -2580,3 +2580,9 @@ scroll it into view, and test navigation beyond the list's visible height.
 Pointer hover and keyboard focus can coexist on different rows. Track their
 ownership separately so leaving one row or blurring another does not clear an
 active chart highlight; test transitions between both inputs in a browser.
+
+## 2026-11-13: Test occupied preferred ports
+
+Local servers must use the selected free port consistently for the server,
+browser URL, and logs. Hold a synthetic listener open in a regression test to
+catch passing the occupied preferred port through to the server.

@@ -14,6 +14,7 @@ import asyncio
 import logging
 import os
 import re
+import socket
 import subprocess
 import sys
 import threading
@@ -31,7 +32,7 @@ from fastapi.responses import HTMLResponse
 
 def parse_args():
     parser = argparse.ArgumentParser(description="MLS Playoff Tracker")
-    parser.add_argument("--port", "-p", type=int, default=8501, help="Port to serve on (default: 8501)")
+    parser.add_argument("--port", "-p", type=int, default=8501, help="Preferred port to serve on (default: 8501)")
     parser.add_argument("--no-browser", action="store_true", help="Don't open browser automatically")
     return parser.parse_args()
 
@@ -2712,6 +2713,17 @@ HTML_TEMPLATE = HTML_TEMPLATE.replace("<!-- frontend-vendor -->", FRONTEND_VENDO
 # Server Lifecycle
 # ============================================================
 
+def find_free_port(start_port, max_attempts=20):
+    for port in range(start_port, start_port + max_attempts):
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+            try:
+                s.bind(("127.0.0.1", port))
+                return port
+            except OSError:
+                continue
+    raise RuntimeError(f"No free port found in range {start_port}–{start_port + max_attempts - 1}")
+
+
 def open_browser(port: int):
     time.sleep(1.5)
     webbrowser.open(f"http://127.0.0.1:{port}")
@@ -2724,13 +2736,16 @@ def testing_mode_enabled() -> bool:
 
 def main():
     args = parse_args()
+    port = find_free_port(args.port)
+    if port != args.port:
+        logger.warning("Port %d is in use; using port %d instead.", args.port, port)
 
     if not args.no_browser and not testing_mode_enabled():
-        t = threading.Thread(target=open_browser, args=(args.port,), daemon=True)
+        t = threading.Thread(target=open_browser, args=(port,), daemon=True)
         t.start()
 
-    logger.info("Starting MLS Playoff Tracker on http://127.0.0.1:%d", args.port)
-    uvicorn.run(app, host="127.0.0.1", port=args.port, log_level="warning")
+    logger.info("Starting MLS Playoff Tracker on http://127.0.0.1:%d", port)
+    uvicorn.run(app, host="127.0.0.1", port=port, log_level="warning")
 
 
 if __name__ == "__main__":
