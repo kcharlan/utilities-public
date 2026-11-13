@@ -1,0 +1,373 @@
+{
+  "checked": "2026-11-13",
+  "latestRelease": "2026-11-13",
+  "baselineManifest": "ai_model_timeline_update_sources_2026_11_12.json",
+  "preservedHistoricalRows": 610,
+  "additions": [
+    {
+      "model": "HeyGen Decision 1",
+      "lab": "HeyGen",
+      "date": "2026-11-13",
+      "tier": "specialty",
+      "note": "Multimodal decision model for classification, yes/no evaluation and scoring over text, images and sampled video frames. Quality model is available through HeyGen's API; its Turbo companion remains a preview in the publisher's documentation.",
+      "source": "https://developers.heygen.com/docs/models/heygen-decision"
+    },
+    {
+      "model": "Atlas (public access)",
+      "lab": "World Labs",
+      "date": "2026-11-12",
+      "tier": "specialty",
+      "note": "Public access to the existing spatial world model through Viewfinder, Chisel and developer APIs, for generating or reconstructing worlds and exporting images, video or 3D Gaussian splats. An availability milestone rather than a new model version or an open-weight release.",
+      "source": "https://worldlabs.ai/atlas"
+    },
+    {
+      "model": "Bielik-One family",
+      "lab": "SpeakLeash / Cyfronet AGH",
+      "date": "2026-11-12",
+      "tier": "specialty",
+      "note": "Four Apache-2.0 decision models classify or score inputs against supplied criteria and return probabilities instead of free-form answers. Public merged weights cover 4B, 7B-v3.0, 11B-v3.0 and 11B-v3.1 variants, with adapter releases alongside them.",
+      "source": "https://www.bielik.ai/en/blog/launching-bielik-11b-v31-dflash-and-the-bielik-one-family"
+    },
+    {
+      "model": "Edge0-145B / Edge0-120B",
+      "lab": "AutoArk (Edge0)",
+      "date": "2026-11-12",
+      "tier": "open-weights",
+      "note": "Open-weight on-device mixture-of-experts models released with an inference framework for local coding, reasoning, and agents. The 145B model activates about 10B parameters per step. Quantized checkpoints use the Edge0 Community Model License 1.0; memory, speed, and benchmark figures in the announcement are vendor measurements.",
+      "source": "https://edge0.ai/blog/introducing-edge0-145b-frontier-ai-capabilities-on-your-own-computer"
+    },
+    {
+      "model": "Gemini 4 Hydrogen",
+      "lab": "Google",
+      "date": "2026-11-12",
+      "tier": "mid",
+      "note": "Generally available fast Gemini 4 model for everyday coding and agent workflows, with a 1M-token context window and configurable thinking. Available through free and paid Gemini API and AI Studio tiers, the Gemini app and Search; Antigravity access requires Google AI Pro or Ultra.",
+      "source": "https://blog.google/innovation-and-ai/models-and-research/gemini-models/introducing-gemini-4-hydrogen/"
+    },
+    {
+      "model": "Granite 4.1 3B / 8B LLMON Preview",
+      "lab": "IBM",
+      "date": "2026-11-12",
+      "tier": "open-weights",
+      "note": "Two Apache-2.0 experimental instruction-model previews trained to consume and generate LLMON markup. Explicit blocks and execution pointers bind instructions to data, separating trusted instructions from documents and tool results; IBM reports improved indirect prompt-injection robustness on its evaluated benchmarks.",
+      "source": "https://huggingface.co/blog/ibm-granite/llmon-an-llm-native-markup-language-now-in-granite"
+    },
+    {
+      "model": "Hark Handoff²",
+      "lab": "Hark",
+      "date": "2026-11-12",
+      "tier": "specialty",
+      "note": "Updated computer-use model for end-to-end web tasks begins rolling out to Hark Pro users. Hark reports a faster trained model and additional backend speed improvements; its task-completion results are internal benchmarks.",
+      "source": "https://hark.com/articles/introducing-hark-handoff-now-2x-faster"
+    },
+    {
+      "model": "MetaEncoder v1",
+      "lab": "Meta",
+      "date": "2026-11-12",
+      "tier": "open-weights",
+      "note": "Public multimodal encoder for text, image, video and document retrieval and structured decisions. Downloadable weights and a Transformers wrapper expose encode, retrieve and decide calls with 6,656-dimensional embeddings.",
+      "source": "https://huggingface.co/facebook/meta-encoder-v1"
+    },
+    {
+      "model": "Perplexity Decider v1.3 / Decider Flash v1.3",
+      "lab": "Perplexity",
+      "date": "2026-11-12",
+      "tier": "specialty",
+      "note": "Apache-2.0 multimodal decision models add Locate extraction of exact text spans with character offsets and confidence. Available through the Decisions API and OpenRouter, with public ungated weights for both the Qwen3.8-27B-based model and its smaller Qwen3.5-4B-based distilled companion.",
+      "source": "https://community.perplexity.ai/t/were-rolling-out-pplx-decider-v1-3-and-pplx-decider-flash-v1-3-the-latest-version-of-our-open-weight-decision-models/6606"
+    },
+    {
+      "model": "SOV-Transcribe-1",
+      "lab": "Salesforce",
+      "date": "2026-11-12",
+      "tier": "specialty",
+      "note": "Apache-2.0 open speech-augmented language model for non-streaming transcription, with multilingual support, natural-language transcription style control and context biasing. Combines a Whisper audio encoder with a Gemma 4 mixture-of-experts backbone.",
+      "source": "https://huggingface.co/blog/salesforce-sovereign-intelligence/sov-transcribe-1"
+    },
+    {
+      "model": "AlphaGenome 2",
+      "lab": "Google",
+      "date": "2026-11-11",
+      "tier": "specialty",
+      "note": "DNA sequence model conditioned on cell type or state to predict gene regulation and variant effects. Available through the AlphaGenome API for non-commercial research, with commercial research in private preview. A research model, not validated for clinical or diagnostic use.",
+      "source": "https://deepmind.google/blog/alphagenome-2-deciphering-how-cells-read-dna-to-better-understand-disease/"
+    },
+    {
+      "model": "Praxis-1 (open weights)",
+      "lab": "Runway",
+      "date": "2026-11-11",
+      "tier": "specialty",
+      "note": "Open weights, inference and fine-tuning code under Apache-2.0 for the 27B world action model, which predicts video and actions. The base checkpoint requires embodiment-specific heads and fine-tuning for robot control.",
+      "source": "https://runway.com/news/company-news/praxis-1-is-now-available"
+    },
+    {
+      "model": "Scribe v3 Medical (announcement)",
+      "lab": "ElevenLabs",
+      "date": "2026-11-11",
+      "tier": "specialty",
+      "note": "Healthcare transcription model named at ElevenLabs Summit NYC, tuned for medical terminology. The announcement does not establish a separate API model ID or general availability milestone; the November 10 Scribe launch already mentioned a medical variant of v3 Live in ElevenAgents.",
+      "source": "https://elevenlabs.io/blog/nyc-summit"
+    },
+    {
+      "model": "Scribe v3 / v3 Live",
+      "lab": "ElevenLabs",
+      "date": "2026-11-10",
+      "tier": "specialty",
+      "note": "Recorded-audio and realtime speech-to-text models with speaker diarization, multilingual transcription and terminology controls. Both launched in ElevenAPI and the ElevenLabs app; Live also launched in ElevenAgents.",
+      "source": "https://elevenlabs.io/blog/scribe-v3"
+    },
+    {
+      "model": "GR00T 2 / Turbo (research announcement)",
+      "lab": "NVIDIA",
+      "date": "2026-11-09",
+      "tier": "specialty",
+      "note": "World-action models jointly predicting future video and robot actions for dexterous manipulation and whole-body control. Introduced at CoRL; the research page schedules code for December, so this is an announcement rather than a downloadable-weight release.",
+      "source": "https://blogs.nvidia.com/blog/robotics-simulation-advancements-corl/"
+    },
+    {
+      "model": "LongCat-2.5 (open weights)",
+      "lab": "Meituan",
+      "date": "2026-11-09",
+      "tier": "open-weights",
+      "note": "MIT-licensed weights for the native multimodal mixture-of-experts model, including a W4A4 quantized companion, following the November 2 hosted release. Publisher describes 1.6T total and approximately 48B active parameters; deployment documentation targets NPU inference.",
+      "source": "https://x.com/Meituan_LongCat/status/2119793531393040462"
+    }
+  ],
+  "corrections": [],
+  "dateEvidence": [
+    {
+      "models": [
+        "Gemini 4 Hydrogen"
+      ],
+      "sourceURLs": [
+        "https://blog.google/innovation-and-ai/models-and-research/gemini-models/introducing-gemini-4-hydrogen/",
+        "https://aistudio.google.com/docs/changelog"
+      ],
+      "result": "Use November 12 announcement and API GA date. The announcement was updated November 13; that is not a second release. Several trackers use their November 13 coverage date. API release notes explicitly date gemini-4-hydrogen GA November 12."
+    },
+    {
+      "models": [
+        "Edge0-145B / Edge0-120B"
+      ],
+      "sourceURLs": [
+        "https://edge0.ai/blog/introducing-edge0-145b-frontier-ai-capabilities-on-your-own-computer",
+        "https://huggingface.co/Edge0/Edge0-145B-NVFP4",
+        "https://huggingface.co/Edge0/Edge0-120B-NVFP4"
+      ],
+      "result": "Publisher's November 12 post explicitly releases both models and links public downloadable checkpoints. Group quantizations and same-day siblings as one family event."
+    },
+    {
+      "models": [
+        "AlphaGenome 2"
+      ],
+      "sourceURLs": [
+        "https://deepmind.google/blog/alphagenome-2-deciphering-how-cells-read-dna-to-better-understand-disease/"
+      ],
+      "result": "Publisher dates announcement and API research availability November 11; November 12 tracker coverage does not move the launch date. This is an omitted earlier event in the update window."
+    },
+    {
+      "models": [
+        "MetaEncoder v1"
+      ],
+      "sourceURLs": [
+        "https://huggingface.co/api/models/facebook/meta-encoder-v1",
+        "https://huggingface.co/api/models/facebook/meta-encoder-v1/commits/main",
+        "https://huggingface.co/api/models/facebook/meta-encoder-v1/tree/d5de8441549e3c5a794aab6b243084af194f6c90",
+        "https://huggingface.co/facebook/meta-encoder-v1/raw/main/README.md"
+      ],
+      "result": "Public and ungated model API response. Repo created 2026-11-12T02:00:27Z but initial commit e5242f5fe3d9a2302b473b402e9763d8a8471be4 contained only .gitattributes and 28-byte README, so creation is not proof weights were public then. Full weight upload d5de8441549e3c5a794aab6b243084af194f6c90 dated 2026-11-12T04:31:36Z contains 11 safetensors shards, embedding head, index, tokenizer, config and implementation. UTC date is November 12. November 11 in ET-based aggregators is a timezone rendering, not a distinct release. Card provides concrete retrieval/decision APIs; no license declared in v1 card, so do not call it Apache-2.0 from the older model's card."
+    },
+    {
+      "models": [
+        "Scribe v3 / v3 Live"
+      ],
+      "sourceURLs": [
+        "https://elevenlabs.io/blog/scribe-v3"
+      ],
+      "result": "Official post published November 10, 2026, explicitly launches both models. API model IDs scribe_v3 and scribe_v3_live are available today; both default in app; Live in ElevenAgents. Final paragraph says healthcare-optimized Scribe v3 Live releasing in ElevenAgents."
+    },
+    {
+      "models": [
+        "Scribe v3 Medical (announcement)"
+      ],
+      "sourceURLs": [
+        "https://elevenlabs.io/blog/nyc-summit",
+        "https://elevenlabs.io/blog/scribe-v3"
+      ],
+      "result": "Summit post dated November 11, 2026 says event took place today and names healthcare model Scribe v3 Medical. No separate model ID, launch date or access statement established for the named Medical version. November 12/13 secondary story dates must not become launch dates. Earlier Nov10 medical Live mention means this should be explicitly a named announcement, not claimed first access."
+    },
+    {
+      "models": [
+        "GR00T 2 / Turbo (research announcement)"
+      ],
+      "sourceURLs": [
+        "https://blogs.nvidia.com/blog/robotics-simulation-advancements-corl/",
+        "https://research.nvidia.com/labs/gear/gr00t-2/"
+      ],
+      "result": "Official NVIDIA announcement dated November 9, 2026. Research page describes both GR00T2 and Turbo and says code available in December. Human-1M-100K public training data is not evidence model weights shipped."
+    },
+    {
+      "models": [
+        "HeyGen Decision 1"
+      ],
+      "sourceURLs": [
+        "https://developers.heygen.com/docs/models/heygen-decision",
+        "https://openrouter.ai/heygen/heygen-decision-1"
+      ],
+      "result": "OpenRouter, the serving platform listing HeyGen as provider, explicitly states Released Nov 13, 2026. HeyGen docs confirm heygen-decision-1 live API, Turbo preview."
+    },
+    {
+      "models": [
+        "Hark Handoff²"
+      ],
+      "sourceURLs": [
+        "https://hark.com/articles/introducing-hark-handoff-now-2x-faster"
+      ],
+      "result": "Primary post header NOV 12 and copyright 2026, release text 'Today, we're releasing Handoff²' and rollout to all Hark Pro users today."
+    },
+    {
+      "models": [
+        "Perplexity Decider v1.3 / Decider Flash v1.3"
+      ],
+      "sourceURLs": [
+        "https://community.perplexity.ai/t/were-rolling-out-pplx-decider-v1-3-and-pplx-decider-flash-v1-3-the-latest-version-of-our-open-weight-decision-models/6606",
+        "https://huggingface.co/perplexity-ai/pplx-decider-v1.3",
+        "https://huggingface.co/perplexity-ai/pplx-decider-flash-v1.3",
+        "https://huggingface.co/api/models/perplexity-ai/pplx-decider-v1.3",
+        "https://huggingface.co/api/models/perplexity-ai/pplx-decider-flash-v1.3"
+      ],
+      "result": "Official pplx-announcements forum post November 12, 2026, 7:34pm announces rolling out both versions and now available in Decisions API, Hugging Face and OpenRouter. Direct HF APIs private:false,gated:false,license apache-2.0, 14 weight files for main and 5 for Flash. Main 26,085,330,160 actual tensor params; Flash 4,539,265,536. Do not confuse these file totals with backbone product names. Model card's usage prose says repository private, contradicted by current API metadata and public weight listing; do not repeat stale limitation. Blog URL could not be fetched."
+    },
+    {
+      "models": [
+        "SOV-Transcribe-1"
+      ],
+      "sourceURLs": [
+        "https://huggingface.co/blog/salesforce-sovereign-intelligence/sov-transcribe-1",
+        "https://huggingface.co/salesforce-sovereign-intelligence/SOV-Transcribe-1"
+      ],
+      "result": "Publisher-authored Hugging Face launch blog Published November 12, 2026 says 'Today, we're introducing' the model."
+    },
+    {
+      "models": [
+        "Granite 4.1 3B / 8B LLMON Preview"
+      ],
+      "sourceURLs": [
+        "https://huggingface.co/blog/ibm-granite/llmon-an-llm-native-markup-language-now-in-granite",
+        "https://huggingface.co/ibm-granite/granite-4.1-3b-llmon-preview",
+        "https://huggingface.co/ibm-granite/granite-4.1-8b-llmon-preview"
+      ],
+      "result": "IBM-authored blog Published November 12, 2026 says today releasing two experimental preview models. Both model cards explicitly Release Date November 12, 2026."
+    },
+    {
+      "models": [
+        "Bielik-One family"
+      ],
+      "sourceURLs": [
+        "https://www.bielik.ai/en/blog/launching-bielik-11b-v31-dflash-and-the-bielik-one-family",
+        "https://huggingface.co/speakleash/Bielik-One-4B-r1",
+        "https://huggingface.co/speakleash/Bielik-One-7B-v3.0-r1",
+        "https://huggingface.co/speakleash/Bielik-One-11B-v3.0-r1",
+        "https://huggingface.co/speakleash/Bielik-One-11B-v3.1-r1"
+      ],
+      "result": "Publisher Nov10 announcement launch schedule explicitly Nov12 Bielik-One family. Current HF API for all four merged repos private:false,gated:false,apache-2.0 with weight files corroborates availability (repository creation dates earlier than launch are not used)."
+    },
+    {
+      "models": [
+        "LongCat-2.5 (open weights)"
+      ],
+      "sourceURLs": [
+        "https://x.com/Meituan_LongCat/status/2119793531393040462",
+        "https://publish.twitter.com/oembed?url=https://x.com/Meituan_LongCat/status/2119793531393040462",
+        "https://huggingface.co/meituan-longcat/LongCat-2.5",
+        "https://huggingface.co/meituan-longcat/LongCat-2.5-W4A4"
+      ],
+      "result": "Official X oEmbed returns publisher text 'We’re releasing the weights for LongCat-2.5 today' and date November 9, 2026. Source retrieved directly with curl; original X page returns403. This establishes announced weight release, unlike HF creation/modified timestamps. Both current HF model APIs private:false,gated:false,license:mit and safetensor file listings. BF16 tensor metadata totals about1.78T; do not silently replace publisher's1.6T claim or invent reason for discrepancy."
+    },
+    {
+      "models": [
+        "Praxis-1 (open weights)"
+      ],
+      "sourceURLs": [
+        "https://runway.com/news/company-news/praxis-1-is-now-available",
+        "https://huggingface.co/runwayml/praxis-1-base"
+      ],
+      "result": "Publisher dates the open-weight release November 11; the public gated checkpoint and model card document the base model and fine-tuning requirements."
+    },
+    {
+      "models": [
+        "Atlas (public access)"
+      ],
+      "sourceURLs": [
+        "https://worldlabs.ai/blog",
+        "https://worldlabs.ai/atlas"
+      ],
+      "result": "Publisher blog dates the release November 12; the Atlas page documents public tools and developer API access."
+    }
+  ],
+  "exclusions": [
+    {
+      "candidate": "Gemini Robotics 2.5; Gemini Decision 1; Qwen4-Max-Preview repeat coverage",
+      "reason": "Existing November 10 Robotics partner-rollout, November 11 Decision 1, and November 11 Qwen4 Max Preview rows already represent these launches. Robotics primary announcement confirms November 10 despite November 12 coverage.",
+      "sources": [
+        "https://deepmind.google/blog/gemini-robotics-2-5-accelerates-real-world-physical-intelligence/",
+        "https://blog.google/innovation-and-ai/technology/developers-tools/gemini-decisions-api/",
+        "https://docs.qwencloud.com/developer-guides/getting-started/latest-model"
+      ]
+    },
+    {
+      "candidate": "GR00T2 November 11 or 13 launch",
+      "reason": "Later reporting; official research announcement is November 9. No proof of November downloadable weights.",
+      "sources": [
+        "https://blogs.nvidia.com/blog/robotics-simulation-advancements-corl/"
+      ]
+    },
+    {
+      "candidate": "Scribe v3 Medical November 12 launch",
+      "reason": "Summit official post is November 11; separate first access unestablished, and medical Live variant already mentioned November 10.",
+      "sources": [
+        "https://elevenlabs.io/blog/nyc-summit"
+      ]
+    },
+    {
+      "candidate": "MetaEncoder v1 creation equals weight availability",
+      "reason": "Initial Nov12 02:00:27Z commit empty of weights. Use Nov12 04:31:36Z full upload, same UTC calendar date.",
+      "sources": [
+        "https://huggingface.co/facebook/meta-encoder-v1/commits/main"
+      ]
+    },
+    {
+      "candidate": "HeyGen Decision 1 Turbo",
+      "reason": "Publisher docs mark preview, opens to all API keys soon; do not imply general availability. Can mention preview companion within Decision1 row. OpenRouter-facing listings exist but were not fetched successfully.",
+      "sources": [
+        "https://developers.heygen.com/docs/models/heygen-decision"
+      ]
+    },
+    {
+      "candidate": "LLMON markup language",
+      "reason": "Not itself a model; include in Granite model release note.",
+      "sources": [
+        "https://huggingface.co/blog/ibm-granite/llmon-an-llm-native-markup-language-now-in-granite"
+      ]
+    },
+    {
+      "candidate": "LongCat Nov10 weight date",
+      "reason": "Incorrect inference from lastModified/documentation update; official X announcement dated Nov9 establishes release.",
+      "sources": [
+        "https://x.com/Meituan_LongCat/status/2119793531393040462"
+      ]
+    }
+  ],
+  "sourceSweep": [
+    {
+      "lab": "November releases and earlier gaps",
+      "sourceURLs": [
+        "https://blog.jiufeng.ai/releases/2026-11",
+        "https://benchlm.ai/model-updates/releases/november-2026",
+        "https://www.llm-releases.com/",
+        "https://tsnmedia.org/category/ai-models/"
+      ],
+      "result": "Compared release trackers and publisher announcements with existing records; checked dates and availability against primary posts, model cards and public hosting metadata."
+    }
+  ]
+}

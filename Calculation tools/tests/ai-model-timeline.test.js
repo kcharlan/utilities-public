@@ -37,6 +37,19 @@ function loadCore() {
 
 const data = extractData();
 
+test('November 13 update records release milestones and access distinctions', () => {
+  const row = model => data.find(item => item.model === model);
+  assert.equal(row('HeyGen Decision 1')?.date, '2026-11-13');
+  assert.match(row('HeyGen Decision 1').note, /Turbo companion remains a preview/);
+  assert.equal(row('Gemini 4 Hydrogen')?.date, '2026-11-12');
+  assert.match(row('Edge0-145B / Edge0-120B').note, /Community Model License/);
+  assert.equal(row('Bielik-One family')?.date, '2026-11-12');
+  assert.match(row('Scribe v3 Medical (announcement)').note, /does not establish.*general availability/);
+  assert.match(row('GR00T 2 / Turbo (research announcement)').note, /announcement rather than a downloadable-weight release/);
+  assert.equal(row('LongCat-2.5 (open weights)')?.date, '2026-11-09');
+  assert.match(row('Praxis-1 (open weights)').note, /fine.tun/);
+});
+
 test('November 12 update preserves hosted dates and distinguishes previews from public weights', () => {
   const update = require('../docs/ai_model_timeline_update_sources_2026_11_12.json');
   assert.equal(update.additions.length, 9);
@@ -55,7 +68,7 @@ test('November 12 update preserves hosted dates and distinguishes previews from 
   assert.equal(row('ERNIE-Light-DT-1.0 (hosted release)')?.date, '2026-11-10');
   assert.match(row('ERNIE-Wizshot-ME (documented API availability)').note, /exact first public launch date was not established/);
   assert.match(row('Bielik-11B-v3.1 DFlash').note, /not a standalone language model/);
-  assert.ok(!data.some(item => /Bielik-One|Qwen4-(27B|Flash|Plus)/.test(item.model)));
+  assert.ok(!data.some(item => /Qwen4-(27B|Flash|Plus)/.test(item.model)));
 });
 
 test('Kimi hosted launches and the open-weight release appear in separate monthly reports', () => {
@@ -304,9 +317,11 @@ test('static header metadata and initial chart domain cover the dataset', () => 
   assert.match(html, new RegExp(`<span data-release-count>${data.length}<\\/span>`));
   assert.match(html, new RegExp(`<span data-lab-count>${labs.size}<\\/span>`));
   const latestLabel = new Date(`${latest}T00:00:00Z`).toLocaleDateString('en-US', {timeZone:'UTC', month:'long', day:'numeric', year:'numeric'});
+  const titleDate = new Date(`${latest}T00:00:00Z`).toLocaleDateString('en-US', {timeZone:'UTC', month:'short', day:'numeric', year:'numeric'});
+  assert.ok(html.includes(`<title>AI Model Release Timeline — Jan 2024 to ${titleDate}</title>`), 'static title reflects the latest release before scripts run');
   assert.ok(html.includes(`<span data-latest-date>${latestLabel}</span>`));
-  assert.equal((html.match(/· checked November 12, 2026 ·/g) || []).length, 1);
-  assert.equal((html.match(/Verification checked November 12, 2026/g) || []).length, 1);
+  assert.equal((html.match(/· checked November 13, 2026 ·/g) || []).length, 1);
+  assert.equal((html.match(/Verification checked November 13, 2026/g) || []).length, 1);
   // Proportional range padding replaces the former fixed ±15-day x0 domain,
   // so assert the core-driven domain instead of its retired literal expression.
   const script = extractInlineScript();
@@ -455,16 +470,16 @@ const {analyze, render} = require('../scripts/timeline-analysis.cjs');
 
 test('narrative statistics match the expanded dataset', () => {
   const stats = analyze(data);
-  assert.equal(stats.total, 610);
-  assert.equal(new Set(data.map(row => row.lab)).size, 130);
-  assert.equal(stats.sameDay, 742);
-  assert.equal(stats.withinTwo, 3057);
-  assert.deepEqual(stats.years, {'2024': 88, '2025': 134, '2026': 388});
-  assert.deepEqual(stats.weekdays, {'0':17, '1':101, '2':125, '3':124, '4':153, '5':77, '6':13});
+  assert.equal(stats.total, 626);
+  assert.equal(new Set(data.map(row => row.lab)).size, 133);
+  assert.equal(stats.sameDay, 814);
+  assert.equal(stats.withinTwo, 3374);
+  assert.deepEqual(stats.years, {'2024': 88, '2025': 134, '2026': 404});
+  assert.deepEqual(stats.weekdays, {'0':17, '1':103, '2':126, '3':127, '4':162, '5':78, '6':13});
   assert.equal(stats.months['2026-10'], 130);
-  assert.equal(stats.months['2026-11'], 51);
+  assert.equal(stats.months['2026-11'], 67);
   assert.equal(stats.cadence.OpenAI.major, 52);
-  assert.equal(stats.cadence.Google.major, 38.5);
+  assert.equal(stats.cadence.Google.major, 29);
   assert.deepEqual(stats.moonshotLags, [14,90,50,31,38,64,4,16,10,25,25]);
   assert.ok(html.includes(render(stats)), 'published findings equal reproducible current analysis');
 });
@@ -488,8 +503,8 @@ test('analysis handles same-day pairs, medians, and missing prior releases', () 
 
 test('recent-release summary follows the latest dated rows', () => {
   const summary = render(analyze(data));
-  assert.match(summary, /Gemini 4 Carbon \(general availability\) \(November 10\)/);
-  assert.match(summary, /Claude Fable 5\.2 \/ Mythos 5\.2 \(November 9\)/);
+  assert.match(summary, /HeyGen Decision 1 \(November 13\)/);
+  assert.match(summary, /Gemini 4 Hydrogen \(November 12\)/);
   assert.match(summary, /Qwen4-Max-Preview \(November 11\)/);
   assert.match(summary, /Gemini Decision 1 \(November 11\)/);
   assert.doesNotMatch(summary, /Shizuku-Duplex \(research announcement\) \(November 8\)/);
