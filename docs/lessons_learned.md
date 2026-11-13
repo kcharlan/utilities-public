@@ -1,5 +1,11 @@
 # Lessons learned
 
+## Validate encoded field limits at the command boundary
+
+Reject values outside a stream field's representable range before opening files.
+Exercise both boundaries and a long synthetic run: an oversized limit can appear
+to work until serialization reaches data that actually uses it.
+
 ## Render the same fields used to select a change
 
 Filtering history at display precision is insufficient if the panel then renders

@@ -8,6 +8,22 @@ export UV_PYTHON_DOWNLOADS=never
 cd "$d"
 failures=0
 for script in "$project/rs.py" "$project/rs-big.py"; do
+  head -c 100000 /dev/zero > runs.bin
+  for value in 0 -1 256 abc; do
+    if "$script" transform -i runs.bin -o "invalid-$value" --rle-max-run "$value" 2> error; then
+      echo "$script: accepted invalid run length $value" >&2; exit 1
+    else
+      status=$?
+    fi
+    [[ $status == 2 ]] || { echo "FAIL: $script run length $value exited $status, expected 2" >&2; exit 1; }
+    [[ ! -e invalid-$value ]] || { echo "FAIL: $script created output for run length $value" >&2; exit 1; }
+  done
+  for value in 1 255; do
+    "$script" transform -i runs.bin -o "valid-$value" --rle-max-run "$value"
+    "$script" inverse -i "valid-$value" -o "decoded-$value"
+    cmp runs.bin "decoded-$value"
+    rm -- "valid-$value" "decoded-$value"
+  done
   for operation in transform inverse; do
     printf 'synthetic input data\n' > input
     hash=$(shasum input | cut -d' ' -f1)
