@@ -82,8 +82,9 @@ docker/propagate-updates.zsh deploy
 
 Both phases accept `--stack NAME` (repeatable) and `--dry-run`. The run exits
 non-zero when any stack failed or needs manual action, and prints a summary
-with problems first. `PROPAGATE_DEPLOY_ROOT` and `PROPAGATE_BACKUP_ROOT`
-override the deployed copy and backup locations. A new top-level project must
+with problems first. `PROPAGATE_DEPLOY_ROOT`, `PROPAGATE_BACKUP_ROOT` and
+`PROPAGATE_BUNDLE_ROOT` override the deployed copy, backup and source-bundle
+snapshot locations. A new top-level project must
 be registered in the script's `STACKS` table before deploy will copy it.
 
 ## Tests

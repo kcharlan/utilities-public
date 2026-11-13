@@ -117,7 +117,9 @@ files 0600:
 - `config.json`: written on first run. Keys `op_item`, `op_vault`, `op_field`,
   `max_age_hours` (a positive number of hours, at most 87600, ten years).
 - `snapshots/<UTC timestamp>.json.gz` (directory mode 0700): each fetch as
-  delivered, newest 60 kept.
+  delivered, newest 60 kept. A fetch identical to the newest snapshot adds no
+  file; it only updates that snapshot's check time, which is what
+  `max_age_hours` is measured from.
 - `model_ladder.html`: the built page, replaced atomically.
 
 Nothing is written inside the repository.

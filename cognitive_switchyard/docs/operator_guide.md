@@ -31,7 +31,7 @@ The CLI runs via [uv](https://docs.astral.sh/uv/) (`brew install uv`) using the 
 ./switchyard serve --port 8200                            # Custom port (default: 127.0.0.1:8100)
 ```
 
-The server has no authentication and can launch agents with permission bypass enabled, so keep it bound to `127.0.0.1`.
+The server has no authentication. It binds only to `127.0.0.1` (`--host` accepts no other value) and rejects requests whose `Host` is not its own loopback address and port, and state-changing or WebSocket requests whose `Origin` is not its own. Built-in agent commands run with the operator's normal permission and sandbox settings.
 
 `serve` opens the UI in the default browser unless `COGNITIVE_SWITCHYARD_NO_BROWSER=1` is set. If the requested port is busy, the server scans the next 19 ports and uses the first available port.
 

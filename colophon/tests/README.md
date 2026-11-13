@@ -42,7 +42,8 @@ synthetic app overview/list/reader images during that browser case.
 `test_antigravity_ccusage_usage_oracle` and the output/model C cases retain
 self-contained, invented expectations captured from native ccusage 20.0.42;
 normal suites neither locate nor require a private oracle executable. The
-public enum/oracle fixture records both descriptor and oracle provenance.
+public enum fixture records descriptor provenance; oracle provenance is in the
+[token rules](../docs/token_rules.md#antigravity-accounting-and-oracle-provenance-050).
 Coverage includes all four direct/retry locations, alias namespaces/transitive
 bridges, global first ownership, component maxima, strict number rejection,
 output reasoning presence, model fallbacks, step clocks/TTFT and repeat compose.

@@ -260,8 +260,9 @@ under `~/.utilities-deploy-backups/colophon-native/copy-*/`, with directory mode
 0700 and backup files 0600. Backup metadata records prior bytes and command mode.
 The candidate is checked as a native executable, atomically installed at mode
 0755, and exercised directly with `--version` and `--help`. If activation or
-receipt publication fails, the old command and receipt are restored. Backups are
-retained; no other commands or runtime state are changed.
+receipt publication fails, the old command and receipt are restored. Backups
+follow the [retention rule](#deployment-backup-retention); no other commands or
+runtime state are changed.
 
 The private mode-0600 `~/Library/Scripts/.colophon-native.json` receipt binds the
 installed binary digest/mode to a fingerprint of all admitted tracked native
@@ -281,8 +282,10 @@ Never edit the old receipt to suppress drift.
 The schema-1 `.colophon-native.json` filename and
 `~/.utilities-deploy-backups/colophon-native/` namespace are retained private
 state compatibility exceptions, not alternate source locations. Existing
-receipts and backups remain usable for rollback; no state is renamed,
-migrated, deleted or automatically pruned.
+receipts and backups remain usable for rollback; no state is renamed or
+migrated, and `copy-*` backups there are pruned only by the
+[retention rule](#deployment-backup-retention) after a successful forward
+deployment.
 
 Roll back with the exact backup directory printed by the installer:
 
@@ -636,15 +639,15 @@ node --test tools/tests/deploy_storage_monitor.test.mjs tools/tests/deploy_colop
 zsh tools/tests/test_check_local_deployments.zsh
 ```
 
-## `~/Library/Scripts`
-
-### Office Picnic static game
+## Office Picnic static game deployment
 
 Office Picnic is a maintained static runtime under `web_games/office_picnic/dist/`, deployed by its project-specific installer rather than the home-project/script manifest. From `web_games/office_picnic`, run `npm test`, stage the runtime with `git add dist`, then `npm run deploy`. It validates indexed source bytes/modes, installs only that inventory into `~/webroot/games/office_picnic/`, and preserves local-only files and other games. No build or server restart is needed. The play route is `/games/office_picnic/index.html` on the existing local webserver; folder URLs open its file browser.
 
 `npm run deploy -- --dry-run` validates without writes; `--check` compares installed maintained files with staged source. Before activation it saves the complete prior managed inventory in private persistent `~/.utilities-deploy-backups/office-picnic/copy-*` backups. Successful forward deployments retain the newest two. `--rollback BACKUP` restores independently of the current source state, saves current files first, preserves recovery history, and preserves unrelated files. The fleet audit does not yet inspect this game; use its explicit `--check`. Its full `npm test` suite includes isolated deployment/update/rollback and rejection tests in removed OS temporary directories. See the [game README](../web_games/office_picnic/README.md#local-webserver-deployment).
 
-Direct script copies are listed in [`tools/deployment_copies.json`](../tools/deployment_copies.json). Deploy them with `node tools/deploy_copies.mjs` from the repository root. Use `--only NAME` to select an entry and `--dry-run` to inspect changes without writing. The deployer requires a clean committed `main` for its inputs. Each entry is its own transaction; a failure reports any earlier entries that completed. Successful forward updates retain the newest two eligible backups per entry, ordered by modification time and then name.
+## `~/Library/Scripts`
+
+Direct script copies are listed in [`tools/deployment_copies.json`](../tools/deployment_copies.json). Deploy them with `node tools/deploy_copies.mjs` from the repository root. Use `--only NAME` (repeatable) to select an entry and `--dry-run` to inspect changes without writing. `--scripts-dir DIR` or `UTILITIES_SCRIPTS_DIR` overrides the scripts destination, `--local-root DIR` or `UTILITIES_LOCAL_ROOT` the home-project root, and `--repo DIR` selects another checkout. The deployer requires a clean committed `main` for its inputs. Each entry is its own transaction; a failure reports any earlier entries that completed. Successful forward updates retain the newest two eligible backups per entry, ordered by modification time and then name.
 
 Model Ladder is a direct copy; its runtime home `~/.model_ladder/` (config, snapshots, built page) is local state the deployer never touches.
 Decision Ladder is also a direct copy; its `~/.decision_ladder/` runtime home is local state the deployer never touches.

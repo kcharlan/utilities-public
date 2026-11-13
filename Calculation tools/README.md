@@ -114,7 +114,7 @@ Open it directly or use the installed [AI model timeline](http://127.0.0.1:7711/
 
 Run the dependency-free Node regression suite with `node --test tests/*.test.js`. It covers drawdown dates, protected-reserve settlement, funded-month counting, summary-projection parity, sales and income-ledger changes, adjustments, yearly aggregation and targets, year marks, waterline bands, contour and needs searches, and axes, and CSV schema and precision, plus the AI model timeline's data records, update manifests, range/URL-state logic, label placement and published analysis. A theme-token guard checks contrast, styling without color literals, absence of browser storage, and the single-script structure. No package installation is required for that suite.
 
-The Playwright suite covers the drawdown editor, yearly target workflow, validation and stale-export recovery, CSV download, theme modes and print styling, responsive layout, chart interaction, the waterline map (rendering, hover, pinning, keyboard probing, its inactive and no-horizon states, and phone fit), keyboard editing, and focus recovery, as well as the Chart.js-backed financing calculator and the AI model timeline (desktop and phone widths, over HTTP and `file://`) in Chromium:
+The Playwright suite covers the drawdown editor, yearly target workflow, validation and stale-export recovery, CSV download, theme modes and print styling, responsive layout, chart interaction, the waterline map (rendering, hover, pinning, keyboard probing, its inactive and no-horizon states, and phone fit), keyboard editing, and focus recovery, as well as the Chart.js-backed financing calculator, lump-sum IRR, the money-sense debt and savings modes, each calculator's default downloads, offline `file://` loading of the pages with embedded assets, and the AI model timeline (desktop and phone widths, over HTTP and `file://`) in Chromium:
 
 ```sh
 npm ci
@@ -122,6 +122,6 @@ npx playwright install chromium
 npm run test:browser
 ```
 
-Run both full automated suites with `npm test`. To inspect the browser suite before running it, use `npx playwright test --list`. The other calculators still require browser checks when changing them; verify their default scenarios, representative edge cases such as zero interest, and download controls.
+Run both full automated suites with `npm test`. To inspect the browser suite before running it, use `npx playwright test --list`. The lump-sum and money-sense coverage is narrower than drawdown's, so still check those pages in a browser when changing them; verify their default scenarios, representative edge cases such as zero interest, and download controls.
 
 These tools provide planning estimates, not financial, tax, or investment advice.

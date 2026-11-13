@@ -26,7 +26,8 @@ The reader's single column lists define compatibility and explicit SELECTs.
 Legacy generation presence is inspected through `sqlite_master` names only.
 When `session` exists, only the exact `migration.v1-v2` value is inspected,
 and its JSON phase must be `completed`. Unknown `migration.*` keys and unknown
-`session*` generation tables reject the database. A structurally compatible migration is accepted; its latest migration is reported.
+`session*` generation tables or views are recorded as per-database diagnostics
+without rejecting the database; their contents are not read. A structurally compatible migration is accepted; its latest migration is reported.
 
 Tests pin all eleven public message literals: `agent-switched`,
 `model-switched`, `location-switched`, `user`, `synthetic`, `system`, `skill`,

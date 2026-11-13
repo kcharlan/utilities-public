@@ -23,7 +23,7 @@ EditDB starts a local web server on `127.0.0.1` and opens your browser automatic
 
 ### First-Time Setup
 
-EditDB is a uv-managed script. Install [uv](https://docs.astral.sh/uv/), then run `editdb`; there is no manual virtual-environment or `pip` setup. On first invocation, uv may download a compatible Python 3.12+ interpreter and the dependencies declared in the script. Later launches reuse uv's cache.
+EditDB is a uv-managed script. Install [uv](https://docs.astral.sh/uv/), then run `editdb`; there is no manual virtual-environment or `pip` setup. On first invocation, uv may download a compatible Python 3.12 through 3.15 interpreter and the dependencies declared in the script. Later launches reuse uv's cache.
 
 **Requirements:** uv and a modern browser. The interface embeds its scripts,
 styles, icons and font, so it works offline after uv resolves the launcher

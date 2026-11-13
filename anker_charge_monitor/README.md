@@ -260,7 +260,7 @@ version until a normal quit/reopen; that restart clears the RAM cache and
 requires normal credential retrieval/authorization again. Preserve the runtime
 state directory. An old copy in `~/Applications` is retired separately, with a
 private backup, only after the canonical installed release is verified.
-Launch the `/Applications` copy and confirm Settings → Launch at Login reports
+Launch the `/Applications` copy and confirm Settings → Launch at login reports
 the real system registration/approval state. Moving an app does not establish
 that its login registration or 1Password grants follow the new path.
 

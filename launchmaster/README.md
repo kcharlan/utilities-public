@@ -92,7 +92,9 @@ not sandbox `launchctl` or change which system plist directories are scanned.
 
 The application creates backups before plist edits and deletes, but a backup
 does not make launchd operations risk-free. Review the target domain and plist
-path before modifying or deleting a job.
+path before modifying or deleting a job. Deleting a loaded job whose unload
+fails keeps its plist, so the job can still be managed; the backup is still
+created.
 
 Job labels used for create, import, and restore must start with an ASCII letter
 or digit and contain only ASCII letters, digits, dots, underscores, or hyphens.

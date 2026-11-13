@@ -45,7 +45,7 @@ step completed_at, finished_generating_at, created_at, chat-start created_at,
 then session start with antigravity_unknown_clocks. These fallback/turn policies
 are explicit Colophon adaptations. TTFT uses the turn's first generator row.
 
-Attribution prefers generator response_model, a model name learned from usage numbers across live generator rows and retained ledger events, step ModelInfo.chat_model_name then model_name, the latest attributed conversation model, then an unknown-number marker or antigravity/unattributed. Names are normalized before counting; the most frequent wins, with first observation breaking ties. The winning observation retains its raw spelling for catalog lookup. Display/Vertex/URL strings are excluded.
+Attribution prefers generator response_model, a runtime number rule, a model name learned from usage numbers across live generator rows and retained ledger events, step ModelInfo.chat_model_name then model_name, the latest attributed conversation model (for numbered usage only when it carried the same number), then an unknown-number marker or antigravity/unattributed. Names are normalized before counting; the most frequent wins, with first observation breaking ties. The winning observation retains its raw spelling for catalog lookup. Display/Vertex/URL strings are excluded.
 
 Normalization adapts CodexBar commit
 `e5d6977ba547aa7046eed3865f8ee1cdd5d58731`, AntigravityLocalReader.swift

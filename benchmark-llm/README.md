@@ -63,7 +63,7 @@ Run the same benchmark against a reusable model set:
 ./bench run examples/logic-mini -m @models.txt --executor-command ./examples/shared/demo_prompt_executor.py
 ```
 
-That shared demo executor reads `responses.jsonl` from the benchmark package by `id`. It is only a fixture runner for local smoke tests and examples, not the recommended authoring pattern for real benchmarks.
+When the benchmark package contains `responses.jsonl`, the runtime passes its rows to the executor as a JSON object in `TASK_RESPONSE_FIXTURES_JSON`; that shared demo executor looks up its response there by `CASE_ID`. It is only a fixture runner for local smoke tests and examples, not the recommended authoring pattern for real benchmarks.
 
 Then inspect results:
 
@@ -212,6 +212,8 @@ If the file exists after the command finishes, the runtime reads it and attaches
 
 If `total_tokens` is omitted but `input_tokens` and `output_tokens` are present, the runtime derives it automatically.
 
+A sidecar that is not valid JSON, is not a JSON object, or has a non-numeric value for one of these keys is ignored: the command row gets `metrics_error` instead of `metrics`, and the run continues.
+
 Example sidecar payload:
 
 ```json
@@ -340,6 +342,8 @@ Use `execution_defaults` for global timeout and retry policy, then override indi
 
 Retries are whole-attempt retries for repo tasks. If a step is retried, the runtime creates a fresh git worktree and reruns the full workflow from the beginning rather than reusing a partially written workspace.
 
+An attempt is retryable when a step hits its wall-clock or inactivity timeout, when a failing step's output matches a known transient provider error (rate limit, throttling, lost connection, or a 429, 502, 503, or 504 code), or when the model step leaves the worktree's `git status --short` output unchanged. A model step that changes nothing therefore fails the attempt even when it exits `0`. Any other failure, or a retryable one once the step's `max_attempts` is reached, fails the run.
+
 For supervised commands, the runtime writes stdout/stderr to per-step files, polls the child process, enforces wall-clock and inactivity timeouts, and preserves prior failed attempts under the run directory for troubleshooting.
 
 ## Artifacts
@@ -369,6 +373,8 @@ Repo-task batch roots may also include:
 - `summary_runs.json`
 - `summary_command.json`
 
+A failed run keeps its run directory. It contains `failure.json` with the error, plus the `commands.jsonl` recorded so far for prompt-batch and plugin runs or the `attempts/` directories for repo-task runs. Failed runs are not added to the SQLite index, so `bench list` and `bench report` do not show them.
+
 For repo tasks, `commands.jsonl` captures the exact command string, cwd, exit code, stdout, stderr, and timestamps for each step. This is where command provenance such as `pytest -q` versus `python -m pytest -q` should live.
 
 Repo-task runs with retries also keep attempt-scoped artifacts under:
@@ -384,6 +390,7 @@ When available, command rows also include:
 - `elapsed_ms`
 - `metrics`
 - `metrics_path`
+- `metrics_error`
 
 For `visibility.expose` and `visibility.hide`, the runtime strips the static path prefix from each glob when copying files. For example:
 

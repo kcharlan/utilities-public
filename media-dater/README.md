@@ -12,8 +12,8 @@ receive the same name.
 
 ## Requirements
 
-- Bash and standard Unix command-line tools (`find`, `sed`, `xargs`, and
-  `basename`)
+- Bash and standard Unix command-line tools (`find`, `xargs`, `head`, `mktemp`,
+  and `basename`)
 - [ExifTool](https://exiftool.org/)
 
 Install ExifTool on macOS with `brew install exiftool`, or on Debian/Ubuntu

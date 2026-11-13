@@ -137,9 +137,11 @@ rebuilds session/turn/bucket summaries, including empty sessions.
 
 The reader emits source counts/status/reasons, ignored environment names and
 diagnostics alongside corpus sessions and capability-gated UI actions. Model
-attribution uses response slug, a number-to-name map learned across generators
-and ledger events, step chat_model_name then model_name, the most recent
-attributed conversation model, or a marker identifying an unknown number.
+attribution uses response slug, a runtime number rule, a number-to-name map
+learned from observed response names across generators and ledger events, step
+chat_model_name then model_name, the most recent attributed conversation model
+(for numbered usage only when it carried the same number), or a marker
+identifying an unknown number.
 Without a number the final marker is antigravity/unattributed.
 Pricing uses independently available bundled/catalog estimates with Antigravity
 identities, normalized effort/routing suffixes and unknown-model unpriced notes.

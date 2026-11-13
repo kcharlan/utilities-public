@@ -43,9 +43,12 @@ is coding-specific.
 
 ### What it is not
 
-- Not a multi-tenant or networked service. The server has no authentication
-  and no Host/Origin validation, and it can launch agents with permission
-  bypass enabled, so it must stay bound to `127.0.0.1` (the `serve` default).
+- Not a multi-tenant or networked service. The server has no authentication.
+  It binds only to `127.0.0.1` (the only host `serve` accepts), and
+  `LocalOriginGuard` in `server.py` rejects any request whose `Host` is not
+  `127.0.0.1:<port>` or `localhost:<port>`, and any non-GET/HEAD or WebSocket
+  request whose `Origin` is not that same origin. Built-in agent commands run
+  with the operator's normal permission and sandbox settings.
 - Not a credential manager. Agent CLIs must already be installed and
   authenticated; preflight reports missing prerequisites but never provisions
   or injects secrets.
@@ -561,9 +564,11 @@ defaults; session config can override them.
   result line, the execute script has produced no output for 30 s, and no
   status sidecar exists yet, the worker is killed. This catches wrappers that
   hang after their agent exits.
-- **Session max (`session_max`, default 14400 s).** Measured from the start of
-  the current run's execution phase; planning, resolution, and idle time are
-  excluded. On expiry every worker is killed, its task is blocked, and the
+- **Session max (`session_max`, default 14400 s).** Counts the session's
+  accumulated active time (`planning`, `resolving`, `running`, `verifying`,
+  and `auto_fixing`, across runs); paused and idle time is excluded. The
+  limit is checked in the execution loop and bounds the built-in planner
+  agents. On expiry every worker is killed, its task is blocked, and the
   session becomes `paused` with workspaces and artifacts kept.
 
 Kills send SIGTERM, wait a 5-second grace period, then SIGKILL. A task killed
@@ -597,15 +602,21 @@ exception in a session thread marks the session `paused`.
 1. Reconcile existing plans to the database before processing worker slots;
    defer blocking missing plans until after orphan cleanup.
 2. For each `workers/<N>/` holding a plan, read `recovery.json`
-   (`{"task_id", "workspace_path", "pid"}`) to locate the workspace.
+   (`{"task_id", "workspace_path", "pid", "process_identity"}`) to locate the
+   workspace. An unreadable `recovery.json` is renamed to
+   `recovery.json.corrupt` with a `session.recovery_warning` event, and the
+   slot is then handled as if it had no metadata.
 3. Classify by sidecar. `STATUS: done` means completed but uncollected: run
    `isolate_end` with `done`, project the task to `done`, and clear the metadata.
    A teardown failure logs a warning and blocks the task instead.
 4. Anything else (no sidecar, `blocked`, or malformed) is incomplete: terminate
    the recorded PID (SIGTERM, grace, SIGKILL), run `isolate_end` with
    `blocked`, delete the sidecar, and return the task to **`ready`**, since the
-   failure was infrastructure, not the task. If `isolate_end` fails, the
-   workspace is force-removed only when it lies inside the session directory.
+   failure was infrastructure, not the task. A still-running PID is signalled
+   only when its recorded process identity still matches; otherwise the task
+   is blocked and its workspace and metadata are kept for manual recovery. If
+   `isolate_end` fails, the workspace is force-removed only when it lies
+   inside the session's `workers/<N>/` directory.
 5. `cleanup_orphaned_workspaces()` handles `recovery.json` files with no plan:
    it terminates the PID and runs `isolate_end` with `blocked`, falling back to
    removal. Steps 4 and 5 skip `isolate_end` when `isolation.type` is `none`.

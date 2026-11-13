@@ -82,7 +82,7 @@ Detection is **value-first, not key-first**. Key names boost confidence (lower t
 
 ### What It Catches
 
-- **Critical**: Authorization headers, session cookies, JWT tokens, Bearer/Basic auth, API keys, sensitive URL parameters, opaque tokens in any field
+- **Critical**: Authorization headers, session cookies, JWT tokens, Bearer/Basic auth, API keys, sensitive URL query and `#` fragment parameters, opaque tokens in any field
 - **Warning**: HTTP (non-HTTPS) requests, missing cookie security flags (httpOnly, secure), email addresses, and long opaque tokens without key hints
 - **Info**: Private IP addresses
 
@@ -92,7 +92,7 @@ Multiple detectors flagging the same field (e.g., JWT pattern + token heuristic 
 
 ### Redaction
 
-Redaction replaces the **entire targeted value** with `[REDACTED]`. Direct HAR fields are replaced in place; structured JSON bodies are parsed, updated at the target key, and re-serialized. Previously redacted values (`[REDACTED]`) are skipped on rescan.
+Redaction replaces the **entire targeted value** with `[REDACTED]`. Direct HAR fields are replaced in place; structured JSON bodies are parsed, updated at the target key, and re-serialized. Findings inside base64-encoded JSON target the whole encoded value. Previously redacted values (`[REDACTED]`) are skipped on rescan.
 
 Review findings in the Security tab, toggle redaction per finding, then use the Export tab for bulk controls and sanitized output. You can also manually redact values in the Inspector, even if the scanner did not flag them.
 

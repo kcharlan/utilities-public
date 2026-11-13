@@ -202,7 +202,7 @@ It writes only under `~/Library/Application Support/Telltale` (database, locks a
 A stored rule setting that fails validation doesn't stop a run: it evaluates with the default
 rules, and the log and run detail name the invalid fields (or say the stored rules couldn't be read).
 
-Retention: responses and evaluation points are kept 180 days, run records 30 days; everything else,
+Retention: responses, compactions and evaluation points are kept 180 days, run records 30 days; everything else,
 including failed turns and connection events, is kept.
 
 ## Collector management and health
@@ -413,7 +413,7 @@ check.
   Toggle a rule's switch, Notify and Notify when it clears. Check "Example Chat" and uncheck a
   "(not on the status page now)" name. Switch Dashboard appearance through Dark, Light and Match
   system (with the system in each appearance): the window follows at once, and after **Light** or
-  **Dark** the next Settings choice wins. The interval, Collector on, Rebuild from Codex logs… and
+  **Dark** the next Settings choice wins. The interval, Collector on, each provider's Rebuild…, Rebuild all providers… and
   Open at login are unavailable, with "Only Telltale in Applications can change this." VoiceOver
   reads each rule parameter by its name (such as "Slower than usual clear band"). The switches
   show their on state in the accent color in both appearances (offscreen snapshots don't).
@@ -439,8 +439,8 @@ check.
   turn Telltale off in System Settings' Login Items instead and relaunch, twice: Telltale must not
   re-register itself, and Settings shows Open at login off.
 - In the installed release only, Settings after the first run: change the interval to 2 minutes;
-  the plist's `StartInterval` is 120 and `launchctl print` still finds the job. Rebuild from Codex
-  logs… asks first; confirming logs "Rebuilding from Codex logs" in `collector.log` within a minute
+  the plist's `StartInterval` is 120 and `launchctl print` still finds the job. Codex's Rebuild… under Providers
+  asks first; confirming logs "Rebuilding from Codex logs" in `collector.log` within a minute
   and keeps accepted baselines. Before the first run (a fresh install), Settings says "You can
   change settings after the collector's first run." and changes nothing.
 - In the installed release only, closed Codex database: avoid a Colophon scan during the check,

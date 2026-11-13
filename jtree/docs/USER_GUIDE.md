@@ -27,7 +27,7 @@ If that port is occupied, jtree tries the next 19 ports and logs the address it 
 
 ### First-Time Setup
 
-jtree requires [uv](https://docs.astral.sh/uv/) (`brew install uv`). Its PEP 723 metadata asks uv for Python 3.12+ and the FastAPI, uvicorn, and Pydantic dependencies. The first launch may use the network while uv resolves and caches them; later launches reuse uv's shared cache. jtree does not create `~/.jtree_venv` or another tool-specific virtual environment.
+jtree requires [uv](https://docs.astral.sh/uv/) (`brew install uv`). Its PEP 723 metadata asks uv for Python 3.12 through 3.15 and the FastAPI, uvicorn, and Pydantic dependencies. The first launch may use the network while uv resolves and caches them; later launches reuse uv's shared cache. jtree does not create `~/.jtree_venv` or another tool-specific virtual environment.
 
 **Requirements:** uv and a modern web browser. The interface embeds its libraries, styles, icons and Latin font subsets, and uses system fonts for other glyphs. It does not need network access after the launcher starts.
 

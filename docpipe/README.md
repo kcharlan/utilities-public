@@ -180,9 +180,9 @@ docpipe includes a custom tool definition for [OpenCode](https://opencode.ai) so
 
 ## Tests (pytest)
 
-Unit tests cover CLI parser + strict-mode behavior.
+The pytest suite covers strict-mode behavior, synthetic DOCX, PPTX, XLSX, and HTML conversions, PDF handling with stubbed Poppler commands, and failure paths. A Node test covers the OpenCode wrapper.
 
-Office archives are limited to 200 MB of declared expanded content. PDF page renders are generated in a fresh temporary directory so a rerun cannot attach pages left by an earlier conversion.
+Empty inputs and inputs larger than 500 MB are rejected. Office archives are limited to 200 MB of declared expanded content. PDF page renders are generated in a fresh temporary directory so a rerun cannot attach pages left by an earlier conversion.
 
 ```bash
 cd /path/to/utilities-public

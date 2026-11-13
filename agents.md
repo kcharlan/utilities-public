@@ -50,7 +50,7 @@ This applies the global test rule (full suite, every category) to a monorepo:
 - Native macOS: `brew_version` (Swift CLI and menu bar app; deliberate exception to UI Shapes).
 - Python/CLI/local web tools: `tax2`, `data_format_converter`, `transcription`, `mls-tracker`, `apple-health-extract`, `md-json`, `doc_linearizer`, `div_conv`, etc.
 - Browser-first single-file apps: `web_games/gorilla`, `web_games/multibody_sim`, `web_games/rps_screen`, plus HTML calculators under `Calculation tools`.
-- Docker stacks and services: `docker/actual-data`, `docker/excalidraw`, `docker/llm_collector`, `docker/mermaid`, `docker/webserver`.
+- Docker stacks and services: `docker/actual-data`, `docker/excalidraw`, `docker/llm_collector`, `docker/llm_proxy`, `docker/mermaid`, `docker/n8n-poc`, `docker/webserver`.
 
 ## Validation Matrix
 Project-specific validation commands, applied with the Testing Scope above. A command listed here does not authorize omitting another test category belonging to that project. For affected projects not listed below, run every test category the project's README and local documentation describe.

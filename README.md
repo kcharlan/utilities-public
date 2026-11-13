@@ -42,6 +42,6 @@ Keep operational configuration, inputs, and generated output in the project's do
 
 Each project README describes its setup and validation commands. Contributor conventions and the rules for choosing a CLI, built page, static page, or local server live in [agents.md](agents.md).
 
-Shared repository tooling lives in [tools/](tools/): deployment installers, the read-only fleet deployment audit, the uv launcher header guard, browser and launcher test helpers, and the shared temporary-file leak checker. The [frontend kit](tools/frontend_vendor/) and `tools/sync_frontend_vendor.mjs` maintain embedded browser assets. Their tests are in [tools/tests/](tools/tests/).
+Shared repository tooling lives in [tools/](tools/): deployment installers, the read-only fleet deployment audit, the registered project test runner (`tools/run_project_tests.py` with `tools/project_tests.toml`), the uv launcher header guard, the local server guard and its sync tool, browser and launcher test helpers, the shared temporary-file leak checker, and the home residue check. The [frontend kit](tools/frontend_vendor/) and `tools/sync_frontend_vendor.mjs` maintain embedded browser assets. Their tests are in [tools/tests/](tools/tests/).
 
 Repository updates do not update installed copies. See the [deployment guide](docs/local_deployment_sync.md) for installation, verification, and rollback, the [maintenance to-do list](docs/todo.md) for open follow-ups, and the [lessons learned](docs/lessons_learned.md) for cross-project pitfalls.

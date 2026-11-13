@@ -21,7 +21,7 @@ catalog/priority/pricing → payload/page:
 | `src/antigravity/corpus.{c,h}` | Project admitted sessions and step-index turn membership, prompt/answer text, images, mapped tools, clocks and status into shared display models. Merge singular nested protobuf messages before scalar lookup. Link only Antigravity parents; preserve parentless/orphaned subagents and diagnose cross-provider collisions. |
 | `src/antigravity/ledger.{c,h}` | Read retained session headers and pre-deduplication usage events before source gating; publish changed live records atomically only after page output. |
 | `src/antigravity/compose.{c,h}` | Collect four usage/retry locations using indexed generator-step matching, union namespaced identity aliases globally, merge component maxima and retain earliest ownership. Author units into the shared usage arena, apply independent catalog estimates and rebuild all summaries every composition. |
-| `src/antigravity/model.{c,h}` | Attribute usage through response/learned number/step/previous fallbacks; normalize routing/effort aliases for pricing. |
+| `src/antigravity/model.{c,h}` | Attribute usage through response/number rule/learned number/step/previous fallbacks; normalize routing/effort aliases for pricing. |
 | `src/acct/` | Track token totals, classify rollouts and resolve inherited fork baselines. |
 | `src/corpus/` | Assemble sessions, titles/status, subagent relationships and workspace aliases. |
 | `src/price/` | Fetch/cache catalog, validate and record history, retain priority evidence, compose usage and dated costs. |

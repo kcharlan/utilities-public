@@ -239,7 +239,7 @@ Two dropdowns at the top of the Security tab:
 | Filter | Options |
 |--------|---------|
 | **Severity** | All, Critical, Warning, Info |
-| **Category** | All, Auth, Token, JWT, Cookie Flags, Credentials, Private IP, etc. |
+| **Category** | All, Auth, Token, JWT, Cookie Flags, Sensitive Field, Private IP, etc. |
 
 ### Per-Finding Toggle
 

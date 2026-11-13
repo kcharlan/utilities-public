@@ -66,7 +66,7 @@ them at 15, in Dim.
 
 A template glyph for a lamp lens (a rounded rectangle with a filament line).
 While healthy it's a plain template image, unlit, like the rest of the bar.
-When a new lamp condition lights, a 7 pt dot in the most severe new color appears
+When a new lamp condition lights, a 10 pt dot in the most severe new color appears
 on it. When all lit conditions are acknowledged, a 1.5 pt ring takes the most
 severe lit color. With no lit lamps the lens stays plain.
 This uses the same drawing approach as Brew Version's `StatusIcon` (mug plus

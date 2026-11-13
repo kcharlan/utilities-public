@@ -37,7 +37,7 @@ Projects are grouped by purpose rather than source-directory layout. Each linked
 | [Cognitive Switchyard](../cognitive_switchyard/README.md) | CLI + local web app | Orchestrates parallel workloads with runner packs, planning, worktree isolation, verification, bounded auto-fix, and recoverable sessions. |
 | [Data Format Converter](../data_format_converter/README.md) | Static page + Python CLI | Converts JSON, XML, YAML, TOON, and TOML. The browser estimates token counts; the CLI converts files without counting tokens. |
 | [dloc](../dloc/README.md) | CLI | Summarizes Git-reported insertions, deletions, and net changes by author date; it does not measure the repository's current source-code size. |
-| [EditDB](../editdb/README.md) | Local web app | Browses and edits SQLite data, runs SQL, and imports/exports CSV or JSON. Schema-editor rebuilds do not preserve keys, constraints, indexes, or triggers; consult its limitations before use. |
+| [EditDB](../editdb/README.md) | Local web app | Browses and edits SQLite data, runs SQL, and imports/exports CSV or JSON. Schema-editor type changes rebuild the table while preserving its constraints, indexes, triggers, and dependent views; consult its limitations before use. |
 | [Git Fleet](../git-multirepo-dashboard/README.md) | Local web app | Reviews repository activity, working-tree state, branches, and dependency health, including nested manifest discovery and explicit check-coverage reporting. |
 | [harscope](../harscope/README.md) | Local web app + validation CLI | Analyzes HAR timing and request details, detects potential secrets, records redaction decisions, and exports sanitized captures and reports. |
 | [jtree](../jtree/README.md) | Local web app | Views and edits JSON as a node graph with search, undo/redo, copy/paste, array reordering, and image exports. |
@@ -82,7 +82,7 @@ The [Calculation Tools guide](../Calculation%20tools/README.md) documents the st
 | Project | Delivery | Purpose and scope |
 | --- | --- | --- |
 | [docpipe](../docpipe/README.md) | CLI | Converts PDF, DOCX, PPTX, HTML, and XLSX to Markdown and structured JSON. PDF text extraction requires Poppler; PDF tables and OCR are not supported. |
-| [Excalidraw Local Environment](../docker/excalidraw/README.md) | Docker stack | Runs an Excalidraw whiteboard. Its current port mapping binds to all host interfaces; review the project configuration before starting it. |
+| [Excalidraw Local Environment](../docker/excalidraw/README.md) | Docker stack | Runs an Excalidraw whiteboard on the host loopback interface. |
 | [HTML Documentation Linearizer](../doc_linearizer/README.md) | Python CLI | Flattens a local multi-page HTML documentation site into Markdown, preserving TOC ordering, heading numbers, and supported assets. |
 | [Media Dater](../media-dater/README.md) | Shell CLI | Renames image and video files from ExifTool creation metadata, with collision handling and dry-run support. |
 | [Mermaid Live Editor](../docker/mermaid/README.md) | Docker scripts | Runs the diagram editor on the host loopback interface. |
@@ -100,7 +100,7 @@ The [Calculation Tools guide](../Calculation%20tools/README.md) documents the st
 | [MLS Tracker](../mls-tracker/README.md) | Local web app | Explores playoff races using ESPN standings and simplified cutoff projections. It does not model fixtures, tiebreakers, or other teams' movement and is not an official clinch/elimination model. |
 | [Multibody Gravity Lab](../web_games/multibody_sim/README.md) | Static page | N-body gravity sandbox and screensaver with collision merges, trails, predictions, and JSON save/load. |
 | [Office Picnic](../web_games/office_picnic/README.md) | Static browser game | One-input paper-airplane flight through five city districts, with three difficulty tiers, pickups, medals and best-time records. |
-| [Rock Paper Scissors Simulator](../web_games/rps_screen/README.md) | Static page | Particle simulation with elastic collisions, configurable conversion rules, and an automatic restart mode. |
+| [Rock Paper Scissors Simulator](../web_games/rps_screen/README.md) | Static page | Particle simulation with elastic collisions, a configurable saving-throw reversal and same-type pass-through, a round-win handicap, and automatic round restarts. |
 
 ## Infrastructure and reference material
 
@@ -116,7 +116,7 @@ The [Docker guide](../docker/README.md) covers stack organization and update pro
 | [Task orchestration scaffold](../coding/task_orch/README.md) | Legacy reference scripts and prompts | Retained source-project snapshot, superseded by Cognitive Switchyard. Its environment and test assumptions require adaptation before reuse. |
 | [Video Scene Detection](../video-scenes/README.md) | CLI | uv-managed PySceneDetect launcher for scene-boundary, splitting, and preview workflows. |
 
-Shared [repository tools](../tools/) include deployment installers, the fleet deployment audit, launcher-header validation, browser/launcher test helpers, and temporary-file leak checks. Their tests live in [tools/tests/](../tools/tests/). See the [deployment guide](local_deployment_sync.md), [maintenance to-do list](todo.md), and [lessons learned](lessons_learned.md) for repository-wide guidance.
+Shared [repository tools](../tools/) include deployment installers, the fleet deployment audit, the registered project test runner, launcher-header validation, the local server guard, browser/launcher test helpers, temporary-file leak checks, and the home residue check. Their tests live in [tools/tests/](../tools/tests/). See the [deployment guide](local_deployment_sync.md), [maintenance to-do list](todo.md), and [lessons learned](lessons_learned.md) for repository-wide guidance.
 
 The shared frontend kit in [tools/frontend_vendor/](../tools/frontend_vendor/) supplies the assets that browser utilities embed so they work offline: Preact, hooks, htm, Lucide icons, D3, Chart.js, js-yaml, TOML, web fonts, a small helper layer and first-party SVG charts. `manifest.json` records each file's version, source URL, SHA-256 and license. A page lists the items it needs between `frontend-vendor:begin` and `frontend-vendor:end` markers, and `tools/sync_frontend_vendor.mjs` writes the generated region; never edit that region by hand. `node tools/sync_frontend_vendor.mjs --all --check` reports stale regions from any directory and fails if it finds no marked files. `tools/testkit.py` provides the matching browser checks for external requests, page source, fonts and styled classes.
 

@@ -22,7 +22,7 @@ Only immediate child directories of `skills/` and top-level `.md` files in
 
 ## Prerequisites
 
-- [uv](https://docs.astral.sh/uv/) (`brew install uv`), which supplies Python 3.12 or newer for the runtime.
+- [uv](https://docs.astral.sh/uv/) (`brew install uv`), which supplies Python 3.12 through 3.15 for the runtime.
 - Gemini CLI installed and configured.
 - A local Claude-style plugin directory.
 

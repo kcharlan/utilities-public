@@ -218,7 +218,7 @@ Other create-related flags:
 --lock-reason TEXT
 ```
 
-Use `--orphan --new-branch NAME` to create an unborn branch with no history; it cannot be combined with `--from`.
+Use `--orphan --new-branch NAME` (or `--orphan --reset-branch NAME`) to create an unborn branch with no history; it cannot be combined with `--branch`, `--detach` or `--from`.
 
 ### Tests
 

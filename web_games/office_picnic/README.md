@@ -10,7 +10,7 @@ Requires Node 20+ for the local server and verification scripts.
 npm start
 ```
 
-Open http://127.0.0.1:4173. Any ordinary static HTTP host can serve the contents of `dist/`. Browser ES modules require HTTP serving rather than opening the HTML file directly. Hold Space, the primary mouse button, or a finger to climb; release to dive. Pause with Escape or P, and press R to restart from pause or the result screen (or at any time in Nonstop).
+Open http://127.0.0.1:4173 (set `PORT` to use another port). Any ordinary static HTTP host can serve the contents of `dist/`. Browser ES modules require HTTP serving rather than opening the HTML file directly. Hold Space, the primary mouse button, or a finger to climb; release to dive. Pause with Escape or P, and press R to restart from pause or the result screen (or at any time in Nonstop).
 
 ## Local webserver deployment
 

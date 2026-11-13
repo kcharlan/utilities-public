@@ -127,12 +127,14 @@ This scope does not inspect an installed environment or perform full dependency 
 ## Command-line options
 
 ```text
-usage: git_dashboard [-h] [--port N] [--no-browser] [--scan PATH] [-y]
+usage: git_dashboard [-h] [--port N] [--no-browser] [--scan PATH]
+                     [--trust-repo-tools] [-y]
 
---port N       Preferred port (default 8300); checks up to 20 consecutive ports
---no-browser   Do not open a browser tab
---scan PATH    Discover and register repositories below PATH before serving
--y, --yes      Accepted for backward compatibility; currently has no effect
+--port N            Preferred port (default 8300); checks up to 20 consecutive ports
+--no-browser        Do not open a browser tab
+--scan PATH         Discover and register repositories below PATH before serving
+--trust-repo-tools  Allow Bundler and cargo checks to run repository-controlled tools
+-y, --yes           Accepted for backward compatibility; currently has no effect
 ```
 
 `GIT_DASHBOARD_NO_BROWSER=1` also suppresses browser launch. The server binds only to `127.0.0.1`.
@@ -154,7 +156,7 @@ The application intentionally remains one uv-managed Python file:
 - aiosqlite provides asynchronous database access.
 - Git commands use asynchronous subprocesses without shell interpolation.
 - A Preact SPA, its CSS, fonts, and SVG charts are embedded in `git_dashboard.py` and served by `GET /`; there is no runtime frontend build or `node_modules`.
-- Hash routes select the Fleet, Analytics, and repository detail views.
+- Hash routes select the Fleet Overview, Analytics, Dependencies, and repository detail views.
 
 The frontend uses embedded Preact, htm, and the shared SVG chart module. It makes no browser requests to external asset providers.
 

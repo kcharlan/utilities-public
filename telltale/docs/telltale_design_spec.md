@@ -154,7 +154,7 @@ Retention:
 
 | Data | Kept |
 |---|---|
-| Response rows | 180 days |
+| Response rows, with their evaluation points and compactions | 180 days |
 | Events, episodes, incidents, baseline acceptances | indefinitely (small) |
 | Collector run records | 30 days |
 
@@ -723,8 +723,9 @@ Collector lamps:
 |---|---|
 | Rules | One row per rule (§7.4): toggle, parameters, Notify, Notify when it clears, Reset to default |
 | Collector | Interval, on/off |
+| Providers | Each usage source's state, version, history and data folder, with its own Rebuild ([Claude provider design](telltale_claude_design.md) §8.3) |
 | Watched status components | Checklist from the status page's component list |
-| Data | Retention, plus "Rebuild from Codex logs", which re-ingests the last 30 days |
+| Data | Retention, plus "Rebuild all providers", which re-ingests the last 30 days |
 | General | Open at login; Dashboard appearance: Dark (default), Light or Match system **(my call)**. The panel always follows the system. |
 
 The provider state line can show `Copy.readProblem` for a read failure.

@@ -9,8 +9,10 @@ Automated API, CLI validation, and Playwright browser tests use synthetic HAR fi
 | `test_api.py` | FastAPI routes, scanner behavior, exports, validation, and robustness cases |
 | `test_cli_validate.py` | CLI validation and redaction workflow coverage |
 | `test_e2e.py` | Chromium coverage for offline loading, page errors, and interaction |
+| `test_local_guard.py` | Local-origin request guard and read-only GET routes |
 | `test_redaction_matrix.py` | Synthetic redaction shapes across export formats and fail-closed checks |
 | `test_token_tiers.py` | Token thresholds and WebSocket redaction and validation |
+| `test_xss.py` | Chromium checks that markup in HAR values renders literally and the page keeps its Content Security Policy |
 | `conftest.py` | ASGI client, isolated application state, and synthetic HAR fixtures |
 
 ## Running the Suite

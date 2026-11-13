@@ -1,6 +1,6 @@
 # Generated assets
 
-All four images were generated with the built-in ImageGen tool in this chat. Production copies are in `dist/assets/`; the game has no image-generation dependency.
+The first four images below (key art, plane, pigeon and window washer) were generated with the built-in ImageGen tool in this chat. Production copies are in `dist/assets/`; the game has no image-generation dependency.
 
 ## Key art — `dist/assets/key-art.png`
 

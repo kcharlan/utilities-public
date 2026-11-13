@@ -23,7 +23,7 @@ Quick first run:
 
 1. Leave mode on `Screensaver`.
 2. Leave `Screensaver bodies` at the default `5` (or adjust as desired).
-3. Set `Time multiplier` to `8`.
+3. Leave `Time multiplier` at the default `8` (or adjust as desired).
 4. Watch interactions; it will auto-restart at end of cycle.
 
 ---

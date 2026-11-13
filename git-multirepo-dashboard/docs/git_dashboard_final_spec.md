@@ -57,7 +57,7 @@ The runtime home contains mutable state only. SQLite is initialized idempotently
 
 Startup performs these steps:
 
-1. Parse `--port`, `--no-browser`, `--scan`, and the backward-compatible no-op `--yes` flag.
+1. Parse `--port`, `--no-browser`, `--scan`, `--trust-repo-tools` (enables the Bundler and cargo checks, which are skipped by default), and the backward-compatible no-op `--yes` flag.
 2. Require Python 3.12 or newer and Git in `PATH`.
 3. Discover optional ecosystem tools and require at least one of `npm`, `go`, `cargo`, `bundle`, `composer`, or `pip-audit`.
 4. Create and migrate the SQLite database.
@@ -138,7 +138,7 @@ All repository-owned tables reference `repositories` with cascading deletion. AP
 
 ## Repository discovery and runtime classification
 
-Discovery walks a selected root recursively, pruning hidden directories and common generated directories such as `.venv`, `node_modules`, `dist`, and `build`. It recognizes a repository when a `.git` entry exists, verifies/deduplicates the top level with `git rev-parse --show-toplevel`, and stops descending below that repository.
+Discovery walks a selected root recursively, pruning hidden directories and common generated directories such as `.venv`, `node_modules`, `dist`, and `build`. It recognizes a repository when a `.git` entry exists, verifies/deduplicates the top level with `git rev-parse --show-toplevel`, groups linked worktrees by `git rev-parse --git-common-dir` (preferring the main checkout, otherwise the first linked worktree found), and stops descending below that repository.
 
 Runtime classification checks root-level manifests for Python, Node.js, Go, Rust, Ruby, PHP, and Docker. Multiple non-Docker ecosystems yield `mixed`; Docker combined with one language does not. Without a manifest, a shell-file majority yields `shell`, root `index.html` yields `html`, and the fallback is `unknown`.
 
@@ -261,7 +261,7 @@ The local SPA consumes these JSON and streaming endpoints:
 
 ## UI contracts
 
-The SPA uses hash routing and has Fleet and Analytics top-level tabs plus repository detail routes. An error boundary prevents an uncaught render error from leaving a blank root.
+The SPA uses hash routing and has Fleet Overview, Analytics, and Dependencies top-level tabs plus repository detail routes. An error boundary prevents an uncaught render error from leaving a blank root.
 
 Important interaction contracts:
 

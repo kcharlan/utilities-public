@@ -47,6 +47,7 @@ or serve locally:
 - `multibody-test-2.json`: sample User setup mode save state for multibody testing.
 - `multibody-test-3.json`: sample saved setup state for multibody testing.
 - `tests/smoke.spec.js`: Playwright smoke tests.
+- `tests/save_load.spec.js`: Playwright save/load, malformed-setup, and merge-conservation tests.
 - `playwright.config.js`: Playwright test configuration (launches `http-server` and tests through `127.0.0.1:4173`).
 - `package.json`: local tooling dependencies (`http-server`, Playwright libs).
 
