@@ -1,5 +1,11 @@
 # Lessons learned
 
+## Reset derived session state together
+
+When a manual restart clears the totals that drive a handicap, clear the active
+handicap and its indicator too. Test automatic round restarts separately so they
+retain session state.
+
 ## Validate encoded field limits at the command boundary
 
 Reject values outside a stream field's representable range before opening files.

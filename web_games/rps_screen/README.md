@@ -81,8 +81,9 @@ release threshold = max(lowest wins * 1.2, lowest wins + 5)
 ### Session timer and restarts
 
 The timer spans automatic round restarts. Clicking **Restart** starts a new
-session by clearing the timer and round-win totals, then rebuilding the field
-from the current controls. Reloading the page also starts a new session.
+session by clearing the timer, round-win totals, and any active handicap, then
+rebuilding the field from the current controls. Reloading the page also starts
+a new session.
 
 ## Running
 
@@ -93,3 +94,9 @@ open web_games/rps_screen/index.html
 ```
 
 No build steps or dependencies required.
+
+## Tests
+
+```bash
+node --test web_games/rps_screen/tests/restart.test.mjs
+```
