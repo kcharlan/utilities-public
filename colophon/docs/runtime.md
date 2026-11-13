@@ -172,7 +172,7 @@ reader. Missing legacy provider fields mean Codex. Source filtering applies
 to overview totals, session lists, descendants and direct subagent links.
 The snapshot log count always includes Codex and Claude logs, regardless of the
 switch; accepted OpenCode and Antigravity database counts are shown separately. The footer
-displays the embedded payload's release version (`colophon 0.8.0`). Catalog
+displays the embedded payload's release version (`colophon 0.8.1`). Catalog
 names take precedence over fallback aliases; valid canonical IDs select one
 target, while existing Codex history keys remain unchanged.
 
@@ -264,7 +264,7 @@ An empty value selects the default `~/.claude` config root. Its
 `COLOPHON_HOME` selects the private runtime home (default `~/.colophon`);
 tilde expansion is supported. `COLOPHON_PRICING_URL` defaults to
 `https://models.dev/api.json`. Help and version exit without initializing
-runtime state. Version is currently `colophon 0.8.0`.
+runtime state. Version is currently `colophon 0.8.1`.
 
 | Flag | Behavior |
 | --- | --- |
@@ -458,6 +458,9 @@ and cutoffs are integer milliseconds. Invalid documents are ignored in full and
 reported in `diagnostics.pricing_rules_errors`. Edits are read on the next run;
 no executable rebuild or cache clearing is needed. Existing dated price-history
 entries retain their precedence.
+Catalog aliases with an absent same-provider target use the target's normalized
+history key and fall back to history or bundled rates. Invalid catalog recording
+keys are skipped and listed in `price_history_skipped_keys`; valid rates still record.
 Ledger recording checks for edits before replacement, but a concurrent edit
 after the check can still be overwritten. There is no ledger lock spanning
 the read/check/replace operation.

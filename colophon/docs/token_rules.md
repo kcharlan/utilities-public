@@ -57,7 +57,11 @@ gemini-3.1-pro-preview. The explicit Vertex entry is excluded and unsupported;
 there is no google-vertex routing lane. Shared catalog pricing preserves Claude
 behavior, context tiers and provenance while memoizing provider-prefixed
 identities. Both providers look up the observed model before fallback aliases.
-Catalog canonical IDs are followed once only when the target exists. Dated
+Claude cross-provider canonical IDs are followed once only when the target exists.
+Codex same-provider missing targets use the canonical name normalized as a
+logged name, with no catalog row; history and bundled prices remain available.
+Catalog identities are normalized to default-rule history keys before recording;
+invalid recording keys are reported and skipped without rejecting valid rates. Dated
 Codex names may use a catalog or history base; existing history keys remain stable.
 Unknown models remain unpriced. Each composition rebuilds summaries after the
 shared usage arena reset, including zero-unit sessions.

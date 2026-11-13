@@ -607,6 +607,7 @@
       if (key === "unknown_record_types") row.append(el("p", {text: "Codex's log format may have changed"}));
       if (key === "claude_unknown_record_types") row.append(el("p", {text: "Claude's log format may have changed"}));
       const explanations = {
+        price_history_skipped_keys: "These invalid history keys were skipped while recording catalog prices; other valid entries were still recorded.",
         antigravity_schema_errors: "Antigravity database schema is unsupported; these databases were skipped.",
         antigravity_unreadable_databases: "Antigravity databases could not be read; check each path and reason.",
         antigravity_archive_disagreements: "Own-surface annotations override summary archive state, including the default false value.",

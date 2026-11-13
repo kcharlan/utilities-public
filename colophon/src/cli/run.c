@@ -134,7 +134,7 @@ int cli_run(const Args *args){
     failure=runtime_ledger_history(&ledger,NULL,&history);if(failure.code)goto fail;
     if(ledger.available&&catalog.catalog&&catalog.has_fetched_at) {
         failure=pricing_recording_models(&corpus,&priority,&index,&recording);if(failure.code)goto fail;
-        failure=record_catalog_rates(&history,&index,catalog.fetched_at_ms,yyjson_doc_get_root(recording),snapshot,&new_entries);if(failure.code)goto fail;
+        failure=record_catalog_rates(&history,&index,catalog.fetched_at_ms,yyjson_doc_get_root(recording),snapshot,&new_entries,&ledger.skipped_keys);if(failure.code)goto fail;
         __int128 start_ns=(__int128)ledger_mtime.tv_sec*1000000000+ledger_mtime.tv_nsec;
         if(start_ns<INT64_MIN||start_ns>INT64_MAX){failure=err_make(ERR_INVALID,"ledger mtime outside int64");goto fail;}
         failure=append_user_ledger(&rules,ledger_path,yyjson_doc_get_root(new_entries),true,(int64_t)start_ns,&appended);if(failure.code)goto fail;

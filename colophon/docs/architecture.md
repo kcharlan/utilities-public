@@ -28,6 +28,11 @@ catalog/priority/pricing → payload/page:
 | `src/out/` | Serialize payload and embed it in the offline page. |
 | `src/cli/`, `src/util/` | Coordinate lifecycle, progress, browser/summary, atomic I/O, events, the shared job pool, Unicode and stable sort. |
 
+Catalog normalization retains a rowless canonical identity for missing
+same-provider targets. History recording validates every key independently,
+collecting rejected keys for the payload and CLI diagnostics while continuing
+with valid entries; catalog rate lookup still requires a real row.
+
 Catalog work starts before scanning and joins before pricing. The CLI reads
 ledger state and detects edits before appending newly observed rates; this
 does not eliminate the concurrent read/replace race. Rendering precedes

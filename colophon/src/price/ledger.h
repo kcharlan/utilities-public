@@ -16,6 +16,7 @@ Err validate_ledger(const PricingRules *rules,yyjson_val *document,bool curated,
 void ledger_check_destroy(LedgerCheck *check);
 void ledger_check_json(JsonWriter *writer,const LedgerCheck *check);
 bool ledger_json_equal(yyjson_val *left,yyjson_val *right,bool omit_notes);
+bool ledger_model_key_valid(const PricingRules *rules,Str key);
 typedef struct {
     yyjson_val *value;
     PriceEntry rates;
@@ -36,7 +37,7 @@ void history_entries_json(JsonWriter *writer,const HistoryGroup *group);
 void history_pick_json(JsonWriter *writer,HistoryPick pick);
 Err record_catalog_rates(const PriceHistory *history,ModelsDevIndex *index,
                          int64_t fetched_at_ms,yyjson_val *recording_ids,int64_t now_ms,
-                         yyjson_doc **out);
+                         yyjson_doc **out,Omap *skipped);
 typedef struct {Arena arena;bool appended;Str warning;} LedgerAppend;
 Err append_user_ledger(const PricingRules *rules,const char *path,yyjson_val *new_entries,bool start_present,
                        int64_t start_mtime_ns,LedgerAppend *out);
@@ -48,6 +49,7 @@ typedef struct {
     LedgerCheck check;
     Str reason;
     LedgerDiagnostic *diagnostics,*last;
+    Omap skipped_keys;
     bool available;
 } RuntimeLedger;
 /* Owns generic dictionary entries and diagnostic text until payload/summary

@@ -773,7 +773,7 @@ def test_help_and_version_create_no_runtime(native):
         assert text in help_result.stdout
     version = native.invoke("--version")
     assert version.returncode == 0
-    assert version.stdout == "colophon 0.8.0\n"
+    assert version.stdout == "colophon 0.8.1\n"
     assert not native.runtime.exists()
 
 def test_sandbox_allows_active_reads_and_scratch_only_writes(tmp_path):
@@ -1448,3 +1448,41 @@ def test_catalog_identity_and_legacy_history_keys(native, model, expected):
     assert payload["sessions"][0]["own_usage"]["cost_usd"] == pytest.approx(expected)
     if model == "synthetic-alias":
         assert "synthetic-base" in payload["models"]
+
+def test_missing_canonical_catalog_target_does_not_block_recording(native):
+    native.runtime.mkdir(mode=0o700)
+    catalog = {"openai": {"models": {
+        "gpt-5.6": {"id": "gpt-5.6", "canonical_model_id": "gpt-5.6-sol", "cost": {"input": 20, "output": 20}},
+        "synthetic-new-model": {"id": "synthetic-new-model", "cost": {"input": 1, "output": 2}},
+    }}}
+    (native.runtime / "pricing-cache.json").write_text(json.dumps({"schema": 1, "url": native.env["COLOPHON_PRICING_URL"], "fetched_at_ms": 1767225600000, "catalog": catalog}))
+    native.write_session([
+        row("session_meta", {"id": SESSION, "cwd": "/synthetic/kite", "source": "cli"}, 0),
+        row("turn_context", {"model": "synthetic-new-model", "turn_id": "synthetic-turn"}, 1),
+        row("event_msg", {"type": "task_started", "turn_id": "synthetic-turn"}, 1),
+        row("event_msg", {"type": "token_count", "turn_id": "synthetic-turn", "info": {"last_token_usage": usage(1000, 0, 100), "total_token_usage": usage(1000, 0, 100)}}, 3),
+    ])
+    result = native.build()
+    assert result.returncode == 0, result.stderr
+    assert native.payload()["diagnostics"]["ledger"] == []
+    entries = json.loads((native.runtime / "price-history.json").read_text())["entries"]
+    assert any(e["model"] == "synthetic-new-model" and e["effective_from"] for e in entries)
+    assert all(e["model"] != "gpt-5.6" for e in entries)
+
+def test_missing_canonical_catalog_target_uses_canonical_history(native):
+    native.runtime.mkdir(mode=0o700)
+    catalog = {"openai": {"models": {"synthetic-alias": {"id": "synthetic-alias", "canonical_model_id": "synthetic-base", "cost": {"input": 20, "output": 20}}}}}
+    (native.runtime / "pricing-cache.json").write_text(json.dumps({"schema": 1, "url": native.env["COLOPHON_PRICING_URL"], "fetched_at_ms": 1767225600000, "catalog": catalog}))
+    entry = {"model": "synthetic-base", "effective_from": "2026-01-01T00:00:00Z", "source": "manual", "per_million": {"input": 4, "cached_input": 4, "cache_write": 4, "output": 2}}
+    (native.runtime / "price-history.json").write_text(json.dumps({"schema": 1, "entries": [entry]}))
+    native.write_session([
+        row("session_meta", {"id": SESSION, "cwd": "/synthetic/kite", "source": "cli"}, 0),
+        row("turn_context", {"model": "synthetic-alias", "turn_id": "synthetic-turn"}, 1),
+        row("event_msg", {"type": "task_started", "turn_id": "synthetic-turn"}, 1),
+        row("event_msg", {"type": "token_count", "turn_id": "synthetic-turn", "info": {"last_token_usage": usage(1000, 0, 100), "total_token_usage": usage(1000, 0, 100)}}, 3),
+    ])
+    result = native.build()
+    assert result.returncode == 0, result.stderr
+    payload = native.payload()
+    assert "synthetic-base" in payload["models"]
+    assert payload["sessions"][0]["own_usage"]["cost_usd"] == pytest.approx(0.0042)

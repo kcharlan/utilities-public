@@ -190,6 +190,7 @@ static Err canonical_hop(ModelsDevIndex *index,CatalogLookup *lookup) {
     CatalogModel *target=omap_get(&index->models,id);CatalogLookup *by_id=omap_get(&index->normalized,id);
     if(target)*lookup=(CatalogLookup){.model=target,.identity=target->model_id,.canonical_applied=true};
     else if(by_id){*lookup=*by_id;lookup->canonical_applied=true;}
+    else *lookup=(CatalogLookup){.identity=normalize_codex_model(index->rules,id),.canonical_applied=true};
     return ERR_SUCCESS;
 }
 static Err lookup_uncached(ModelsDevIndex *index,bool accepted,Str raw,CatalogLookup *out) {
@@ -211,7 +212,9 @@ Err models_dev_normalize(ModelsDevIndex *index,Str raw,Str *out) {
     Str *cached=omap_get(&index->normalizations,raw);if(cached){*out=*cached;return ERR_SUCCESS;}
     CatalogLookup lookup={0};Err e=models_dev_pricing(index,STR_LIT("openai"),raw,&lookup);if(e.code)return e;
     e=arena_alloc(&index->arena,sizeof *cached,_Alignof(Str),(void **)&cached);if(e.code)return e;
-    e=str_copy(&index->arena,lookup.model?lookup.identity:normalize_codex_model(index->rules,raw),cached);if(e.code)return e;
+    PricingRules defaults={.defaults=index->rules?index->rules->defaults:NULL};
+    Str identity=lookup.identity.p?lookup.identity:normalize_codex_model(index->rules,raw);
+    e=str_copy(&index->arena,normalize_codex_model(&defaults,identity),cached);if(e.code)return e;
     e=omap_put(&index->normalizations,raw,cached);if(!e.code)*out=*cached;return e;
 }
 Err models_dev_pricing(ModelsDevIndex *index,Str provider,Str raw,CatalogLookup *out) {

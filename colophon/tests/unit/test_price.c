@@ -261,12 +261,47 @@ TEST(catalog_context_tier_first_match_presence_and_extended_tier_rules) {
 }
 
 TEST(catalog_canonical_and_catalog_only_dated_names) {
-    const char *json="{\"openai\":{\"models\":{\"synthetic-alias\":{\"id\":\"synthetic-alias\",\"canonical_model_id\":\"synthetic-base\",\"cost\":{\"input\":1,\"output\":1}},\"synthetic-base\":{\"id\":\"synthetic-base\",\"cost\":{\"input\":7,\"output\":9}}}}}";
+    const char *json="{\"openai\":{\"models\":{\"synthetic-alias\":{\"id\":\"synthetic-alias\",\"canonical_model_id\":\"synthetic-base\",\"cost\":{\"input\":1,\"output\":1}},\"synthetic-base\":{\"id\":\"synthetic-base\",\"cost\":{\"input\":7,\"output\":9}},\"synthetic-missing\":{\"id\":\"synthetic-missing\",\"canonical_model_id\":\"synthetic-absent\",\"cost\":{\"input\":1,\"output\":2}},\"synthetic-date-2099-01-01\":{\"id\":\"synthetic-date-2099-01-01\",\"cost\":{\"input\":1,\"output\":2}}}}}";
     yyjson_doc *doc=NULL; ASSERT_EQ(ERR_OK,catalog_decode((Str){json,(uint32_t)strlen(json)},&doc).code);
     ModelsDevIndex index={.rules=&test_rules};ASSERT_EQ(ERR_OK,models_dev_index(yyjson_doc_get_root(doc),&index).code);
     Str name;CatalogLookup lookup;
     ASSERT_EQ(ERR_OK,models_dev_normalize(&index,STR_LIT("synthetic-alias"),&name).code);ASSERT_TRUE(str_equal(name,STR_LIT("synthetic-base")));
     ASSERT_EQ(ERR_OK,models_dev_pricing(&index,STR_LIT("openai"),STR_LIT("synthetic-alias"),&lookup).code);ASSERT_EQ(7,lookup.model->rates[0]);
     ASSERT_EQ(ERR_OK,models_dev_normalize(&index,STR_LIT("synthetic-base-2099-01-01"),&name).code);ASSERT_TRUE(str_equal(name,STR_LIT("synthetic-base")));
+    ASSERT_EQ(ERR_OK,models_dev_normalize(&index,STR_LIT("synthetic-missing"),&name).code);ASSERT_TRUE(str_equal(name,STR_LIT("synthetic-absent")));
+    ASSERT_TRUE(ledger_model_key_valid(&test_rules,name));
+    for(OmapEntry *entry=index.models.first;entry;entry=entry->next){CatalogModel *model=entry->value;ASSERT_EQ(ERR_OK,models_dev_normalize(&index,model->model_id,&name).code);ASSERT_TRUE(ledger_model_key_valid(&test_rules,name));}
     models_dev_destroy(&index);yyjson_doc_free(doc);
+}
+TEST(catalog_missing_canonical_target_uses_logged_name_normalization) {
+    const char *json="{\"openai\":{\"models\":{\"synthetic-alias\":{\"id\":\"synthetic-alias\",\"canonical_model_id\":\"synthetic-base\",\"cost\":{\"input\":1,\"output\":2}},\"synthetic-rules-alias\":{\"id\":\"synthetic-rules-alias\",\"canonical_model_id\":\"gpt-5.6\",\"cost\":{\"input\":1,\"output\":2}}}}}";
+    yyjson_doc *doc=NULL;ASSERT_EQ(ERR_OK,catalog_decode((Str){json,(uint32_t)strlen(json)},&doc).code);
+    ModelsDevIndex index={.rules=&test_rules};ASSERT_EQ(ERR_OK,models_dev_index(yyjson_doc_get_root(doc),&index).code);
+    Str name,direct;CatalogLookup lookup={0};
+    ASSERT_EQ(ERR_OK,models_dev_normalize(&index,STR_LIT("synthetic-alias"),&name).code);ASSERT_TRUE(str_equal(name,STR_LIT("synthetic-base")));
+    ASSERT_EQ(ERR_OK,models_dev_pricing(&index,STR_LIT("openai"),STR_LIT("synthetic-alias"),&lookup).code);ASSERT_TRUE(lookup.model==NULL);
+    ASSERT_EQ(ERR_OK,models_dev_normalize(&index,STR_LIT("synthetic-rules-alias"),&name).code);
+    ASSERT_EQ(ERR_OK,models_dev_normalize(&index,STR_LIT("gpt-5.6"),&direct).code);
+    ASSERT_TRUE(str_equal(name,STR_LIT("gpt-5.6-sol")));ASSERT_TRUE(str_equal(name,direct));
+    for(OmapEntry *entry=index.models.first;entry;entry=entry->next){CatalogModel *model=entry->value;ASSERT_EQ(ERR_OK,models_dev_normalize(&index,model->model_id,&name).code);ASSERT_TRUE(ledger_model_key_valid(&test_rules,name));}
+    models_dev_destroy(&index);yyjson_doc_free(doc);
+}
+TEST(catalog_present_default_alias_uses_valid_history_key) {
+    JsonRead doc=json_read(STR_LIT("{\"openai\":{\"models\":{\"gpt-5.6\":{\"id\":\"gpt-5.6\",\"cost\":{\"input\":1,\"output\":2}}}}}"),BYTES,JSON_CONSTANTS_REJECT,"test.price.present_alias");
+    ModelsDevIndex index={.rules=&test_rules};ASSERT_EQ(ERR_OK,models_dev_index(yyjson_doc_get_root(doc.doc),&index).code);
+    Str name;ASSERT_EQ(ERR_OK,models_dev_normalize(&index,STR_LIT("gpt-5.6"),&name).code);ASSERT_TRUE(str_equal(name,STR_LIT("gpt-5.6-sol")));
+    ASSERT_TRUE(ledger_model_key_valid(&test_rules,name));
+    CatalogLookup lookup={0};ASSERT_EQ(ERR_OK,models_dev_pricing(&index,STR_LIT("openai"),STR_LIT("gpt-5.6"),&lookup).code);ASSERT_TRUE(lookup.model!=NULL);
+    models_dev_destroy(&index);json_read_free(&doc);
+}
+TEST(catalog_recording_invalid_key_does_not_block_valid_entry) {
+    const char *json="{\"openai\":{\"models\":{\"synthetic-valid\":{\"id\":\"synthetic-valid\",\"cost\":{\"input\":1,\"output\":2}}}}}";
+    yyjson_doc *doc=NULL,*recorded=NULL;ASSERT_EQ(ERR_OK,catalog_decode((Str){json,(uint32_t)strlen(json)},&doc).code);
+    ModelsDevIndex index={.rules=&test_rules};ASSERT_EQ(ERR_OK,models_dev_index(yyjson_doc_get_root(doc),&index).code);
+    JsonRead ids=json_read(STR_LIT("{\"gpt-5.6\":\"synthetic-valid\"}"),BYTES,JSON_CONSTANTS_REJECT,"test.price.recording");
+    PriceHistory history={0};Omap skipped={0};ASSERT_EQ(ERR_OK,record_catalog_rates(&history,&index,1767225600000LL,yyjson_doc_get_root(ids.doc),1767225600000LL,&recorded,&skipped).code);
+    yyjson_val *rows=yyjson_doc_get_root(recorded);ASSERT_EQ(1,yyjson_arr_size(rows));
+    ASSERT_STREQ("synthetic-valid",yyjson_get_str(obj_get_last(yyjson_arr_get(rows,0),STR_LIT("model"))));
+    ASSERT_EQ(1,skipped.size);ASSERT_STREQ("gpt-5.6",skipped.first->key.p);
+    omap_destroy(&skipped);yyjson_doc_free(recorded);json_read_free(&ids);models_dev_destroy(&index);yyjson_doc_free(doc);
 }

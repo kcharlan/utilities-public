@@ -396,3 +396,7 @@ a combining character immediately after a prefix does not select that provider.
 Reject an entire ledger record as learning evidence when decoding fails, even
 if its leading events decoded successfully. When catalog aliases cross providers,
 carry the canonical provider with the rates: it also selects the pricing policy.
+
+Catalog aliases and history validation must agree on key normalization even
+when the catalog omits a canonical target. Exercise missing targets and invalid
+recording IDs alongside valid entries so one bad key cannot reject the batch.

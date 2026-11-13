@@ -73,9 +73,9 @@ static bool instant(yyjson_val *v,int64_t *out) {
     }
     return time_parse_rfc3339(s,"price.effective_from",out);
 }
-static bool model_valid(const PricingRules *rules,yyjson_val *v) {
+bool ledger_model_key_valid(const PricingRules *rules,Str model) {
     PricingRules defaults={.defaults=rules?rules->defaults:NULL};
-    Str model=string(v);if(!model.n||!token_model_trim(model).n)return false;
+    if(!model.n||!token_model_trim(model).n)return false;
     if(model.n>=8&&!memcmp(model.p,"catalog:",8)) {
         size_t bar=SIZE_MAX;for(size_t i=8;i<model.n;i++)if(model.p[i]=='|')bar=i;
         if(bar==SIZE_MAX||bar==8||bar==model.n-1)return false;
@@ -84,6 +84,7 @@ static bool model_valid(const PricingRules *rules,yyjson_val *v) {
     }
     return str_equal(normalize_codex_model(&defaults,model),model);
 }
+static bool model_valid(const PricingRules *rules,yyjson_val *v) {return ledger_model_key_valid(rules,string(v));}
 typedef struct {PyNum number;bool valid;} LedgerNumber;
 static bool ledger_number(LedgerCheck *check,yyjson_val *v,const char *site,PyNum *out) {
     if(check->numeric_error.code)return false;
@@ -320,7 +321,7 @@ static yyjson_mut_val *rate_block(yyjson_mut_doc *doc,const PriceRates *rates,bo
     return value;
 }
 Err record_catalog_rates(const PriceHistory *history,ModelsDevIndex *index,int64_t fetched_at_ms,
-                         yyjson_val *recording_ids,int64_t now_ms,yyjson_doc **out) {
+                         yyjson_val *recording_ids,int64_t now_ms,yyjson_doc **out,Omap *skipped) {
     *out=NULL;Omap sources={0};Arena arena={0};OmapEntry **sorted=NULL;
     yyjson_mut_doc *doc=yyjson_mut_doc_new(NULL);Err error=ERR_SUCCESS;
     if(!doc)return err_make(ERR_NOMEM,"catalog recording allocation");
@@ -352,6 +353,7 @@ Err record_catalog_rates(const PriceHistory *history,ModelsDevIndex *index,int64
     char effective[21],recorded[21];
     if(!time_format_rfc3339(effective_ms,effective)||!time_format_rfc3339(now_ms,recorded)){error=err_make(ERR_INVALID,"invalid catalog recording clock");goto done;}
     for(size_t i=0;i<count;i++) {
+        if(!ledger_model_key_valid(index->rules,sorted[i]->key)){error=omap_put(skipped,sorted[i]->key,(void *)1);if(error.code)goto done;continue;}
         Str model=*(Str *)sorted[i]->value;PricingTargets targets;
         error=codex_models_dev_pricing_targets(index->rules,&arena,model,&targets);if(error.code)goto done;
         CatalogLookup lookup={0};
@@ -556,4 +558,4 @@ done:
 void runtime_ledger_json(JsonWriter *w,const RuntimeLedger *ledger) {
     jsonw_raw(w,"[");if(ledger)for(LedgerDiagnostic *diagnostic=ledger->diagnostics;diagnostic;diagnostic=diagnostic->next){if(diagnostic!=ledger->diagnostics)jsonw_raw(w,",");jsonw_raw(w,"{\"level\":");jsonw_string(w,diagnostic->level);jsonw_raw(w,",\"message\":");jsonw_string(w,diagnostic->message);jsonw_raw(w,"}");}jsonw_raw(w,"]");
 }
-void runtime_ledger_destroy(RuntimeLedger *ledger) {ledger_check_destroy(&ledger->check);yyjson_doc_free(ledger->curated);yyjson_doc_free(ledger->document);yyjson_doc_free(ledger->entries);arena_destroy(&ledger->arena);*ledger=(RuntimeLedger){0};}
+void runtime_ledger_destroy(RuntimeLedger *ledger) {ledger_check_destroy(&ledger->check);yyjson_doc_free(ledger->curated);yyjson_doc_free(ledger->document);yyjson_doc_free(ledger->entries);omap_destroy(&ledger->skipped_keys);arena_destroy(&ledger->arena);*ledger=(RuntimeLedger){0};}
