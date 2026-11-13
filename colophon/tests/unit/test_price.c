@@ -259,3 +259,14 @@ TEST(catalog_context_tier_first_match_presence_and_extended_tier_rules) {
     snprintf(raw,sizeof raw,"{\"openai\":{\"models\":{\"gpt-synthetic-tier\":{\"id\":\"gpt-synthetic-tier\",\"cost\":{" SYNTHETIC_COST ",\"context_over_200k\":{\"input\":4,\"output\":15,\"cache_read\":0.2,\"cache_write\":5,\"tier\":{\"type\":\"context\",\"size\":272000}},%s}}}}}",tiers);
     ASSERT_EQ(200000,resolve_with_catalog(raw,"gpt-synthetic-tier",&found).threshold);ASSERT_TRUE(found);
 }
+
+TEST(catalog_canonical_and_catalog_only_dated_names) {
+    const char *json="{\"openai\":{\"models\":{\"synthetic-alias\":{\"id\":\"synthetic-alias\",\"canonical_model_id\":\"synthetic-base\",\"cost\":{\"input\":1,\"output\":1}},\"synthetic-base\":{\"id\":\"synthetic-base\",\"cost\":{\"input\":7,\"output\":9}}}}}";
+    yyjson_doc *doc=NULL; ASSERT_EQ(ERR_OK,catalog_decode((Str){json,(uint32_t)strlen(json)},&doc).code);
+    ModelsDevIndex index={0};ASSERT_EQ(ERR_OK,models_dev_index(yyjson_doc_get_root(doc),&index).code);
+    Str name;CatalogLookup lookup;
+    ASSERT_EQ(ERR_OK,models_dev_normalize(&index,STR_LIT("synthetic-alias"),&name).code);ASSERT_TRUE(str_equal(name,STR_LIT("synthetic-base")));
+    ASSERT_EQ(ERR_OK,models_dev_pricing(&index,STR_LIT("openai"),STR_LIT("synthetic-alias"),&lookup).code);ASSERT_EQ(7,lookup.model->rates[0]);
+    ASSERT_EQ(ERR_OK,models_dev_normalize(&index,STR_LIT("synthetic-base-2099-01-01"),&name).code);ASSERT_TRUE(str_equal(name,STR_LIT("synthetic-base")));
+    models_dev_destroy(&index);yyjson_doc_free(doc);
+}

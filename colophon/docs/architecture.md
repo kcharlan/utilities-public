@@ -81,7 +81,9 @@ Claude raw rows capture priced nanocosts before winner reconciliation.
 After Codex composition/pricing, `claude_compose` authors Claude units and
 `claude_price_units` prices them independently of the Codex ledger. The
 catalog retains first-party Claude providers and explicit supported routes
-in separate indexes; Codex keeps its existing model lookup and cache.
+in separate indexes. Exact catalog names precede aliases, and a valid
+canonical ID resolves one hop, including supported cross-provider targets.
+Codex history keys continue to use the existing offline normalization.
 `PricingReport` owns transient Claude rate/fast periods and exact-input
 resolution memos. Raw rows own the prior-price facts needed by persistent
 Claude codecs. Provider-aware aggregation refresh and page availability

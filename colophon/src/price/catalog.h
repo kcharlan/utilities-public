@@ -5,15 +5,15 @@
 #include "util/omap.h"
 #include "out/jsonw.h"
 typedef struct {
-    Str model_id;
+    Str model_id, canonical_provider, canonical_model;
     double rates[4], extended[4];
     uint8_t present, extended_present;
     bool has_extended;
     bool has_context_tier;
     int64_t context_tier_size;
 } CatalogModel;
-typedef struct { Arena arena; Omap models, normalized, lookups, normalizations, claude_providers; } ModelsDevIndex;
-typedef struct { const CatalogModel *model; Str identity; } CatalogLookup;
+typedef struct { Arena arena; Omap models, normalized, lookups, normalizations, claude_providers; Str provider_id; } ModelsDevIndex;
+typedef struct { const CatalogModel *model; Str identity, provider; bool canonical_applied; } CatalogLookup;
 Err models_dev_index(yyjson_val *catalog,ModelsDevIndex *out);
 Err models_dev_pricing(ModelsDevIndex *index,Str provider,Str raw,CatalogLookup *out);
 Err claude_catalog_pricing(ModelsDevIndex *index,Str provider,Str raw,CatalogLookup *out);

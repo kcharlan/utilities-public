@@ -64,6 +64,7 @@ Err claude_models_dev_lookup(Arena *arena,ModelsDevIndex *index,Str raw,ClaudeLo
         CatalogLookup lookup={0};
         for(size_t t=0;t<count;t++){TRY(claude_catalog_pricing(index,provider,targets[t],&lookup));if(lookup.model)break;}
         if(!lookup.model)continue;
+        if(lookup.provider.n)provider=lookup.provider;
         if(explicit||vendor){*out=(ClaudeLookup){lookup,provider};return ERR_SUCCESS;}
         if(++matched_providers==1)*out=(ClaudeLookup){lookup,provider};else *out=(ClaudeLookup){0};
     }

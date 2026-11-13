@@ -45,18 +45,20 @@ step completed_at, finished_generating_at, created_at, chat-start created_at,
 then session start with antigravity_unknown_clocks. These fallback/turn policies
 are explicit Colophon adaptations. TTFT uses the turn's first generator row.
 
-Attribution prefers generator response_model, a model name learned from usage numbers across live generator rows and retained ledger events, step ModelInfo.chat_model_name then model_name, the latest attributed conversation model, then an unknown-number marker or antigravity/unattributed. Names are normalized before counting; the most frequent wins, with first observation breaking ties. Display/Vertex/URL strings are excluded.
+Attribution prefers generator response_model, a model name learned from usage numbers across live generator rows and retained ledger events, step ModelInfo.chat_model_name then model_name, the latest attributed conversation model, then an unknown-number marker or antigravity/unattributed. Names are normalized before counting; the most frequent wins, with first observation breaking ties. The winning observation retains its raw spelling for catalog lookup. Display/Vertex/URL strings are excluded.
 
 Normalization adapts CodexBar commit
 `e5d6977ba547aa7046eed3865f8ee1cdd5d58731`, AntigravityLocalReader.swift
 pricingBaseModelID/routingVariantSuffixes/pricingModelAliases, adding -medium,
--high and -trial. Exact aliases are checked before removing one suffix and again
-afterward, including gemini-3.1-pro-high/-low followed by a routing suffix.
+-high and -trial. Catalog pricing first tries the logged name, then one routing
+suffix, then the offline alias. The fallback retains exact-alias precedence.
 The moving gemini-pro-default/gemini-pro-agent aliases assume
 gemini-3.1-pro-preview. The explicit Vertex entry is excluded and unsupported;
 there is no google-vertex routing lane. Shared catalog pricing preserves Claude
 behavior, context tiers and provenance while memoizing provider-prefixed
-identities. Antigravity looks up normalized model; Claude looks up model_raw.
+identities. Both providers look up the observed model before fallback aliases.
+Catalog canonical IDs are followed once only when the target exists. Dated
+Codex names may use a catalog or history base; existing history keys remain stable.
 Unknown models remain unpriced. Each composition rebuilds summaries after the
 shared usage arena reset, including zero-unit sessions.
 

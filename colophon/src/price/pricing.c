@@ -99,6 +99,14 @@ static bool cutoff_for(Str model,int64_t *cutoff) {
     if(str_equal(model,STR_LIT("gpt-5.6-terra"))||str_equal(model,STR_LIT("gpt-5.6-luna"))){*cutoff=INT64_C(1785369600000);return true;}
     return false;
 }
+static Str history_key(const PriceHistory *history,Str raw) {
+    Str key=normalize_codex_model(raw);
+    if(history_has_any(history,key))return key;
+    if(key.n>11){Str tail={key.p+key.n-11,11};bool date=true;
+        for(size_t i=0;i<11;i++){bool dash=i==0||i==5||i==8;if(dash?tail.p[i]!='-':tail.p[i]<'0'||tail.p[i]>'9'){date=false;break;}}
+        if(date){Str base={key.p,key.n-11};if(history_has_any(history,base))return base;}}
+    return key;
+}
 Err price_usage_units(UsageUnit *units,size_t count,const PriceHistory *history,ModelsDevIndex *index,bool available,PricingReport *report) {
     for(size_t i=0;i<count;i++) {
         UsageUnit *unit=&units[i];unit->has_cost=false;unit->cost_usd=0;unit->period=unit->priority_period=(PricePeriod){0};
@@ -109,13 +117,15 @@ Err price_usage_units(UsageUnit *units,size_t count,const PriceHistory *history,
         Str raw=override?trace:unit->model_raw,normalized;
         if(index){e=models_dev_normalize(index,raw,&normalized);if(e.code)return e;}
         else normalized=normalize_codex_model(raw);
+        Str old_key=history_key(history,raw);
+        if(history_has_any(history,old_key))normalized=old_key;
         if(str_equal(normalized,STR_LIT("unknown"))){e=count_add(report,&report->unpriced,unit->model,unit->input+unit->output);if(e.code)return e;continue;}
         const PriceEntry *rates=NULL;PricePriority priority={0};
         if(!unit->at_ms.present) {
             double multiplier=unit->priority_tier?codex_api_fast_multiplier(raw):0;
             if(multiplier)priority=(PricePriority){.present=true,.capped=!str_equal(normalized,STR_LIT("gpt-6-astra")),.cap=272000,.multiplier={.is_float=true,.f=multiplier}};
             Str key={0};if(override){e=override_key(report,index,raw,normalized,&key);if(e.code)return e;}
-            e=rates_at(report,history,index,key.p?key:normalized,override?raw:normalized,0,true,priority,&rates,&unit->period);if(e.code)return e;
+            e=rates_at(report,history,index,key.p?key:normalized,raw,0,true,priority,&rates,&unit->period);if(e.code)return e;
             if(!rates){e=count_add(report,&report->unpriced,unit->model,unit->input+unit->output);if(e.code)return e;continue;}
             e=count_add(report,&report->untimed,unit->model,unit->input+unit->output);if(e.code)return e;
             unit->has_cost=true;unit->cost_usd=cost_usd(rates,unit->input,unit->cached,unit->output);
@@ -131,7 +141,7 @@ Err price_usage_units(UsageUnit *units,size_t count,const PriceHistory *history,
         if(cutoff_present&&!unit->timestamp_ms.present&&rates_clock<cutoff)rates_clock=cutoff;
         Str key={0};if(override&&!historical){e=override_key(report,index,raw,normalized,&key);if(e.code)return e;}
         if(key.p){HistoryPick pick=history_pick(history,key,rates_clock);if(pick.entry&&pick.before_first)key=(Str){0};}
-        e=rates_at(report,history,index,key.p?key:normalized,key.p?raw:normalized,rates_clock,false,(PricePriority){0},&rates,&unit->period);if(e.code)return e;
+        e=rates_at(report,history,index,key.p?key:normalized,raw,rates_clock,false,(PricePriority){0},&rates,&unit->period);if(e.code)return e;
         if(!rates){e=count_add(report,&report->unpriced,unit->model,unit->input+unit->output);if(e.code)return e;continue;}
         unit->has_cost=true;unit->cost_usd=cost_usd(rates,unit->input,unit->cached,unit->output);
         if(unit->priority_tier) {

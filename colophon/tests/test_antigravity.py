@@ -77,6 +77,19 @@ def test_antigravity_cached_pricing_effort_alias_after_routing(native, model):
     assert row["own_usage"]["cost_usd"] == pytest.approx(.001173)
     assert row["buckets"][0][1] == "gemini-3.1-pro-preview"
 
+def test_antigravity_catalog_exact_name_wins_over_preview_alias(native):
+    cached_pricing(native, unknown=False, model="gemini-3.1-pro-high")
+    path = native.runtime / "pricing-cache.json"
+    cache = json.loads(path.read_text())
+    cache["catalog"]["google"]["models"]["gemini-3.1-pro-high"] = {
+        "id": "gemini-3.1-pro-high", "cost": {"input": 3, "output": 5}}
+    path.write_text(json.dumps(cache))
+    result = native.build("--no-claude", "--no-opencode")
+    assert result.returncode == 0, result.stderr
+    row, = native.payload()["sessions"]
+    assert row["buckets"][0][1] == "gemini-3.1-pro-high"
+    assert row["own_usage"]["cost_usd"] == pytest.approx((50 * 3 + 7 * 5) / 1e6)
+
 @pytest.mark.parametrize("key", ["synthetic-opaque-key", 7, None])
 def test_antigravity_trajectory_key_types_preserve_workspace_creation_and_parent(native, key):
     child_id = "00000000-0000-4000-8000-000000000002"

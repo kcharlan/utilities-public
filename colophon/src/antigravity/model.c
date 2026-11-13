@@ -9,12 +9,17 @@ static Str pricing_alias(Str lower) {
     for(size_t i=0;i<sizeof aliases/sizeof *aliases;i++)if(str_equal(lower,(Str){aliases[i][0],(uint32_t)strlen(aliases[i][0])}))return (Str){aliases[i][1],(uint32_t)strlen(aliases[i][1])};
     return (Str){0};
 }
-Err antigravity_normalize_model(Arena *arena,Str raw,Str *out) {
+Err antigravity_strip_routing(Arena *arena,Str raw,Str *out) {
     Str s=token_model_trim(raw),lower;TRY(str_lower(arena,s,&lower));
-    /* Pinned order: exact alias, one routing suffix, then alias again. */
-    Str alias=pricing_alias(lower);if(alias.n)return str_copy(arena,alias,out);
     const char *suffixes[]={"-tiered","-low","-thinking","-medium","-high","-trial"};
     for(size_t i=0;i<sizeof suffixes/sizeof *suffixes;i++){size_t n=strlen(suffixes[i]);if(s.n>n&&!memcmp(lower.p+lower.n-n,suffixes[i],n)){s.n-=(uint32_t)n;lower.n-=(uint32_t)n;break;}}
+    return str_copy(arena,s,out);
+}
+Err antigravity_normalize_model(Arena *arena,Str raw,Str *out) {
+    Str s=token_model_trim(raw),lower;TRY(str_lower(arena,s,&lower));
+    /* Offline fallback retains its pinned alias precedence. */
+    Str alias=pricing_alias(lower);if(alias.n)return str_copy(arena,alias,out);
+    TRY(antigravity_strip_routing(arena,s,&s));TRY(str_lower(arena,s,&lower));
     alias=pricing_alias(lower);if(alias.n)s=alias;
     return str_copy(arena,s,out);
 }

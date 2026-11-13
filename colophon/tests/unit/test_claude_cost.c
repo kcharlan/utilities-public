@@ -113,3 +113,23 @@ TEST(claude_route_primary_precedes_alias_provider_and_preferred_vendor_stays_own
     ASSERT_EQ(ERR_OK,claude_models_dev_lookup(&arena,&index,STR_LIT("google/claude-synthetic"),&lookup).code);ASSERT_TRUE(lookup.catalog.model);
     arena_destroy(&arena);models_dev_destroy(&index);yyjson_doc_free(doc);
 }
+TEST(antigravity_catalog_exact_name_precedes_effort_alias) {
+    const char *json="{\"google\":{\"models\":{\"gemini-3.1-pro-high\":{\"id\":\"gemini-3.1-pro-high\",\"cost\":{\"input\":11,\"output\":17}},\"gemini-3.1-pro-preview\":{\"id\":\"gemini-3.1-pro-preview\",\"cost\":{\"input\":31,\"output\":37}}}}}";
+    yyjson_doc *doc=NULL;ASSERT_EQ(ERR_OK,catalog_decode((Str){json,(uint32_t)strlen(json)},&doc).code);
+    ModelsDevIndex index={0};ASSERT_EQ(ERR_OK,models_dev_index(yyjson_doc_get_root(doc),&index).code);
+    UsageUnit u=unit(STR_LIT("gemini-3.1-pro-high"),19,0);u.model=STR_LIT("gemini-3.1-pro-preview");
+    PricingReport report={0};ASSERT_EQ(ERR_OK,catalog_price_usage_units(&u,1,&index,&report,STR_LIT("antigravity:"),true).code);
+    CLOSE((19.*11+7*17)/1e6,u.cost_usd);ASSERT_TRUE(str_equal(u.model,STR_LIT("gemini-3.1-pro-high")));
+    pricing_report_destroy(&report);models_dev_destroy(&index);yyjson_doc_free(doc);
+}
+TEST(catalog_cross_provider_canonical_is_one_hop_and_missing_target_is_safe) {
+    const char *json="{\"opencode\":{\"models\":{\"synthetic-hop\":{\"id\":\"synthetic-hop\",\"canonical_model_id\":\"google/synthetic-target\",\"cost\":{\"input\":1,\"output\":2}},\"synthetic-missing\":{\"id\":\"synthetic-missing\",\"canonical_model_id\":\"google/synthetic-absent\",\"cost\":{\"input\":3,\"output\":4}}}},\"google\":{\"models\":{\"synthetic-target\":{\"id\":\"synthetic-target\",\"canonical_model_id\":\"opencode/synthetic-hop\",\"cost\":{\"input\":7,\"output\":9}}}}}";
+    yyjson_doc *doc=NULL;ASSERT_EQ(ERR_OK,catalog_decode((Str){json,(uint32_t)strlen(json)},&doc).code);
+    ModelsDevIndex index={0};ASSERT_EQ(ERR_OK,models_dev_index(yyjson_doc_get_root(doc),&index).code);
+    Arena arena={0};ClaudeLookup lookup;
+    ASSERT_EQ(ERR_OK,claude_models_dev_lookup(&arena,&index,STR_LIT("opencode/synthetic-hop"),&lookup).code);
+    ASSERT_TRUE(str_equal(lookup.provider,STR_LIT("google")));ASSERT_TRUE(str_equal(lookup.catalog.identity,STR_LIT("synthetic-target")));ASSERT_EQ(7,lookup.catalog.model->rates[0]);
+    ASSERT_EQ(ERR_OK,claude_models_dev_lookup(&arena,&index,STR_LIT("opencode/synthetic-missing"),&lookup).code);
+    ASSERT_TRUE(str_equal(lookup.provider,STR_LIT("opencode")));ASSERT_EQ(3,lookup.catalog.model->rates[0]);
+    arena_destroy(&arena);models_dev_destroy(&index);yyjson_doc_free(doc);
+}

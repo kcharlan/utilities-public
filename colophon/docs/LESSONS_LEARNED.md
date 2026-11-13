@@ -375,3 +375,10 @@ malformed clock tests that prevent accidental epoch defaults. Diagnostics must
 identify the used message and field without inspecting unknown fields.
 
 - Antigravity model numbers can change independently of a bundled table. Learn normalized names across all sessions before attribution, and keep generated unknown markers out of that evidence.
+
+## Preserve observed model names until catalog lookup
+
+Alias normalization before catalog lookup can erase a distinct priced model,
+including a name learned from a numeric identifier. Retain the observed spelling
+through attribution, resolve exact catalog names first, and keep historical
+pricing keys independent of evolving catalog identities.

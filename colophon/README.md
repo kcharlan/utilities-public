@@ -70,6 +70,9 @@ the first request.
 
 Version 0.7.2 learns Antigravity model numbers from observed response names and retained ledger events, with explicit markers for unknown numbers.
 
+Version 0.7.3 resolves catalog model names and canonical identities before
+falling back to built-in aliases, while retaining existing Codex price history keys.
+
 Version 0.7.1 keeps structurally valid Antigravity records when individual
 used fields are malformed, reports field mismatches, and reads structurally
 compatible OpenCode databases without a migration-date warning.
