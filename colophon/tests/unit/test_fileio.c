@@ -99,6 +99,16 @@ TEST(atomic_write_creates_private_parents_and_replaces) {
     ASSERT_EQ(0,temporary_count(parent));
     unlink(path); rmdir(parent); rmdir(root);
 }
+TEST(atomic_create_preserves_existing_destination) {
+    char root[]="/tmp/colophon-create.XXXXXX";ASSERT_TRUE(mkdtemp(root));
+    char path[512];snprintf(path,sizeof path,"%s/rules.json",root);
+    ASSERT_EQ(ERR_OK,atomic_create(path,"first",5).code);
+    struct stat st;ASSERT_EQ(0,stat(path,&st));ASSERT_EQ(0600,st.st_mode&0777);
+    ASSERT_EQ(ERR_OK,atomic_create(path,"replacement",11).code);
+    char *bytes=NULL;size_t length=0;ASSERT_EQ(ERR_OK,file_read_all(path,&bytes,&length).code);
+    ASSERT_EQ(5,length);ASSERT_STREQ("first",bytes);free(bytes);
+    ASSERT_EQ(0,temporary_count(root));ASSERT_EQ(0,unlink(path));ASSERT_EQ(0,rmdir(root));
+}
 TEST(atomic_rename_failure_removes_temporary) {
     char root[]="/tmp/colophon-atomic.XXXXXX"; ASSERT_TRUE(mkdtemp(root));
     char path[512]; snprintf(path,sizeof(path),"%s/directory",root); ASSERT_EQ(0,mkdir(path,0700));

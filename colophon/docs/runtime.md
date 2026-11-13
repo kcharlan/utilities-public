@@ -20,6 +20,23 @@ the end-of-run summary.
 
 ## Antigravity source discovery
 
+Each successful page build saves observed Antigravity session headers and
+pre-deduplication usage events under `antigravity-ledger/<root-key>/`, where
+the key hashes the resolved Gemini root. Directories are private (0700) and
+records are private (0600); writes are atomic and happen only after the page is
+written. Transcript turns, answers and tools are not stored; when no title is
+available, the saved title can be derived from the first request. A missing or
+unreadable database falls back to its last readable record, shown as a retained
+session with usage outside turns. Live accepted databases win. Ledger-only
+homes can produce a page; `--no-antigravity` neither reads nor writes the
+ledger, and `--rebuild` does not clear it. Unreadable records remain untouched
+and are reported in `antigravity_ledger_unreadable`.
+
+The ledger cannot capture a conversation created and deleted between runs. A
+live database with fewer events replaces its previous record and increments
+`antigravity_ledger_shrunk`. As with other runtime state, avoid concurrent runs
+sharing one runtime home: ledger read and replacement are not a transaction.
+
 `--antigravity-home PATH` selects a Gemini root, defaulting to `~/.gemini`,
 with explicit-path tilde expansion and lexical relative-path resolution.
 `--no-antigravity` returns before expansion or inspection. Nonempty
@@ -52,10 +69,11 @@ Every existing SQLite sidecar must be a regular file before SQLite opens either
 a conversation or summary database; FIFOs, directories and symlinks are rejected
 with a source diagnostic so they cannot block later readable siblings.
 
-The bounded wire decoder validates the pinned public schema projection,
-retains unknown fields and raw blobs only in memory, and distinguishes absent,
-found and malformed fields. Malformed blobs lose their staged record, with
-contextual diagnostics; SQL/read failures lose the staged database. Archive
+The bounded wire decoder validates top-level protobuf structure and reads only
+used fields. Wrong wire types, invalid text and malformed nested messages are
+treated as absent and counted by message and field in `antigravity_field_mismatches`;
+unused fields remain opaque. Malformed top-level blobs lose their staged record,
+with contextual diagnostics; SQL/read failures lose the staged database. Archive
 annotations accept text protobuf whitespace, escaped strings and balanced
 unknown nested messages. A valid annotation wins over its own surface's summary,
 including absent `archived` meaning false. Unusable annotations diagnose and
@@ -119,8 +137,10 @@ rebuilds session/turn/bucket summaries, including empty sessions.
 
 The reader emits source counts/status/reasons, ignored environment names and
 diagnostics alongside corpus sessions and capability-gated UI actions. Model
-attribution uses response slug, meaningful usage enum, step chat_model_name then
-model_name, most recent attributed conversation model, or an unattributed marker.
+attribution uses response slug, a number-to-name map learned across generators
+and ledger events, step chat_model_name then model_name, the most recent
+attributed conversation model, or a marker identifying an unknown number.
+Without a number the final marker is antigravity/unattributed.
 Pricing uses independently available bundled/catalog estimates with Antigravity
 identities, normalized effort/routing suffixes and unknown-model unpriced notes.
 The moving gemini-pro-default alias assumes gemini-3.1-pro-preview; Vertex-only
@@ -152,7 +172,9 @@ reader. Missing legacy provider fields mean Codex. Source filtering applies
 to overview totals, session lists, descendants and direct subagent links.
 The snapshot log count always includes Codex and Claude logs, regardless of the
 switch; accepted OpenCode and Antigravity database counts are shown separately. The footer
-displays the embedded payload's release version (`colophon 0.6.0`).
+displays the embedded payload's release version (`colophon 0.8.0`). Catalog
+names take precedence over fallback aliases; valid canonical IDs select one
+target, while existing Codex history keys remain unchanged.
 
 Codex uses green, Claude blue, OpenCode violet and Antigravity pink. In All, KPI share rules and workspace
 bars split by provider; calendar cells use the provider with the greater
@@ -242,7 +264,7 @@ An empty value selects the default `~/.claude` config root. Its
 `COLOPHON_HOME` selects the private runtime home (default `~/.colophon`);
 tilde expansion is supported. `COLOPHON_PRICING_URL` defaults to
 `https://models.dev/api.json`. Help and version exit without initializing
-runtime state. Version is currently `colophon 0.6.0`.
+runtime state. Version is currently `colophon 0.8.0`.
 
 | Flag | Behavior |
 | --- | --- |
@@ -272,8 +294,8 @@ win duplicate IDs, and successful siblings remain usable after a source failure.
 owns that preview database. Desktop-specific discovery is not verified.
 
 Only structurally compatible v2 databases are read; legacy JSON, v1-only
-schemas and incomplete/unfamiliar migrations are unsupported. A newer known-shape
-migration produces an untested-schema warning. A message's id and type come
+schemas and incomplete/unfamiliar migrations are unsupported. The latest migration
+is reported without a date-based compatibility warning. A message's id and type come
 from its `session_message` columns; OpenCode 2.1 payloads omit them, and older
 payloads that embed them must carry a non-empty id and the column's type.
 Database status and reasons
@@ -408,8 +430,10 @@ files older than one hour are cleaned from the runtime home.
 | `colophon.html` | Generated offline page. |
 | `cache-native/` | Native per-log parse cache; changed logs reparse from the beginning. |
 | `cache-claude/` | Claude parse records, grouped by resolved search root. |
+| `antigravity-ledger/` | Last observed Antigravity session headers and usage events, grouped by the hash of the resolved Gemini root. |
 | `claude-retained/` | Claude facts retained after proved source deletion; no automatic age limit. |
 | `price-history.json` | Editable user ledger, created with schema 1 and empty entries. |
+| `pricing-rules.json` | Optional schema 1 pricing overrides, created empty without replacing an existing file. |
 | `pricing-cache.json` | Shared multi-provider catalog, URL, ETag and successful fetch timestamp. |
 | `priority-turns.json` | Sticky detected priority-turn metadata and first-seen times. |
 | `workspaces.json` | Optional workspace aliases. |
@@ -420,6 +444,20 @@ Prior Python releases used the same ledger, catalog, priority memory, aliases
 and default page. Native retains compatibility and a separate parse cache.
 Select a different native home for independent state; the application does
 not migrate existing private state. Commands sharing a home must run sequentially.
+`pricing-rules.json` starts as `{"schema":1}` with mode 0600. The embedded
+`assets/pricing_rules.json` shows the supported keys: provider-scoped `aliases`,
+`antigravity_routing_suffixes`, `codex_fast` (`multipliers`, `max_input_tokens`,
+`uncapped`), `codex_cutoffs_ms`, and `claude_fast` (`exact`, `normalized_prefix`).
+Claude catalog routing also uses `claude_provider_exact`,
+`claude_provider_families`, `claude_provider_prefixes`, and
+`claude_catalog_aliases`; the latter supplies fallback model names for the
+`kimi-for-coding` provider.
+Objects merge by key and arrays replace the corresponding default array. Values
+must have the same types as the defaults; multipliers and the cap must be positive,
+and cutoffs are integer milliseconds. Invalid documents are ignored in full and
+reported in `diagnostics.pricing_rules_errors`. Edits are read on the next run;
+no executable rebuild or cache clearing is needed. Existing dated price-history
+entries retain their precedence.
 Ledger recording checks for edits before replacement, but a concurrent edit
 after the check can still be overwritten. There is no ledger lock spanning
 the read/check/replace operation.

@@ -16,7 +16,7 @@ static void composed(ClaudeRecord *records, size_t n, ClaudeScan *scan,
   CorpusStrings collisions = {0};
   ASSERT_EQ(ERR_OK, claude_corpus_add(records, n, 0, c, &collisions).code);
   PriorityTurns priority = {0};
-  ASSERT_EQ(ERR_OK, compose_usage(c, &priority).code);
+  ASSERT_EQ(ERR_OK, compose_usage(&test_rules,c, &priority).code);
   for (OmapEntry *p = c->sessions.first; p; p = p->next)
     if (((SessionModel *)p->value)->provider == PROVIDER_CLAUDE)
       ASSERT_TRUE(((SessionModel *)p->value)->own_usage == NULL);

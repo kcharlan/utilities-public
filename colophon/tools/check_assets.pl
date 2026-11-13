@@ -16,7 +16,7 @@ sub content {
     return $bytes;
 }
 my @expected = sort qw(OFL.txt curated_bundled.json curated_price_history.json font.css
-    curated_bundled_claude.json ccusage_fast_multiplier_overrides.json
+    curated_bundled_claude.json pricing_rules.json
     pricing_extend_ranges.txt
     pricing_numeric_ranges.txt pricing_prepend_ranges.txt);
 my $manifest = decode_json(content("$assets/MANIFEST"));

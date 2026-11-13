@@ -5,4 +5,6 @@
 /* Publish a complete 0600 sibling temporary via fsync+rename. Failure removes
  * the temporary and preserves the destination. No directory fsync contract. */
 Err atomic_write(const char *path, const void *bytes, size_t length);
+/* Publish only if absent; an existing destination is left untouched. */
+Err atomic_create(const char *path, const void *bytes, size_t length);
 #endif

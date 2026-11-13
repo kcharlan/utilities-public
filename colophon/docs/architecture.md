@@ -17,10 +17,11 @@ catalog/priority/pricing → payload/page:
 | `src/opencode/corpus.{c,h}` | Project accepted OpenCode sessions into shared display models. Keep row-clock fork exclusions and source TurnFacts in the store, map messages to display-turn keys for usage, and link an OpenCode-only acyclic parent graph. |
 | `src/opencode/scan.{c,h}` | Resolve default/environment/explicit paths, order/deduplicate database candidates, skip migration previews, and establish read-only source presence before runtime creation. |
 | `src/opencode/compose.{c,h}` | Author recorded usage/cost units and raw-component residuals, retaining contextual shortfalls and invalid-number facts. |
-| `src/antigravity/{scan,db,wire}.{c,h}` | Discover admitted Gemini surface databases before runtime creation; stage read transactions and retain owned validated protobuf blobs, row indexes, independent trajectory/cascade IDs and archive/title provenance. The dependency-free bounded wire reader follows fully qualified public schema references. |
+| `src/antigravity/{scan,db,wire}.{c,h}` | Discover admitted Gemini surface databases before runtime creation; stage read transactions and retain owned structurally validated protobuf blobs, row indexes, independent trajectory/cascade IDs and archive/title provenance. Typed reads diagnose malformed used fields without inspecting unknown fields. |
 | `src/antigravity/corpus.{c,h}` | Project admitted sessions and step-index turn membership, prompt/answer text, images, mapped tools, clocks and status into shared display models. Merge singular nested protobuf messages before scalar lookup. Link only Antigravity parents; preserve parentless/orphaned subagents and diagnose cross-provider collisions. |
+| `src/antigravity/ledger.{c,h}` | Read retained session headers and pre-deduplication usage events before source gating; publish changed live records atomically only after page output. |
 | `src/antigravity/compose.{c,h}` | Collect four usage/retry locations using indexed generator-step matching, union namespaced identity aliases globally, merge component maxima and retain earliest ownership. Author units into the shared usage arena, apply independent catalog estimates and rebuild all summaries every composition. |
-| `src/antigravity/model.{c,h}` | Attribute usage through response/enum/step/previous fallbacks; normalize routing/effort aliases for pricing. `models.inc` records the versioned qualified enum/native-oracle mappings. |
+| `src/antigravity/model.{c,h}` | Attribute usage through response/learned number/step/previous fallbacks; normalize routing/effort aliases for pricing. |
 | `src/acct/` | Track token totals, classify rollouts and resolve inherited fork baselines. |
 | `src/corpus/` | Assemble sessions, titles/status, subagent relationships and workspace aliases. |
 | `src/price/` | Fetch/cache catalog, validate and record history, retain priority evidence, compose usage and dated costs. |
@@ -54,9 +55,7 @@ follows OpenCode insertion before shared workspace resolution. After OpenCode
 composition, `antigravity_compose` collects and prices usage, then rebuilds usage
 summaries on every run, including empty sessions. Raw per-database
 arenas survive successful commits through rendering and are discarded on failed
-snapshots. `schema.inc` and the public fixture projection pin fully qualified
-message references and the language-server binary digest, avoiding unqualified
-descriptor-name collisions. Projection/composition borrows these owned
+snapshots. Projection/composition borrows these owned
 blobs and source-row indexes rather than reparsing or persisting private data.
 `corpus/provider.h` names Codex, Claude, OpenCode and Antigravity consistently in session
 rows and usage buckets. Its shared adoption/status/idle helpers preserve
@@ -82,7 +81,9 @@ Claude raw rows capture priced nanocosts before winner reconciliation.
 After Codex composition/pricing, `claude_compose` authors Claude units and
 `claude_price_units` prices them independently of the Codex ledger. The
 catalog retains first-party Claude providers and explicit supported routes
-in separate indexes; Codex keeps its existing model lookup and cache.
+in separate indexes. Exact catalog names precede aliases, and a valid
+canonical ID resolves one hop, including supported cross-provider targets.
+Codex history keys continue to use the existing offline normalization.
 `PricingReport` owns transient Claude rate/fast periods and exact-input
 resolution memos. Raw rows own the prior-price facts needed by persistent
 Claude codecs. Provider-aware aggregation refresh and page availability
@@ -240,3 +241,12 @@ latest preceding start for its turn in the same file. Resuming the same turn
 under a different setting changes later rows without changing earlier rows.
 Turnless units check the empty id. Trace-database and sticky priority evidence
 still apply; thread settings supply the priority tier without a trace entry.
+
+Pricing rules are immutable per-run documents. The runtime owner loads the
+embedded defaults and validates the optional user document before composition;
+accounting, catalog and provider pricing borrow that owner until rendering ends.
+Object entries override individual defaults, while configured arrays replace the
+corresponding default array. Invalid user documents contribute no rules. Raw
+observations remain in parse caches, so the next run recomposes with current rules
+without changing cache formats. Catalog identity and dated history keep their
+existing precedence over fallback aliases and policy.

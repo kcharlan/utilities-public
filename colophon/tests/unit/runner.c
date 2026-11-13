@@ -9,6 +9,7 @@ static TestCase **tail = &first;
 static jmp_buf failure;
 static unsigned count;
 static unsigned failed;
+PricingRules test_rules;
 
 void test_register(TestCase *test) {
     *tail = test;
@@ -21,6 +22,7 @@ _Noreturn void test_fail(const char *file, int line, const char *expression) {
 }
 
 int main(void) {
+    if(pricing_rules_load(NULL,&test_rules).code) return EXIT_FAILURE;
     for (TestCase *test = first; test != NULL; test = test->next) {
         ++count;
         if (setjmp(failure) == 0) {
@@ -32,5 +34,6 @@ int main(void) {
         }
     }
     printf("%u test(s), %u failure(s)\n", count, failed);
+    pricing_rules_destroy(&test_rules);
     return failed == 0 ? EXIT_SUCCESS : EXIT_FAILURE;
 }

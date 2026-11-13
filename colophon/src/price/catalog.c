@@ -56,7 +56,7 @@ static bool same_rates(const double *a,uint8_t ap,const double *b,uint8_t bp) {
 }
 static bool decode_model(yyjson_val *v,CatalogModel *out,const char *prefix) {
     *out=(CatalogModel){0};
-    if(!yyjson_is_obj(v)||!yyjson_is_str(get(v,"id"))||!nullable_string(get(v,"name")))return false;
+    if(!yyjson_is_obj(v)||!yyjson_is_str(get(v,"id"))||!nullable_string(get(v,"name"))||!nullable_string(get(v,"canonical_model_id")))return false;
     yyjson_val *limit=get(v,"limit");
     if(limit&&!yyjson_is_null(limit)) {
         if(!yyjson_is_obj(limit))return false;
@@ -96,7 +96,12 @@ static bool decode_model(yyjson_val *v,CatalogModel *out,const char *prefix) {
             }
         }
     }
-    out->model_id=string(get(v,"id"));return true;
+    out->model_id=string(get(v,"id"));
+    Str canonical=string(get(v,"canonical_model_id"));
+    const char *slash=canonical.p?memchr(canonical.p,'/',canonical.n):NULL;
+    if(slash){out->canonical_provider=(Str){canonical.p,(uint32_t)(slash-canonical.p)};out->canonical_model=(Str){slash+1,canonical.n-(uint32_t)(slash-canonical.p)-1};}
+    else out->canonical_model=canonical;
+    return true;
 }
 static Err openai(Arena *arena,Str raw,bool *out) {
     Str lower;Err e=str_lower(arena,token_model_trim(raw),&lower);
@@ -118,6 +123,8 @@ static Err index_provider_models(ModelsDevIndex *out,yyjson_val *provider,bool w
         Str key;error=str_nfc(&out->arena,m->key,"price.catalog.key",&key);if(error.code)break;
         CatalogModel *copy;error=arena_alloc(&out->arena,sizeof *copy,_Alignof(CatalogModel),(void **)&copy);if(error.code)break;
         *copy=decoded;error=str_copy(&out->arena,decoded.model_id,&copy->model_id);if(error.code)break;
+        error=str_copy(&out->arena,decoded.canonical_provider,&copy->canonical_provider);if(error.code)break;
+        error=str_copy(&out->arena,decoded.canonical_model,&copy->canonical_model);if(error.code)break;
         error=omap_put(&out->models,key,copy);
     }
     omap_destroy(&models);return error;
@@ -130,18 +137,20 @@ static Err index_normalized(ModelsDevIndex *out) {
         if(!omap_get(&out->normalized,identity)) {
             CatalogLookup *lookup;error=arena_alloc(&out->arena,sizeof *lookup,_Alignof(CatalogLookup),(void **)&lookup);if(error.code)return error;
             Str spelling;error=str_copy(&out->arena,token_model_trim(model->model_id),&spelling);if(error.code)return error;
-            *lookup=(CatalogLookup){model,spelling};error=omap_put(&out->normalized,identity,lookup);if(error.code)return error;
+            *lookup=(CatalogLookup){.model=model,.identity=spelling};error=omap_put(&out->normalized,identity,lookup);if(error.code)return error;
         }
     }
     return ERR_SUCCESS;
 }
 static Err claude_index_provider(ModelsDevIndex *out,Str id,yyjson_val *provider,bool wrapper,size_t position) {
     ModelsDevIndex *child=omap_get(&out->claude_providers,id);Err e;
-    if(!child){e=arena_alloc(&out->arena,sizeof *child,_Alignof(ModelsDevIndex),(void **)&child);if(e.code)return e;*child=(ModelsDevIndex){0};e=omap_put(&out->claude_providers,id,child);if(e.code)return e;}
+    if(!child){e=arena_alloc(&out->arena,sizeof *child,_Alignof(ModelsDevIndex),(void **)&child);if(e.code)return e;*child=(ModelsDevIndex){.rules=out->rules};e=omap_put(&out->claude_providers,id,child);if(e.code)return e;}
+    e=str_copy(&child->arena,id,&child->provider_id);if(e.code)return e;
     e=index_provider_models(child,provider,wrapper,position);return e.code?e:index_normalized(child);
 }
 Err models_dev_index(yyjson_val *catalog,ModelsDevIndex *out) {
     if(!yyjson_is_obj(catalog))return ERR_SUCCESS;
+    out->provider_id=STR_LIT("openai");
     yyjson_val *providers=get(catalog,"providers");
     bool wrapper=yyjson_is_obj(providers);
     if(wrapper) {
@@ -169,14 +178,19 @@ Err models_dev_index(yyjson_val *catalog,ModelsDevIndex *out) {
     /* Decode OpenAI once: Claude has separate query caches and map nodes, but
      * borrows the immutable catalog rows. This preserves Codex event counts. */
     ModelsDevIndex *shared;error=arena_alloc(&out->arena,sizeof *shared,_Alignof(ModelsDevIndex),(void **)&shared);if(error.code)return error;
-    *shared=(ModelsDevIndex){0};error=omap_put(&out->claude_providers,STR_LIT("openai"),shared);if(error.code)return error;
+    *shared=(ModelsDevIndex){.provider_id=STR_LIT("openai")};error=omap_put(&out->claude_providers,STR_LIT("openai"),shared);if(error.code)return error;
     for(OmapEntry *m=out->models.first;m;m=m->next){error=omap_put(&shared->models,m->key,m->value);if(error.code)return error;}
     for(OmapEntry *m=out->normalized.first;m;m=m->next){error=omap_put(&shared->normalized,m->key,m->value);if(error.code)return error;}
     return ERR_SUCCESS;
 }
 typedef struct { bool accepted; Omap queries; } ProviderMemo;
-Err models_dev_normalize(ModelsDevIndex *index,Str raw,Str *out) {
-    return normalize_codex_model_memo(&index->arena,&index->normalizations,raw,out);
+static Err canonical_hop(ModelsDevIndex *index,CatalogLookup *lookup) {
+    if(!lookup->model||!lookup->model->canonical_model.n)return ERR_SUCCESS;
+    Str id;Err e=str_nfc(&index->arena,lookup->model->canonical_model,"price.catalog.canonical",&id);if(e.code)return e;
+    CatalogModel *target=omap_get(&index->models,id);CatalogLookup *by_id=omap_get(&index->normalized,id);
+    if(target)*lookup=(CatalogLookup){.model=target,.identity=target->model_id,.canonical_applied=true};
+    else if(by_id){*lookup=*by_id;lookup->canonical_applied=true;}
+    return ERR_SUCCESS;
 }
 static Err lookup_uncached(ModelsDevIndex *index,bool accepted,Str raw,CatalogLookup *out) {
     *out=(CatalogLookup){0};
@@ -187,11 +201,18 @@ static Err lookup_uncached(ModelsDevIndex *index,bool accepted,Str raw,CatalogLo
         Str identity;e=str_nfc(&index->arena,candidates.items[i],"price.catalog.lookup",&identity);
         if(e.code)return e;
         CatalogModel *direct=omap_get(&index->models,identity);
-        if(direct){*out=(CatalogLookup){direct,candidates.items[i]};return ERR_SUCCESS;}
+        if(direct){*out=(CatalogLookup){.model=direct,.identity=candidates.items[i]};if(!direct->canonical_provider.n||str_equal(direct->canonical_provider,index->provider_id))return canonical_hop(index,out);return ERR_SUCCESS;}
         CatalogLookup *normalized=omap_get(&index->normalized,identity);
-        if(normalized){*out=*normalized;return ERR_SUCCESS;}
+        if(normalized){*out=*normalized;if(!out->model->canonical_provider.n||str_equal(out->model->canonical_provider,index->provider_id))return canonical_hop(index,out);return ERR_SUCCESS;}
     }
     return ERR_SUCCESS;
+}
+Err models_dev_normalize(ModelsDevIndex *index,Str raw,Str *out) {
+    Str *cached=omap_get(&index->normalizations,raw);if(cached){*out=*cached;return ERR_SUCCESS;}
+    CatalogLookup lookup={0};Err e=models_dev_pricing(index,STR_LIT("openai"),raw,&lookup);if(e.code)return e;
+    e=arena_alloc(&index->arena,sizeof *cached,_Alignof(Str),(void **)&cached);if(e.code)return e;
+    e=str_copy(&index->arena,lookup.model?lookup.identity:normalize_codex_model(index->rules,raw),cached);if(e.code)return e;
+    e=omap_put(&index->normalizations,raw,cached);if(!e.code)*out=*cached;return e;
 }
 Err models_dev_pricing(ModelsDevIndex *index,Str provider,Str raw,CatalogLookup *out) {
     *out=(CatalogLookup){0};ProviderMemo *memo=omap_get(&index->lookups,provider);Err e;
@@ -209,7 +230,17 @@ Err models_dev_pricing(ModelsDevIndex *index,Str provider,Str raw,CatalogLookup 
 Err claude_catalog_pricing(ModelsDevIndex *index,Str provider,Str raw,CatalogLookup *out) {
     *out=(CatalogLookup){0};if(!index)return ERR_SUCCESS;
     ModelsDevIndex *child=omap_get(&index->claude_providers,provider);
-    return child?models_dev_pricing(child,STR_LIT("openai"),raw,out):ERR_SUCCESS;
+    if(!child)return ERR_SUCCESS;
+    Err e=models_dev_pricing(child,STR_LIT("openai"),raw,out);if(e.code||!out->model)return e;
+    Str target_provider=out->model->canonical_provider;
+    if(!out->canonical_applied&&target_provider.n&&!str_equal(target_provider,provider)) {
+        ModelsDevIndex *target=omap_get(&index->claude_providers,target_provider);
+        if(target){Str id; e=str_nfc(&target->arena,out->model->canonical_model,"price.catalog.canonical",&id);if(e.code)return e;
+            CatalogModel *row=omap_get(&target->models,id);CatalogLookup *by_id=omap_get(&target->normalized,id);
+            if(row)*out=(CatalogLookup){.model=row,.identity=row->model_id,.provider=target_provider};
+            else if(by_id){*out=*by_id;out->provider=target_provider;}}
+    }
+    return ERR_SUCCESS;
 }
 void models_dev_destroy(ModelsDevIndex *index) {
     for(OmapEntry *p=index->claude_providers.first;p;p=p->next)models_dev_destroy(p->value);
@@ -234,7 +265,7 @@ void catalog_lookup_json(JsonWriter *w,const CatalogLookup *lookup) {
     jsonw_raw(w,",\"per_million\":");rates_json(w,m->rates,m->present,false);
     jsonw_raw(w,",\"long_context\":");if(m->has_extended)rates_json(w,m->extended,m->extended_present,true);else jsonw_raw(w,"null");jsonw_raw(w,"}");
 }
-Err codex_models_dev_pricing_targets(Arena *arena,Str raw,PricingTargets *out) {
+Err codex_models_dev_pricing_targets(const PricingRules *rules,Arena *arena,Str raw,PricingTargets *out) {
     *out=(PricingTargets){0};Str trimmed=token_model_trim(raw);
     if(!trimmed.n)return ERR_SUCCESS;
     size_t slash=price_literal_parts(trimmed,STR_LIT("/"),STR_LIT(""),false);
@@ -246,7 +277,7 @@ Err codex_models_dev_pricing_targets(Arena *arena,Str raw,PricingTargets *out) {
         size_t first=price_literal_parts(model,STR_LIT("/"),STR_LIT(""),false),last=price_literal_parts(model,STR_LIT("/"),STR_LIT(""),true);
         if(first!=0&&last!=model.n-1)out->model[out->count++]=model;
     } else out->model[out->count++]=model;
-    Str normalized=normalize_codex_model(model);
+    Str normalized=normalize_codex_model(rules,model);
     if(!str_equal(normalized,model))out->model[out->count++]=normalized;
     return ERR_SUCCESS;
 }
@@ -257,13 +288,13 @@ static double scale_token(double value) {
     int length=snprintf(spelling,sizeof spelling,"%s%.*se%d",decimal.negative?"-":"",decimal.length,decimal.digits,decimal.exponent+6);
     return length>0&&(size_t)length<sizeof spelling?strtod(spelling,NULL):NAN;
 }
-Err resolve_rates(Str raw,ModelsDevIndex *index,PriceEntry *out,bool *found) {
+Err resolve_rates(const PricingRules *rules,Str raw,ModelsDevIndex *index,PriceEntry *out,bool *found) {
     *found=false;*out=(PriceEntry){0};
     Str key;Err normalization_error=index?models_dev_normalize(index,raw,&key):ERR_SUCCESS;
-    if(!index)key=normalize_codex_model(raw);
+    if(!index)key=normalize_codex_model(rules,raw);
     if(normalization_error.code)return normalization_error;
     if(str_equal(key,STR_LIT("unknown")))return ERR_SUCCESS;
-    Arena arena={0};PricingTargets targets;Err error=codex_models_dev_pricing_targets(&arena,raw,&targets);
+    Arena arena={0};PricingTargets targets;Err error=codex_models_dev_pricing_targets(rules,&arena,raw,&targets);
     JsonRead bundled={0};
     if(error.code)goto done;
     Str trimmed=token_model_trim(raw);
@@ -411,8 +442,8 @@ static bool raw_tier_valid(yyjson_val *block) {
 }
 static bool raw_model_valid(yyjson_val *model) {
     if(!yyjson_is_obj(model)||!keys_valid(model))return false;
-    const char *fields[]={"id","name"};
-    for(size_t i=0;i<2;i++){yyjson_val *leaf=get(model,fields[i]);if(yyjson_is_str(leaf)&&!str_utf8_scalar_valid(string(leaf)))return false;}
+    const char *fields[]={"id","name","canonical_model_id"};
+    for(size_t i=0;i<3;i++){yyjson_val *leaf=get(model,fields[i]);if(yyjson_is_str(leaf)&&!str_utf8_scalar_valid(string(leaf)))return false;}
     if(!keys_valid(get(model,"limit")))return false;
     yyjson_val *cost=get(model,"cost"),*extended=get(cost,"context_over_200k");
     if(!raw_rates_valid(cost)||!raw_rates_valid(extended)||!raw_tier_valid(extended))return false;

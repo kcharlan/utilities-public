@@ -39,11 +39,11 @@ static void error_line(const char *message){
 static void interrupt_handler(int sig){(void)sig;interrupted=1;}
 static char *join(const char *home,const char *name){size_t n=strlen(home)+strlen(name)+2;char *p=malloc(n);if(p)snprintf(p,n,"%s/%s",home,name);return p;}
 static Err templates(const char *home){
-    const char *names[]={"price-history.json","workspaces.example.json","priority-turns.json"};
+    const char *names[]={"price-history.json","workspaces.example.json","priority-turns.json","pricing-rules.json"};
     const char *bytes[]={"{\n  \"schema\": 1,\n  \"entries\": []\n}\n",
         "{\n  \"schema\": 1,\n  \"aliases\": [\n    {\n      \"name\": \"Example Tools\",\n      \"origins\": [\n        \"https://example.invalid/synthetic/tools.git\"\n      ],\n      \"paths\": [\n        \"/synthetic/deployed/tools\"\n      ]\n    }\n  ]\n}\n",
-        "{\n  \"schema\": 1,\n  \"turns\": {}\n}\n"};
-    for(int i=0;i<3;i++){char *p=join(home,names[i]);if(!p)return err_make(ERR_NOMEM,"path allocation failed");struct stat st;Err e=ERR_SUCCESS;if(stat(p,&st))e=atomic_write(p,bytes[i],strlen(bytes[i]));free(p);if(e.code!=ERR_OK)return e;}return ERR_SUCCESS;
+        "{\n  \"schema\": 1,\n  \"turns\": {}\n}\n", "{\n  \"schema\": 1\n}\n"};
+    for(int i=0;i<4;i++){char *p=join(home,names[i]);if(!p)return err_make(ERR_NOMEM,"path allocation failed");struct stat st;Err e=ERR_SUCCESS;if(i==3)e=atomic_create(p,bytes[i],strlen(bytes[i]));else if(stat(p,&st))e=atomic_write(p,bytes[i],strlen(bytes[i]));free(p);if(e.code!=ERR_OK)return e;}return ERR_SUCCESS;
 }
 char *cli_source_host(const char *url){
     const char *start=strstr(url,"://");if(start)start+=3;else if(!strncmp(url,"//",2))start=url+2;else return NULL;
@@ -62,8 +62,8 @@ int cli_run(const Args *args){
     const char *conflict=args_conflict(args);if(conflict){fprintf(stderr,"colophon: %s\n",conflict);return 2;}
     char *codex=NULL,*home=NULL,*output=NULL,*display=NULL,*host=NULL,*ledger_path=NULL;JsonWriter payload={0},page={0};
     Cache cache={0};ScanResult scan={0};ScanDisplay scan_display={0};ClaudeScan claude={0};ClaudeStore claude_store={0};bool codex_present=false,cache_opened=false;
-    CodexMetadata metadata={0};Corpus corpus={0};OpencodeStore opencode={0};AntigravityStore antigravity={0};AssemblyRecord *assembly_records=NULL;WorkspaceAliases aliases={0};PriorityTurns priority={0};
-    CatalogResult catalog={0};CatalogFetch *fetch=NULL;ModelsDevIndex index={0};RuntimeLedger ledger={0};PriceHistory history={0};PricingReport pricing={0};LedgerAppend appended={0};yyjson_doc *recording=NULL,*new_entries=NULL;
+    CodexMetadata metadata={0};Corpus corpus={0};OpencodeStore opencode={0};AntigravityStore antigravity={0};AntigravityLedger ag_ledger={0};AssemblyRecord *assembly_records=NULL;WorkspaceAliases aliases={0};PriorityTurns priority={0};
+    PricingRules rules={0};CatalogResult catalog={0};CatalogFetch *fetch=NULL;ModelsDevIndex index={.rules=&rules};RuntimeLedger ledger={0};PriceHistory history={0};PricingReport pricing={.rules=&rules};LedgerAppend appended={0};yyjson_doc *recording=NULL,*new_entries=NULL;
     bool home_exists=false,page_failure=false,committed=false,clock_started=false;int result=1;Err failure=ERR_SUCCESS;
     const char *failure_type="OSError";struct sigaction previous,action={0};bool handler=false;
     failure=file_expand_path(args->codex_home,&codex);if(failure.code!=ERR_OK)goto fail;
@@ -85,10 +85,13 @@ int cli_run(const Args *args){
     failure=antigravity_discover(args,&antigravity);if(failure.code)goto fail;
     if(!antigravity.disabled)progress_phase(&scan_display,"reading Antigravity databases…");
     failure=antigravity_store_read(&antigravity,&interrupted);if(failure.code)goto fail;
-    if(!codex_present&&!claude.present&&!opencode.present&&!antigravity.present){fprintf(stderr,"colophon: no readable sources; Codex home is missing or unreadable: %s; Claude roots:",codex);for(size_t i=0;i<claude.root_count;i++)fprintf(stderr," %s",claude.roots[i].path.p);fprintf(stderr,"; history: %s%s; OpenCode:",claude.history_path.p,claude.disabled?" (--no-claude)":"");if(opencode.data_dir.p){fputc(' ',stderr);error_line(opencode.data_dir.p);}for(size_t i=0;i<opencode.database_count;i++){fputc(' ',stderr);error_line(opencode.databases[i].path.p);}fprintf(stderr,"%s; Antigravity:",opencode.disabled?" (--no-opencode)":"");if(antigravity.home.p){fputc(' ',stderr);error_line(antigravity.home.p);}fprintf(stderr,"%s\n",antigravity.disabled?" (--no-antigravity)":"");goto done;}
+    failure=antigravity_ledger_load(home,&antigravity,&ag_ledger);if(failure.code)goto fail;
+    if(!codex_present&&!claude.present&&!opencode.present&&!antigravity.present&&!antigravity_ledger_present(&ag_ledger)){fprintf(stderr,"colophon: no readable sources; Codex home is missing or unreadable: %s; Claude roots:",codex);for(size_t i=0;i<claude.root_count;i++)fprintf(stderr," %s",claude.roots[i].path.p);fprintf(stderr,"; history: %s%s; OpenCode:",claude.history_path.p,claude.disabled?" (--no-claude)":"");if(opencode.data_dir.p){fputc(' ',stderr);error_line(opencode.data_dir.p);}for(size_t i=0;i<opencode.database_count;i++){fputc(' ',stderr);error_line(opencode.databases[i].path.p);}fprintf(stderr,"%s; Antigravity:",opencode.disabled?" (--no-opencode)":"");if(antigravity.home.p){fputc(' ',stderr);error_line(antigravity.home.p);}fprintf(stderr,"%s\n",antigravity.disabled?" (--no-antigravity)":"");goto done;}
     int64_t snapshot=cp_now_ms();
     failure=ensure_runtime_home(home);home_exists=!stat(home,&st)&&S_ISDIR(st.st_mode);if(failure.code!=ERR_OK)goto fail;
     failure=templates(home);if(failure.code!=ERR_OK)goto fail;
+    char *rules_path=join(home,"pricing-rules.json");if(!rules_path){failure=err_make(ERR_NOMEM,"rules path allocation failed");goto fail;}
+    failure=pricing_rules_load(rules_path,&rules);free(rules_path);if(failure.code)goto fail;
     ledger_path=join(home,"price-history.json");if(!ledger_path){failure=err_make(ERR_NOMEM,"path allocation failed");goto fail;}
     int stat_result=stat(ledger_path,&st);if(stat_result){failure=err_make(ERR_IO,"ledger stat failed");goto fail;}
     /* Snapshot before catalog/scan; later ledger recording consumes this. */
@@ -117,6 +120,7 @@ int cli_run(const Args *args){
     failure=claude_metadata_apply(&claude,&corpus);if(failure.code)goto fail;
     failure=opencode_corpus_add(&opencode,snapshot,&corpus);if(failure.code)goto fail;
     failure=antigravity_corpus_add(&antigravity,snapshot,&corpus);if(failure.code)goto fail;
+    failure=antigravity_ledger_corpus_add(&ag_ledger,&antigravity,&corpus);if(failure.code)goto fail;
     char *alias_path=join(home,"workspaces.json");if(!alias_path){failure=err_make(ERR_NOMEM,"alias path allocation failed");goto fail;}
     failure=workspace_aliases_load(alias_path,&aliases);free(alias_path);if(failure.code)goto fail;
     failure=corpus_resolve_workspaces(&corpus,&aliases);if(failure.code)goto fail;
@@ -126,24 +130,24 @@ int cli_run(const Args *args){
     CP_PHASE_MARK(3);
     if(codex_present){failure=priority_load(codex,home,&priority);if(failure.code)goto fail;}
     failure=models_dev_index(catalog.catalog?yyjson_doc_get_root(catalog.catalog):NULL,&index);if(failure.code)goto fail;
-    failure=runtime_ledger_load(ledger_path,&ledger);if(failure.code)goto fail;
+    failure=runtime_ledger_load(&rules,ledger_path,&ledger);if(failure.code)goto fail;
     failure=runtime_ledger_history(&ledger,NULL,&history);if(failure.code)goto fail;
     if(ledger.available&&catalog.catalog&&catalog.has_fetched_at) {
         failure=pricing_recording_models(&corpus,&priority,&index,&recording);if(failure.code)goto fail;
         failure=record_catalog_rates(&history,&index,catalog.fetched_at_ms,yyjson_doc_get_root(recording),snapshot,&new_entries);if(failure.code)goto fail;
         __int128 start_ns=(__int128)ledger_mtime.tv_sec*1000000000+ledger_mtime.tv_nsec;
         if(start_ns<INT64_MIN||start_ns>INT64_MAX){failure=err_make(ERR_INVALID,"ledger mtime outside int64");goto fail;}
-        failure=append_user_ledger(ledger_path,yyjson_doc_get_root(new_entries),true,(int64_t)start_ns,&appended);if(failure.code)goto fail;
+        failure=append_user_ledger(&rules,ledger_path,yyjson_doc_get_root(new_entries),true,(int64_t)start_ns,&appended);if(failure.code)goto fail;
         if(appended.warning.p){failure=runtime_ledger_warning(&ledger,ledger_path,appended.warning);if(failure.code)goto fail;}
         if(appended.appended){history_destroy(&history);failure=runtime_ledger_history(&ledger,yyjson_doc_get_root(new_entries),&history);if(failure.code)goto fail;}
     }
-    failure=compose_usage(&corpus,&priority);if(failure.code)goto fail;
+    failure=compose_usage(&rules,&corpus,&priority);if(failure.code)goto fail;
     failure=price_units(&corpus,&history,catalog.catalog?&index:NULL,ledger.available,&pricing);if(failure.code)goto fail;
-    failure=claude_capture_prices(&claude,catalog.catalog?&index:NULL);if(failure.code)goto fail;
+    failure=claude_capture_prices(&rules,&claude,catalog.catalog?&index:NULL);if(failure.code)goto fail;
     failure=claude_compose(&claude,&corpus);if(failure.code)goto fail;
     failure=claude_price_units(&corpus,catalog.catalog?&index:NULL,&pricing);if(failure.code)goto fail;
     failure=opencode_compose(&opencode,&corpus);if(failure.code)goto fail;
-    failure=antigravity_compose(&antigravity,&corpus,catalog.catalog?&index:NULL,&pricing);if(failure.code)goto fail;
+    failure=antigravity_compose(&antigravity,&corpus,catalog.catalog?&index:NULL,&pricing,&ag_ledger);if(failure.code)goto fail;
     failure=compose_refresh_costs(&corpus,ledger.available);if(failure.code)goto fail;
     char *key=NULL;failure=file_codex_path_key(codex,&key);if(failure.code==ERR_OK)failure=file_abbreviate_home(key,&display);free(key);if(failure.code!=ERR_OK)goto fail;
     host=cli_source_host(url);
@@ -163,6 +167,7 @@ int cli_run(const Args *args){
         atomic_write(output,page.data,page.length);
     if(failure.code!=ERR_OK){page_failure=true;goto fail;}
     failure=claude_store_commit(&claude_store,&claude,&interrupted);if(failure.code)goto fail;
+    failure=antigravity_ledger_commit(&ag_ledger,&antigravity,&corpus,&interrupted);if(failure.code)goto fail;
     if(cache_opened){failure=cache_commit(&cache,&scan.live,&interrupted);committed=cache.committed;}
     if(failure.code!=ERR_OK)goto fail;
     if(interrupted)goto fail;
@@ -186,5 +191,5 @@ done:
     corpus_destroy(&corpus);pricing_report_destroy(&pricing);history_destroy(&history);runtime_ledger_destroy(&ledger);models_dev_destroy(&index);catalog_result_destroy(&catalog);ledger_append_destroy(&appended);yyjson_doc_free(recording);yyjson_doc_free(new_entries);priority_destroy(&priority);workspace_aliases_destroy(&aliases);free(assembly_records);metadata_destroy(&metadata);cache_destroy(&cache);scan_destroy(&scan);
     if(clock_started)(void)cp_monotonic_finish();if(home_exists)event_flush(home);
     if(handler)sigaction(SIGINT,&previous,NULL);
-    antigravity_store_destroy(&antigravity);opencode_store_destroy(&opencode);claude_store_destroy(&claude_store);claude_scan_destroy(&claude);jsonw_free(&payload);jsonw_free(&page);free(codex);free(home);free(output);free(display);free(host);free(ledger_path);return result;
+    antigravity_ledger_destroy(&ag_ledger);antigravity_store_destroy(&antigravity);opencode_store_destroy(&opencode);claude_store_destroy(&claude_store);claude_scan_destroy(&claude);pricing_rules_destroy(&rules);jsonw_free(&payload);jsonw_free(&page);free(codex);free(home);free(output);free(display);free(host);free(ledger_path);return result;
 }

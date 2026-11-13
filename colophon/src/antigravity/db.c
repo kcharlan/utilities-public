@@ -88,7 +88,7 @@ static Err guard(sqlite3 *db,bool summary,bool *raw){
 static Err blob(AntigravityStore *s,AntigravityDatabase *d,sqlite3_stmt *st,int col,AgMessageType type,int64_t idx,Str *out,bool *valid){
     Err e=cell(&d->arena,st,col,true,out);*valid=false;
     if(e.code==ERR_NOMEM)return e;
-    if(!e.code&&ag_wire_validate(*out,type)!=AG_MALFORMED){*valid=true;return ERR_SUCCESS;}
+    if(!e.code&&ag_wire_validate(*out)!=AG_MALFORMED){*valid=true;return ERR_SUCCESS;}
     s->malformed_blobs++;return antigravity_diagnostic(s,d,ag_wire_type_name(type),idx,e.code?e.message:"malformed protobuf blob");
 }
 static bool integer(sqlite3_stmt *st,int col,int64_t *value,bool *present){
@@ -221,7 +221,7 @@ static Err summary(AntigravityStore *s,AntigravityDatabase *d,AntigravitySession
             e=cell(&d->arena,q,0,false,&r->summary_title);
             if(!e.code&&!raw)r->summary_valid=true;
             else if(!e.code){Str bytes={0};e=cell(&d->arena,q,1,true,&bytes);
-                if(!e.code&&ag_wire_validate(bytes,AG_SUMMARY)!=AG_MALFORMED){
+                if(!e.code&&ag_wire_validate(bytes)!=AG_MALFORMED){
                     r->summary_blob=bytes;
                     /* Singular embedded messages merge. Only a found archived
                      * scalar overwrites prior state; empty/title-only instances
@@ -230,9 +230,9 @@ static Err summary(AntigravityStore *s,AntigravityDatabase *d,AntigravitySession
                     r->summary_valid=true;
                     while((result=ag_wire_next(&cursor,&annotations))==AG_FOUND){
                         if(annotations.number!=15)continue;
-                        AgField archived={0};AgResult scalar=ag_wire_last(annotations.bytes,4,&archived);
-                        if(annotations.wire!=2||scalar==AG_MALFORMED||(scalar==AG_FOUND&&archived.wire!=0)){r->summary_valid=false;break;}
-                        if(scalar==AG_FOUND)r->summary_archived=archived.integer!=0;
+                        if(!ag_wire_message_field(&s->field_mismatches,AG_SUMMARY,&annotations))continue;
+                        uint64_t archived=0;AgResult scalar=ag_wire_uint(&s->field_mismatches,AG_ANNOTATIONS,annotations.bytes,4,&archived);
+                        if(scalar==AG_FOUND)r->summary_archived=archived!=0;
                     }
                     if(result==AG_MALFORMED)r->summary_valid=false;
                 }
@@ -267,8 +267,8 @@ static Err read_database(AntigravityStore *s,AntigravityDatabase *d,volatile sig
 }
 Err antigravity_store_read(AntigravityStore *s,volatile sig_atomic_t *interrupted){
     if(s->disabled)return ERR_SUCCESS;
-    for(size_t i=0;i<s->database_count;i++)TRY(read_database(s,&s->databases[i],interrupted));return ERR_SUCCESS;
+    for(size_t i=0;i<s->database_count;i++){TRY(read_database(s,&s->databases[i],interrupted));if(s->field_mismatches.error.code)return s->field_mismatches.error;}return ERR_SUCCESS;
 }
 void antigravity_store_destroy(AntigravityStore *s){
-    for(size_t i=0;i<s->database_count;i++)arena_destroy(&s->databases[i].arena);omap_destroy(&s->session_ids);arena_destroy(&s->arena);memset(s,0,sizeof *s);
+    for(size_t i=0;i<s->database_count;i++)arena_destroy(&s->databases[i].arena);omap_destroy(&s->session_ids);ag_wire_mismatches_destroy(&s->field_mismatches);arena_destroy(&s->arena);memset(s,0,sizeof *s);
 }

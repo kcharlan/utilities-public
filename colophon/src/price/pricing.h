@@ -11,6 +11,7 @@ typedef struct {
 } PricingPeriod;
 typedef struct {Str key;PricingPeriod **items;size_t count,capacity;} PricingPeriods;
 typedef struct {
+    const PricingRules *rules;
     Arena arena;
     Omap periods,unpriced,history_begins,priority_without_multiplier,unrecorded,untimed;
     Omap claude_resolutions;

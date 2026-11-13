@@ -56,7 +56,7 @@ Err pricing_note_unpriced(PricingReport *report,Str key,__int128 tokens) {
 }
 static Err catalog_match(ModelsDevIndex *index,Str raw,CatalogLookup *out) {
     *out=(CatalogLookup){0};if(!index)return ERR_SUCCESS;
-    Arena scratch={0};PricingTargets targets;Err e=codex_models_dev_pricing_targets(&scratch,raw,&targets);
+    Arena scratch={0};PricingTargets targets;Err e=codex_models_dev_pricing_targets(index->rules,&scratch,raw,&targets);
     if(!e.code)for(size_t i=0;i<targets.count;i++){e=models_dev_pricing(index,STR_LIT("openai"),targets.model[i],out);if(e.code||out->model)break;}
     arena_destroy(&scratch);return e;
 }
@@ -81,7 +81,7 @@ static Err rates_at(PricingReport *report,const PriceHistory *history,ModelsDevI
     if(!current){e=picked(report,history,key,at,&pick);if(e.code)return e;}
     PricingPeriods *group;e=periods_for(report,key,&group);if(e.code)return e;
     if(pick.entry){*out=&pick.entry->rates;*reference=(PricePeriod){true,group->key,pick.index};return ERR_SUCCESS;}
-    PriceEntry rates;bool found;e=resolve_rates(source,index,&rates,&found);if(e.code||!found)return e;
+    PriceEntry rates;bool found;e=resolve_rates(report->rules,source,index,&rates,&found);if(e.code||!found)return e;
     size_t position=0;
     for(;position<group->count;position++) {
         PricingPeriod *p=group->items[position];if(!p->history&&price_entry_equal(&p->rates,&rates)&&priority_equal(p->priority,priority))break;
@@ -94,10 +94,14 @@ static Err rates_at(PricingReport *report,const PriceHistory *history,ModelsDevI
     if(match.model){e=omap_put(&report->unrecorded,group->key,(void *)1);if(e.code)return e;}
     *out=&group->items[position]->rates;*reference=(PricePeriod){true,group->key,position};return ERR_SUCCESS;
 }
-static bool cutoff_for(Str model,int64_t *cutoff) {
-    if(str_equal(model,STR_LIT("gpt-5.6-sol"))){*cutoff=INT64_C(1787270400000);return true;}
-    if(str_equal(model,STR_LIT("gpt-5.6-terra"))||str_equal(model,STR_LIT("gpt-5.6-luna"))){*cutoff=INT64_C(1785369600000);return true;}
-    return false;
+static Str history_key(const PricingRules *rules,const PriceHistory *history,Str raw) {
+    PricingRules defaults={.defaults=rules?rules->defaults:NULL};
+    Str key=normalize_codex_model(&defaults,raw);
+    if(history_has_any(history,key))return key;
+    if(key.n>11){Str tail={key.p+key.n-11,11};bool date=true;
+        for(size_t i=0;i<11;i++){bool dash=i==0||i==5||i==8;if(dash?tail.p[i]!='-':tail.p[i]<'0'||tail.p[i]>'9'){date=false;break;}}
+        if(date){Str base={key.p,key.n-11};if(history_has_any(history,base))return base;}}
+    return key;
 }
 Err price_usage_units(UsageUnit *units,size_t count,const PriceHistory *history,ModelsDevIndex *index,bool available,PricingReport *report) {
     for(size_t i=0;i<count;i++) {
@@ -105,17 +109,19 @@ Err price_usage_units(UsageUnit *units,size_t count,const PriceHistory *history,
         PricingPeriods *unused;Err e=periods_for(report,unit->model,&unused);if(e.code)return e;
         if(!available)continue;
         Str trace=unit->priority&&(unit->priority_fields&PRIORITY_MODEL)?unit->priority->model:(Str){0};
-        bool override=trace.p&&codex_api_fast_multiplier(trace)!=0;
+        bool override=trace.p&&codex_api_fast_multiplier(report->rules,trace)!=0;
         Str raw=override?trace:unit->model_raw,normalized;
         if(index){e=models_dev_normalize(index,raw,&normalized);if(e.code)return e;}
-        else normalized=normalize_codex_model(raw);
+        else normalized=normalize_codex_model(report->rules,raw);
+        Str old_key=history_key(report->rules,history,raw);
+        if(history_has_any(history,old_key))normalized=old_key;
         if(str_equal(normalized,STR_LIT("unknown"))){e=count_add(report,&report->unpriced,unit->model,unit->input+unit->output);if(e.code)return e;continue;}
         const PriceEntry *rates=NULL;PricePriority priority={0};
         if(!unit->at_ms.present) {
-            double multiplier=unit->priority_tier?codex_api_fast_multiplier(raw):0;
-            if(multiplier)priority=(PricePriority){.present=true,.capped=!str_equal(normalized,STR_LIT("gpt-6-astra")),.cap=272000,.multiplier={.is_float=true,.f=multiplier}};
+            double multiplier=unit->priority_tier?codex_api_fast_multiplier(report->rules,raw):0;
+            if(multiplier)priority=(PricePriority){.present=true,.capped=!rules_codex_uncapped(report->rules,normalized),.cap=rules_codex_cap(report->rules),.multiplier={.is_float=true,.f=multiplier}};
             Str key={0};if(override){e=override_key(report,index,raw,normalized,&key);if(e.code)return e;}
-            e=rates_at(report,history,index,key.p?key:normalized,override?raw:normalized,0,true,priority,&rates,&unit->period);if(e.code)return e;
+            e=rates_at(report,history,index,key.p?key:normalized,raw,0,true,priority,&rates,&unit->period);if(e.code)return e;
             if(!rates){e=count_add(report,&report->unpriced,unit->model,unit->input+unit->output);if(e.code)return e;continue;}
             e=count_add(report,&report->untimed,unit->model,unit->input+unit->output);if(e.code)return e;
             unit->has_cost=true;unit->cost_usd=cost_usd(rates,unit->input,unit->cached,unit->output);
@@ -126,12 +132,12 @@ Err price_usage_units(UsageUnit *units,size_t count,const PriceHistory *history,
             }
             continue;
         }
-        int64_t at=unit->at_ms.value,cutoff=0,rates_clock=at;bool cutoff_present=cutoff_for(normalized,&cutoff);
+        int64_t at=unit->at_ms.value,cutoff=0,rates_clock=at;bool cutoff_present=rules_codex_cutoff(report->rules,normalized,&cutoff);
         bool historical=cutoff_present&&unit->timestamp_ms.present&&unit->timestamp_ms.value<cutoff;
         if(cutoff_present&&!unit->timestamp_ms.present&&rates_clock<cutoff)rates_clock=cutoff;
         Str key={0};if(override&&!historical){e=override_key(report,index,raw,normalized,&key);if(e.code)return e;}
         if(key.p){HistoryPick pick=history_pick(history,key,rates_clock);if(pick.entry&&pick.before_first)key=(Str){0};}
-        e=rates_at(report,history,index,key.p?key:normalized,key.p?raw:normalized,rates_clock,false,(PricePriority){0},&rates,&unit->period);if(e.code)return e;
+        e=rates_at(report,history,index,key.p?key:normalized,raw,rates_clock,false,(PricePriority){0},&rates,&unit->period);if(e.code)return e;
         if(!rates){e=count_add(report,&report->unpriced,unit->model,unit->input+unit->output);if(e.code)return e;continue;}
         unit->has_cost=true;unit->cost_usd=cost_usd(rates,unit->input,unit->cached,unit->output);
         if(unit->priority_tier) {
@@ -222,26 +228,26 @@ static Err recording_add(Omap *models,Arena *arena,Str key,Str source) {
     Str *copy;Err e=arena_alloc(arena,sizeof *copy,_Alignof(Str),(void **)&copy);if(e.code)return e;
     *copy=source;return omap_put(models,key,copy);
 }
-static Err recording_record(Omap *models,Arena *arena,const LogRecord *record) {
+static Err recording_record(const PricingRules *rules,Omap *models,Arena *arena,const LogRecord *record) {
     for(size_t i=0;i<record->token_stream.count;i++) {
         const TokenObservation *observation=&record->token_stream.observations[i];Str raw={0};
         if(observation->tag==TOKEN_C||observation->tag==TOKEN_XC) {
             if(observation->model_state.kind==MODEL_SET)raw=observation->model_state.model;
         } else if(observation->tag==TOKEN_T||observation->tag==TOKEN_B)raw=observation->model;
-        if(raw.p) {Str normalized=normalize_codex_model(raw);if(!str_equal(normalized,STR_LIT("unknown"))){Err e=recording_add(models,arena,normalized,normalized);if(e.code)return e;}}
+        if(raw.p) {Str normalized=normalize_codex_model(rules,raw);if(!str_equal(normalized,STR_LIT("unknown"))){Err e=recording_add(models,arena,normalized,normalized);if(e.code)return e;}}
     }
     return ERR_SUCCESS;
 }
 Err pricing_recording_models(const Corpus *corpus,const PriorityTurns *priority,ModelsDevIndex *index,yyjson_doc **out) {
     *out=NULL;Omap models={0};PricingReport owner={0};yyjson_mut_doc *doc=NULL;Err error=ERR_SUCCESS;
     for(OmapEntry *entry=corpus->sessions.first;entry;entry=entry->next) {
-        const SessionModel *session=entry->value;for(size_t i=0;i<session->record_count;i++){error=recording_record(&models,&owner.arena,session->records[i]);if(error.code)goto done;}
+        const SessionModel *session=entry->value;for(size_t i=0;i<session->record_count;i++){error=recording_record(index->rules,&models,&owner.arena,session->records[i]);if(error.code)goto done;}
     }
-    for(size_t i=0;i<corpus->skipped_count;i++){error=recording_record(&models,&owner.arena,corpus->skipped[i]);if(error.code)goto done;}
+    for(size_t i=0;i<corpus->skipped_count;i++){error=recording_record(index->rules,&models,&owner.arena,corpus->skipped[i]);if(error.code)goto done;}
     for(OmapEntry *entry=priority->turns.first;entry;entry=entry->next) {
         const PriorityEntry *metadata=entry->value;Str raw=metadata->model;
-        if(!raw.p||!codex_api_fast_multiplier(raw))continue;
-        Str normalized=normalize_codex_model(raw);error=recording_add(&models,&owner.arena,normalized,normalized);if(error.code)goto done;
+        if(!raw.p||!codex_api_fast_multiplier(index->rules,raw))continue;
+        Str normalized=normalize_codex_model(index->rules,raw);error=recording_add(&models,&owner.arena,normalized,normalized);if(error.code)goto done;
         Str key;error=override_key(&owner,index,raw,normalized,&key);if(error.code)goto done;
         if(key.p){error=recording_add(&models,&owner.arena,key,raw);if(error.code)goto done;}
     }

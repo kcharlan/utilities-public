@@ -188,7 +188,7 @@ TEST(opencode_db_schema_guards) {
         OpencodeFixture f;opencode_fixture_open(&f);opencode_fixture_session(&f,"synthetic-session");opencode_fixture_sql(&f,changes[i]);
         OpencodeStore s={0};add(&s,&f);read_store(&s);ASSERT_EQ(1,s.database_count);
         bool ok=i>=7;ASSERT_EQ(ok?OC_DB_OK:OC_DB_UNSUPPORTED,s.databases[0].status);ASSERT_EQ(ok?1:0,s.session_count);
-        if(!ok)ASSERT_TRUE(s.databases[0].reason.n);if(i==9)ASSERT_TRUE(s.databases[0].untested);
+        if(!ok)ASSERT_TRUE(s.databases[0].reason.n);
         opencode_store_destroy(&s);opencode_fixture_close(&f);
     }
     /* This independent contract list prevents an accidentally optional field

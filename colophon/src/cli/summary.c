@@ -58,11 +58,11 @@ static void provider_summary(Provider provider,const PayloadInputs *in) {
 }
 static __int128 oc_map_count(const Omap *map){__int128 n=0;for(OmapEntry *q=map->first;q;q=q->next)n+=*(uint64_t *)q->value;return n;}
 static void oc_diagnostics(const OpencodeStore *s,bool *first){
-    if(!s)return;size_t schema=0,unreadable=0,untested=0,invalid=0;
-    for(size_t i=0;i<s->database_count;i++){schema+=s->databases[i].status==OC_DB_UNSUPPORTED;unreadable+=s->databases[i].status==OC_DB_UNREADABLE;untested+=s->databases[i].untested;}
+    if(!s)return;size_t schema=0,unreadable=0,invalid=0;
+    for(size_t i=0;i<s->database_count;i++){schema+=s->databases[i].status==OC_DB_UNSUPPORTED;unreadable+=s->databases[i].status==OC_DB_UNREADABLE;}
     for(size_t i=0;i<s->session_count;i++)invalid+=s->sessions[i]->invalid_numbers!=0;
     const OpencodeUsageReport *u=s->usage;
-    diagnostic("opencode_schema_errors",schema,first);diagnostic("opencode_unreadable_databases",unreadable,first);diagnostic("opencode_untested_schema",untested,first);
+    diagnostic("opencode_schema_errors",schema,first);diagnostic("opencode_unreadable_databases",unreadable,first);
     diagnostic("opencode_session_id_collisions",s->corpus_collisions.count,first);diagnostic("opencode_duplicate_sessions",s->duplicate_count,first);
     diagnostic("opencode_orphaned_subagents",s->orphaned_subagents.count,first);diagnostic("opencode_spawn_conflicts",s->ambiguous_spawns.count,first);diagnostic("opencode_unknown_clocks",s->unknown_clocks.count,first);
     diagnostic("opencode_invalid_numbers",invalid+(u?u->invalid_count:0),first);
@@ -90,16 +90,19 @@ Err summary_run(const char *output,size_t size,const PayloadInputs *in) {
     diagnostic("claude_history_alias_conflicts",in->claude?in->claude->history_conflicts.size:0,&first);
     diagnostic("claude_duplicate_responses",in->claude?in->claude->duplicate_rows:0,&first);diagnostic("claude_incomplete_requests",in->claude?in->claude->incomplete_requests:0,&first);
     oc_diagnostics(in->opencode,&first);
-    if(in->antigravity){const AntigravityStore *s=in->antigravity;size_t schema=0,unreadable=0;
+    if(in->antigravity){const AntigravityStore *s=in->antigravity;size_t schema=0,unreadable=0,mismatches=0;
         for(size_t i=0;i<s->database_count;i++){schema+=s->databases[i].status==AG_DB_UNSUPPORTED;unreadable+=s->databases[i].status==AG_DB_UNREADABLE;}
+        for(size_t t=0;t<20;t++)for(size_t n=0;n<256;n++)mismatches+=s->field_mismatches.counts[t][n];
         diagnostic("antigravity_schema_errors",schema,&first);diagnostic("antigravity_unreadable_databases",unreadable,&first);
         diagnostic("antigravity_duplicate_sessions",s->duplicate_sessions,&first);diagnostic("antigravity_archive_disagreements",s->archive_disagreements,&first);
         diagnostic("antigravity_malformed_blobs",s->malformed_blobs,&first);diagnostic("antigravity_annotation_errors",s->annotation_errors,&first);
+        diagnostic("antigravity_field_mismatches",mismatches,&first);
         diagnostic("antigravity_malformed_rows",s->malformed_rows,&first);
         diagnostic("antigravity_cross_session_duplicates",s->cross_session_duplicates,&first);
         diagnostic("antigravity_requests_without_usage",s->requests_without_usage,&first);
         diagnostic("antigravity_invalid_numbers",s->invalid_numbers,&first);
         diagnostic("antigravity_unknown_clocks",s->unknown_clocks,&first);
+        diagnostic("antigravity_ledger_unreadable",s->ledger_unreadable.count,&first);diagnostic("antigravity_retained_sessions",s->ledger_retained,&first);diagnostic("antigravity_ledger_shrunk",s->ledger_shrunk,&first);
         diagnostic("antigravity_orphaned_subagents",s->orphaned_subagents.count,&first);diagnostic("antigravity_session_id_collisions",s->corpus_collisions.count,&first);
         diagnostic("antigravity_legacy_encrypted",s->legacy_encrypted,&first);diagnostic("antigravity_source_diagnostics",s->diagnostic_count,&first);
     }

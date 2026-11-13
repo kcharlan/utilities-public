@@ -77,6 +77,56 @@ def test_antigravity_cached_pricing_effort_alias_after_routing(native, model):
     assert row["own_usage"]["cost_usd"] == pytest.approx(.001173)
     assert row["buckets"][0][1] == "gemini-3.1-pro-preview"
 
+def test_antigravity_catalog_exact_name_wins_over_preview_alias(native):
+    cached_pricing(native, unknown=False, model="gemini-3.1-pro-high")
+    path = native.runtime / "pricing-cache.json"
+    cache = json.loads(path.read_text())
+    cache["catalog"]["google"]["models"]["gemini-3.1-pro-high"] = {
+        "id": "gemini-3.1-pro-high", "cost": {"input": 3, "output": 5}}
+    path.write_text(json.dumps(cache))
+    result = native.build("--no-claude", "--no-opencode")
+    assert result.returncode == 0, result.stderr
+    row, = native.payload()["sessions"]
+    assert row["buckets"][0][1] == "gemini-3.1-pro-high"
+    assert row["own_usage"]["cost_usd"] == pytest.approx((50 * 3 + 7 * 5) / 1e6)
+
+def test_antigravity_learned_number_uses_exact_catalog_name(native):
+    db_path = cached_pricing(native, unknown=False)
+    path = native.runtime / "pricing-cache.json"
+    cache = json.loads(path.read_text())
+    cache["catalog"]["google"]["models"]["gemini-3.1-pro-high"] = {
+        "id": "gemini-3.1-pro-high", "cost": {"input": 3, "output": 5}}
+    path.write_text(json.dumps(cache))
+    numbered = proto_field(1, 9999) + proto_field(2, 42) + proto_field(3, 7)
+    metadata = proto_field(1, proto_field(1, 1767355200)) + proto_field(9, numbered)
+    learned = proto_field(1, proto_field(4, proto_field(1, 9999)) + proto_field(19, "gemini-3.1-pro-high"))
+    with sqlite3.connect(db_path) as db:
+        db.execute("UPDATE steps SET metadata=? WHERE idx=0", (metadata,))
+        db.execute("DELETE FROM gen_metadata")
+        db.execute("INSERT INTO gen_metadata VALUES(0,?)", (learned,))
+    result = native.build("--no-claude", "--no-opencode")
+    assert result.returncode == 0, result.stderr
+    row, = native.payload()["sessions"]
+    assert row["buckets"][0][1] == "gemini-3.1-pro-high"
+    assert row["own_usage"]["cost_usd"] == pytest.approx((42 * 3 + 7 * 5) / 1e6)
+
+@pytest.mark.parametrize("exact", [False, True])
+def test_user_antigravity_alias_follows_catalog_lookup(native, exact):
+    cached_pricing(native, unknown=False, model="synthetic-custom-high")
+    cache_path = native.runtime / "pricing-cache.json"
+    cache = json.loads(cache_path.read_text())
+    if exact:
+        cache["catalog"]["google"]["models"]["synthetic-custom-high"] = {
+            "id": "synthetic-custom-high", "cost": {"input": 3, "output": 5}}
+        cache_path.write_text(json.dumps(cache))
+    (native.runtime / "pricing-rules.json").write_text(json.dumps({"schema": 1,
+        "aliases": {"antigravity": {"synthetic-custom": "gemini-3.1-pro-preview"}}}))
+    result = native.build("--no-claude", "--no-opencode")
+    assert result.returncode == 0, result.stderr
+    row, = native.payload()["sessions"]
+    assert row["buckets"][0][1] == ("synthetic-custom-high" if exact else "gemini-3.1-pro-preview")
+    assert row["own_usage"]["cost_usd"] == pytest.approx((50 * 3 + 7 * 5) / 1e6 if exact else .001173)
+
 @pytest.mark.parametrize("key", ["synthetic-opaque-key", 7, None])
 def test_antigravity_trajectory_key_types_preserve_workspace_creation_and_parent(native, key):
     child_id = "00000000-0000-4000-8000-000000000002"
@@ -103,8 +153,11 @@ def test_antigravity_trajectory_key_types_preserve_workspace_creation_and_parent
     assert child["start_ms"] == 1767355200000
     assert payload["diagnostics"]["antigravity_malformed_rows"] == 0
 
-@pytest.mark.parametrize("timestamp", [b"\x80", proto_field(1,b"Synthetic wrong wire")])
-def test_antigravity_malformed_chat_start_timestamp_isolates_generator(native, timestamp):
+@pytest.mark.parametrize("timestamp, mismatch", [
+    (b"\x80", ".exa.cortex_pb.ChatStartMetadata.4"),
+    (proto_field(1,b"Synthetic wrong wire"), ".google.protobuf.Timestamp.1"),
+])
+def test_antigravity_malformed_chat_start_timestamp_is_ignored(native, timestamp, mismatch):
     path = database(native)
     bad_chat = proto_field(4,proto_field(2,5)) + proto_field(9,proto_field(4,timestamp))
     valid_chat = proto_field(4,proto_field(2,7)) + proto_field(9,proto_field(4,proto_field(1,1767355200)))
@@ -115,12 +168,47 @@ def test_antigravity_malformed_chat_start_timestamp_isolates_generator(native, t
     assert result.returncode == 0, result.stderr
     payload = native.payload()
     row, = payload["sessions"]
-    assert payload["diagnostics"]["antigravity_malformed_blobs"] == 1
-    assert payload["diagnostics"]["antigravity_unknown_clocks"] == 0
-    assert row["own_usage"]["input"] == 7
+    assert payload["diagnostics"]["antigravity_malformed_blobs"] == 0
+    assert payload["diagnostics"]["antigravity_unknown_clocks"] == 1
+    assert payload["diagnostics"]["antigravity_field_mismatches"] == {mismatch: 1}
+    assert row["own_usage"]["input"] == 12
     assert len(row["buckets"]) == 1
     assert row["buckets"][0][0] == 1963728
-    assert row["buckets"][0][3] == 7
+    assert row["buckets"][0][3] == 12
+
+def test_antigravity_unused_fields_do_not_reject_sessions(native):
+    first = database(native)
+    second = database(native, identity=ID[:-1] + "2")
+    usage = proto_field(2, 12) + proto_field(3, 7)
+    with sqlite3.connect(first) as db:
+        # Field 5 was known to the old schema but is not read by Colophon.
+        db.execute("INSERT INTO gen_metadata VALUES(1,?)", (proto_field(1, proto_field(4, usage)) + proto_field(5, 9),))
+    with sqlite3.connect(second) as db:
+        # Step metadata field 21 is also unused; its expected wire is varint.
+        metadata = proto_field(9, usage) + proto_field(21, b"synthetic unused")
+        db.execute("INSERT INTO steps VALUES(1,1,3,?,?,0)", (metadata, b""))
+    result = native.build("--no-claude", "--no-opencode")
+    assert result.returncode == 0, result.stderr
+    payload = native.payload()
+    assert len(payload["sessions"]) == 2
+    assert all(row["own_usage"]["input"] == 12 for row in payload["sessions"])
+    assert all(row["own_usage"]["output"] == 7 for row in payload["sessions"])
+    assert payload["diagnostics"]["antigravity_malformed_blobs"] == 0
+    assert payload["diagnostics"]["antigravity_field_mismatches"] == {}
+
+def test_antigravity_mistyped_usage_field_preserves_other_counts(native):
+    path = database(native)
+    usage = proto_field(2, b"synthetic wrong wire") + proto_field(3, 7) + proto_field(5, 3)
+    with sqlite3.connect(path) as db:
+        db.execute("INSERT INTO gen_metadata VALUES(1,?)", (proto_field(1, proto_field(4, usage)),))
+    result = native.build("--no-claude", "--no-opencode")
+    assert result.returncode == 0, result.stderr
+    payload = native.payload()
+    row, = payload["sessions"]
+    assert row["own_usage"]["input"] == 3
+    assert row["own_usage"]["output"] == 7
+    assert payload["diagnostics"]["antigravity_malformed_blobs"] == 0
+    assert payload["diagnostics"]["antigravity_field_mismatches"] == {".exa.codeium_common_pb.ModelUsageStats.2": 1}
 
 @pytest.mark.parametrize("created, bucket", [(proto_field(4,b""),0),
     (proto_field(4,proto_field(1,0)+proto_field(2,0)),0),
@@ -356,10 +444,12 @@ def test_antigravity_no_database_size_cap_and_no_summary_only_sessions(native):
     path.unlink()
     with sqlite3.connect(path.parent.parent / "conversation_summaries.db") as db:
         db.execute("CREATE TABLE conversation_summaries(conversation_id,title)")
-        db.execute("INSERT INTO conversation_summaries VALUES(?,?)", (ID, "Synthetic index only"))
+        db.execute("INSERT INTO conversation_summaries VALUES(?,?)", (ID[:-1] + "2", "Synthetic index only"))
     assert native.build().returncode == 0
     assert source(native)["status"] == "absent"
-    assert source(native)["sessions"] == 0
+    retained, = native.payload()["sessions"]
+    assert retained["id"] == ID
+    assert "transcript_deleted" in retained["flags"]
 
 def test_antigravity_symlink_database_annotation_and_sidecar_excluded(native):
     path = database(native)
@@ -446,7 +536,8 @@ def test_antigravity_annotation_and_root_symlink_excluded(native):
     root.rename(moved)
     root.symlink_to(moved)
     assert native.build().returncode == 0
-    assert source(native)["sessions"] == 0
+    assert source(native)["sessions"] == 1
+    assert "transcript_deleted" in native.payload()["sessions"][0]["flags"]
     assert source(native)["status"] == "unreadable"
 
 def test_antigravity_filename_identity_and_summary_joins_use_exact_case(native):
@@ -538,3 +629,209 @@ def test_antigravity_malformed_optional_enum_keeps_indexed_step(native, bad):
     assert result.returncode == 0, result.stderr
     assert source(native)["databases"][0]["accepted_steps"] == 1
     assert native.payload()["diagnostics"]["antigravity_malformed_rows"] == 2
+
+
+def test_antigravity_deleted_database_retains_usage_and_metadata(native):
+    path = cached_pricing(native, unknown=False)
+    workspace = proto_field(1, "file:///SYNTHETIC-LEDGER-WORKSPACE")
+    with sqlite3.connect(path) as db:
+        db.execute("INSERT INTO trajectory_metadata_blob VALUES(1,?)", (proto_field(1, workspace),))
+    result = native.build("--no-claude", "--no-opencode")
+    assert result.returncode == 0, result.stderr
+    live, = native.payload()["sessions"]
+    path.unlink()
+    result = native.build("--no-claude", "--no-opencode")
+    assert result.returncode == 0, result.stderr
+    retained, = native.payload()["sessions"]
+    assert retained["own_usage"] == live["own_usage"]
+    assert retained["title"] == live["title"]
+    assert retained["workspace"] == live["workspace"]
+    assert retained["turns"] == []
+    assert "transcript_deleted" in retained["flags"]
+
+
+def test_antigravity_unsupported_database_uses_retained_usage(native):
+    path = cached_pricing(native, unknown=False)
+    assert native.build("--no-claude", "--no-opencode").returncode == 0
+    usage = native.payload()["sessions"][0]["own_usage"]
+    path.unlink()
+    with sqlite3.connect(path) as db:
+        db.execute("CREATE TABLE synthetic_incompatible(value TEXT)")
+    result = native.build("--no-claude", "--no-opencode")
+    assert result.returncode == 0, result.stderr
+    payload = native.payload()
+    assert payload["sessions"][0]["own_usage"] == usage
+    assert "transcript_deleted" in payload["sessions"][0]["flags"]
+    assert payload["diagnostics"]["antigravity_schema_errors"]
+
+
+def test_antigravity_ledger_only_home_and_disabled_rebuild(native):
+    path = cached_pricing(native, unknown=False)
+    assert native.build("--no-claude", "--no-opencode").returncode == 0
+    ledger = native.runtime / "antigravity-ledger"
+    before = {p.relative_to(ledger): p.read_bytes() for p in ledger.rglob("*.json")}
+    assert len(before) == 1
+    path.unlink()
+    assert native.build("--no-claude", "--no-opencode", "--no-antigravity").returncode == 0
+    assert native.payload()["sessions"] == []
+    assert {p.relative_to(ledger): p.read_bytes() for p in ledger.rglob("*.json")} == before
+    native.codex.rmdir()
+    result = native.build("--no-claude", "--no-opencode", "--rebuild")
+    assert result.returncode == 0, result.stderr
+    assert len(native.payload()["sessions"]) == 1
+    assert {p.relative_to(ledger): p.read_bytes() for p in ledger.rglob("*.json")} == before
+
+
+def test_antigravity_corrupt_ledger_is_reported_unchanged(native):
+    path = cached_pricing(native, unknown=False)
+    assert native.build("--no-claude", "--no-opencode").returncode == 0
+    record, = (native.runtime / "antigravity-ledger").rglob("*.json")
+    path.unlink()
+    record.write_bytes(b"synthetic malformed ledger")
+    assert native.build("--no-claude", "--no-opencode").returncode == 0
+    assert record.read_bytes() == b"synthetic malformed ledger"
+    assert str(record) in native.payload()["diagnostics"]["antigravity_ledger_unreadable"]
+
+
+def test_antigravity_ledger_is_private_and_root_scoped(native):
+    path = cached_pricing(native, unknown=False)
+    assert native.build("--no-claude", "--no-opencode").returncode == 0
+    root = native.runtime / "antigravity-ledger"
+    record, = root.rglob("*.json")
+    assert stat.S_IMODE(root.stat().st_mode) == 0o700
+    assert stat.S_IMODE(record.parent.stat().st_mode) == 0o700
+    assert stat.S_IMODE(record.stat().st_mode) == 0o600
+    path.unlink()
+    other = native.home / "synthetic-other-gemini"
+    other.mkdir()
+    assert native.build("--no-claude", "--no-opencode", "--antigravity-home", str(other)).returncode == 0
+    assert native.payload()["sessions"] == []
+
+
+@pytest.mark.parametrize("field", [11, 12, 7])
+@pytest.mark.parametrize("raw_id", [b"SYNTHETIC\x00RAW-IDENTITY", b"SYNTHETIC\xffRAW-IDENTITY"])
+def test_antigravity_binary_usage_identity_survives_live_capture_and_retention(native, field, raw_id):
+    first = database(native)
+    second = database(native, identity=ID[:-1] + "2")
+    usage = proto_field(2, 5) + proto_field(field, raw_id)
+    for path in (first, second):
+        with sqlite3.connect(path) as db:
+            db.execute("INSERT INTO gen_metadata VALUES(1,?)", (proto_field(1, proto_field(4, usage)),))
+    result = native.build("--no-claude", "--no-opencode")
+    assert result.returncode == 0, result.stderr
+    payload = native.payload()
+    assert sum(row["own_usage"]["input"] for row in payload["sessions"]) == 5
+    assert payload["diagnostics"]["antigravity_cross_session_duplicates"] == 1
+    assert payload["diagnostics"]["antigravity_field_mismatches"] == {}
+    ledger = [json.loads(path.read_text()) for path in (native.runtime / "antigravity-ledger").rglob("*.json")]
+    assert len(ledger) == 2
+    assert all(record["events"][0]["ids"] == [[field, raw_id.hex()]] for record in ledger)
+
+    first.unlink()
+    result = native.build("--no-claude", "--no-opencode")
+    assert result.returncode == 0, result.stderr
+    payload = native.payload()
+    by_id = {row["id"]: row for row in payload["sessions"]}
+    assert len(by_id) == 2
+    assert by_id[ID]["own_usage"]["input"] == 0
+    assert by_id[ID[:-1] + "2"]["own_usage"]["input"] == 5
+    assert payload["diagnostics"]["antigravity_cross_session_duplicates"] == 1
+    assert payload["diagnostics"]["antigravity_field_mismatches"] == {}
+    reloaded = [json.loads(path.read_text()) for path in (native.runtime / "antigravity-ledger").rglob("*.json")]
+    assert len(reloaded) == 2
+    assert all(record["events"][0]["ids"] == [[field, raw_id.hex()]] for record in reloaded)
+
+
+def test_antigravity_retained_duplicate_yields_to_live_request(native):
+    first = database(native)
+    second = database(native, identity=ID[:-1] + "2")
+    usage = proto_field(2, 42) + proto_field(3, 7) + proto_field(11, b"synthetic-shared-request")
+    chat = proto_field(4, usage) + proto_field(19, "gemini-3.1-pro-preview")
+    for path in (first, second):
+        with sqlite3.connect(path) as db:
+            db.execute("INSERT INTO gen_metadata VALUES(0,?)", (proto_field(1, chat),))
+    assert native.build("--no-claude", "--no-opencode").returncode == 0
+    assert sum(row["own_usage"]["input"] for row in native.payload()["sessions"]) == 42
+    first.unlink()
+    result = native.build("--no-claude", "--no-opencode")
+    assert result.returncode == 0, result.stderr
+    payload = native.payload()
+    assert len(payload["sessions"]) == 2
+    assert sum(row["own_usage"]["input"] for row in payload["sessions"]) == 42
+    by_id = {row["id"]: row for row in payload["sessions"]}
+    assert by_id[ID]["own_usage"]["input"] == 0
+    assert by_id[ID[:-1] + "2"]["own_usage"]["input"] == 42
+    assert payload["diagnostics"]["antigravity_cross_session_duplicates"] == 1
+
+
+def test_antigravity_shrinking_live_database_reports_and_replaces_ledger(native):
+    path = cached_pricing(native)
+    assert native.build("--no-claude", "--no-opencode").returncode == 0
+    assert native.payload()["sessions"][0]["own_usage"]["input"] == 52
+    with sqlite3.connect(path) as db:
+        db.execute("DELETE FROM gen_metadata WHERE idx=1")
+    assert native.build("--no-claude", "--no-opencode").returncode == 0
+    payload = native.payload()
+    assert payload["diagnostics"]["antigravity_ledger_shrunk"] == 1
+    assert payload["sessions"][0]["own_usage"]["input"] == 50
+    path.unlink()
+    assert native.build("--no-claude", "--no-opencode").returncode == 0
+    assert native.payload()["sessions"][0]["own_usage"]["input"] == 50
+
+
+def test_antigravity_retained_parent_relinks_live_child(native):
+    parent = database(native)
+    child_id = ID[:-1] + "2"
+    child = database(native, identity=child_id)
+    with sqlite3.connect(child) as db:
+        db.execute("INSERT INTO trajectory_metadata_blob VALUES(1,?)", (proto_field(5, ID),))
+    assert native.build("--no-claude", "--no-opencode").returncode == 0
+    parent.unlink()
+    result = native.build("--no-claude", "--no-opencode")
+    assert result.returncode == 0, result.stderr
+    payload = native.payload()
+    assert payload["sessions"][0]["children"] == [child_id]
+    assert payload["subagents"][child_id]["parent_id"] == ID
+    assert payload["diagnostics"]["antigravity_orphaned_subagents"] == []
+
+
+@pytest.mark.parametrize("change", ["schema", "id", "identity"])
+def test_antigravity_invalid_ledger_metadata_is_untouched_even_with_live_database(native, change):
+    cached_pricing(native, unknown=False)
+    assert native.build("--no-claude", "--no-opencode").returncode == 0
+    record, = (native.runtime / "antigravity-ledger").rglob("*.json")
+    value = json.loads(record.read_text())
+    if change == "identity":
+        value["events"][0]["ids"] = [[]]
+    else:
+        value[change] = 2 if change == "schema" else ID[:-1] + "2"
+    bad = json.dumps(value).encode()
+    record.write_bytes(bad)
+    assert native.build("--no-claude", "--no-opencode").returncode == 0
+    assert record.read_bytes() == bad
+    assert str(record) in native.payload()["diagnostics"]["antigravity_ledger_unreadable"]
+    assert "transcript_deleted" not in native.payload()["sessions"][0]["flags"]
+
+
+def test_rejected_ledger_prefix_does_not_supply_model_learning(native):
+    path = database(native)
+    number = 991199
+    usage = proto_field(1, number) + proto_field(2, 42)
+    named = proto_field(4, usage) + proto_field(19, "synthetic-rejected-ledger-model")
+    with sqlite3.connect(path) as db:
+        db.execute("INSERT INTO gen_metadata VALUES(0,?)", (proto_field(1, named),))
+    result = native.build("--no-claude", "--no-opencode")
+    assert result.returncode == 0, result.stderr
+    record, = (native.runtime / "antigravity-ledger").rglob("*.json")
+    value = json.loads(record.read_text())
+    value["events"].append({"synthetic_invalid": True})
+    record.write_text(json.dumps(value))
+    damaged = record.read_bytes()
+    with sqlite3.connect(path) as db:
+        db.execute("UPDATE gen_metadata SET data=?", (proto_field(1, proto_field(4, usage)),))
+    result = native.build("--no-claude", "--no-opencode")
+    assert result.returncode == 0, result.stderr
+    payload = native.payload()
+    assert payload["diagnostics"]["antigravity_ledger_unreadable"] == [str(record)]
+    assert record.read_bytes() == damaged
+    assert payload["sessions"][0]["buckets"][0][1] == f"antigravity/model-{number}"

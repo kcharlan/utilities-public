@@ -8,7 +8,7 @@ import {fileURLToPath} from 'node:url';
 import {buildInput} from '../deploy_colophon.mjs';
 
 const script = fileURLToPath(new URL('../deploy_colophon.mjs', import.meta.url));
-const currentVersion = 'colophon 0.6.0';
+const currentVersion = 'colophon 0.8.0';
 test('synthetic current release matches the Colophon CLI version', () => {
   const source = fs.readFileSync(new URL('../../colophon/src/cli/args.c', import.meta.url), 'utf8');
   const versions = [...source.matchAll(/puts\("(colophon \d+\.\d+\.\d+)"\)/g)];

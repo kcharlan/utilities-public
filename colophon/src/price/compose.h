@@ -46,7 +46,7 @@ typedef struct UsageBucket {
 } UsageBucket;
 /* Compose retains raw record/Intern and PriorityTurns strings. Its arena and
  * diagnostics are owned separately, and reset on every recomposition. */
-Err compose_usage(Corpus *corpus, const PriorityTurns *priority);
+Err compose_usage(const PricingRules *rules,Corpus *corpus, const PriorityTurns *priority);
 Err compose_refresh_costs(Corpus *corpus, bool costs_available);
 /* Aggregate an authored or freshly composed unit sequence into the same
  * owned session/turn/bucket summaries. Called once before cost refresh. */

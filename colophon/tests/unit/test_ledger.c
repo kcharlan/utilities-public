@@ -22,7 +22,7 @@ static void append_case(const char *fault) {
     JsonRead entries=json_read(STR_LIT("[{\"model\":\"synthetic-second\",\"effective_from\":\"2026-01-03T00:00:00Z\",\"source\":\"manual\",\"per_million\":{\"input\":3,\"cached_input\":1,\"cache_write\":0,\"output\":5}}]"),STRICT,JSON_CONSTANTS_REJECT,"test.ledger.entries");
     ASSERT_EQ(JSON_OK,entries.status);LedgerAppend append={0};
     if(fault)ASSERT_EQ(0,setenv("COLOPHON_TEST_FAULT",fault,1));
-    Err e=append_user_ledger(path,yyjson_doc_get_root(entries.doc),true,ledger_clock(&st),&append);
+    Err e=append_user_ledger(&test_rules,path,yyjson_doc_get_root(entries.doc),true,ledger_clock(&st),&append);
     if(fault)ASSERT_EQ(0,unsetenv("COLOPHON_TEST_FAULT"));
     ASSERT_EQ(ERR_OK,e.code);char *bytes=NULL;size_t n=0;ASSERT_EQ(ERR_OK,file_read_all(path,&bytes,&n).code);
     if(fault) {
@@ -32,7 +32,7 @@ static void append_case(const char *fault) {
     } else {
         ASSERT_TRUE(append.appended);ASSERT_EQ(0,stat(path,&st));ASSERT_EQ(0600,st.st_mode & 0777);
         JsonRead saved=json_read((Str){bytes,(uint32_t)n},STRICT,JSON_CONSTANTS_REJECT,"test.ledger.saved");
-        ASSERT_EQ(JSON_OK,saved.status);LedgerCheck check={0};ASSERT_EQ(ERR_OK,validate_ledger(yyjson_doc_get_root(saved.doc),false,&check).code);
+        ASSERT_EQ(JSON_OK,saved.status);LedgerCheck check={0};ASSERT_EQ(ERR_OK,validate_ledger(&test_rules,yyjson_doc_get_root(saved.doc),false,&check).code);
         ASSERT_EQ(0,check.errors.count);ASSERT_EQ(2,check.count);
         ASSERT_TRUE(strstr(bytes,"synthetic-ledger"));ASSERT_TRUE(strstr(bytes,"synthetic-second"));
         ledger_check_destroy(&check);json_read_free(&saved);
@@ -45,10 +45,10 @@ TEST(ledger_append_write_failure_is_warning_not_fatal) {append_case("append_ledg
 TEST(ledger_user_entries_reject_null_effective_from_and_unknown_source) {
     const char *bad="{\"schema\":1,\"entries\":[{\"model\":\"synthetic-ledger\",\"effective_from\":null,\"source\":\"synthetic\",\"per_million\":{\"input\":1,\"cached_input\":0.5,\"cache_write\":0,\"output\":2}}]}";
     JsonRead read=json_read((Str){bad,(uint32_t)strlen(bad)},STRICT,JSON_CONSTANTS_REJECT,"test.ledger.bad");LedgerCheck check={0};
-    ASSERT_EQ(JSON_OK,read.status);ASSERT_EQ(ERR_OK,validate_ledger(yyjson_doc_get_root(read.doc),false,&check).code);ASSERT_EQ(2,check.errors.count);
+    ASSERT_EQ(JSON_OK,read.status);ASSERT_EQ(ERR_OK,validate_ledger(&test_rules,yyjson_doc_get_root(read.doc),false,&check).code);ASSERT_EQ(2,check.errors.count);
     ledger_check_destroy(&check);json_read_free(&read);
     const char *curated="{\"schema\":1,\"entries\":[{\"model\":\"synthetic-ledger\",\"effective_from\":null,\"source\":\"curated\",\"per_million\":{\"input\":1,\"cached_input\":0.5,\"cache_write\":0,\"output\":2}}]}";
     read=json_read((Str){curated,(uint32_t)strlen(curated)},STRICT,JSON_CONSTANTS_REJECT,"test.ledger.curated");
-    ASSERT_EQ(JSON_OK,read.status);ASSERT_EQ(ERR_OK,validate_ledger(yyjson_doc_get_root(read.doc),true,&check).code);ASSERT_EQ(0,check.errors.count);
+    ASSERT_EQ(JSON_OK,read.status);ASSERT_EQ(ERR_OK,validate_ledger(&test_rules,yyjson_doc_get_root(read.doc),true,&check).code);ASSERT_EQ(0,check.errors.count);
     ledger_check_destroy(&check);json_read_free(&read);
 }

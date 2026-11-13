@@ -98,7 +98,7 @@ static Err row(Parser *p, const TokenObservation *o, Str ts, Str model,
                      .raw_last = o->last,
                      .raw_total = o->total,
                      .bare = bare};
-  TRY(normalize_codex_model_memo(&p->r->arena,&p->normalizations,model,&r.model));
+  TRY(normalize_codex_model_memo(p->resolver?p->resolver->rules:NULL,&p->r->arena,&p->normalizations,model,&r.model));
   int64_t dayms;
   if (!time_day_key(ts, "accounting.timestamp", r.day, &dayms) &&
       !time_day_key_iso(ts, "accounting.timestamp", r.day, &dayms))

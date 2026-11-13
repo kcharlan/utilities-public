@@ -16,7 +16,7 @@ TEST(claude_cost_bundled_threshold_cutoff_and_unknown) {
         unit(STR_LIT("claude-sonnet-4-6"),200001,1773360000000),
         unit(STR_LIT("claude-sonnet-4-5"),200001,1773360000000),
         unit(STR_LIT("synthetic-unpriced-model"),19,0)};
-    PricingReport report={0};ASSERT_EQ(ERR_OK,claude_price_usage_units(units,7,NULL,&report).code);
+    PricingReport report={.rules=&test_rules};ASSERT_EQ(ERR_OK,claude_price_usage_units(units,7,NULL,&report).code);
     CLOSE(1.000175,units[0].cost_usd);CLOSE(2.0002725,units[1].cost_usd);
     CLOSE(1.00018,units[2].cost_usd);CLOSE(1.2001635,units[3].cost_usd);
     CLOSE(.600108,units[4].cost_usd);CLOSE(1.2001635,units[5].cost_usd);
@@ -46,20 +46,20 @@ TEST(claude_model_normalization_and_fast_overrides) {
     ASSERT_TRUE(str_equal(normalized,STR_LIT("claude-opus-4-6-v²:¹")));
     const char *models[]={"claude-opus-4-6","provider/claude-opus-4-7-20990101","anthropic.claude-opus-4-8@default","claude-opus-4-70","gpt-reserve","gpt-5.6-2099-01-01","gpt-6.1-sol","claude-sonnet-4-6","claude-opus-4-6-foo-claude-opus-4-60"};
     double expected[]={6,6,2,1,2,2,2,1,1};
-    for(size_t i=0;i<9;i++){double multiplier;ASSERT_EQ(ERR_OK,claude_fast_multiplier((Str){models[i],(uint32_t)strlen(models[i])},&multiplier).code);CLOSE(expected[i],multiplier);}
+    for(size_t i=0;i<9;i++){double multiplier;ASSERT_EQ(ERR_OK,claude_fast_multiplier(&test_rules,(Str){models[i],(uint32_t)strlen(models[i])},&multiplier).code);CLOSE(expected[i],multiplier);}
     arena_destroy(&arena);
 }
 TEST(claude_catalog_lookup_ambiguity_route_and_fallback_rates) {
     const char *json="{\"anthropic\":{\"models\":{\"synthetic-shared\":{\"id\":\"synthetic-shared\",\"cost\":{\"input\":11,\"output\":17}},\"claude-synthetic\":{\"id\":\"claude-synthetic\",\"cost\":{\"input\":11,\"output\":17,\"context_over_200k\":{\"input\":23},\"tiers\":[{\"tier\":{\"type\":\"context\",\"size\":41},\"input\":23}]}}}},\"google\":{\"models\":{\"synthetic-shared\":{\"id\":\"synthetic-shared\",\"cost\":{\"input\":19,\"output\":31}}}},\"kimi-for-coding\":{\"models\":{\"k3\":{\"id\":\"k3\",\"cost\":{\"input\":37,\"output\":43}}}}}";
     yyjson_doc *doc=NULL;ASSERT_EQ(ERR_OK,catalog_decode((Str){json,(uint32_t)strlen(json)},&doc).code);ASSERT_TRUE(doc);
-    ModelsDevIndex index={0};ASSERT_EQ(ERR_OK,models_dev_index(yyjson_doc_get_root(doc),&index).code);
+    ModelsDevIndex index={.rules=&test_rules};ASSERT_EQ(ERR_OK,models_dev_index(yyjson_doc_get_root(doc),&index).code);
     Arena arena={0};ClaudeLookup lookup;
     ASSERT_EQ(ERR_OK,claude_models_dev_lookup(&arena,&index,STR_LIT("synthetic-shared"),&lookup).code);ASSERT_FALSE(lookup.catalog.model);
     ASSERT_EQ(ERR_OK,claude_models_dev_lookup(&arena,&index,STR_LIT("google/synthetic-shared"),&lookup).code);ASSERT_TRUE(lookup.catalog.model);ASSERT_TRUE(str_equal(lookup.provider,STR_LIT("google")));
     ASSERT_EQ(ERR_OK,claude_models_dev_lookup(&arena,&index,STR_LIT("k3[1m]"),&lookup).code);ASSERT_TRUE(lookup.catalog.model);
     ASSERT_EQ(ERR_OK,claude_models_dev_lookup(&arena,&index,STR_LIT("unsupported/synthetic-shared"),&lookup).code);ASSERT_FALSE(lookup.catalog.model);
     UsageUnit u=unit(STR_LIT("claude-synthetic"),42,0);u.cached=13;u.cache_write=11;u.cache_write_1h=5;
-    PricingReport report={0};ASSERT_EQ(ERR_OK,claude_price_usage_units(&u,1,&index,&report).code);ASSERT_TRUE(u.has_cost);
+    PricingReport report={.rules=&test_rules};ASSERT_EQ(ERR_OK,claude_price_usage_units(&u,1,&index,&report).code);ASSERT_TRUE(u.has_cost);
     /* Absent cache rates fall back to standard input, even in the long lane. */
     CLOSE((18.*23+13*11+6*11+5*46+7*17)/1e6,u.cost_usd);
     ASSERT_TRUE(str_equal(u.period.model,STR_LIT("claude:anthropic/claude-synthetic")));
@@ -69,7 +69,7 @@ TEST(claude_temporal_preserves_prior_zero_and_falls_back_to_nanocost) {
     UsageUnit u[]={unit(STR_LIT("claude-opus-4-6"),19,0),unit(STR_LIT("synthetic-unlisted-model"),19,0)};
     for(size_t i=0;i<2;i++){u[i].claude_price_snapshot=true;u[i].claude_cost_priced=true;}
     u[1].claude_cost_nanos=1234567;
-    PricingReport report={0};ASSERT_EQ(ERR_OK,claude_price_usage_units(u,2,NULL,&report).code);
+    PricingReport report={.rules=&test_rules};ASSERT_EQ(ERR_OK,claude_price_usage_units(u,2,NULL,&report).code);
     ASSERT_TRUE(u[0].has_cost);CLOSE(0,u[0].cost_usd);
     ASSERT_TRUE(u[1].has_cost);CLOSE(.001234567,u[1].cost_usd);
     ASSERT_EQ(0,report.unpriced.size);
@@ -79,17 +79,17 @@ TEST(claude_snapshot_prices_every_complete_raw_row_before_dedupe) {
     ClaudeUsageRow rows[3]={0};for(size_t i=0;i<3;i++)rows[i].unit=unit(STR_LIT("claude-opus-4-6"),19,0);
     rows[2].incomplete=true;
     ClaudeRecord record={.usage_rows=rows,.usage_count=3};ClaudeScan scan={.records=&record,.count=1};
-    ASSERT_EQ(ERR_OK,claude_capture_prices(&scan,NULL).code);
+    ASSERT_EQ(ERR_OK,claude_capture_prices(&test_rules,&scan,NULL).code);
     for(size_t i=0;i<2;i++){ASSERT_TRUE(rows[i].unit.claude_price_snapshot);ASSERT_TRUE(rows[i].unit.claude_cost_priced);ASSERT_EQ(270000,rows[i].unit.claude_cost_nanos);ASSERT_FALSE(rows[i].unit.period.present);}
     ASSERT_FALSE(rows[2].unit.claude_price_snapshot);
 }
 TEST(claude_catalog_precedence_untimed_and_openai_boundary) {
     const char *json="{\"anthropic\":{\"models\":{\"claude-opus-4-6\":{\"id\":\"claude-opus-4-6\",\"cost\":{\"input\":11,\"output\":17}}}},\"openai\":{\"models\":{\"gpt-5.6-sol\":{\"id\":\"gpt-5.6-sol\",\"cost\":{\"input\":19,\"output\":31,\"context_over_200k\":{\"input\":37},\"tiers\":[{\"tier\":{\"type\":\"context\",\"size\":41},\"input\":37}]}}}}}";
     yyjson_doc *doc=NULL;ASSERT_EQ(ERR_OK,catalog_decode((Str){json,(uint32_t)strlen(json)},&doc).code);
-    ModelsDevIndex index={0};ASSERT_EQ(ERR_OK,models_dev_index(yyjson_doc_get_root(doc),&index).code);
+    ModelsDevIndex index={.rules=&test_rules};ASSERT_EQ(ERR_OK,models_dev_index(yyjson_doc_get_root(doc),&index).code);
     UsageUnit units[]={unit(STR_LIT("claude-opus-4-6"),19,1773360000000),unit(STR_LIT("claude-opus-4-6"),19,0),unit(STR_LIT("openai/gpt-5.6-sol"),272000,0),unit(STR_LIT("openai/gpt-5.6-sol"),272001,0)};
     units[1].timestamp_ms.present=false;
-    PricingReport report={0};ASSERT_EQ(ERR_OK,claude_price_usage_units(units,4,&index,&report).code);
+    PricingReport report={.rules=&test_rules};ASSERT_EQ(ERR_OK,claude_price_usage_units(units,4,&index,&report).code);
     CLOSE(.000270,units[0].cost_usd);CLOSE((19.*11+7*17)/1e6,units[1].cost_usd);
     ASSERT_TRUE(str_equal(units[0].period.model,STR_LIT("claude:bundled/claude-opus-4-6")));
     ASSERT_TRUE(str_equal(units[1].period.model,STR_LIT("claude:anthropic/claude-opus-4-6")));
@@ -100,16 +100,52 @@ TEST(claude_bundled_families_and_nonnormalized_unknown_dates) {
     const char *models[]={"claude-fable-5","claude-haiku-4-5","claude-haiku-4-5-20251001","claude-opus-4-5","claude-opus-4-5-20251101","claude-opus-4-6-20260205","claude-opus-4-7","claude-opus-4-8","claude-opus-4-20250514","claude-opus-4-1","claude-sonnet-4-20250514","claude-sonnet-4-5-20250929"};
     double expected[]={.000540,.000054,.000054,.000270,.000270,.000270,.000270,.000270,.000810,.000810,.000162,.000162};
     UsageUnit units[12];for(size_t i=0;i<12;i++)units[i]=unit((Str){models[i],(uint32_t)strlen(models[i])},19,0);
-    PricingReport report={0};ASSERT_EQ(ERR_OK,claude_price_usage_units(units,12,NULL,&report).code);
+    PricingReport report={.rules=&test_rules};ASSERT_EQ(ERR_OK,claude_price_usage_units(units,12,NULL,&report).code);
     for(size_t i=0;i<12;i++){ASSERT_TRUE(units[i].has_cost);CLOSE(expected[i],units[i].cost_usd);}
     pricing_report_destroy(&report);
 }
 TEST(claude_route_primary_precedes_alias_provider_and_preferred_vendor_stays_owned) {
     const char *json="{\"kimi-coding\":{\"models\":{\"synthetic-kite\":{\"id\":\"synthetic-kite\",\"cost\":{\"input\":11,\"output\":17}}}},\"kimi-for-coding\":{\"models\":{\"synthetic-kite\":{\"id\":\"synthetic-kite\",\"cost\":{\"input\":19,\"output\":31}}}},\"google\":{\"models\":{\"claude-synthetic\":{\"id\":\"claude-synthetic\",\"cost\":{\"input\":37,\"output\":43}}}}}";
-    yyjson_doc *doc=NULL;ASSERT_EQ(ERR_OK,catalog_decode((Str){json,(uint32_t)strlen(json)},&doc).code);ModelsDevIndex index={0};ASSERT_EQ(ERR_OK,models_dev_index(yyjson_doc_get_root(doc),&index).code);
+    yyjson_doc *doc=NULL;ASSERT_EQ(ERR_OK,catalog_decode((Str){json,(uint32_t)strlen(json)},&doc).code);ModelsDevIndex index={.rules=&test_rules};ASSERT_EQ(ERR_OK,models_dev_index(yyjson_doc_get_root(doc),&index).code);
     Arena arena={0};ClaudeLookup lookup;
     ASSERT_EQ(ERR_OK,claude_models_dev_lookup(&arena,&index,STR_LIT("kimi-coding/synthetic-kite"),&lookup).code);ASSERT_TRUE(str_equal(lookup.provider,STR_LIT("kimi-coding")));
     ASSERT_EQ(ERR_OK,claude_models_dev_lookup(&arena,&index,STR_LIT("claude-synthetic"),&lookup).code);ASSERT_FALSE(lookup.catalog.model);
     ASSERT_EQ(ERR_OK,claude_models_dev_lookup(&arena,&index,STR_LIT("google/claude-synthetic"),&lookup).code);ASSERT_TRUE(lookup.catalog.model);
+    arena_destroy(&arena);models_dev_destroy(&index);yyjson_doc_free(doc);
+}
+TEST(claude_provider_prefix_respects_grapheme_boundary) {
+    const char *json="{\"google\":{\"models\":{\"gpt-\\u0301synthetic\":{\"id\":\"gpt-\\u0301synthetic\",\"cost\":{\"input\":11,\"output\":17}},\"gpt-synthetic\":{\"id\":\"gpt-synthetic\",\"cost\":{\"input\":19,\"output\":31}}}}}";
+    yyjson_doc *doc=NULL;ASSERT_EQ(ERR_OK,catalog_decode((Str){json,(uint32_t)strlen(json)},&doc).code);
+    ModelsDevIndex index={.rules=&test_rules};ASSERT_EQ(ERR_OK,models_dev_index(yyjson_doc_get_root(doc),&index).code);
+    Arena arena={0};ClaudeLookup lookup;
+    Str marked=STR_LIT("gpt-\xcc\x81synthetic");
+    ASSERT_EQ(ERR_OK,claude_models_dev_lookup(&arena,&index,marked,&lookup).code);
+    ASSERT_TRUE(lookup.catalog.model);ASSERT_TRUE(str_equal(lookup.provider,STR_LIT("google")));
+    ASSERT_TRUE(str_equal(lookup.catalog.identity,marked));
+    UsageUnit u=unit(marked,19,0);PricingReport report={.rules=&test_rules};
+    ASSERT_EQ(ERR_OK,claude_price_usage_units(&u,1,&index,&report).code);ASSERT_TRUE(u.has_cost);
+    CLOSE((19.*11+7*17)/1e6,u.cost_usd);
+    ASSERT_EQ(ERR_OK,claude_models_dev_lookup(&arena,&index,STR_LIT("gpt-synthetic"),&lookup).code);ASSERT_FALSE(lookup.catalog.model);
+    ASSERT_EQ(ERR_OK,claude_models_dev_lookup(&arena,&index,STR_LIT("google/gpt-synthetic"),&lookup).code);ASSERT_TRUE(lookup.catalog.model);
+    pricing_report_destroy(&report);arena_destroy(&arena);models_dev_destroy(&index);yyjson_doc_free(doc);
+}
+TEST(antigravity_catalog_exact_name_precedes_effort_alias) {
+    const char *json="{\"google\":{\"models\":{\"gemini-3.1-pro-high\":{\"id\":\"gemini-3.1-pro-high\",\"cost\":{\"input\":11,\"output\":17}},\"gemini-3.1-pro-preview\":{\"id\":\"gemini-3.1-pro-preview\",\"cost\":{\"input\":31,\"output\":37}}}}}";
+    yyjson_doc *doc=NULL;ASSERT_EQ(ERR_OK,catalog_decode((Str){json,(uint32_t)strlen(json)},&doc).code);
+    ModelsDevIndex index={.rules=&test_rules};ASSERT_EQ(ERR_OK,models_dev_index(yyjson_doc_get_root(doc),&index).code);
+    UsageUnit u=unit(STR_LIT("gemini-3.1-pro-high"),19,0);u.model=STR_LIT("gemini-3.1-pro-preview");
+    PricingReport report={.rules=&test_rules};ASSERT_EQ(ERR_OK,catalog_price_usage_units(&u,1,&index,&report,STR_LIT("antigravity:"),true).code);
+    CLOSE((19.*11+7*17)/1e6,u.cost_usd);ASSERT_TRUE(str_equal(u.model,STR_LIT("gemini-3.1-pro-high")));
+    pricing_report_destroy(&report);models_dev_destroy(&index);yyjson_doc_free(doc);
+}
+TEST(catalog_cross_provider_canonical_is_one_hop_and_missing_target_is_safe) {
+    const char *json="{\"opencode\":{\"models\":{\"synthetic-hop\":{\"id\":\"synthetic-hop\",\"canonical_model_id\":\"google/synthetic-target\",\"cost\":{\"input\":1,\"output\":2}},\"synthetic-missing\":{\"id\":\"synthetic-missing\",\"canonical_model_id\":\"google/synthetic-absent\",\"cost\":{\"input\":3,\"output\":4}}}},\"google\":{\"models\":{\"synthetic-target\":{\"id\":\"synthetic-target\",\"canonical_model_id\":\"opencode/synthetic-hop\",\"cost\":{\"input\":7,\"output\":9}}}}}";
+    yyjson_doc *doc=NULL;ASSERT_EQ(ERR_OK,catalog_decode((Str){json,(uint32_t)strlen(json)},&doc).code);
+    ModelsDevIndex index={.rules=&test_rules};ASSERT_EQ(ERR_OK,models_dev_index(yyjson_doc_get_root(doc),&index).code);
+    Arena arena={0};ClaudeLookup lookup;
+    ASSERT_EQ(ERR_OK,claude_models_dev_lookup(&arena,&index,STR_LIT("opencode/synthetic-hop"),&lookup).code);
+    ASSERT_TRUE(str_equal(lookup.provider,STR_LIT("google")));ASSERT_TRUE(str_equal(lookup.catalog.identity,STR_LIT("synthetic-target")));ASSERT_EQ(7,lookup.catalog.model->rates[0]);
+    ASSERT_EQ(ERR_OK,claude_models_dev_lookup(&arena,&index,STR_LIT("opencode/synthetic-missing"),&lookup).code);
+    ASSERT_TRUE(str_equal(lookup.provider,STR_LIT("opencode")));ASSERT_EQ(3,lookup.catalog.model->rates[0]);
     arena_destroy(&arena);models_dev_destroy(&index);yyjson_doc_free(doc);
 }

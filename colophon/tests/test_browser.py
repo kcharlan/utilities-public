@@ -72,6 +72,18 @@ def test_antigravity_source_filter_actions_tags_and_phone(page, native, surface,
         assert requests == []
 
 
+def test_antigravity_field_mismatch_diagnostic(page, native):
+    antigravity_page(native, lambda payload: payload['diagnostics'].update(
+        antigravity_field_mismatches={'.exa.codeium_common_pb.ModelUsageStats.2': 2}))
+    with guard_browser_errors(page):
+        requests = open_native(page, native.page)
+        panel = page.locator('[data-diagnostic="antigravity_field_mismatches"]')
+        expect(panel.locator('summary')).to_contain_text('2')
+        panel.evaluate('e => e.open = true')
+        expect(panel).to_contain_text('.exa.codeium_common_pb.ModelUsageStats.2: 2')
+        expect(panel).to_contain_text('other fields in their records remain included')
+        assert requests == []
+
 def test_antigravity_archive_inclusion(page, native):
     antigravity_page(native, archived=True)
     with guard_browser_errors(page):
@@ -92,6 +104,18 @@ def test_antigravity_snapshot_plural_databases(page, native):
     with guard_browser_errors(page):
         requests = open_native(page, native.page)
         expect(page.locator('#snapshot-meta')).to_contain_text('2 Antigravity databases ·')
+        assert requests == []
+
+
+def test_antigravity_retained_only_page_identifies_unavailable_live_data(page, native):
+    antigravity_page(native)
+    (native.home / '.gemini' / 'antigravity' / 'conversations' / (AG_ID + '.db')).unlink()
+    result = native.build('--no-claude', '--no-opencode')
+    assert result.returncode == 0, result.stderr
+    with guard_browser_errors(page):
+        requests = open_native(page, native.page)
+        expect(page.locator('#colophon-footer')).to_contain_text('No live Antigravity databases found; retained sessions are shown.')
+        expect(page.locator('#colophon-footer')).not_to_contain_text('No Antigravity data found.')
         assert requests == []
 
 @pytest.mark.parametrize('unknown', [False, True])
@@ -241,10 +265,10 @@ def test_opencode_source_hash_descendants_actions_and_version(page, native):
         row["children"] = [child["id"], foreign["id"]]
         payload["subagents"].update({child["id"]: child, foreign["id"]: foreign})
     payload = opencode_page(native, mutate)
-    assert payload["meta"]["version"] == "0.6.0"
+    assert payload["meta"]["version"] == "0.8.0"
     with guard_browser_errors(page):
         requests = open_native(page, native.page)
-        expect(page.locator('[data-version]')).to_have_text("colophon 0.6.0")
+        expect(page.locator('[data-version]')).to_have_text("colophon 0.8.0")
         page.goto(native.page.as_uri() + "#v=session&p=all&a=1&h=0&sort=cost&src=opencode&s=" + OPENCODE_SESSION)
         reader = page.locator("[data-reader]")
         expect(reader).to_have_attribute("data-provider", "opencode")
@@ -382,12 +406,11 @@ def test_opencode_zero_provider_shares_and_reader_overflow(page, native):
 def test_opencode_source_states_structured_diagnostics_and_preview(page, native, status):
     def mutate(payload):
         payload["meta"]["sources"]["opencode"].update(status=status, databases=[
-            {"path": "/synthetic/good.db", "status": "ok", "reason": None, "primary": True, "untested": True, "latest_migration": "synthetic-future", "accepted_sessions": 1, "accepted_messages": 2},
+            {"path": "/synthetic/good.db", "status": "ok", "reason": None, "primary": True, "latest_migration": "synthetic-future", "accepted_sessions": 1, "accepted_messages": 2},
             {"path": "/synthetic/bad.db", "status": "unreadable", "reason": "Synthetic read failure"},
             {"path": "/synthetic/opencode-next.db", "status": "skipped", "reason": "Synthetic preview skip"}])
         payload["diagnostics"].update(opencode_unknown_message_types={"synthetic-future": 3},
             opencode_requests_without_usage={"synthetic-provider": 2}, opencode_cost_without_tokens=1,
-            opencode_untested_schema=[{"path": "/synthetic/good.db", "latest_migration": "synthetic-future"}],
             opencode_rollup_residuals={"synthetic-session": {"session": "synthetic-session", "database": "/synthetic/good.db", "input": 4, "cost": None, "date": CLOCK, "date_basis": "session_start"}})
     opencode_page(native, mutate)
     with guard_browser_errors(page):

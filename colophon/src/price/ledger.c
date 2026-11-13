@@ -73,15 +73,16 @@ static bool instant(yyjson_val *v,int64_t *out) {
     }
     return time_parse_rfc3339(s,"price.effective_from",out);
 }
-static bool model_valid(yyjson_val *v) {
+static bool model_valid(const PricingRules *rules,yyjson_val *v) {
+    PricingRules defaults={.defaults=rules?rules->defaults:NULL};
     Str model=string(v);if(!model.n||!token_model_trim(model).n)return false;
     if(model.n>=8&&!memcmp(model.p,"catalog:",8)) {
         size_t bar=SIZE_MAX;for(size_t i=8;i<model.n;i++)if(model.p[i]=='|')bar=i;
         if(bar==SIZE_MAX||bar==8||bar==model.n-1)return false;
         Str matched={model.p+8,(uint32_t)bar-8},normalized={model.p+bar+1,model.n-(uint32_t)bar-1};
-        return str_equal(token_model_trim(matched),matched)&&str_equal(normalize_codex_model(normalized),normalized);
+        return str_equal(token_model_trim(matched),matched)&&str_equal(normalize_codex_model(&defaults,normalized),normalized);
     }
-    return str_equal(normalize_codex_model(model),model);
+    return str_equal(normalize_codex_model(&defaults,model),model);
 }
 typedef struct {PyNum number;bool valid;} LedgerNumber;
 static bool ledger_number(LedgerCheck *check,yyjson_val *v,const char *site,PyNum *out) {
@@ -155,7 +156,7 @@ static Err nonfinite(LedgerCheck *check,yyjson_val *root,Str initial,const char 
     }
     free(stack);return error;
 }
-Err validate_ledger(yyjson_val *document,bool curated,LedgerCheck *out) {
+Err validate_ledger(const PricingRules *rules,yyjson_val *document,bool curated,LedgerCheck *out) {
     PyNum schema;
     if(!yyjson_is_obj(document)||!ledger_number(out,get(document,"schema"),"price-history.json:schema",&schema)||schema.is_float||schema.i!=1)
         return out->numeric_error.code?out->numeric_error:message(out,&out->errors,"ledger schema must be 1 in a JSON object");
@@ -179,7 +180,7 @@ Err validate_ledger(yyjson_val *document,bool curated,LedgerCheck *out) {
         char prefix[48];snprintf(prefix,sizeof prefix,"entry %zu: ",number);
         char entry_site[80];snprintf(entry_site,sizeof entry_site,"price-history.json:entries[%zu]",number);
         error=nonfinite(out,entry,STR_LIT(""),prefix,(Str){entry_site,(uint32_t)strlen(entry_site)},LEDGER_ENTRY);if(error.code)goto done;
-        if(!model_valid(get(entry,"model")))ERROR("entry %zu: model must be a nonempty normalized id or catalog override key",number);
+        if(!model_valid(rules,get(entry,"model")))ERROR("entry %zu: model must be a nonempty normalized id or catalog override key",number);
         yyjson_val *effective=get(entry,"effective_from");int64_t clock;
         if(!effective||!((curated&&yyjson_is_null(effective))||instant(effective,&clock)))ERROR("entry %zu: effective_from must be a whole-second RFC 3339 UTC instant%s",number,curated?" or null":"; null is curated-only");
         Str source=string(get(entry,"source"));
@@ -352,7 +353,7 @@ Err record_catalog_rates(const PriceHistory *history,ModelsDevIndex *index,int64
     if(!time_format_rfc3339(effective_ms,effective)||!time_format_rfc3339(now_ms,recorded)){error=err_make(ERR_INVALID,"invalid catalog recording clock");goto done;}
     for(size_t i=0;i<count;i++) {
         Str model=*(Str *)sorted[i]->value;PricingTargets targets;
-        error=codex_models_dev_pricing_targets(&arena,model,&targets);if(error.code)goto done;
+        error=codex_models_dev_pricing_targets(index->rules,&arena,model,&targets);if(error.code)goto done;
         CatalogLookup lookup={0};
         for(size_t j=0;j<targets.count;j++){error=models_dev_pricing(index,STR_LIT("openai"),targets.model[j],&lookup);if(error.code)goto done;if(lookup.model)break;}
         if(!lookup.model)continue;
@@ -360,7 +361,7 @@ Err record_catalog_rates(const PriceHistory *history,ModelsDevIndex *index,int64
         bool same_date=false;
         if(group)for(size_t j=0;j<group->count;j++)if(!group->entries[j]->null_time&&group->entries[j]->effective_ms==effective_ms)same_date=true;
         if(same_date)continue;
-        PriceEntry rates;bool found;error=resolve_rates(model,index,&rates,&found);if(error.code)goto done;if(!found)continue;
+        PriceEntry rates;bool found;error=resolve_rates(index->rules,model,index,&rates,&found);if(error.code)goto done;if(!found)continue;
         const HistoryEntry *previous=NULL;
         if(group)for(size_t j=group->count;j>0;j--) {
             const HistoryEntry *candidate=group->entries[j-1];
@@ -419,7 +420,7 @@ static void pretty_ledger(JsonWriter *out,const JsonWriter *compact) {
     }
     jsonw_raw(out,"\n");
 }
-Err append_user_ledger(const char *path,yyjson_val *new_entries,bool start_present,int64_t start_mtime_ns,LedgerAppend *out) {
+Err append_user_ledger(const PricingRules *rules,const char *path,yyjson_val *new_entries,bool start_present,int64_t start_mtime_ns,LedgerAppend *out) {
     if(!yyjson_is_arr(new_entries))return err_make(ERR_INVALID,"invalid new ledger entries");
     if(!yyjson_arr_size(new_entries))return ERR_SUCCESS;
     static const Str changed=STR_LIT("price-history.json changed during the run; recording skipped");
@@ -461,7 +462,7 @@ Err append_user_ledger(const char *path,yyjson_val *new_entries,bool start_prese
         yyjson_mut_doc_set_root(dict,root);
     }
     error=json_freeze(dict,&document);if(error.code)goto done;
-    error=validate_ledger(yyjson_doc_get_root(document),false,&checked);if(error.code)goto done;
+    error=validate_ledger(rules,yyjson_doc_get_root(document),false,&checked);if(error.code)goto done;
     if(checked.errors.count)goto validation_error;
     ledger_check_destroy(&checked);
     yyjson_mut_val *entries=yyjson_mut_obj_get(dict->root,"entries");
@@ -470,7 +471,7 @@ Err append_user_ledger(const char *path,yyjson_val *new_entries,bool start_prese
         if(!copy||!yyjson_mut_arr_append(entries,copy)){error=err_make(ERR_NOMEM,"ledger append allocation");goto done;}
     }
     error=json_freeze(dict,&combined);if(error.code)goto done;
-    error=validate_ledger(yyjson_doc_get_root(combined),false,&checked);if(error.code)goto done;
+    error=validate_ledger(rules,yyjson_doc_get_root(combined),false,&checked);if(error.code)goto done;
     if(checked.errors.count)goto validation_error;
     jsonw_value(&compact,yyjson_doc_get_root(combined));if(compact.error.code){error=compact.error;goto done;}
     pretty_ledger(&pretty,&compact);if(pretty.error.code){error=pretty.error;goto done;}
@@ -496,7 +497,7 @@ static Err runtime_diagnostic(RuntimeLedger *ledger,const char *path,Str level,S
     if(ledger->last)ledger->last->next=diagnostic;else ledger->diagnostics=diagnostic;ledger->last=diagnostic;return ERR_SUCCESS;
 }
 Err runtime_ledger_warning(RuntimeLedger *ledger,const char *path,Str warning) {return runtime_diagnostic(ledger,path,STR_LIT("warning"),warning);}
-Err runtime_ledger_load(const char *path,RuntimeLedger *out) {
+Err runtime_ledger_load(const PricingRules *rules,const char *path,RuntimeLedger *out) {
     char *bytes=NULL;size_t length=0;JsonRead parsed={0},curated={0};yyjson_mut_doc *dictionary=NULL,*entries=NULL;Err error=ERR_SUCCESS;
     curated=json_read((Str){(const char *)cp_asset_curated_price_history,(uint32_t)cp_asset_curated_price_history_len},STR,JSON_CONSTANTS_REJECT,"price.curated");
     if(curated.status!=JSON_OK){error=err_make(ERR_INVALID,"invalid embedded curated ledger");goto done;}
@@ -518,7 +519,7 @@ Err runtime_ledger_load(const char *path,RuntimeLedger *out) {
             } else {
                 error=json_load_dict_semantics(parsed.doc,&dictionary);if(error.code)goto done;
                 error=json_freeze(dictionary,&out->document);if(error.code)goto done;
-                error=validate_ledger(yyjson_doc_get_root(out->document),false,&out->check);if(error.code)goto done;
+                error=validate_ledger(rules,yyjson_doc_get_root(out->document),false,&out->check);if(error.code)goto done;
             }
         }
     }

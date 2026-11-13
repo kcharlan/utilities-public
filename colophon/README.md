@@ -63,6 +63,24 @@ Version 0.5.7 speeds up Claude cache lookups and reconciliation.
 
 Version 0.6.0 processes Claude transcripts on the shared scan worker pool.
 
+Version 0.7.0 retains observed Antigravity usage and session headers when a
+database disappears or cannot be read. Live databases replace retained records;
+the ledger stores no transcript turns, though a fallback title may come from
+the first request.
+
+Version 0.7.2 learns Antigravity model numbers from observed response names and retained ledger events, with explicit markers for unknown numbers.
+
+Version 0.7.3 resolves catalog model names and canonical identities before
+falling back to built-in aliases, while retaining existing Codex price history keys.
+
+Version 0.8.0 loads pricing aliases, fast multipliers and cutoffs from embedded
+defaults and optional `pricing-rules.json` overrides in the runtime home. Edits
+take effect on the next run without rebuilding or clearing the parse cache.
+
+Version 0.7.1 keeps structurally valid Antigravity records when individual
+used fields are malformed, reports field mismatches, and reads structurally
+compatible OpenCode databases without a migration-date warning.
+
 The page's All/Codex/Claude/OpenCode/Antigravity switch preserves filters and uses green/blue/violet/pink
 provider marks, split overview bars and metric-based calendar colors.
 Claude continuation commands are offered only for supported primary CLI

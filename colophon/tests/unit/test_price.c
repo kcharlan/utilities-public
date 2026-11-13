@@ -14,10 +14,10 @@
 
 TEST(shared_normalization_memo_preserves_raw_key_identity_and_durable_values) {
     Arena arena={0};Omap memo={0};Str first,repeat,alias;
-    ASSERT_EQ(ERR_OK,normalize_codex_model_memo(&arena,&memo,STR_LIT("gpt-5.6"),&first).code);
-    ASSERT_EQ(ERR_OK,normalize_codex_model_memo(&arena,&memo,STR_LIT("gpt-5.6"),&repeat).code);
+    ASSERT_EQ(ERR_OK,normalize_codex_model_memo(&test_rules,&arena,&memo,STR_LIT("gpt-5.6"),&first).code);
+    ASSERT_EQ(ERR_OK,normalize_codex_model_memo(&test_rules,&arena,&memo,STR_LIT("gpt-5.6"),&repeat).code);
     ASSERT_TRUE(first.p==repeat.p);ASSERT_EQ(1,memo.size);
-    ASSERT_EQ(ERR_OK,normalize_codex_model_memo(&arena,&memo,STR_LIT("gpt-daybreak-blue-latest"),&alias).code);
+    ASSERT_EQ(ERR_OK,normalize_codex_model_memo(&test_rules,&arena,&memo,STR_LIT("gpt-daybreak-blue-latest"),&alias).code);
     ASSERT_EQ(2,memo.size);ASSERT_TRUE(str_equal(first,alias));
     omap_destroy(&memo);ASSERT_TRUE(str_equal(first,STR_LIT("gpt-5.6-sol")));
     ASSERT_TRUE(str_equal(alias,STR_LIT("gpt-5.6-sol")));arena_destroy(&arena);
@@ -42,20 +42,20 @@ TEST(price_unicode_date_and_alias_rate_paths_survive_sanitized_owners) {
     for(size_t i=0;i<3;i++) {
         Arena arena={0};ModelCandidates candidates={0};PricingTargets targets={0};PriceEntry rates;bool found=false;
         Err e=models_dev_candidates(&arena,inputs[i],&candidates);ASSERT_EQ(ERR_OK,e.code);
-        e=codex_models_dev_pricing_targets(&arena,inputs[i],&targets);ASSERT_EQ(ERR_OK,e.code);
-        e=resolve_rates(inputs[i],NULL,&rates,&found);ASSERT_EQ(ERR_OK,e.code);ASSERT_TRUE(found);
+        e=codex_models_dev_pricing_targets(&test_rules,&arena,inputs[i],&targets);ASSERT_EQ(ERR_OK,e.code);
+        e=resolve_rates(&test_rules,inputs[i],NULL,&rates,&found);ASSERT_EQ(ERR_OK,e.code);ASSERT_TRUE(found);
         ASSERT_TRUE(isfinite(rates.standard.input.f));ASSERT_TRUE(isfinite(rates.standard.output.f));
         ASSERT_TRUE(isfinite(rates.standard.cached_input.f));ASSERT_TRUE(isfinite(rates.standard.cache_write.f));
         if(rates.has_extended){ASSERT_TRUE(isfinite(rates.extended.input.f));ASSERT_TRUE(isfinite(rates.extended.output.f));ASSERT_TRUE(isfinite(rates.extended.cached_input.f));ASSERT_TRUE(isfinite(rates.extended.cache_write.f));}
-        ModelsDevIndex index={0};CatalogLookup lookup={0};
+        ModelsDevIndex index={.rules=&test_rules};CatalogLookup lookup={0};
         e=models_dev_pricing(&index,STR_LIT("openai"),inputs[i],&lookup);ASSERT_EQ(ERR_OK,e.code);
         ASSERT_TRUE(isfinite(rates.standard.input.f));ASSERT_TRUE(isfinite(rates.standard.output.f));
-        JsonWriter writer={0};jsonw_string(&writer,normalize_codex_model(inputs[i]));ASSERT_EQ(ERR_OK,writer.error.code);
+        JsonWriter writer={0};jsonw_string(&writer,normalize_codex_model(&test_rules,inputs[i]));ASSERT_EQ(ERR_OK,writer.error.code);
         for(size_t j=0;j<candidates.count;j++){jsonw_string(&writer,candidates.items[j]);ASSERT_EQ(ERR_OK,writer.error.code);}
         for(size_t j=0;j<targets.count;j++){jsonw_string(&writer,targets.model[j]);ASSERT_EQ(ERR_OK,writer.error.code);}
         catalog_lookup_json(&writer,&lookup);ASSERT_EQ(ERR_OK,writer.error.code);
         price_entry_json(&writer,&rates);ASSERT_EQ(ERR_OK,writer.error.code);
-        double multiplier=codex_api_fast_multiplier(inputs[i]);if(multiplier)jsonw_double(&writer,multiplier);ASSERT_EQ(ERR_OK,writer.error.code);
+        double multiplier=codex_api_fast_multiplier(&test_rules,inputs[i]);if(multiplier)jsonw_double(&writer,multiplier);ASSERT_EQ(ERR_OK,writer.error.code);
         models_dev_destroy(&index);
         jsonw_free(&writer);arena_destroy(&arena);
     }
@@ -66,7 +66,7 @@ TEST(summary_nonfinite_result_is_unavailable_with_provider_context) {
     PriceEntry rates={.standard={.input={.is_float=true,.f=1e308}}};
     units[0].cost_usd=cost_usd(&rates,INT64_MAX,0,0);ASSERT_TRUE(isinf(units[0].cost_usd));
     session.units=units;session.unit_count=2;ASSERT_EQ(ERR_OK,omap_put(&corpus.sessions,STR_LIT("synthetic-overflow"),&session).code);
-    RuntimeLedger ledger={.available=true};PricingReport pricing={0};CatalogResult catalog={0};CodexMetadata metadata={0};ScanResult scan={0};CorpusStrings errors={0};
+    RuntimeLedger ledger={.available=true};PricingReport pricing={.rules=&test_rules};CatalogResult catalog={0};CodexMetadata metadata={0};ScanResult scan={0};CorpusStrings errors={0};
     PayloadInputs in={.corpus=&corpus,.ledger=&ledger,.pricing=&pricing,.catalog=&catalog,.metadata=&metadata,.scan=&scan,.workspace_errors=&errors};
     FILE *capture=tmpfile(),*diagnostics=tmpfile();ASSERT_TRUE(capture&&diagnostics);fflush(stdout);fflush(stderr);
     int saved=dup(STDOUT_FILENO),saved_error=dup(STDERR_FILENO);ASSERT_TRUE(saved>=0&&saved_error>=0);
@@ -90,7 +90,7 @@ static void *catalog_deep_owned(void *unused) {
     memset(raw+strlen(prefix),'[',depth);raw[strlen(prefix)+depth]='0';
     memset(raw+strlen(prefix)+depth+1,']',depth);raw[length-1]='}';
     yyjson_doc *catalog=NULL;ASSERT_EQ(ERR_OK,catalog_decode((Str){raw,(uint32_t)length},&catalog).code);ASSERT_TRUE(catalog!=NULL);free(raw);
-    ModelsDevIndex index={0};ASSERT_EQ(ERR_OK,models_dev_index(yyjson_doc_get_root(catalog),&index).code);
+    ModelsDevIndex index={.rules=&test_rules};ASSERT_EQ(ERR_OK,models_dev_index(yyjson_doc_get_root(catalog),&index).code);
     yyjson_doc_free(catalog);CatalogLookup lookup={0};ASSERT_EQ(ERR_OK,models_dev_pricing(&index,STR_LIT("openai"),STR_LIT("synthetic-owner"),&lookup).code);
     ASSERT_TRUE(lookup.model!=NULL);ASSERT_EQ(2.0,lookup.model->rates[0]);
     models_dev_destroy(&index);return NULL;
@@ -101,7 +101,7 @@ TEST(catalog_decoder_deep_thread_and_independent_index_owner) {
 }
 TEST(catalog_lookup_memo_interns_repeated_candidate_and_retains_raw_provider_rules) {
     JsonRead read=json_read(STR_LIT("{\"openai\":{\"models\":{\"synthetic-cache\":{\"id\":\"synthetic-id\",\"cost\":{\"input\":2,\"output\":7}}}}}"),BYTES,JSON_CONSTANTS_REJECT,"test.price.memo");
-    ModelsDevIndex index={0};ASSERT_EQ(ERR_OK,models_dev_index(yyjson_doc_get_root(read.doc),&index).code);json_read_free(&read);
+    ModelsDevIndex index={.rules=&test_rules};ASSERT_EQ(ERR_OK,models_dev_index(yyjson_doc_get_root(read.doc),&index).code);json_read_free(&read);
     CatalogLookup first={0},second={0},miss={0};
     ASSERT_EQ(ERR_OK,models_dev_pricing(&index,STR_LIT("openai"),STR_LIT("synthetic-cache"),&first).code);
     ASSERT_EQ(ERR_OK,models_dev_pricing(&index,STR_LIT("openai"),STR_LIT("synthetic-cache"),&second).code);
@@ -113,14 +113,14 @@ TEST(catalog_lookup_memo_interns_repeated_candidate_and_retains_raw_provider_rul
     ASSERT_STREQ("synthetic-cache",index.models.first->key.p);models_dev_destroy(&index);
 }
 TEST(catalog_normalization_memo_owns_raw_keys_and_results) {
-    ModelsDevIndex index={0};Str first,second;
+    ModelsDevIndex index={.rules=&test_rules};Str first,second;
     char raw[]="synthetic-normalization";
     ASSERT_EQ(ERR_OK,models_dev_normalize(&index,(Str){raw,sizeof raw-1},&first).code);
     ASSERT_EQ(ERR_OK,models_dev_normalize(&index,STR_LIT("synthetic-normalization"),&second).code);
     ASSERT_TRUE(first.p==second.p);raw[0]='X';ASSERT_STREQ("synthetic-normalization",first.p);
     ASSERT_EQ(1,index.normalizations.size);
     ASSERT_EQ(ERR_OK,models_dev_normalize(&index,STR_LIT("gpt-5.6"),&second).code);
-    ASSERT_TRUE(str_equal(normalize_codex_model(STR_LIT("gpt-5.6")),second));ASSERT_EQ(2,index.normalizations.size);
+    ASSERT_TRUE(str_equal(normalize_codex_model(&test_rules,STR_LIT("gpt-5.6")),second));ASSERT_EQ(2,index.normalizations.size);
     models_dev_destroy(&index);
 }
 TEST(price_wide_composed_token_count_retains_positive_cost) {
@@ -133,8 +133,8 @@ TEST(price_wide_composed_token_count_retains_positive_cost) {
 }
 TEST(price_repeated_units_do_not_grow_index_scratch_arena) {
     JsonRead read=json_read(STR_LIT("{\"openai\":{\"models\":{\"gpt-5.6-sol\":{\"id\":\"gpt-5.6-sol\",\"cost\":{\"input\":2,\"output\":7}}}}}"),BYTES,JSON_CONSTANTS_REJECT,"test.price.memo");
-    ModelsDevIndex index={0};ASSERT_EQ(ERR_OK,models_dev_index(yyjson_doc_get_root(read.doc),&index).code);json_read_free(&read);
-    PriceHistory history={0};PricingReport report={0};PriorityEntry trace={.model=STR_LIT("openai/gpt-5.6-sol")};
+    ModelsDevIndex index={.rules=&test_rules};ASSERT_EQ(ERR_OK,models_dev_index(yyjson_doc_get_root(read.doc),&index).code);json_read_free(&read);
+    PriceHistory history={0};PricingReport report={.rules=&test_rules};PriorityEntry trace={.model=STR_LIT("openai/gpt-5.6-sol")};
     UsageUnit unit={.model=STR_LIT("gpt-5.6-sol"),.model_raw=STR_LIT("openai/gpt-5.6-sol"),.input=1,.priority=&trace,.priority_fields=PRIORITY_MODEL};
     ASSERT_EQ(ERR_OK,price_usage_units(&unit,1,&history,&index,true,&report).code);
     ArenaChunk *head=index.arena.head;
@@ -159,8 +159,8 @@ TEST(price_wide_non_power_totals_keep_source_halfway_rounding) {
 static PriceEntry resolve_with_catalog(const char *catalog, const char *model, bool *found) {
     JsonRead read=json_read((Str){catalog,(uint32_t)strlen(catalog)},BYTES,JSON_CONSTANTS_REJECT,"test.price.tier");
     ASSERT_TRUE(read.status==JSON_OK);
-    ModelsDevIndex index={0};ASSERT_EQ(ERR_OK,models_dev_index(yyjson_doc_get_root(read.doc),&index).code);
-    PriceEntry rates;ASSERT_EQ(ERR_OK,resolve_rates((Str){model,(uint32_t)strlen(model)},&index,&rates,found).code);
+    ModelsDevIndex index={.rules=&test_rules};ASSERT_EQ(ERR_OK,models_dev_index(yyjson_doc_get_root(read.doc),&index).code);
+    PriceEntry rates;ASSERT_EQ(ERR_OK,resolve_rates(&test_rules,(Str){model,(uint32_t)strlen(model)},&index,&rates,found).code);
     models_dev_destroy(&index);json_read_free(&read);return rates;
 }
 #define SYNTHETIC_LONG "\"context_over_200k\":{\"input\":4,\"output\":15,\"cache_read\":0.2,\"cache_write\":5}"
@@ -196,7 +196,7 @@ TEST(catalog_malformed_tiers_reject_model) {
         "{\"openai\":{\"models\":{\"gpt-synthetic-tier\":{\"id\":\"gpt-synthetic-tier\",\"cost\":{" SYNTHETIC_COST ",\"tiers\":[{\"input\":\"4\"}]}}}}}"};
     for(size_t i=0;i<sizeof bad/sizeof *bad;i++) {
         JsonRead read=json_read((Str){bad[i],(uint32_t)strlen(bad[i])},BYTES,JSON_CONSTANTS_REJECT,"test.price.bad_tier");
-        ModelsDevIndex index={0};ASSERT_EQ(ERR_OK,models_dev_index(yyjson_doc_get_root(read.doc),&index).code);
+        ModelsDevIndex index={.rules=&test_rules};ASSERT_EQ(ERR_OK,models_dev_index(yyjson_doc_get_root(read.doc),&index).code);
         CatalogLookup lookup={0};ASSERT_EQ(ERR_OK,models_dev_pricing(&index,STR_LIT("openai"),STR_LIT("gpt-synthetic-tier"),&lookup).code);
         ASSERT_TRUE(lookup.model==NULL);models_dev_destroy(&index);json_read_free(&read);
     }
@@ -216,7 +216,7 @@ TEST(curated_seed_has_no_200000_long_context_threshold) {
 TEST(bundled_new_models_resolve_offline_with_272000_threshold) {
     const char *models[]={"gpt-6.1-sol","gpt-6-sol","gpt-6-luna","gpt-5.4-pro","gpt-5.5-pro"};
     for(size_t i=0;i<sizeof models/sizeof *models;i++){PriceEntry rates;bool found=false;
-        ASSERT_EQ(ERR_OK,resolve_rates((Str){models[i],(uint32_t)strlen(models[i])},NULL,&rates,&found).code);
+        ASSERT_EQ(ERR_OK,resolve_rates(&test_rules,(Str){models[i],(uint32_t)strlen(models[i])},NULL,&rates,&found).code);
         ASSERT_TRUE(found);ASSERT_TRUE(rates.has_extended);ASSERT_EQ(272000,rates.threshold);}
 }
 
@@ -224,7 +224,7 @@ TEST(bundled_new_models_resolve_offline_with_272000_threshold) {
 static void assert_raw_tier_rejected(const char *cost) {
     char raw[2048];snprintf(raw,sizeof raw,"{\"openai\":{\"models\":{\"gpt-synthetic-tier\":{\"id\":\"gpt-synthetic-tier\",\"cost\":{\"input\":2,\"output\":10,%s}}}}}",cost);
     yyjson_doc *catalog=NULL;ASSERT_EQ(ERR_OK,catalog_decode((Str){raw,(uint32_t)strlen(raw)},&catalog).code);
-    ASSERT_TRUE(catalog!=NULL);ModelsDevIndex index={0};ASSERT_EQ(ERR_OK,models_dev_index(yyjson_doc_get_root(catalog),&index).code);
+    ASSERT_TRUE(catalog!=NULL);ModelsDevIndex index={.rules=&test_rules};ASSERT_EQ(ERR_OK,models_dev_index(yyjson_doc_get_root(catalog),&index).code);
     yyjson_doc_free(catalog);CatalogLookup lookup={0};ASSERT_EQ(ERR_OK,models_dev_pricing(&index,STR_LIT("openai"),STR_LIT("gpt-synthetic-tier"),&lookup).code);
     ASSERT_TRUE(lookup.model==NULL);models_dev_destroy(&index);
 }
@@ -258,4 +258,15 @@ TEST(catalog_context_tier_first_match_presence_and_extended_tier_rules) {
     ASSERT_EQ(272000,resolve_with_catalog(raw,"gpt-synthetic-tier",&found).threshold);ASSERT_TRUE(found);
     snprintf(raw,sizeof raw,"{\"openai\":{\"models\":{\"gpt-synthetic-tier\":{\"id\":\"gpt-synthetic-tier\",\"cost\":{" SYNTHETIC_COST ",\"context_over_200k\":{\"input\":4,\"output\":15,\"cache_read\":0.2,\"cache_write\":5,\"tier\":{\"type\":\"context\",\"size\":272000}},%s}}}}}",tiers);
     ASSERT_EQ(200000,resolve_with_catalog(raw,"gpt-synthetic-tier",&found).threshold);ASSERT_TRUE(found);
+}
+
+TEST(catalog_canonical_and_catalog_only_dated_names) {
+    const char *json="{\"openai\":{\"models\":{\"synthetic-alias\":{\"id\":\"synthetic-alias\",\"canonical_model_id\":\"synthetic-base\",\"cost\":{\"input\":1,\"output\":1}},\"synthetic-base\":{\"id\":\"synthetic-base\",\"cost\":{\"input\":7,\"output\":9}}}}}";
+    yyjson_doc *doc=NULL; ASSERT_EQ(ERR_OK,catalog_decode((Str){json,(uint32_t)strlen(json)},&doc).code);
+    ModelsDevIndex index={.rules=&test_rules};ASSERT_EQ(ERR_OK,models_dev_index(yyjson_doc_get_root(doc),&index).code);
+    Str name;CatalogLookup lookup;
+    ASSERT_EQ(ERR_OK,models_dev_normalize(&index,STR_LIT("synthetic-alias"),&name).code);ASSERT_TRUE(str_equal(name,STR_LIT("synthetic-base")));
+    ASSERT_EQ(ERR_OK,models_dev_pricing(&index,STR_LIT("openai"),STR_LIT("synthetic-alias"),&lookup).code);ASSERT_EQ(7,lookup.model->rates[0]);
+    ASSERT_EQ(ERR_OK,models_dev_normalize(&index,STR_LIT("synthetic-base-2099-01-01"),&name).code);ASSERT_TRUE(str_equal(name,STR_LIT("synthetic-base")));
+    models_dev_destroy(&index);yyjson_doc_free(doc);
 }

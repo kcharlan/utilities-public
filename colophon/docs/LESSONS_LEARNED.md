@@ -1,5 +1,10 @@
 # Lessons learned
 
+Retain Antigravity usage before deduplication, including raw request identity
+bytes, so deleted databases can still participate in global alias merging. Live
+events must be collected first and diagnostics for a shrinking live database
+must be computed before rendering, even though the ledger commits afterward.
+
 Announce Codex scanning before opening its cache: discovery and cache checks
 can take time even when every log is warm, before parsing progress appears.
 
@@ -360,3 +365,34 @@ Preserve source metadata for reconciliation, but limit displayed scalar and fall
 strings with a UTF-8-safe suffix. Bound file and network readers while reading,
 not after allocating their complete input, and compare cache contents before
 replacing an unchanged record.
+
+## Used protobuf fields need independent validation
+
+A schema-wide Antigravity validator dropped whole usage records when an unused
+field changed or a nested timestamp was malformed. Validate the outer wire
+structure, then check each consumed field and preserve unrelated facts; keep
+malformed clock tests that prevent accidental epoch defaults. Diagnostics must
+identify the used message and field without inspecting unknown fields.
+
+- Antigravity model numbers can change independently of a bundled table. Learn normalized names across all sessions before attribution, and keep generated unknown markers out of that evidence.
+
+## Preserve observed model names until catalog lookup
+
+Alias normalization before catalog lookup can erase a distinct priced model,
+including a name learned from a numeric identifier. Retain the observed spelling
+through attribution, resolve exact catalog names first, and keep historical
+pricing keys independent of evolving catalog identities.
+
+Pricing rule overrides must be applied during recomposition, not persisted in
+raw parse caches. A warm-run regression should cover a configurable alias, an
+untimed Codex multiplier and an undated-record cutoff separately from historical
+priority, whose stored policy takes precedence. Invalid-document tests must pair
+an observable valid override with an invalid field and show both atomic rejection
+and the effect of that override when used alone.
+
+Provider-routing prefixes must retain the pricing matcher’s grapheme boundaries:
+a combining character immediately after a prefix does not select that provider.
+
+Reject an entire ledger record as learning evidence when decoding fails, even
+if its leading events decoded successfully. When catalog aliases cross providers,
+carry the canonical provider with the rates: it also selects the pricing policy.

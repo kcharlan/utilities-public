@@ -2,6 +2,13 @@
 
 ## Antigravity accounting and oracle provenance (0.5.0)
 
+The Antigravity ledger retains pre-deduplication usage events and their request
+identities. Live events are collected first and own any shared request; retained
+events then join the same alias and pricing pipeline. Retained usage has no turn
+attribution. A live database that shrinks replaces its prior ledger record and
+increments `antigravity_ledger_shrunk`; the ledger cannot recover a conversation
+created and deleted between runs.
+
 Collect ChatModelMetadata.usage and retry_infos[].usage plus
 CortexStepMetadata.model_usage and retry_infos[].usage, regardless of cleared
 or checkpoint step status. Merge repeated singular embedded messages before
@@ -38,29 +45,20 @@ step completed_at, finished_generating_at, created_at, chat-start created_at,
 then session start with antigravity_unknown_clocks. These fallback/turn policies
 are explicit Colophon adaptations. TTFT uses the turn's first generator row.
 
-Attribution prefers generator response_model, meaningful mapped usage enum,
-step ModelInfo.chat_model_name then model_name, latest attributed conversation
-model, then antigravity/unattributed. Display/Vertex/URL strings are excluded.
-Public fully qualified Model descriptors from Antigravity 2.26.0 binary SHA-256
-`6f7e5004629070ac0c4651a1dc29030eaadcd5dc68fa9edf170047d7f8424f4d`
-match all 1,691 earlier candidates from the pinned public binary SHA-256
-`060ebf79719024f1b3acb52a21c7a182cb6466b2ac4ac25e93391169b1c1bb46`.
-`models.inc` retains those values and native-oracle slugs; the self-contained
-model-oracle fixture retains public names and observed expectations. Generic
-oracle labels deliberately yield empty attribution so meaningful fallbacks win.
-Schema provenance remains tied to its producing binary, not reassigned to the
-earlier hash after the app updated.
+Attribution prefers generator response_model, a model name learned from usage numbers across live generator rows and retained ledger events, step ModelInfo.chat_model_name then model_name, the latest attributed conversation model, then an unknown-number marker or antigravity/unattributed. Names are normalized before counting; the most frequent wins, with first observation breaking ties. The winning observation retains its raw spelling for catalog lookup. Display/Vertex/URL strings are excluded.
 
 Normalization adapts CodexBar commit
 `e5d6977ba547aa7046eed3865f8ee1cdd5d58731`, AntigravityLocalReader.swift
 pricingBaseModelID/routingVariantSuffixes/pricingModelAliases, adding -medium,
--high and -trial. Exact aliases are checked before removing one suffix and again
-afterward, including gemini-3.1-pro-high/-low followed by a routing suffix.
+-high and -trial. Catalog pricing first tries the logged name, then one routing
+suffix, then the offline alias. The fallback retains exact-alias precedence.
 The moving gemini-pro-default/gemini-pro-agent aliases assume
 gemini-3.1-pro-preview. The explicit Vertex entry is excluded and unsupported;
 there is no google-vertex routing lane. Shared catalog pricing preserves Claude
 behavior, context tiers and provenance while memoizing provider-prefixed
-identities. Antigravity looks up normalized model; Claude looks up model_raw.
+identities. Both providers look up the observed model before fallback aliases.
+Catalog canonical IDs are followed once only when the target exists. Dated
+Codex names may use a catalog or history base; existing history keys remain stable.
 Unknown models remain unpriced. Each composition rebuilds summaries after the
 shared usage arena reset, including zero-unit sessions.
 
@@ -201,12 +199,10 @@ Fast pricing is the secondary-reference extension from ccusage v20.0.33,
 commit `1308c416a7da73b63463f953a51b5ae29fb784a4`:
 `rust/crates/ccusage-core/src/cost.rs` (L110–115),
 `pricing.rs::SpeedMultiplierOverrides.multiplier_for` (L944–980), and its
-models.dev loader (L1309–1311). The committed
-`assets/ccusage_fast_multiplier_overrides.json` is copied verbatim from
-that pin. Exact keys, family aliases, date suffixes and provider/dotted
+models.dev loader (L1309–1311). The `claude_fast` object in `assets/pricing_rules.json` retains the exact values from the override asset at that pin. Exact keys, family aliases, date suffixes and provider/dotted
 parts resolve before normalized-prefix matching; an unmatched fast model
 uses multiplier 1. Fast applies to the complete Claude request estimate.
-The verbatim override asset SHA-256 is
+The original verbatim override asset SHA-256 was
 `f055ffafcf93bc164a0fe071bb462d17c5d888ddf2314ce876cba12fd1f67c42`.
 Codex retains its separate rate ledger, candidate lookup and priority rules.
 
@@ -293,3 +289,14 @@ ledger-independence regressions. Rebuilding from surviving rollups can recover
 removed-message residuals; deleted sessions contribute nothing. Rollup equality
 holds for complete valid synthetic inputs without shortfalls and is not an
 assertion about malformed or incomplete sources.
+
+## Pricing rule overrides
+
+The embedded `assets/pricing_rules.json` holds provider-scoped aliases,
+Antigravity routing suffixes, Codex fast policy and cutoffs, and the ccusage
+Claude fast values and Claude provider-family routing. The optional runtime `pricing-rules.json` merges
+objects by key and replaces arrays. Validation rejects the entire user document
+on an invalid field and emits `pricing_rules_errors`; defaults stay in force.
+The rules are loaded for each run before composition, so edits apply to retained
+raw observations on the next warm run. Catalog-first identity and existing dated
+price-history priority policies continue to take precedence.
