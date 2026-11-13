@@ -264,5 +264,8 @@ def test_dependency_response_exposes_coverage(test_app, tmp_path, dependency_rep
     for row in dependency_report_seed['rows']:
         assert actual[(row['source_path'], row['name'])] == {k: v for k, v in row.items() if k != 'manager'}
     status = client.get('/api/status').json()
+    scope_groups = status['dependency_scope']['groups']
+    assert 'external includes' not in scope_groups
+    assert 'includes that resolve outside the repository are skipped' in scope_groups
     assert status['dependency_scope']['discovery']['max_depth'] == git_dashboard._DEP_WALK_MAX_DEPTH
     assert status['dependency_scope']['discovery']['skip_directories'] == sorted(git_dashboard._DEP_WALK_SKIP)

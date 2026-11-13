@@ -395,6 +395,8 @@ def test_detail_shows_failed_quick_scan(page, server_context, tmp_path):
         assert error
         page.goto(server_context['url'] + '/#/repo/' + repo_id)
         header = page.locator('.detail-header')
+        expect(header.locator('h1')).to_have_text(repo_id)
+        expect(header.get_by_role('button', name='Scan Now')).to_have_count(0)
         expect(header.get_by_text('status failed', exact=True)).to_be_visible()
         expect(header.get_by_role('alert')).to_contain_text(error)
         expect(header.get_by_text('Clean', exact=True)).to_have_count(0)

@@ -2598,3 +2598,10 @@ active chart highlight; test transitions between both inputs in a browser.
 Local servers must use the selected free port consistently for the server,
 browser URL, and logs. Hold a synthetic listener open in a regression test to
 catch passing the occupied preferred port through to the server.
+
+## 2026-11-13: Check report scope and visible controls against behavior
+
+Git Fleet's dependency scope claimed external includes were retained even though
+the parser skips them, and its detail header offered an unwired scan button.
+Test report descriptions against the actual boundary and check rendered controls
+as well as their supporting APIs.

@@ -45,6 +45,7 @@ def test_html_embeds_current_offline_frontend(html_body):
     assert_launcher_compiles_cleanly(launcher)
     assert_offline_page_source(html_body)
     assert 'preact.render(' in html_body
+    assert 'not yet wired' not in html_body
 
 
 # ── Test 3: SVG charts ────────────────────────────────────────────────────────
