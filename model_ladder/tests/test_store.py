@@ -71,6 +71,72 @@ def test_load_snapshots_empty(ml, home):
     assert ml.load_snapshots(home) == []
 
 
+def test_other_source_snapshots_are_separate(ml, home):
+    item = result(version="2.0")
+    path = ml.save_snapshot(home, item, T0, source="fc")
+    assert path.parent == home / "snapshots" / "fc"
+    assert ml.load_snapshots(home) == []
+    assert ml.load_snapshots(home, "fc") == [path]
+    assert ml.read_snapshot(path, "fc")["index_version"] == "2.0"
+    assert path.parent.stat().st_mode & 0o777 == 0o700
+    assert path.parent.parent.stat().st_mode & 0o777 == 0o700
+
+
+def test_not_modified_updates_metadata_without_new_file(ml, home):
+    path = ml.save_snapshot(home, {**result(), "etag": "old"}, T0)
+    later = T0 + timedelta(hours=1)
+    assert ml.save_snapshot(home, {"not_modified": True, "etag": "new", "published": {"date": "2026-01-01", "note": "synthetic"}}, later) == path
+    data = ml.read_snapshot(path)
+    assert data["last_checked"] == later.isoformat()
+    assert data["fetched_at"] == T0.isoformat()
+    assert data["etag"] == "new"
+    assert data["published"]["note"] == "synthetic"
+    assert len(ml.load_snapshots(home)) == 1
+
+
+def test_not_modified_without_snapshot_raises(ml, home):
+    with pytest.raises(ml.StoreError, match="not modified, but there is no snapshot to keep"):
+        ml.save_snapshot(home, {"not_modified": True}, T0)
+
+
+def test_status_round_trip_and_mode(ml, home):
+    ml.write_status(home, "aa", T0, "synthetic error")
+    assert ml.read_status(home)["aa"] == {"last_attempt": T0.isoformat(), "error": "synthetic error"}
+    assert (home / "status.json").stat().st_mode & 0o777 == 0o600
+
+
+def test_unreadable_status_reads_empty(ml, home, capsys):
+    (home / "status.json").write_text("invalid")
+    assert ml.read_status(home) == {}
+    assert len(capsys.readouterr().err.splitlines()) == 1
+
+
+@pytest.mark.parametrize("entry", [None, "invalid", [], {},
+                                   {"last_attempt": None, "error": None},
+                                   {"last_attempt": "invalid", "error": None},
+                                   {"last_attempt": "2026-11-01T12:00:00+00:00", "error": []}])
+def test_invalid_source_status_reads_empty(ml, home, capsys, entry):
+    (home / "status.json").write_text(json.dumps({"fc": entry}))
+    assert ml.read_status(home) == {}
+    diagnostic = capsys.readouterr().err
+    assert "status.json" in diagnostic and len(diagnostic.splitlines()) == 1
+
+
+def test_unchanged_fetch_refreshes_published_and_etag(ml, home):
+    path = ml.save_snapshot(home, {**result(), "etag": "old", "published": None}, T0)
+    ml.save_snapshot(home, {**result(), "etag": "new", "published": {"date": "2026-01-01", "note": "synthetic"}}, T0 + timedelta(hours=1))
+    assert ml.read_snapshot(path)["etag"] == "new"
+    assert ml.read_snapshot(path)["published"]["note"] == "synthetic"
+    assert len(ml.load_snapshots(home)) == 1
+
+
+def test_maximum_changes_snapshot_identity(ml, home):
+    ml.save_snapshot(home, {**result(), "index_maxima": {"intelligence": 100}}, T0)
+    ml.save_snapshot(home, {**result(), "index_maxima": {"intelligence": 120}}, T0 + timedelta(hours=1))
+    assert ml.read_snapshot(ml.load_snapshots(home)[0])["index_maxima"] == {"intelligence": 120}
+    assert len(ml.load_snapshots(home)) == 2
+
+
 def test_read_truncated_snapshot(ml, home):
     path = ml.save_snapshot(home, result(), T0)
     path.write_bytes(path.read_bytes()[:20])

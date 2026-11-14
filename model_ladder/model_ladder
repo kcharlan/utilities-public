@@ -3,7 +3,8 @@
 # requires-python = ">=3.12,<3.16"
 # dependencies = []
 # ///
-"""Model Ladder: compare model effort levels by Intelligence Index and cost per task.
+"""Model Ladder: compare model effort levels from Artificial Analysis,
+AI Coding Daily and FrontierCode.
 
 Runtime home: ~/.model_ladder/ (override with MODEL_LADDER_HOME), holding
 config.json, snapshots/ (newest 60 fetches, gzip) and the built offline page model_ladder.html.
@@ -15,6 +16,7 @@ import http.client
 import json
 import math
 import os
+import re
 import subprocess
 import sys
 import tempfile
@@ -23,16 +25,23 @@ import urllib.request
 import webbrowser
 import zlib
 from datetime import datetime, timedelta, timezone
+from html.parser import HTMLParser
 from pathlib import Path
 
-VERSION = "1.1.4"
+VERSION = "1.2.0"
+USER_AGENT = f"model_ladder/{VERSION}"
+FC_DATA_URL = "https://cognition.com/data/frontier-code-2.0/data.json"
+FC_PAGE_URL = "https://cognition.com/frontiercode"
+FC_VERSION = "2.0"
+AICD_URL = "https://aicodingdaily.com/leaderboard"
 
 # ---------------------------------------------------------------------------
 # Config and atomic writes
 # ---------------------------------------------------------------------------
 
 CONFIG_FILENAME = "config.json"
-DEFAULT_CONFIG = {"op_item": "", "op_vault": "", "op_field": "credential", "max_age_hours": 12}
+DEFAULT_CONFIG = {"op_item": "", "op_vault": "", "op_field": "credential", "max_age_hours": 12,
+                  "source_max_age_hours": {"aicd": 24, "fc": 24}}
 MAX_AGE_LIMIT = 87600  # ten years in hours; larger values overflow date arithmetic
 
 
@@ -77,13 +86,24 @@ def load_config() -> dict:
     if not isinstance(loaded, dict):
         raise ValueError(f"{path} must contain a JSON object")
     config = {**DEFAULT_CONFIG, **loaded}
+    ages = loaded.get("source_max_age_hours", {})
+    if not isinstance(ages, dict):
+        raise ValueError(f"{path}: source_max_age_hours must be an object")
+    config["source_max_age_hours"] = {**DEFAULT_CONFIG["source_max_age_hours"], **ages}
     for key in ("op_item", "op_vault", "op_field"):
         if not isinstance(config[key], str):
             raise ValueError(f"{path}: {key} must be a string")
     age = config["max_age_hours"]
     if isinstance(age, bool) or not isinstance(age, (int, float)) or not 0 < age <= MAX_AGE_LIMIT:
         raise ValueError(f"{path}: max_age_hours must be a positive number of at most {MAX_AGE_LIMIT}")
+    for key, age in config["source_max_age_hours"].items():
+        if isinstance(age, bool) or not isinstance(age, (int, float)) or not 0 < age <= MAX_AGE_LIMIT:
+            raise ValueError(f"{path}: source_max_age_hours.{key} must be a positive number of at most {MAX_AGE_LIMIT}")
     return config
+
+
+def source_max_age(config: dict, key: str) -> float:
+    return config["max_age_hours"] if key == "aa" else config.get("source_max_age_hours", {}).get(key, DEFAULT_CONFIG["source_max_age_hours"][key])
 
 
 # ---------------------------------------------------------------------------
@@ -99,13 +119,13 @@ def _whole_name(text: str, problem: str) -> dict:
     return {"family": text, "rung": None, "tags": [], "problem": problem}
 
 
-def split_name(name: str) -> dict:
+def split_name(name: str, last_group: bool = False) -> dict:
     """Split a display name into family, effort rung and tags using string operations only."""
     text = name.strip()
     if text.endswith(")") and "(" in text:
         start = text.rfind("(")
         family, inner = text[:start].rstrip(), text[start + 1:-1]
-        if "(" in family or ")" in family:
+        if ("(" in family or ")" in family) and not (last_group and inner.strip().lower() in EFFORTS):
             return _whole_name(text, "more than one group")
         words = [w.strip() for w in inner.split(",") if w.strip()]
     else:
@@ -169,6 +189,8 @@ def classify(models: list[dict]) -> list[dict]:
             "tags": parts["tags"],
             "scores": scores,
             "cost": cost,
+            "axes": {"cost": cost},
+            "extras": {},
             "total_cost": cost_block.get("total_cost"),
             "release_date": item.get("release_date"),
             "problem": parts["problem"],
@@ -283,21 +305,26 @@ def _is_finite_number(value) -> bool:
     return _is_number(value) and math.isfinite(value)
 
 
-def _fetch_page(key: str, number: int, open_url) -> tuple[dict, dict]:
+def _get(request, label: str, open_url=None, http_failure=None, allow_304=False):
+    try:
+        with (open_url or urllib.request.urlopen)(request, timeout=30) as response:
+            return getattr(response, "status", 200), response.read(), response.headers
+    except urllib.error.HTTPError as error:
+        if allow_304 and error.code == 304:
+            return 304, b"", error.headers
+        raise (http_failure(error) if http_failure else FetchError(f"{label} returned HTTP {error.code}")) from None
+    except urllib.error.URLError as error:
+        raise FetchError(f"Could not reach {label}: {error.reason}") from None
+    except http.client.HTTPException as error:
+        raise FetchError(f"{label} response was incomplete or malformed ({type(error).__name__})") from None
+    except (OSError, TimeoutError) as error:
+        raise FetchError(f"Could not reach {label}: {error}") from None
+
+
+def _fetch_page(key: str, number: int, open_url=None) -> tuple[dict, dict]:
     request = urllib.request.Request(f"{API_URL}?page={number}",
                                      headers={"x-api-key": key, "Accept": "application/json"})
-    try:
-        with open_url(request, timeout=30) as response:
-            body, headers = response.read(), response.headers
-    except urllib.error.HTTPError as error:
-        raise _http_failure(error) from None
-    except urllib.error.URLError as error:
-        raise FetchError(f"Could not reach Artificial Analysis: {error.reason}") from None
-    except http.client.HTTPException as error:
-        raise FetchError(f"Artificial Analysis response was incomplete or malformed "
-                         f"({type(error).__name__})") from None
-    except (OSError, TimeoutError) as error:
-        raise FetchError(f"Could not reach Artificial Analysis: {error}") from None
+    _, body, headers = _get(request, "Artificial Analysis", open_url, _http_failure)
     try:
         envelope = json.loads(body)
     except ValueError:
@@ -314,7 +341,7 @@ def _fetch_page(key: str, number: int, open_url) -> tuple[dict, dict]:
     return envelope, headers
 
 
-def fetch_all(key: str, open_url=urllib.request.urlopen) -> dict:
+def fetch_all(key: str, open_url=None) -> dict:
     """Fetch every page; return models, index version and the last rate-limit headers."""
     models: list = []
     version = None
@@ -362,6 +389,242 @@ def validate_models(models: list) -> None:
                 raise FetchError(f"{label}: field cost_per_task.total_cost must be a finite number")
 
 
+class _TextParser(HTMLParser):
+    """Collect visible text with a space at each tag boundary."""
+    def __init__(self):
+        super().__init__()
+        self.parts = []
+        self.hidden = 0
+
+    def handle_starttag(self, tag, attrs):
+        self.parts.append(" ")
+        if tag in ("script", "style"):
+            self.hidden += 1
+
+    def handle_endtag(self, tag):
+        if tag in ("script", "style") and self.hidden:
+            self.hidden -= 1
+        self.parts.append(" ")
+
+    def handle_data(self, data):
+        if not self.hidden:
+            self.parts.append(data)
+
+
+def page_text(html: str) -> str:
+    parser = _TextParser()
+    parser.feed(html)
+    return " ".join("".join(parser.parts).split())
+
+
+AICD_CATEGORIES = (("laravel", "Laravel code quality", "Laravel"), ("react_ts", "React-TS code quality", "React-TS"),
+                   ("bug_finding", "Bug finding", "Bug finding"), ("python", "Python code quality", "Python"),
+                   ("edge_cases", "Edge-case testing", "Edge cases"))
+
+
+def parse_ai_coding_daily(html: str) -> dict:
+    class TableParser(_TextParser):
+        def __init__(self):
+            super().__init__()
+            self.tables = 0
+            self.inside = False
+            self.headers, self.rows = [], []
+            self.row = self.cell = None
+            self.in_time = False
+
+        def handle_starttag(self, tag, attrs):
+            super().handle_starttag(tag, attrs)
+            attrs = dict(attrs)
+            if tag == "table":
+                self.tables += 1
+                self.inside = True
+            elif self.inside and tag == "tr":
+                self.row = []
+            elif self.inside and tag in ("td", "th"):
+                self.cell = {"tag": tag, "parts": [], "harness": [], "colspan": "colspan" in attrs, "href": None, "date": None}
+            elif self.cell is not None:
+                self.cell["parts"].append(" ")
+                self.cell["harness"].append(" ")
+                if tag == "a": self.cell["href"] = attrs.get("href")
+                if tag == "time":
+                    self.in_time = True
+                    self.cell["date"] = attrs.get("datetime")
+
+        def handle_endtag(self, tag):
+            super().handle_endtag(tag)
+            if tag in ("td", "th") and self.cell is not None:
+                self.cell["text"] = " ".join("".join(self.cell["parts"]).split())
+                self.cell["harness"] = " ".join("".join(self.cell["harness"]).split())
+                if tag == "th": self.headers.append(self.cell["text"])
+                elif self.row is not None: self.row.append(self.cell)
+                self.cell = None
+            elif tag == "tr" and self.row is not None:
+                if self.row: self.rows.append(self.row)
+                self.row = None
+            elif tag == "table": self.inside = False
+            elif self.cell is not None:
+                if tag == "time": self.in_time = False
+                self.cell["parts"].append(" ")
+                self.cell["harness"].append(" ")
+
+        def handle_data(self, data):
+            super().handle_data(data)
+            if self.cell is not None and not self.hidden:
+                self.cell["parts"].append(data)
+                if not self.in_time: self.cell["harness"].append(data)
+
+    parser = TableParser()
+    parser.feed(html)
+    patterns = [r"#", r"Model", r"Total points \(max (\d+)\)", r"Avg cost per prompt", r"Avg time per prompt", r"Video", r"Tested with", r"Points per project", r"Penalty Points deducted for INCONSISTENT results across attempts\.", r"Laravel Code Quality \(max (\d+)\)", r"React-TS Code Quality \(max (\d+)\)", r"Bug Finding Test \(max (\d+)\)", r"Python Code Quality \(max (\d+)\)", r"Edge-case Testing \(4 projects, max (\d+)\)"]
+    matches = [re.fullmatch(pattern, value) for pattern, value in zip(patterns, parser.headers)]
+    if parser.tables != 1 or len(parser.headers) != len(patterns) or not all(matches) or any(int(m.group(1)) <= 0 for m in matches if m.groups()):
+        raise FetchError("AI Coding Daily changed its leaderboard columns; keeping the last good data")
+    maxima = dict(zip(("total", *(key for key, _, _ in AICD_CATEGORIES)), (int(m.group(1)) for m in matches if m.groups())))
+    records = []
+    for cells in parser.rows:
+        if len(cells) == 1 and cells[0]["colspan"]: continue
+        rank = cells[0]["text"] if cells else "?"
+        def fail(column, value):
+            raise FetchError(f"AI Coding Daily row {rank}: {column} {value!r} is not in the expected format")
+        if len(cells) != 13: fail("cells", str(len(cells)))
+        def number(index, label):
+            value = cells[index]["text"]
+            if not re.fullmatch(r"\d+(?:\.\d+)?", value): fail(label, value)
+            return float(value)
+        cost = cells[3]["text"]
+        if cost == "N/A": cost = None
+        elif re.fullmatch(r"\$\d+(?:\.\d+)?", cost): cost = float(cost[1:]) or None
+        else: fail("Cost", cost)
+        duration = cells[4]["text"]
+        if not re.fullmatch(r"\d+:[0-5]\d(?::[0-5]\d)?", duration): fail("Time", duration)
+        seconds = 0
+        for part in duration.split(":"): seconds = seconds * 60 + int(part)
+        tested = cells[6]["date"]
+        try:
+            if not tested or not re.fullmatch(r"\d{4}-\d{2}-\d{2}", tested): raise ValueError()
+            datetime.strptime(tested, "%Y-%m-%d")
+        except ValueError: fail("Tested with", cells[6]["text"])
+        penalty = cells[12]["text"]
+        if not re.fullmatch(r"(?:0|[−-]\d+(?:\.\d+)?)", penalty): fail("Penalty", penalty)
+        records.append({"model": cells[1]["text"], "href": cells[1]["href"], "harness": cells[6]["harness"],
+                        "scores": {"total": number(2, "Total"), **{key: number(i, label) for i, (key, label, _) in enumerate(AICD_CATEGORIES, 7)}},
+                        "cost": cost, "time": seconds or None, "tested": tested, "penalty": float(penalty.replace("−", "-"))})
+    if not records: raise FetchError("AI Coding Daily: the leaderboard has no rows")
+    published = None
+    match = re.search(r"Last update: ([A-Z][a-z]+ \d{1,2})(?:st|nd|rd|th)?, (\d{4})(?: \(([^)]*)\))?", page_text(html))
+    if match:
+        try: published = {"date": datetime.strptime(f"{match[1]}, {match[2]}", "%B %d, %Y").date().isoformat(), "note": match[3] or ""}
+        except ValueError: pass
+    return {"models": records, "index_version": maxima["total"], "index_maxima": maxima, "published": published, "rate_limit": {}}
+
+
+def fetch_ai_coding_daily(open_url=None) -> dict:
+    _status("Fetching AI Coding Daily data…")
+    _, body, _ = _get(urllib.request.Request(AICD_URL, headers={"User-Agent": USER_AGENT}), "AI Coding Daily", open_url)
+    try:
+        html = body.decode("utf-8")
+    except UnicodeDecodeError:
+        raise FetchError("AI Coding Daily: invalid UTF-8") from None
+    return parse_ai_coding_daily(html)
+
+
+def classify_ai_coding_daily(records) -> list[dict]:
+    rows = []
+    for record in records:
+        name, maker = record["model"], record["harness"]
+        parts = split_name(name, last_group=True)
+        rows.append({"slug": f"{record['href'] or name}|{parts['rung']}|{maker}", "name": name, "maker": maker,
+                     "family": parts["family"], "family_key": _family_key(maker, parts["family"]), "rung": parts["rung"],
+                     "tags": parts["tags"], "problem": parts["problem"], "scores": record["scores"], "cost": record["cost"],
+                     "axes": {"cost": record["cost"], "time": record["time"]}, "extras": {"penalty": record["penalty"], "tested": record["tested"]},
+                     "total_cost": None, "release_date": None})
+    return rows
+
+
+def validate_frontiercode(data) -> list[dict]:
+    if not isinstance(data, dict):
+        raise FetchError("FrontierCode 2.0: feed must be an object")
+    for field in ("data", "harness", "efforts"):
+        if not isinstance(data.get(field), dict) or (field == "data" and not data[field]):
+            raise FetchError(f"FrontierCode 2.0: {field} must be {'a non-empty' if field == 'data' else 'an'} object")
+    records = []
+    for model, efforts in data["data"].items():
+        if not isinstance(efforts, dict):
+            raise FetchError(f"FrontierCode 2.0: {model} efforts must be an object")
+        for effort, entry in efforts.items():
+            prefix = f"FrontierCode 2.0: {model} {effort}:"
+            if effort not in (*EFFORTS, "none", "na"):
+                raise FetchError(f"{prefix} effort is unknown")
+            main = entry.get("main") if isinstance(entry, dict) else None
+            if not isinstance(main, dict):
+                raise FetchError(f"{prefix} main must be an object")
+            for field in ("new_score", "correct", "cost", "tokens", "flagged_rate"):
+                value = main.get(field)
+                nullable = field in ("correct", "tokens", "flagged_rate")
+                if field in main and ((value is None and nullable) or (_is_finite_number(value) and
+                    (field not in ("cost", "tokens") or value >= 0) and
+                    (field != "new_score" or 0 <= value <= 1))):
+                    continue
+                raise FetchError(f"{prefix} {field} is invalid")
+            records.append({"model": model, "effort": effort, "harness": data["harness"].get(model, "Unknown harness"),
+                            **{field: main.get(field) for field in ("new_score", "correct", "cost", "tokens", "flagged_rate")}})
+    if not records:
+        raise FetchError("FrontierCode 2.0: feed has no configurations")
+    return records
+
+
+def classify_frontiercode(records) -> list[dict]:
+    rows = []
+    for record in records:
+        model, effort, maker = record["model"], record["effort"], record["harness"]
+        rung = NON_REASONING if effort == "none" else None if effort == "na" else effort
+        cost = record["cost"] or None
+        rows.append({"slug": f"{model}|{effort}", "name": model if effort == "na" else f"{model} ({effort})",
+                     "maker": maker, "family": model, "family_key": _family_key(maker, model), "rung": rung,
+                     "tags": [], "scores": {"score": round(record["new_score"] * 100, 2)},
+                     "cost": cost, "axes": {"cost": cost, "tokens": record["tokens"] or None},
+                     "extras": {"flagged": record["flagged_rate"]}, "total_cost": None,
+                     "release_date": None, "problem": None})
+    return rows
+
+
+def fetch_frontiercode(etag: str | None, open_url=None) -> dict:
+    headers = {"User-Agent": USER_AGENT, "Accept": "application/json"}
+    if etag:
+        headers["If-None-Match"] = etag
+    _status("Fetching FrontierCode 2.0 data…")
+    status, body, response_headers = _get(urllib.request.Request(FC_DATA_URL, headers=headers), "FrontierCode 2.0", open_url, allow_304=True)
+    result = {"etag": response_headers.get("ETag") or etag, "published": None, "current_version": None}
+    if status == 304:
+        result["not_modified"] = True
+    else:
+        try:
+            data = json.loads(body)
+        except (ValueError, UnicodeDecodeError):
+            raise FetchError("FrontierCode 2.0: invalid JSON") from None
+        result.update(models=validate_frontiercode(data), index_version=FC_VERSION,
+                      rate_limit={"limit": None, "remaining": None, "reset": None})
+    try:
+        _, body, _ = _get(urllib.request.Request(FC_PAGE_URL, headers={"User-Agent": USER_AGENT}), "FrontierCode 2.0 page", open_url)
+        text = page_text(body.decode("utf-8"))
+        version = re.search(r"FrontierCode (\d+(?:\.\d+)+) Current", text)
+        result["current_version"] = version.group(1) if version else None
+        changelog = text.find("Changelog")
+        if changelog >= 0:
+            dates = list(re.finditer(r"\b(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec) (\d{1,2}), (\d{4})\b", text[changelog:]))
+            if dates:
+                first = dates[0]
+                date = datetime.strptime(first.group(), "%b %d, %Y").date().isoformat()
+                section = text[changelog:]
+                note = section[first.end():dates[1].start() if len(dates) > 1 else None].strip()
+                if len(note) > 160:
+                    note = note[:159].rsplit(" ", 1)[0] + "…"
+                result["published"] = {"date": date, "note": note}
+    except Exception:
+        result.update(published=None, current_version=None)
+    return result
+
+
 # ---------------------------------------------------------------------------
 # Store
 # ---------------------------------------------------------------------------
@@ -387,12 +650,18 @@ def _write_snapshot(path: Path, data: dict) -> None:
     atomic_write_bytes(path, gzip.compress(json.dumps(data).encode("utf-8")))
 
 
-def load_snapshots(home: Path) -> list[Path]:
+def snapshot_dir(home: Path, source: str = "aa") -> Path:
+    root = ensure_runtime_home(home / SNAPSHOT_DIR)
+    return root if source == "aa" else ensure_runtime_home(root / source)
+
+
+def load_snapshots(home: Path, source: str = "aa") -> list[Path]:
     """Snapshot files, newest first by file name."""
-    return sorted((home / SNAPSHOT_DIR).glob("*" + SNAPSHOT_SUFFIX), key=lambda p: p.name, reverse=True)
+    root = home / SNAPSHOT_DIR
+    return sorted((root if source == "aa" else root / source).glob("*" + SNAPSHOT_SUFFIX), key=lambda p: p.name, reverse=True)
 
 
-def read_snapshot(path: Path) -> dict:
+def read_snapshot(path: Path, source: str = "aa") -> dict:
     try:
         with gzip.open(path, "rb") as stream:
             data = json.loads(stream.read().decode("utf-8"))
@@ -402,7 +671,10 @@ def read_snapshot(path: Path) -> dict:
         raise StoreError(f"cannot read {path}: not a version {SCHEMA} snapshot")
     if not isinstance(data.get("models"), list):
         raise StoreError(f"cannot read {path}: missing the models list")
-    if not _is_number(data.get("index_version")):
+    if source == "fc":
+        if not isinstance(data.get("index_version"), str) or not re.fullmatch(r"\d+(?:\.\d+)+", data["index_version"]):
+            raise StoreError(f"cannot read {path}: missing the dotted index_version")
+    elif not _is_number(data.get("index_version")):
         raise StoreError(f"cannot read {path}: missing the numeric index_version")
     for field in ("fetched_at", "last_checked"):
         try:
@@ -412,19 +684,23 @@ def read_snapshot(path: Path) -> dict:
     return data
 
 
-def save_snapshot(home: Path, result: dict, now: datetime) -> Path:
+def save_snapshot(home: Path, result: dict, now: datetime, source: str = "aa") -> Path:
     """Store a fetch. An unchanged one only refreshes the newest file's last_checked."""
     moment = _utc(now).replace(microsecond=0)
-    ensure_runtime_home(home / SNAPSHOT_DIR)
-    existing = load_snapshots(home)
+    directory = snapshot_dir(home, source)
+    existing = load_snapshots(home, source)
     if existing:
-        newest = read_snapshot(existing[0])
-        if newest["models"] == result["models"] and newest["index_version"] == result["index_version"]:
+        newest = read_snapshot(existing[0], source)
+        if result.get("not_modified") or (newest["models"] == result["models"] and newest["index_version"] == result["index_version"] and newest.get("index_maxima") == result.get("index_maxima")):
             newest["last_checked"] = moment.isoformat()
-            newest["rate_limit"] = result["rate_limit"]
+            for key in ("rate_limit", "published", "etag", "current_version"):
+                if key in result:
+                    newest[key] = result[key]
             _write_snapshot(existing[0], newest)
             return existing[0]
-    path = home / SNAPSHOT_DIR / (moment.strftime("%Y%m%dT%H%M%SZ") + SNAPSHOT_SUFFIX)
+    if result.get("not_modified"):
+        raise StoreError("not modified, but there is no snapshot to keep")
+    path = directory / (moment.strftime("%Y%m%dT%H%M%SZ") + SNAPSHOT_SUFFIX)
     _write_snapshot(path, {
         "schema": SCHEMA,
         "fetched_at": moment.isoformat(),
@@ -432,10 +708,40 @@ def save_snapshot(home: Path, result: dict, now: datetime) -> Path:
         "index_version": result["index_version"],
         "rate_limit": result["rate_limit"],
         "models": result["models"],
+        **{key: result[key] for key in ("index_maxima", "published", "etag", "current_version") if key in result},
     })
-    for old in load_snapshots(home)[KEEP:]:
+    for old in load_snapshots(home, source)[KEEP:]:
         old.unlink()
     return path
+
+
+def read_status(home: Path) -> dict:
+    path = home / "status.json"
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+        if not isinstance(data, dict):
+            raise ValueError("not an object")
+        for source, entry in data.items():
+            if (not isinstance(entry, dict) or not isinstance(entry.get("last_attempt"), str)
+                    or "error" not in entry or not isinstance(entry["error"], (str, type(None)))):
+                raise ValueError(f"invalid status for {source}")
+            try:
+                datetime.fromisoformat(entry["last_attempt"])
+            except ValueError:
+                raise ValueError(f"invalid status for {source}") from None
+        return data
+    except FileNotFoundError:
+        return {}
+    except (OSError, ValueError) as error:
+        _complain(f"cannot read {path}: {error}")
+        return {}
+
+
+def write_status(home: Path, source: str, attempt: datetime, error: str | None) -> None:
+    ensure_runtime_home(home)
+    status = read_status(home)
+    status[source] = {"last_attempt": _utc(attempt).isoformat(), "error": error}
+    atomic_write_bytes(home / "status.json", (json.dumps(status, indent=2) + "\n").encode())
 
 
 # ---------------------------------------------------------------------------
@@ -443,20 +749,68 @@ def save_snapshot(home: Path, result: dict, now: datetime) -> Path:
 # ---------------------------------------------------------------------------
 
 
-def diff_rows(old: dict | None, new: dict) -> dict | None:
+SOURCE_KEYS = ("aa", "aicd", "fc")
+SOURCE_SPECS = {
+    "aa": {"label": "Artificial Analysis", "attribution": {"name": "Artificial Analysis", "url": "https://artificialanalysis.ai/"},
+           "indexes": [{"key": key, "label": label, "short": short, "borrowed": key != "intelligence", "max": None} for key, _, label, short in INDEXES],
+           "axes": [{"key": "cost", "label": "Cost per task", "unit": "money", "per": "per task"}],
+           "default_axis": "cost", "group_label": "Creator", "version_label": "Intelligence Index v{version}",
+           "has_quota": True, "notice": lambda rows: None,
+           "borrowed_notice": {"cost": "Costs here are from the Intelligence Index run. Artificial Analysis publishes no cost for the {index} index, so every cost, frontier and cost per point on this page pairs these scores with that cost."},
+           "extras": [], "classify": classify},
+    "aicd": {"label": "AI Coding Daily", "attribution": {"name": "AI Coding Daily", "url": AICD_URL},
+             "indexes": [{"key": "total", "label": "Total points", "short": "Total", "borrowed": False}] +
+                        [{"key": key, "label": label, "short": short, "borrowed": True} for key, label, short in AICD_CATEGORIES],
+             "axes": [{"key": "cost", "label": "Cost per prompt", "unit": "money", "per": "per prompt"},
+                      {"key": "time", "label": "Time per prompt", "unit": "time", "per": "per prompt"}],
+             "default_axis": "time", "group_label": "Harness", "version_label": "Total points out of {version}", "has_quota": False,
+             "notice": lambda rows: "Scores are for each model running in the harness named beside it." + (f" {sum(row['axes']['cost'] is None for row in rows)} configurations have no cost per prompt; plot against time to include them." if any(row['axes']['cost'] is None for row in rows) else ""),
+             "borrowed_notice": {"cost": "Costs here are the overall cost per prompt. AI Coding Daily publishes no cost for {index} alone, so every cost, frontier and cost per point on this page pairs these scores with that cost.",
+                                 "time": "Times here are the overall time per prompt. AI Coding Daily publishes no time for {index} alone, so every time, frontier and time per point on this page pairs these scores with that time."},
+             "extras": [{"key": key, "label": short, "kind": "points", "path": f"scores.{key}"} for key, _, short in AICD_CATEGORIES] +
+                       [{"key": "penalty", "label": "Penalty", "kind": "number2", "path": "extras.penalty"}, {"key": "tested", "label": "Tested", "kind": "date", "path": "extras.tested"}],
+             "classify": classify_ai_coding_daily},
+    "fc": {"label": "FrontierCode 2.0", "attribution": {"name": "Cognition", "url": FC_PAGE_URL},
+           "indexes": [{"key": "score", "label": "Score", "short": "Score", "borrowed": False}],
+           "axes": [{"key": "cost", "label": "Cost per rollout", "unit": "money", "per": "per rollout"},
+                    {"key": "tokens", "label": "Output tokens per rollout", "unit": "tokens", "per": "per rollout"}],
+           "default_axis": "cost", "group_label": "Harness", "version_label": "FrontierCode {version}",
+           "has_quota": False, "notice": lambda rows: "A run that fails a blocking criterion scores 0. Cost is the mean USD spend per rollout at list API pricing, including public discounts, not what a subscription charges.",
+           "borrowed_notice": {}, "extras": [{"key": "flagged", "label": "Flagged runs", "kind": "percent1", "path": "extras.flagged"}],
+           "classify": classify_frontiercode},
+}
+
+
+def _row_path(row: dict, path: str):
+    value = row
+    for part in path.split("."):
+        if not isinstance(value, dict):
+            return None
+        value = value.get(part)
+    return value
+
+
+def diff_rows(old: dict | None, new: dict, source: str = "aa") -> dict | None:
     """What changed between two snapshots, by slug. Raw values, no rounding."""
     if old is None:
         return None
-    before = {row["slug"]: row for row in classify(old["models"])}
-    after = {row["slug"]: row for row in classify(new["models"])}
+    spec = SOURCE_SPECS[source]
+    before = {row["slug"]: row for row in spec["classify"](old["models"])}
+    after = {row["slug"]: row for row in spec["classify"](new["models"])}
     changed = []
     for slug, row in after.items():
         prior = before.get(slug)
-        if prior and (prior["scores"] != row["scores"] or prior["cost"] != row["cost"]):
+        extras = {item["path"]: [_row_path(prior, item["path"]), _row_path(row, item["path"])]
+                  for item in spec["extras"] if prior and item["path"] != "tested" and item["path"] != "extras.tested"}
+        extras = {key: pair for key, pair in extras.items() if pair[0] != pair[1]}
+        if prior and (prior["scores"] != row["scores"] or prior["axes"] != row["axes"] or extras):
             changed.append({"slug": slug, "name": row["name"],
-                            "scores": {key: [prior["scores"][key], row["scores"][key]] for key, *_ in INDEXES},
-                            "cost": [prior["cost"], row["cost"]]})
+                            "scores": {item["key"]: [prior["scores"].get(item["key"]), row["scores"].get(item["key"])] for item in spec["indexes"]},
+                            "axes": {item["key"]: [prior["axes"].get(item["key"]), row["axes"].get(item["key"])] for item in spec["axes"]},
+                            "extras": extras})
+    old_max, new_max = old.get("index_maxima", {}), new.get("index_maxima", {})
     return {
+        "source": source,
         "from": old["fetched_at"],
         "to": new["fetched_at"],
         "version": None if old["index_version"] == new["index_version"]
@@ -464,6 +818,7 @@ def diff_rows(old: dict | None, new: dict) -> dict | None:
         "added": [row["name"] for slug, row in after.items() if slug not in before],
         "removed": [row["name"] for slug, row in before.items() if slug not in after],
         "changed": changed,
+        "maxima": {key: [old_max.get(key), new_max.get(key)] for key in old_max.keys() | new_max.keys() if old_max.get(key) != new_max.get(key)},
     }
 
 
@@ -471,27 +826,35 @@ def diff_rows(old: dict | None, new: dict) -> dict | None:
 # Page build
 # ---------------------------------------------------------------------------
 
-PAGE_SCHEMA = 2
+PAGE_SCHEMA = 3
 
 
-def build_payload(snapshot: dict, previous: dict | None, config: dict) -> dict:
-    """Everything the page shows; all analysis happens in the page's JavaScript."""
-    rows = classify(snapshot["models"])
-    indexes = [{"key": key, "label": label, "short": short,
-                "count": sum(row["scores"][key] is not None for row in rows)}
-               for key, _, label, short in INDEXES]
+def build_source_entry(key: str, newest: dict | None, previous: dict | None, status: dict, config: dict) -> dict:
+    spec = SOURCE_SPECS[key]
+    rows = spec["classify"](newest["models"]) if newest else []
+    indexes = [{**item, "max": (newest or {}).get("index_maxima", {}).get(item["key"], item.get("max")),
+                "count": sum(row["scores"].get(item["key"]) is not None for row in rows)} for item in spec["indexes"]]
+    indexes = [item for item in indexes if item["count"] or item["key"] == DEFAULT_INDEX]
+    entry = {field: spec[field] for field in ("label", "attribution", "axes", "default_axis", "group_label", "borrowed_notice", "extras", "has_quota")}
+    entry.update({"key": key, "indexes": indexes, "available": newest is not None,
+                  "version_label": spec["version_label"].format(version=newest["index_version"]) if newest else "",
+                  "version": newest["index_version"] if newest else None,
+                  "rate_limit": (newest or {}).get("rate_limit") or {"limit": None, "remaining": None, "reset": None},
+                  "max_age_hours": source_max_age(config, key), "rows": rows,
+                  "notice": spec["notice"](rows) if newest else None,
+                  "changes": diff_rows(previous, newest, key) if newest else None,
+                  "last_attempt": status.get("last_attempt"), "error": status.get("error")})
+    entry.update({field: (newest or {}).get(field) for field in ("fetched_at", "last_checked", "published", "current_version")})
+    return entry
+
+
+def build_payload(inputs: dict, config: dict, status: dict | None = None) -> dict:
     return {
         "schema": PAGE_SCHEMA,
         "app": {"name": "Model Ladder", "version": VERSION},
-        "fetched_at": snapshot["fetched_at"],
-        "last_checked": snapshot["last_checked"],
-        "max_age_hours": config["max_age_hours"],
-        "index_version": snapshot["index_version"],
-        "rate_limit": snapshot.get("rate_limit") or {"limit": None, "remaining": None, "reset": None},
         "rung_order": list(RUNG_ORDER),
-        "rows": rows,
-        "indexes": [index for index in indexes if index["count"] or index["key"] == DEFAULT_INDEX],
-        "changes": diff_rows(previous, snapshot),
+        "default_source": "aa",
+        "sources": {key: build_source_entry(key, *inputs.get(key, (None, None)), (status or {}).get(key, {}), config) for key in SOURCE_KEYS},
     }
 
 
@@ -518,10 +881,10 @@ def render_page(payload: dict) -> bytes:
 
 
 def _shows_a_change(diff: dict) -> bool:
-    return bool(diff["version"] or diff["added"] or diff["removed"] or diff["changed"])
+    return bool(diff["version"] or diff["added"] or diff["removed"] or diff["changed"] or diff["maxima"])
 
 
-def _last_real_change(older: list[Path], snapshot: dict) -> dict | None:
+def _last_real_change(older: list[Path], snapshot: dict, source: str = "aa") -> dict | None:
     """The newest older snapshot that differs from snapshot in what the page shows.
 
     A new snapshot is stored whenever any delivered field differs, including fields the page
@@ -530,23 +893,35 @@ def _last_real_change(older: list[Path], snapshot: dict) -> dict | None:
     """
     for path in older:
         try:
-            candidate = read_snapshot(path)
+            candidate = read_snapshot(path, source)
         except StoreError as error:
             _complain(f"{error}; skipping it for the list of changes")
             continue
-        if _shows_a_change(diff_rows(candidate, snapshot)):
+        if _shows_a_change(diff_rows(candidate, snapshot, source)):
             return candidate
     return None
 
 
-def build_page(home: Path, output: Path) -> None:
+def build_page(home: Path, output: Path, *, unavailable=None) -> None:
     """Build from the newest snapshot, comparing with the last older one that differs in what is shown."""
-    paths = load_snapshots(home)
-    if not paths:
+    inputs, unavailable = {}, dict(unavailable or {})
+    for key in SOURCE_KEYS:
+        if key in unavailable:
+            continue
+        try:
+            paths = load_snapshots(home, key)
+            if paths:
+                snapshot = read_snapshot(paths[0], key)
+                inputs[key] = (snapshot, _last_real_change(paths[1:], snapshot, key))
+        except StoreError as error:
+            _complain(str(error))
+            unavailable[key] = str(error)
+    if not inputs:
         raise StoreError("no snapshot to build from")
-    snapshot = read_snapshot(paths[0])
-    previous = _last_real_change(paths[1:], snapshot)
-    atomic_write_bytes(output, render_page(build_payload(snapshot, previous, load_config())))
+    status = read_status(home)
+    for key, error in unavailable.items():
+        status[key] = {**status.get(key, {}), "error": error}
+    atomic_write_bytes(output, render_page(build_payload(inputs, load_config(), status)))
 
 
 # ---------------------------------------------------------------------------
@@ -617,9 +992,9 @@ function presentRungs(rows, rungOrder) {
   return rungOrder.filter(function (rung) { return seen[rung]; });
 }
 
-function rowsForIndex(rows, key) {
+function rowsForIndex(rows, key, axisKey) {
   return rows.filter(function (row) { return typeof row.scores[key] === "number"; })
-    .map(function (row) { return Object.assign({}, row, { index: row.scores[key] }); });
+    .map(function (row) { return Object.assign({}, row, { index: row.scores[key], cost: (row.axes || {})[axisKey] ?? null }); });
 }
 
 function unscoredRows(rows, key, opts) {
@@ -711,24 +1086,85 @@ function money(v) {
   return "$" + (size === 0 || Number(small) >= 0.1 ? size.toFixed(2) : small);
 }
 
+function lowerFirst(text) { return text.charAt(0).toLowerCase() + text.slice(1); }
+function formatAxis(value, unit) {
+  if (value === null || value === undefined) return "";
+  if (unit === "money") return money(value);
+  if (unit === "tokens") return value < 1000 ? Math.round(value) + " tokens" : Math.round(value / 1000) + "k tokens";
+  var seconds = Math.round(value), hours = Math.floor(seconds / 3600), minutes = Math.floor(seconds % 3600 / 60);
+  return (hours ? hours + ":" + String(minutes).padStart(2, "0") : String(minutes)) + ":" + String(seconds % 60).padStart(2, "0");
+}
+function checkedText(iso, nowMs, maxAgeHours) {
+  var age = dataAge(iso, nowMs, maxAgeHours), text = age.text;
+  if (text === "Data is less than an hour old") text = "Checked less than an hour ago";
+  else if (/^Data is .+ old$/.test(text)) text = text.replace(/^Data is (.+) old$/, "Checked $1 ago");
+  else text = "Check time unknown";
+  return {text: text, stale: age.stale};
+}
+function dayText(date) { return new Date(date + "T00:00:00Z").toLocaleDateString(undefined, {dateStyle: "medium", timeZone: "UTC"}); }
+function formatExtra(value, kind) {
+  if (value === null || value === undefined) return "";
+  if (kind === "date") return dayText(value);
+  if (kind === "percent1") return (value * 100).toFixed(1) + "%";
+  if (kind === "number2") return (value < 0 ? "−" : "") + Math.abs(value).toFixed(2);
+  return value.toFixed(2);
+}
+
 function showPoints(value, mode) {
   return mode === "decimal" ? Math.abs(value).toFixed(1) : String(Math.round(Math.abs(value)));
 }
 
-function dominatedReason(row, mode) {
+function startLadder(sel, startSlug) {
+  var pareto = paretoRows(sel);
+  var front = pareto.filter(function (r) { return r.status === "frontier"; });
+  var unpriced = sel.filter(function (r) { return !priced(r); });
+  var chosen = sel.filter(function (r) { return r.slug === startSlug; })[0] || front[0] || null;
+  var unplaced = chosen && !priced(chosen) ? chosen : null;
+  var start = unplaced ? (front[0] || null) : chosen;
+  if (!start) return { rungs: [], start: null, startOn: false, unplaced: unplaced, steps: [], offLadder: [], unpriced: unpriced };
+  var startRow = pareto.filter(function (r) { return r.slug === start.slug; })[0];
+  var startOn = startRow.status === "frontier";
+  var rungs = front.slice().reverse();
+  if (!startOn) {
+    var at = rungs.findIndex(function (r) { return r.score < startRow.score || (r.score === startRow.score && r.cost > startRow.cost); });
+    rungs.splice(at === -1 ? rungs.length : at, 0, startRow);
+  }
+  var s = rungs.indexOf(startRow), steps = [];
+  for (var i = 1; i < rungs.length; i += 1) {
+    steps.push(i <= s ? { direction: "up", step: makeStep(rungs[i], rungs[i - 1], "up") }
+                      : { direction: "down", step: makeStep(rungs[i - 1], rungs[i], "down") });
+  }
+  var offLadder = pareto.filter(function (r) { return r.status === "dominated"; })
+    .sort(function (a, b) { return (b.slug === start.slug) - (a.slug === start.slug); });
+  return { rungs: rungs, start: startRow, startOn: startOn, unplaced: unplaced, steps: steps, offLadder: offLadder, unpriced: unpriced };
+}
+
+function stepSentence(step, direction, axis, mode) {
+  var points = showPoints(step.points, mode), p = points + (Number(points) === 1 ? " point" : " points");
+  var x = formatAxis(Math.abs(step.cost), axis.unit), a = lowerFirst(axis.label);
+  if (step.points === 0) return step.cost === 0 ? "Same score and " + a : "Same score for " + x + (step.cost < 0 ? " less" : " more");
+  if (direction === "up") {
+    if (step.perPoint != null) return "+" + p + " for +" + x + " (" + formatAxis(step.perPoint, axis.unit) + " per point)";
+    return "+" + p + (step.cost < 0 ? " for " + x + " less" : " for the same " + a);
+  }
+  if (step.perPoint != null) return "−" + p + " to save " + x + " (" + formatAxis(step.perPoint, axis.unit) + " per point)";
+  return "−" + p + " and saves nothing";
+}
+
+function dominatedReason(row, mode, axis) {
   if (row.status !== "dominated" || !row.by) return null;
   var gap = row.by.score - row.score;
   var saved = Math.round((row.cost - row.by.cost) * FLOAT_NOISE) / FLOAT_NOISE;
   var head = row.by.label + " scores ";
-  if (gap === 0) return head + "the same for " + money(saved) + " less per task";
-  if (saved > 0) return head + showPoints(gap, mode) + " higher for " + money(saved) + " less per task";
-  return head + showPoints(gap, mode) + " higher for the same cost per task";
+  if (gap === 0) return head + "the same for " + formatAxis(saved, axis.unit) + " less " + axis.per;
+  if (saved > 0) return head + showPoints(gap, mode) + " higher for " + formatAxis(saved, axis.unit) + " less " + axis.per;
+  return head + showPoints(gap, mode) + " higher for the same " + lowerFirst(axis.label);
 }
 
-function findings(pareto, steps, mode) {
+function findings(pareto, steps, mode, axis) {
   var out = [];
   pareto.forEach(function (row) {
-    var reason = dominatedReason(row, mode);
+    var reason = dominatedReason(row, mode, axis);
     if (reason) out.push(row.label + " is dominated: " + reason + ".");
   });
   var cheapest = null;
@@ -739,31 +1175,39 @@ function findings(pareto, steps, mode) {
     if (dearest === null || row.up.perPoint > dearest.up.perPoint) dearest = row;
   });
   if (cheapest) {
-    out.push("Cheapest step on the frontier: " + cheapest.label + " to " + cheapest.up.to.label +
-      ", " + money(cheapest.up.perPoint) + " per point.");
+    var least = {money: "Cheapest", time: "Least time per point", tokens: "Fewest output tokens per point"}[axis.unit];
+    var most = {money: "Most expensive", time: "Most time per point", tokens: "Most output tokens per point"}[axis.unit];
+    out.push(least + " step on the frontier: " + cheapest.label + " to " + cheapest.up.to.label +
+      ", " + formatAxis(cheapest.up.perPoint, axis.unit) + " per point.");
     if (dearest !== cheapest) {
-      out.push("Most expensive step on the frontier: " + dearest.label + " to " + dearest.up.to.label +
-        ", " + money(dearest.up.perPoint) + " per point.");
+      out.push(most + " step on the frontier: " + dearest.label + " to " + dearest.up.to.label +
+        ", " + formatAxis(dearest.up.perPoint, axis.unit) + " per point.");
     }
   }
   steps.forEach(function (row) {
     var up = row.up;
     if (!up || up.points > 0 || up.cost === null || up.cost <= 0) return;
     var tail = up.points === 0 ? "no points." : "scores " + showPoints(up.points, mode) + " lower.";
-    out.push(row.label + " to " + rungLabel(up.to.rung) + " adds " + money(up.cost) + " per task and " + tail);
+    out.push(row.label + " to " + rungLabel(up.to.rung) + " adds " + formatAxis(up.cost, axis.unit) + " " + axis.per + " and " + tail);
   });
   return out;
 }
 
-function changesToShow(changes, mode, key) {
+function scoreText(raw, mode) { return mode === "decimal" ? raw.toFixed(1) : String(wholePoints(raw)); }
+function changesToShow(changes, mode, key, axis, extras) {
   if (!changes || !changes.changed) return [];
-  function shownScore(raw) { return raw === null ? null : mode === "decimal" ? raw : wholePoints(raw); }
+  function shownScore(raw) { return raw === null ? null : scoreText(raw, mode); }
   return changes.changed.filter(function (item) {
     // Unscored in this index before and after: the view never lists the model, so its cost is not news here.
     if (item.scores[key][0] === null && item.scores[key][1] === null) return false;
     var scoreMoved = shownScore(item.scores[key][0]) !== shownScore(item.scores[key][1]);
-    var costMoved = money(item.cost[0]) !== money(item.cost[1]);
-    return scoreMoved || costMoved;
+    var pair = item.axes[axis.key] || [null, null];
+    var costMoved = formatAxis(pair[0], axis.unit) !== formatAxis(pair[1], axis.unit);
+    var extrasMoved = (extras || []).some(function (col) {
+      var values = (item.extras || {})[col.path];
+      return col.kind !== "date" && values && formatExtra(values[0], col.kind) !== formatExtra(values[1], col.kind);
+    });
+    return scoreMoved || costMoved || extrasMoved;
   });
 }
 
@@ -772,7 +1216,8 @@ var api = {
   presentRungs: presentRungs, selectRows: selectRows, rowsForIndex: rowsForIndex, unscoredRows: unscoredRows, frontier: frontier,
   paretoRows: paretoRows, familySteps: familySteps, sortRows: sortRows,
   findings: findings, money: money, dataAge: dataAge, changesToShow: changesToShow,
-  dominatedReason: dominatedReason, rungLabel: rungLabel, showPoints: showPoints
+  lowerFirst: lowerFirst, formatAxis: formatAxis, checkedText: checkedText, dayText: dayText, formatExtra: formatExtra,
+  dominatedReason: dominatedReason, rungLabel: rungLabel, showPoints: showPoints, scoreText: scoreText, startLadder: startLadder, stepSentence: stepSentence
 };
 if (typeof module !== "undefined") module.exports = api; else window.ladderMath = api;
 // ladder-math:end
@@ -800,11 +1245,51 @@ PAGE_CSS = r"""
 body { margin: 0; background: var(--bg); color: var(--ink); font-family: var(--font); font-size: 15px; line-height: 1.45;
   padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px)); padding-block: 20px 40px; }
 .wrap { max-width: 1180px; margin: 0 auto; display: flex; flex-direction: column; gap: 20px; }
+.body { display: contents; }
+.start-layout { display: grid; grid-template-columns: minmax(0, 7fr) minmax(0, 4fr); gap: 16px; align-items: start; }
+.ladder { list-style: none; padding: 14px 16px 14px 14px; margin: 0; align-self: start; }
+.ladder li { display: grid; grid-template-columns: 34px minmax(0, 1fr) 4ch 8ch; gap: 0 14px; align-items: center; position: relative; }
+.ladder li.rung { padding: 7px 0; }
+.ladder li.rung::before, .ladder li.step::before { content: ""; position: absolute; left: 16px; top: 0; bottom: 0; width: 2px; background: var(--line); }
+.ladder li.rung:first-child::before { top: 50%; }
+.ladder li.rung:last-child::before { bottom: 50%; }
+.ladder .node { grid-column: 1; justify-self: center; width: 14px; height: 14px; border-radius: 50%; border: 2.5px solid var(--c); background: var(--panel); position: relative; }
+.ladder .who { min-width: 0; }
+.ladder .score { font-size: 22px; font-weight: 700; font-variant-numeric: tabular-nums; text-align: right; }
+.ladder .x { color: var(--muted); text-align: right; font-variant-numeric: tabular-nums; }
+.ladder li.start { background: var(--front-bg); border-radius: 8px; margin: 4px -8px; padding: 9px 8px; }
+.ladder li.start::before { left: 24px; }
+.ladder li.start .node { background: var(--c); width: 18px; height: 18px; }
+.ladder .tag { display: inline-block; margin-left: 8px; font-size: 12px; font-weight: 600; color: var(--front); }
+.ladder li.step { grid-template-columns: 34px minmax(0, 1fr); color: var(--muted); font-size: 13px; min-height: 24px; }
+.ladder li.step span { grid-column: 2; }
+.start-side { padding: 12px 14px; display: flex; flex-direction: column; gap: 8px; }
+.start-side h3 { margin: 0; }
+.start-side ul { margin: 0; padding-left: 18px; }
+.start-side table { font-size: 14px; font-variant-numeric: tabular-nums; }
+.start-side th, .start-side td { padding: 4px 6px; white-space: nowrap; }
+.start-side th:first-child, .start-side td:first-child { text-align: left; }
+.start-side tr.off td { color: var(--muted); }
+.category-bar { display: block; height: 5px; background: var(--line); min-width: 80px; }
+.category-bar i { display: block; height: 100%; background: var(--accent); }
+@media (max-width: 860px) { .start-layout { grid-template-columns: 1fr; } }
+@media (max-width: 450px) { .ladder li { grid-template-columns: 24px minmax(0, 1fr) 3ch 6ch; gap: 0 6px; } .ladder li.rung::before, .ladder li.step::before { left: 11px; } .ladder li.start::before { left: 19px; } .ladder li.step { grid-template-columns: 24px minmax(0, 1fr); } }
 header { display: flex; flex-direction: column; gap: 10px; }
 h1 { font-size: 26px; font-weight: 700; margin: 0; letter-spacing: -0.01em; }
 h2 { font-size: 18px; font-weight: 600; margin: 0; text-wrap: balance; }
 h3 { font-size: 14px; font-weight: 600; margin: 0 0 4px; }
 .sub { color: var(--muted); margin: 2px 0 0; max-width: 70ch; }
+.sources { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); border: 1px solid var(--line); border-radius: 10px; overflow: hidden; background: var(--panel); }
+.sources button { position: relative; display: flex; flex-direction: column; gap: 2px; border: 0; border-left: 1px solid var(--line); border-radius: 0; background: none; padding: 10px 14px 11px 16px; text-align: left; }
+.sources button:first-child { border-left: 0; }
+.sources button::before { content: ""; position: absolute; left: 0; top: 0; bottom: 0; width: 4px; background: var(--front); }
+.sources button.failed::before, .sources button.stale::before { background: var(--warn); }
+.sources button span { font-weight: 700; font-size: 16px; }
+.sources small { font-size: 13px; color: var(--muted); }
+.sources .failed small { color: var(--warn); font-weight: 600; }
+.sources button[aria-pressed="true"] { background: var(--dom-bg); }
+.sources button[aria-pressed="true"] span { text-decoration: underline; text-decoration-thickness: 2px; text-underline-offset: 4px; }
+@media (max-width: 640px) { .sources { grid-template-columns: 1fr; } .sources button { border-left: 0; border-top: 1px solid var(--line); } .sources button:first-child { border-top: 0; } }
 .status { display: flex; flex-wrap: wrap; gap: 8px 18px; align-items: center; color: var(--muted); font-size: 14px; }
 .status b { color: var(--ink); font-weight: 600; }
 .age { background: var(--front-bg); color: var(--front); padding: 2px 10px; border-radius: 999px; font-weight: 600; }
@@ -908,24 +1393,21 @@ APP_JS = r"""
   const html = window.htm.bind(h);
 
   const DATA = JSON.parse(document.getElementById("payload").textContent);
-  const ALL_ROWS = DATA.rows;
+  let SRC, ALL_ROWS, RUNGS, KNOWN_FAMILIES;
   const ORDER = DATA.rung_order;
-  const RUNGS = M.presentRungs(ALL_ROWS, ORDER);
-  const KNOWN_FAMILIES = {};
-  ALL_ROWS.forEach((r) => { KNOWN_FAMILIES[r.family_key] = { family: r.family, maker: r.maker }; });
   const views = {};
-  function viewFor(key) {
-    if (!views[key]) {
-      const rows = M.rowsForIndex(ALL_ROWS, key), families = M.families(rows), familyByKey = {};
+  function viewFor(key, axis) {
+    const cacheKey = SRC.key + ":" + key + ":" + axis;
+    if (!views[cacheKey]) {
+      const rows = M.rowsForIndex(ALL_ROWS, key, axis), families = M.families(rows), familyByKey = {};
       families.forEach((f) => { familyByKey[f.key] = f; });
-      views[key] = { rows, families, familyByKey, allKeys: families.map((f) => f.key),
+      views[cacheKey] = { rows, families, familyByKey, allKeys: families.map((f) => f.key),
         makers: Array.from(new Set(rows.map((r) => r.maker))).sort(), attention: rows.filter((r) => r.problem) };
     }
-    return views[key];
+    return views[cacheKey];
   }
   const LIMIT = 8;
   const STORAGE_KEY = "model_ladder.state";
-  const COMMAND = "model_ladder refresh";
   const MINUS = "−";
   const STEP_KEYS = ["up.points", "up.cost", "up.perPoint", "down.points", "down.cost", "down.perPoint"];
   const SORT_KEYS = {
@@ -942,29 +1424,36 @@ APP_JS = r"""
   };
 
   // ---- state: hash first, then storage, then defaults ----
-  function defaults() {
-    return { view: "all", index: "intelligence", keys: [], hi: RUNGS[0] || null, lo: RUNGS[RUNGS.length - 1] || null, mode: "whole", sorts: {} };
+  function sourceDefaults(src) {
+    const rungs = M.presentRungs(src.rows, ORDER);
+    return { index: src.indexes[0]?.key || null, axis: src.default_axis, keys: [], hi: rungs[0] || null, lo: rungs[rungs.length - 1] || null, sorts: {}, start: null };
   }
+  function defaults() { return {view: "all", mode: "whole", source: DATA.default_source, per: {[DATA.default_source]: sourceDefaults(DATA.sources[DATA.default_source])}}; }
   function clean(raw) {
     if (!raw || typeof raw !== "object" || Array.isArray(raw)) return null;
     const s = defaults();
-    if (DATA.indexes.some((i) => i.key === raw.index)) s.index = raw.index;
     if (raw.view === "all" || raw.view === "compare") s.view = raw.view;
-    if (Array.isArray(raw.keys)) {
-      s.keys = raw.keys.filter((k, i) => typeof k === "string" && raw.keys.indexOf(k) === i).slice(0, LIMIT);
-    }
-    if (RUNGS.indexOf(raw.hi) !== -1) s.hi = raw.hi;
-    if (RUNGS.indexOf(raw.lo) !== -1) s.lo = raw.lo;
-    if (RUNGS.indexOf(s.hi) > RUNGS.indexOf(s.lo)) { s.hi = RUNGS[0] || null; s.lo = RUNGS[RUNGS.length - 1] || null; }
     if (raw.mode === "whole" || raw.mode === "decimal") s.mode = raw.mode;
-    if (raw.sorts && typeof raw.sorts === "object" && !Array.isArray(raw.sorts)) {
-      Object.keys(SORT_KEYS).forEach((table) => {
-        const v = raw.sorts[table];
-        if (v && SORT_KEYS[table].indexOf(v.key) !== -1 && (v.dir === "asc" || v.dir === "desc")) {
-          s.sorts[table] = { key: v.key, dir: v.dir };
-        }
+    const legacy = !raw.per && ["index", "keys", "hi", "lo", "sorts"].some((k) => k in raw);
+    const per = legacy ? {aa: raw} : raw.per || {};
+    if (!legacy && typeof raw.source === "string" && Object.keys(DATA.sources).includes(raw.source)) s.source = raw.source;
+    Object.keys(DATA.sources).forEach((key) => {
+      const src = DATA.sources[key], value = per[key];
+      if (!value || typeof value !== "object" || Array.isArray(value)) return;
+      const p = sourceDefaults(src), rungs = M.presentRungs(src.rows, ORDER);
+      if (src.indexes.some((i) => i.key === value.index)) p.index = value.index;
+      if (src.axes.some((a) => a.key === value.axis)) p.axis = value.axis;
+      if (Array.isArray(value.keys)) p.keys = value.keys.filter((k, i) => typeof k === "string" && value.keys.indexOf(k) === i).slice(0, LIMIT);
+      if (rungs.includes(value.hi)) p.hi = value.hi;
+      if (rungs.includes(value.lo)) p.lo = value.lo;
+      if (rungs.indexOf(p.hi) > rungs.indexOf(p.lo)) { p.hi = rungs[0] || null; p.lo = rungs[rungs.length - 1] || null; }
+      if (value.sorts && typeof value.sorts === "object" && !Array.isArray(value.sorts)) Object.keys(SORT_KEYS).forEach((table) => {
+        const v = value.sorts[table], allowed = SORT_KEYS[table].concat(table === "all" ? src.extras.map((c) => c.path) : []);
+        if (v && allowed.includes(v.key) && (v.dir === "asc" || v.dir === "desc")) p.sorts[table] = {key: v.key, dir: v.dir};
       });
-    }
+      if (typeof value.start === "string") p.start = value.start;
+      s.per[key] = p;
+    });
     return s;
   }
   function parse(text) {
@@ -997,15 +1486,16 @@ APP_JS = r"""
     return withTime ? d.toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" })
       : d.toLocaleDateString(undefined, { dateStyle: "medium" });
   }
-  function scoreText(raw, mode) { return mode === "decimal" ? raw.toFixed(1) : String(M.wholePoints(raw)); }
+  const scoreText = M.scoreText;
   function signedPoints(v, mode) {
     if (v === null || v === undefined) return "";
     if (v === 0) return mode === "decimal" ? "0.0" : "0";
     return (v > 0 ? "+" : MINUS) + M.showPoints(v, mode);
   }
-  function signedMoney(v) {
+  const QUANTITY = {money: "cost", time: "time", tokens: "output tokens"};
+  function signedAxis(v, axis) {
     if (v === null || v === undefined) return "";
-    return (v > 0 ? "+" : v < 0 ? MINUS : "") + M.money(v);
+    return (v > 0 ? "+" : v < 0 ? MINUS : "") + M.formatAxis(Math.abs(v), axis.unit);
   }
   function missingName(key) {
     try {
@@ -1025,8 +1515,8 @@ APP_JS = r"""
     return html`<td data-c="score" data-v=${row.score}><span class="num">${scoreText(row.index, mode)}</span>${
       mode === "whole" ? html`<span class="raw">${row.index.toFixed(1)}</span>` : null}</td>`;
   }
-  function CostCell({ row, borrowed }) {
-    return html`<td data-c="cost" class=${borrowed ? "borrowed" : ""}>${M.money(row.cost)}</td>`;
+  function CostCell({ row, borrowed, axis }) {
+    return html`<td data-c="cost" class=${borrowed ? "borrowed" : ""}>${M.formatAxis(row.cost, axis.unit)}</td>`;
   }
 
   function Th({ table, k, label, sorts, onSort, cls }) {
@@ -1040,27 +1530,29 @@ APP_JS = r"""
       onClick=${() => onSort(table, k)} onKeyDown=${onKey}>${label}${active ? (cur.dir === "desc" ? " ▼" : " ▲") : ""}</th>`;
   }
 
-  function StepCells({ step, mode, kind, borrowed }) {
+  function StepCells({ step, mode, kind, borrowed, axis }) {
     const base = kind + ".";
     if (!step) {
       return ["points", "cost", "perPoint"].map((f, i) => html`<td class=${"step" + (i === 0 ? " b" : borrowed ? " borrowed" : "")} data-c=${base + f}></td>`);
     }
-    const per = step.perPoint !== null ? M.money(step.perPoint) : (step.note || "");
+    const note = step.note === "costs no more" && axis.unit !== "money" ? (axis.unit === "time" ? "takes no more time" : "uses no more output tokens") : step.note;
+    const per = step.perPoint !== null ? M.formatAxis(step.perPoint, axis.unit) : (note || "");
     return [
       html`<td class="step b" data-c=${base + "points"}>${signedPoints(step.points, mode)}</td>`,
-      html`<td class=${"step" + (borrowed ? " borrowed" : "")} data-c=${base + "cost"}>${signedMoney(step.cost)}</td>`,
+      html`<td class=${"step" + (borrowed ? " borrowed" : "")} data-c=${base + "cost"}>${signedAxis(step.cost, axis)}</td>`,
       html`<td class=${"step" + (step.note ? " note" : "") + (borrowed ? " borrowed" : "")} data-c=${base + "perPoint"}>${per}</td>`,
     ];
   }
 
-  function StepHeads({ table, sorts, onSort }) {
+  function StepHeads({ table, sorts, onSort, axis }) {
     const p = { table, sorts, onSort };
+    const quantity = QUANTITY[axis.unit].charAt(0).toUpperCase() + QUANTITY[axis.unit].slice(1);
     return [
       html`<${Th} ...${p} k="up.points" label="Points" cls="b" />`,
-      html`<${Th} ...${p} k="up.cost" label="Cost" />`,
-      html`<${Th} ...${p} k="up.perPoint" label="Cost per point" />`,
+      html`<${Th} ...${p} k="up.cost" label=${quantity} />`,
+      html`<${Th} ...${p} k="up.perPoint" label=${quantity + " per point"} />`,
       html`<${Th} ...${p} k="down.points" label="Points" cls="b" />`,
-      html`<${Th} ...${p} k="down.cost" label="Cost" />`,
+      html`<${Th} ...${p} k="down.cost" label=${quantity} />`,
       html`<${Th} ...${p} k="down.perPoint" label="Saved per point" />`,
     ];
   }
@@ -1078,7 +1570,7 @@ APP_JS = r"""
       <text x=${PAD.l - 6} y=${y(v) + 4} text-anchor="end">${v}</text></g>`);
   }
 
-  function Scatter({ rows, front, color, title, borrowed }) {
+  function Scatter({ rows, front, color, title, borrowed, axis }) {
     const costs = rows.map((r) => r.cost);
     let lo = Math.min.apply(null, costs), hi = Math.max.apply(null, costs);
     if (lo === hi) { lo /= 2; hi *= 2; } else { lo /= 1.3; hi *= 1.3; }
@@ -1094,15 +1586,15 @@ APP_JS = r"""
       <${YAxis} lo=${ylo} hi=${yhi} y=${y} />
       ${logTicks(lo, hi).map((v) => html`<g key=${"x" + v}>
         <line class="grid" x1=${x(v)} x2=${x(v)} y1=${PAD.t} y2=${H - PAD.b} />
-        <text x=${x(v)} y=${H - PAD.b + 16} text-anchor="middle">${"$" + v}</text></g>`)}
-      <text x=${(PAD.l + W - PAD.r) / 2} y=${H - 6} text-anchor="middle">${borrowed ? "Overall cost per task, log scale" : "Cost per task, log scale"}</text>
+        <text x=${x(v)} y=${H - PAD.b + 16} text-anchor="middle">${axis.unit === "money" ? "$" + v : M.formatAxis(v, axis.unit)}</text></g>`)}
+      <text x=${(PAD.l + W - PAD.r) / 2} y=${H - 6} text-anchor="middle">${(borrowed ? "Overall " + M.lowerFirst(axis.label) : axis.label) + ", log scale"}</text>
       ${d ? html`<path class=${borrowed ? "stair borrowed" : "stair"} d=${d} />` : null}
       ${rows.map((r) => {
         const c = color(r);
         const filled = onFront.has(r.slug);
         return html`<circle key=${r.slug} cx=${x(r.cost)} cy=${y(r.score)} r="4.5"
           fill=${filled ? c : "var(--panel)"} stroke=${c} stroke-width="1.8">
-          <title>${r.label + ": " + scoreText(r.index, "decimal") + ", " + M.money(r.cost) + (borrowed ? " overall" : "")}</title></circle>`;
+          <title>${r.label + ": " + scoreText(r.index, "decimal") + ", " + M.formatAxis(r.cost, axis.unit) + (borrowed ? " overall" : "")}</title></circle>`;
       })}
     </svg>`;
   }
@@ -1139,8 +1631,9 @@ APP_JS = r"""
       const timer = setInterval(() => setNow(Date.now()), 60000);
       return () => clearInterval(timer);
     }, []);
-    const age = M.dataAge(DATA.last_checked, now, DATA.max_age_hours);
-    const rl = DATA.rate_limit || {};
+    const age = M.dataAge(SRC.last_checked, now, SRC.max_age_hours);
+    const rl = SRC.rate_limit || {};
+    const COMMAND = "model_ladder refresh --source " + SRC.key;
     const copy = () => {
       let pending;
       try { pending = navigator.clipboard.writeText(COMMAND); } catch (e) { pending = Promise.reject(e); }
@@ -1152,13 +1645,14 @@ APP_JS = r"""
     const reset = rl.reset ? new Date(rl.reset * 1000) : null;
     return html`<div class="status">
       <span id="status-age" class=${age.stale ? "age stale" : "age"}>${age.text}</span>
-      <span>Fetched <b>${when(DATA.fetched_at, true)}</b></span>
-      <span>Intelligence Index <b>${"v" + DATA.index_version}</b></span>
+      <span>Fetched <b>${when(SRC.fetched_at, true)}</b></span>
+      <span>${SRC.version_label}</span>
+      ${SRC.published && SRC.published.note ? html`<span>${SRC.published.note}</span>` : null}
       <span><b>${view.rows.length}</b>${view.rows.length !== ALL_ROWS.length ? html` of <b>${ALL_ROWS.length}</b>` : null} scored models</span>
       <span id="status-attention"><b>${view.attention.length}</b>${view.attention.length === 1 ? " needs" : " need"} attention</span>
-      <span id="status-quota">${rl.remaining !== null && rl.remaining !== undefined && rl.limit !== null && rl.limit !== undefined
+      ${SRC.has_quota ? html`<span id="status-quota">${rl.remaining !== null && rl.remaining !== undefined && rl.limit !== null && rl.limit !== undefined
         ? html`<b>${rl.remaining}</b> of ${rl.limit} requests left at the last fetch${reset && !isNaN(reset.getTime()) ? ", resets " + when(reset.toISOString(), true) : ""}`
-        : "Request quota unknown"}</span>
+        : "Request quota unknown"}</span>` : null}
       <button id="copy-refresh" type="button" onClick=${copy}>${copied === "done" ? "Copied" : "Copy refresh command"}</button>
       ${copied === "failed" ? html`<span>Copy this command: <code class="cmd">${COMMAND}</code></span>` : null}
     </div>`;
@@ -1173,34 +1667,43 @@ APP_JS = r"""
     </section>`;
   }
 
-  function Changes({ mode, index }) {
-    const c = DATA.changes;
+  function Changes({ mode, index, axis }) {
+    const c = SRC.changes;
     if (!c) return null;
-    const shown = M.changesToShow(c, mode, index);
-    const empty = !c.version && !c.added.length && !c.removed.length && !shown.length;
+    const shown = M.changesToShow(c, mode, index, axis, SRC.extras);
+    const maximum = (c.maxima || {})[index];
+    const empty = !c.version && !maximum && !c.added.length && !c.removed.length && !shown.length;
     const describe = (item) => {
       const parts = [];
       const a = item.scores[index][0] === null ? "no score" : scoreText(item.scores[index][0], mode);
       const b = item.scores[index][1] === null ? "no score" : scoreText(item.scores[index][1], mode);
       parts.push(a === b ? "score " + a : "score " + a + " to " + b);
-      const ca = M.money(item.cost[0]) || "no cost", cb = M.money(item.cost[1]) || "no cost";
-      parts.push(ca === cb ? "cost " + ca : "cost " + ca + " to " + cb);
+      const pair = item.axes[axis.key] || [null, null], quantity = QUANTITY[axis.unit];
+      const ca = M.formatAxis(pair[0], axis.unit) || "no " + quantity, cb = M.formatAxis(pair[1], axis.unit) || "no " + quantity;
+      parts.push(ca === cb ? quantity + " " + ca : quantity + " " + ca + " to " + cb);
+      SRC.extras.filter((col) => col.kind !== "date").forEach((col) => {
+        const values = (item.extras || {})[col.path];
+        if (!values) return;
+        const a = M.formatExtra(values[0], col.kind), b = M.formatExtra(values[1], col.kind);
+        if (a !== b) parts.push(col.label + " " + (a || "none") + " to " + (b || "none"));
+      });
       return parts.join("; ");
     };
     return html`<details id="changes" class="box changes" open=${!!c.version}>
       <summary>What changed between ${when(c.from)} and ${when(c.to)}</summary>
       <div class="changes-body">
-        ${c.version ? html`<p class="ver">Intelligence Index version changed from ${c.version[0]} to ${c.version[1]}. Scores from different versions are not comparable.</p>` : null}
+        ${c.version ? html`<p class="ver">${SRC.key === "aicd" ? `AI Coding Daily changed its maximum from ${c.version[0]} to ${c.version[1]} points. Scores before and after are not comparable.` : `Intelligence Index version changed from ${c.version[0]} to ${c.version[1]}. Scores from different versions are not comparable.`}</p>` : null}
+        ${maximum ? html`<p class="ver">${SRC.indexes.find((i) => i.key === index).label} maximum changed from ${maximum[0]} to ${maximum[1]}. Scores are not comparable.</p>` : null}
         ${c.added.length ? html`<div data-changes="added"><h3>Added (${c.added.length})</h3><ul>${c.added.map((n, i) => html`<li key=${i}>${n}</li>`)}</ul></div>` : null}
         ${c.removed.length ? html`<div data-changes="removed"><h3>Removed (${c.removed.length})</h3><ul>${c.removed.map((n, i) => html`<li key=${i}>${n}</li>`)}</ul></div>` : null}
-        ${shown.length ? html`<div><h3>Score or cost changed (${shown.length})</h3><ul>${shown.map((item) => html`<li key=${item.slug}>${item.name}: ${describe(item)}</li>`)}</ul></div>` : null}
+        ${shown.length ? html`<div><h3>Score or ${QUANTITY[axis.unit]}${SRC.extras.length ? " or extras" : ""} changed (${shown.length})</h3><ul>${shown.map((item) => html`<li key=${item.slug}>${item.name}: ${describe(item)}</li>`)}</ul></div>` : null}
         ${empty ? html`<p class="note">Nothing changed that shows in ${mode === "whole" ? "whole points" : "decimals"}.</p>` : null}
       </div>
     </details>`;
   }
 
   // ---- all models view ----
-  function AllView({ state, onSort, toggleKey, view, borrowed, indexLabel }) {
+  function AllView({ state, onSort, toggleKey, view, borrowed, indexLabel, axis }) {
     const [creator, setCreator] = useState("");
     const [query, setQuery] = useState("");
     useEffect(() => { if (creator && !view.makers.includes(creator)) setCreator(""); }, [view, creator]);
@@ -1211,23 +1714,24 @@ APP_JS = r"""
       return sel.map((r) => Object.assign(r, {
         effort: effortValue(r), tagText: r.tags.length ? r.tags.join(", ") : null, status: status[r.slug] || null,
       }));
-    }, [state.mode, state.index]);
+    }, [state.mode, state.index, state.axis, SRC.key]);
     const front = useMemo(() => M.frontier(rows), [rows]);
     const visible = ordered(M.searchRows(rows, query).filter((r) => !creator || r.maker === creator), "all", state.sorts);
     const priced = rows.filter((r) => r.status);
     const full = state.keys.length >= LIMIT;
     const p = { table: "all", sorts: state.sorts, onSort };
+    const label = borrowed ? "Overall " + M.lowerFirst(axis.label) : axis.label, quantity = QUANTITY[axis.unit];
     return html`<div class="view">
       <section>
         <h2>Every scored model</h2>
-        <p class="note">Each point is one model variant with a cost per task. The green staircase is the frontier: nothing scores at least as high for less.</p>
-        ${priced.length ? html`<div class="box chart solo"><${Scatter} rows=${priced} front=${front} title=${indexLabel + " against cost per task"} borrowed=${borrowed}
-          color=${(r) => (r.status === "frontier" ? "var(--front)" : "var(--muted)")} /></div>` : html`<p class="empty">No scored model has a cost per task.</p>`}
+        <p class="note">Each point is one model variant with a ${M.lowerFirst(axis.label)}. The green staircase is the frontier: nothing scores at least as high for less.</p>
+        ${priced.length ? html`<div class="box chart solo"><${Scatter} rows=${priced} front=${front} title=${indexLabel + " against " + M.lowerFirst(label)} borrowed=${borrowed} axis=${axis}
+          color=${(r) => (r.status === "frontier" ? "var(--front)" : "var(--muted)")} /></div>` : html`<p class="empty">No scored model has a ${M.lowerFirst(axis.label)}.</p>`}
       </section>
       <section>
         <div class="filters">
-          <select id="all-creator" aria-label="Creator" value=${creator} onChange=${(e) => setCreator(e.currentTarget.value)}>
-            <option value="">All creators</option>
+          <select id="all-creator" aria-label=${SRC.group_label} value=${creator} onChange=${(e) => setCreator(e.currentTarget.value)}>
+            <option value="">All ${M.lowerFirst(SRC.group_label)}${SRC.group_label.endsWith("s") ? "es" : "s"}</option>
             ${view.makers.map((m) => html`<option key=${m} value=${m}>${m}</option>`)}
           </select>
           <input id="all-filter" type="search" placeholder="Filter by name or creator" aria-label="Filter by name or creator"
@@ -1237,12 +1741,13 @@ APP_JS = r"""
         <div class="box scroll"><table id="all-table">
           <thead><tr>
             <th class="l">Compare</th>
-            <${Th} ...${p} k="maker" label="Creator" cls="l" />
+            <${Th} ...${p} k="maker" label=${SRC.group_label} cls="l" />
             <${Th} ...${p} k="family" label="Model" cls="l" />
             <${Th} ...${p} k="effort" label="Effort" cls="l" />
             <${Th} ...${p} k="tagText" label="Tags" cls="l" />
             <${Th} ...${p} k="score" label="Index" />
-            <${Th} ...${p} k="cost" label=${borrowed ? "Overall cost per task" : "Cost per task"} />
+            ${SRC.extras.map((col) => html`<${Th} ...${p} k=${col.path} label=${col.label} />`)}
+            <${Th} ...${p} k="cost" label=${label} />
             <${Th} ...${p} k="release_date" label="Released" />
             <${Th} ...${p} k="status" label="Frontier" cls="l" />
           </tr></thead>
@@ -1256,10 +1761,11 @@ APP_JS = r"""
               <td class="l" data-c="effort">${r.problem ? "Unclassified" : (r.rung ? M.rungLabel(r.rung) : "")}</td>
               <td class="l" data-c="tags">${r.tagText || ""}</td>
               <${ScoreCell} row=${r} mode=${state.mode} />
-              <${CostCell} row=${r} borrowed=${borrowed} />
-              <td data-c="release_date">${r.release_date || ""}</td>
+              ${SRC.extras.map((col) => html`<td data-c=${col.path}>${M.formatExtra(window.ladderCore.pathValue(r, col.path), col.kind)}</td>`)}
+              <${CostCell} row=${r} borrowed=${borrowed} axis=${axis} />
+              <td data-c="release_date">${r.release_date ? M.dayText(r.release_date) : ""}</td>
               <td class="l" data-c="status">${r.status === "frontier" ? html`<span class="pill f">Frontier</span>`
-                : r.status === "dominated" ? html`<span class="pill d">Dominated</span>` : html`<span class="pill n">No cost</span>`}</td>
+                : r.status === "dominated" ? html`<span class="pill d">Dominated</span>` : html`<span class="pill n">No ${quantity}</span>`}</td>
             </tr>`;
           })}</tbody>
         </table></div>
@@ -1355,7 +1861,7 @@ APP_JS = r"""
     </div>`;
   }
 
-  function CompareView({ state, update, onSort, toggleKey, view, borrowed, indexLabel, indexShort }) {
+  function CompareView({ state, update, onSort, toggleKey, view, borrowed, indexLabel, indexShort, axis }) {
     const present = state.keys.filter((k) => view.familyByKey[k]);
     const controls = html`<${Controls} state=${state} update=${update} toggleKey=${toggleKey} view=${view} indexShort=${indexShort} />`;
     const missing = M.unscoredRows(ALL_ROWS, state.index, { keys: state.keys, hi: state.hi, lo: state.lo, rungOrder: ORDER, mode: state.mode });
@@ -1375,7 +1881,8 @@ APP_JS = r"""
     const sel = M.selectRows(view.rows, { keys: present, hi: state.hi, lo: state.lo, rungOrder: ORDER, mode });
     const steps = M.familySteps(sel);
     const pareto = M.paretoRows(sel);
-    const notes = M.findings(pareto, steps, mode);
+    const notes = M.findings(pareto, steps, mode, axis);
+    const quantity = QUANTITY[axis.unit], label = borrowed ? "Overall " + M.lowerFirst(axis.label) : axis.label;
     [sel, steps, pareto].forEach((list) => list.forEach((r) => { r.effort = effortValue(r); }));
     const color = (r) => colorOf(state.keys, r.family_key);
 
@@ -1392,12 +1899,35 @@ APP_JS = r"""
     const unpriced = sel.length - pareto.length;
     const sp = { table: "steps", sorts: state.sorts, onSort };
     const pp = { table: "pareto", sorts: state.sorts, onSort };
+    const starting = M.startLadder(sel, state.start);
+    const categories = SRC.indexes.filter((i) => i.borrowed && i.max != null && i.max > 0);
+    const axisName = M.lowerFirst(axis.label);
     const groupRow = (lead) => html`<tr class="grp"><th colspan=${lead}></th>
       <th colspan="3" class="b">One step up</th><th colspan="3" class="b">One step down</th></tr>`;
 
     return html`<div class="view">
       ${controls}
       ${note}
+      <section id="start-ladder">
+        <div class="group"><label for="start-select">Start from</label><select id="start-select" value=${state.start && sel.some((r) => r.slug === state.start) ? state.start : starting.start?.slug || ""} onChange=${(e) => update({start: e.currentTarget.value})}>
+          ${sel.map((r) => html`<option key=${r.slug} value=${r.slug}>${r.label}</option>`)}
+        </select></div>
+        ${starting.start ? html`<h2>Ladder from ${starting.start.label}</h2>
+          <p class="note">The selection's frontier on ${axisName}, highest score at the top. Each line between rungs is the step to the next rung: up if this one fails, down to try for less.</p>
+          ${starting.unplaced ? html`<p id="start-unplaced" class="ver">${starting.unplaced.label} has no ${axisName}, so it can't be placed on this ladder. Showing the ladder from ${starting.start.label} instead.</p>` : null}
+          <div class="start-layout"><ol class="ladder box">${starting.rungs.map((r, i) => [
+            i ? html`<li class="step"><span>${M.stepSentence(starting.steps[i - 1].step, starting.steps[i - 1].direction, axis, mode)}</span></li>` : null,
+            html`<li class=${"rung" + (r.slug === starting.start.slug ? " start" : "")} style=${"--c:" + color(r)}><span class="node"></span><span class="who"><strong>${r.label}</strong>${r.slug === starting.start.slug ? html`<span class="tag">${starting.startOn ? "Start" : "Start, off the ladder"}</span>` : null}</span><span class="score">${scoreText(r.index, mode)}</span><span class="x">${M.formatAxis(r.cost, axis.unit)}</span></li>`
+          ])}</ol><aside class="box start-side">
+            <h3>${starting.start.family} at each effort</h3><div class="scroll"><table><thead><tr><th>Effort</th><th>Score</th><th>${axis.label}</th></tr></thead><tbody>${sel.filter((r) => r.family_key === starting.start.family_key).map((r) => html`<tr class=${starting.offLadder.some((d) => d.slug === r.slug) ? "off" : ""}><td>${M.rungLabel(r.rung) || r.label}${starting.offLadder.some((d) => d.slug === r.slug) ? " (off ladder)" : ""}</td><td>${scoreText(r.index, mode)}</td><td>${M.formatAxis(r.cost, axis.unit)}</td></tr>`)}</tbody></table></div>
+            ${starting.offLadder.length ? html`<h3>Off the ladder</h3><ul>${starting.offLadder.map((r) => html`<li>${r.label}${r.slug === starting.start.slug ? " (start)" : ""}: ${M.dominatedReason(r, mode, axis)}.</li>`)}</ul>` : null}
+            ${starting.unpriced.length ? html`<h3>Not on this ladder</h3><p>No ${axisName}: ${starting.unpriced.map((r) => r.label).join(", ")}.</p>` : null}
+          </aside></div>` : html`<p class="empty box">None of the selected rows has a ${axisName}.</p>`}
+      </section>
+      ${categories.length ? html`<section id="categories"><h2>Score by category</h2>
+        <p class="note">Each bar is scaled to that category's maximum. Categories share the overall ${axisName}.</p>
+        <div class="box scroll"><table><thead><tr><th class="l">Model and effort</th>${categories.map((c) => html`<th>${c.label}</th>`)}</tr></thead>
+        <tbody>${sel.map((r) => html`<tr><th class="l">${r.label}</th>${categories.map((c) => { const value = r.scores[c.key]; return html`<td>${value == null ? "" : html`${value.toFixed(1)}<span class="category-bar"><i style=${"width: " + (value / c.max * 100) + "%"}></i></span>`}</td>`; })}</tr>`)}</tbody></table></div></section>` : null}
       <section id="ladder">
         <h2>Effort ladder</h2>
         ${fams.length ? html`<div class=${sel.some((r) => r.rank !== null) ? "pair" : ""}>
@@ -1405,13 +1935,13 @@ APP_JS = r"""
           <div class="box scroll"><table id="ladder-table">
             <thead>
               <tr class="grp"><th></th>${fams.map((k) => html`<th key=${k} colspan="2" class="b"><${Dot} color=${colorOf(state.keys, k)} />${view.familyByKey[k].family}</th>`)}</tr>
-              <tr><th>Effort</th>${fams.map((k) => [html`<th class="b">Index</th>`, html`<th>${borrowed ? "Overall cost per task" : "Cost per task"}</th>`])}</tr>
+              <tr><th>Effort</th>${fams.map((k) => [html`<th class="b">Index</th>`, html`<th>${label}</th>`])}</tr>
             </thead>
             <tbody>${rungs.map((rung) => html`<tr key=${rung}><th>${M.rungLabel(rung)}</th>${fams.map((k) => {
               const r = cell(k, rung);
               return r ? [html`<td class="b" data-c="score" data-v=${r.score}><span class="num">${scoreText(r.index, mode)}</span>${
                 mode === "whole" ? html`<span class="raw">${r.index.toFixed(1)}</span>` : null}</td>`,
-                html`<${CostCell} row=${r} borrowed=${borrowed} />`]
+                html`<${CostCell} row=${r} borrowed=${borrowed} axis=${axis} />`]
                 : [html`<td class=${missingCell(k, rung) ? "b none" : "b"}>${missingCell(k, rung) ? "No score" : ""}</td>`, html`<td></td>`];
             })}</tr>`)}</tbody>
           </table></div>
@@ -1420,22 +1950,22 @@ APP_JS = r"""
 
       <section id="steps">
         <h2>Steps within each model</h2>
-        <p class="note">What one step of effort costs or saves. Steps always follow the effort order, however the table is sorted.</p>
+        <p class="note">${axis.unit === "money" ? "What one step of effort costs or saves." : axis.unit === "time" ? "What one step of effort takes or saves in time." : "What one step of effort uses or saves in output tokens."} Steps always follow the effort order, however the table is sorted.</p>
         ${steps.length ? html`<div class="box scroll"><table id="steps-table">
           <thead>${groupRow(4)}<tr>
             <${Th} ...${sp} k="family" label="Model" cls="l" />
             <${Th} ...${sp} k="effort" label="Effort" cls="l" />
             <${Th} ...${sp} k="score" label="Index" />
-            <${Th} ...${sp} k="cost" label=${borrowed ? "Overall cost per task" : "Cost per task"} />
-            <${StepHeads} ...${sp} />
+            <${Th} ...${sp} k="cost" label=${label} />
+            <${StepHeads} ...${sp} axis=${axis} />
           </tr></thead>
           <tbody>${stepRows.map((r) => html`<tr key=${r.slug}>
             <td class="l" data-c="family"><${Dot} color=${color(r)} />${r.family}</td>
             <td class="l" data-c="effort">${M.rungLabel(r.rung)}</td>
             <${ScoreCell} row=${r} mode=${mode} />
-            <${CostCell} row=${r} borrowed=${borrowed} />
-            <${StepCells} step=${r.up} mode=${mode} kind="up" borrowed=${borrowed} />
-            <${StepCells} step=${r.down} mode=${mode} kind="down" borrowed=${borrowed} />
+            <${CostCell} row=${r} borrowed=${borrowed} axis=${axis} />
+            <${StepCells} step=${r.up} mode=${mode} kind="up" borrowed=${borrowed} axis=${axis} />
+            <${StepCells} step=${r.down} mode=${mode} kind="down" borrowed=${borrowed} axis=${axis} />
           </tr>`)}</tbody>
         </table></div>` : html`<p class="empty box">None of the selected models has effort levels in this range.</p>`}
       </section>
@@ -1443,34 +1973,34 @@ APP_JS = r"""
       <section id="pareto">
         <h2>Pareto ladder</h2>
         <p class="note">A row is on the frontier when nothing else in the selection scores at least as high for less. Steps run between neighbouring frontier rows.${
-          unpriced && pareto.length ? " " + unpriced + (unpriced === 1 ? " selected row has" : " selected rows have") + " no cost and " + (unpriced === 1 ? "is" : "are") + " left out." : ""}</p>
+          unpriced && pareto.length ? " " + unpriced + (unpriced === 1 ? " selected row has" : " selected rows have") + " no " + quantity + " and " + (unpriced === 1 ? "is" : "are") + " left out." : ""}</p>
         ${pareto.length ? html`<div class="stack">
           <div class="box chart solo"><${Scatter} rows=${pareto} front=${pareto.filter((r) => r.status === "frontier")} color=${color}
-            title=${"Selected rows: " + indexLabel + " against cost per task"} borrowed=${borrowed} /></div>
+            title=${"Selected rows: " + indexLabel + " against " + M.lowerFirst(label)} borrowed=${borrowed} axis=${axis} /></div>
           <div class="box scroll"><table id="pareto-table">
             <thead>${groupRow(4)}<tr>
               <${Th} ...${pp} k="label" label="Model and effort" cls="l" />
               <${Th} ...${pp} k="score" label="Index" />
-              <${Th} ...${pp} k="cost" label=${borrowed ? "Overall cost per task" : "Cost per task"} />
+              <${Th} ...${pp} k="cost" label=${label} />
               <${Th} ...${pp} k="status" label="Status" cls="l" />
-              <${StepHeads} ...${pp} />
+              <${StepHeads} ...${pp} axis=${axis} />
             </tr></thead>
             <tbody>${paretoRows.map((r) => html`<tr key=${r.slug} class=${r.status === "dominated" ? "dom" : ""}>
               <td class="l" data-c="label"><${Dot} color=${color(r)} />${r.label}</td>
               <${ScoreCell} row=${r} mode=${mode} />
-              <${CostCell} row=${r} borrowed=${borrowed} />
+              <${CostCell} row=${r} borrowed=${borrowed} axis=${axis} />
               <td class="l" data-c="status">${r.status === "frontier" ? html`<span class="pill f">Frontier</span>` : html`<span class="pill d">Dominated</span>`}</td>
               ${r.status === "frontier"
-                ? [html`<${StepCells} step=${r.up} mode=${mode} kind="up" borrowed=${borrowed} />`, html`<${StepCells} step=${r.down} mode=${mode} kind="down" borrowed=${borrowed} />`]
-                : html`<td colspan="6" class="reason b">${M.dominatedReason(r, mode)}</td>`}
+                ? [html`<${StepCells} step=${r.up} mode=${mode} kind="up" borrowed=${borrowed} axis=${axis} />`, html`<${StepCells} step=${r.down} mode=${mode} kind="down" borrowed=${borrowed} axis=${axis} />`]
+                : html`<td colspan="6" class="reason b">${M.dominatedReason(r, mode, axis)}</td>`}
             </tr>`)}</tbody>
           </table></div>
-        </div>` : html`<p class="empty box">None of the selected rows has a cost per task.</p>`}
+        </div>` : html`<p class="empty box">None of the selected rows has a ${M.lowerFirst(axis.label)}.</p>`}
       </section>
 
       <section id="say">
         <h2>What the numbers say</h2>
-        ${borrowed ? html`<p class="note">Costs in these sentences are Intelligence Index costs.</p>` : null}
+        ${borrowed ? html`<p class="note">${axis.unit === "money" && SRC.key === "aa" ? "Costs in these sentences are Intelligence Index costs." : "Values in these sentences are overall " + quantity + (axis.per === "per prompt" && axis.unit !== "tokens" ? " per prompt" : "") + ", including " + quantity + " per point."}</p>` : null}
         ${notes.length ? html`<ul id="findings" class="find box">${notes.map((n, i) => html`<li key=${i}>${n}</li>`)}</ul>`
           : html`<p id="findings" class="empty box">Nothing to report for this selection.</p>`}
       </section>
@@ -1479,10 +2009,14 @@ APP_JS = r"""
 
   // ---- app ----
   function App() {
-    const [state, setState] = useState(initialState);
+    const [saved, setState] = useState(initialState);
+    SRC = DATA.sources[saved.source]; ALL_ROWS = SRC.rows;
+    RUNGS = M.presentRungs(ALL_ROWS, ORDER); KNOWN_FAMILIES = {};
+    ALL_ROWS.forEach((r) => { KNOWN_FAMILIES[r.family_key] = {family: r.family, maker: r.maker}; });
+    const state = Object.assign({}, sourceDefaults(SRC), saved.per[saved.source] || {}, {view: saved.view, mode: saved.mode});
     // Layout effect: the hash and storage are current as soon as the change renders,
     // so a reload or bookmark right after a click keeps it.
-    useLayoutEffect(() => { saveState(state); }, [state]);
+    useLayoutEffect(() => { saveState(saved); }, [saved]);
     // Layout effect: the listener is attached before the first paint, so a hash change
     // right after the page loads is never missed.
     useLayoutEffect(() => {
@@ -1490,7 +2024,18 @@ APP_JS = r"""
       window.addEventListener("hashchange", onHash);
       return () => window.removeEventListener("hashchange", onHash);
     }, []);
-    const update = (patch) => setState((prev) => Object.assign({}, prev, typeof patch === "function" ? patch(prev) : patch));
+    const update = (patch) => setState((prev) => {
+      const current = Object.assign({}, sourceDefaults(DATA.sources[prev.source]), prev.per[prev.source] || {}, {view: prev.view, mode: prev.mode});
+      const changes = typeof patch === "function" ? patch(current) : patch;
+      const next = Object.assign({}, prev), per = Object.assign({}, prev.per), sourceState = Object.assign({}, current);
+      Object.keys(changes).forEach((key) => {
+        if (key === "view" || key === "mode" || key === "source") next[key] = changes[key];
+        else sourceState[key] = changes[key];
+      });
+      delete sourceState.view; delete sourceState.mode;
+      per[prev.source] = sourceState; next.per = per;
+      return next;
+    });
     const toggleKey = (key) => update((s) => {
       if (s.keys.indexOf(key) !== -1) return { keys: s.keys.filter((k) => k !== key) };
       return s.keys.length < LIMIT ? { keys: s.keys.concat([key]) } : {};
@@ -1504,29 +2049,47 @@ APP_JS = r"""
     });
     const tab = (view, label) => html`<button role="tab" type="button" id=${"tab-" + view} aria-selected=${String(state.view === view)}
       onClick=${() => update({ view })}>${label}</button>`;
-    const view = viewFor(state.index), borrowed = state.index !== "intelligence";
-    const indexInfo = DATA.indexes.find((i) => i.key === state.index);
-    const indexLabel = indexInfo.label, indexShort = indexInfo.short;
-    const props = { state, update, onSort, toggleKey, view, borrowed, indexLabel, indexShort };
+    const view = viewFor(state.index, state.axis), borrowed = !!SRC.indexes.find((i) => i.key === state.index)?.borrowed;
+    const indexInfo = SRC.indexes.find((i) => i.key === state.index);
+    const axis = SRC.axes.find((a) => a.key === state.axis), indexLabel = indexInfo?.label || "", indexShort = indexInfo?.short || "";
+    const props = { state, update, onSort, toggleKey, view, borrowed, indexLabel, indexShort, axis };
+    const now = Date.now();
+    const failed = (src) => src.error && Date.parse(src.last_attempt) > Date.parse(src.last_checked);
     return html`<div class="wrap">
       <header>
-        <div><h1>Model Ladder</h1><p class="sub">Effort levels compared by ${borrowed ? "the " + indexLabel + " index" : indexLabel} and cost per task.</p></div>
-        <${Status} view=${view} />
+        <div><h1>Model Ladder</h1><p class="sub">${SRC.key === "aa" ? "Effort levels compared by " + (borrowed ? "the " + indexLabel + " index" : indexLabel) + " and cost per task." : axis ? "Effort levels compared by " + SRC.label + " " + M.lowerFirst(indexLabel) + " and " + M.lowerFirst(axis.label) + "." : ""}</p></div>
+        <nav class="sources" aria-label="Data source">${Object.keys(DATA.sources).map((key) => {
+          const src = DATA.sources[key], checked = M.checkedText(src.last_checked, now, src.max_age_hours);
+          const text = !src.available ? "No data yet" : failed(src) ? "Fetch failed " + when(src.last_attempt) + "; showing " + when(src.fetched_at)
+            : src.published ? "Updated " + M.dayText(src.published.date) + ", " + M.lowerFirst(checked.text) : checked.text;
+          return html`<button id=${"source-" + key} type="button" aria-pressed=${String(saved.source === key)} class=${(!src.available || failed(src) ? "failed " : "") + (checked.stale ? "stale" : "")} onClick=${() => update({source: key})}><span>${src.label}</span><small>${text}</small></button>`;
+        })}</nav>
+        ${SRC.available ? html`<${Status} view=${view} />` : null}
       </header>
+      ${!SRC.available ? html`<p class="empty">No data from ${SRC.label} yet. Run model_ladder refresh --source ${SRC.key}.</p>` : html`<${FragmentBody} ...${props} failed=${failed(SRC)} now=${now} tab=${tab} />`}
+    </div>`;
+  }
+  function FragmentBody({state, update, onSort, toggleKey, view, borrowed, indexLabel, indexShort, axis, failed, now, tab}) {
+    const props = {state, update, onSort, toggleKey, view, borrowed, indexLabel, indexShort, axis};
+    return html`<div class="body">
+      ${failed ? html`<p id="source-error" class="ver">The last fetch on ${when(SRC.last_attempt, true)} failed: ${SRC.error}. This page shows data fetched ${when(SRC.fetched_at, true)}.</p>` : null}
+      ${SRC.published && now - Date.parse(SRC.published.date + "T00:00:00Z") > 30 * 864e5 ? html`<p id="source-quiet" class="note">No new results from ${SRC.label} since ${M.dayText(SRC.published.date)}.</p>` : null}
+      ${SRC.notice ? html`<p id="source-notice" class="note">${SRC.notice}</p>` : null}
+      ${SRC.key === "fc" && SRC.current_version && SRC.current_version !== SRC.version ? html`<p id="source-version" class="ver">FrontierCode ${SRC.current_version} is now current; this page shows ${SRC.version}.</p>` : null}
       <${Attention} view=${view} />
-      <${Changes} mode=${state.mode} index=${state.index} />
+      <${Changes} mode=${state.mode} index=${state.index} axis=${axis} />
       <div class="index-bar"><label for="index-select">Scored by</label><select id="index-select" value=${state.index} onChange=${(e) => update({ index: e.currentTarget.value })}>
-        ${DATA.indexes.filter((i) => i.key === "intelligence" || i.count > 0).map((i) => html`<option key=${i.key} value=${i.key}>${i.label} (${i.count})</option>`)}
-      </select></div>
-      ${borrowed ? html`<p id="cost-notice" class="ver cost-notice">Costs here are from the Intelligence Index run. Artificial Analysis publishes no cost for the ${indexLabel} index, so every cost, frontier and cost per point on this page pairs these scores with that cost.</p>` : null}
+        ${SRC.indexes.filter((i, n) => n === 0 || i.count > 0).map((i) => html`<option key=${i.key} value=${i.key}>${i.label} (${i.count})</option>`)}
+      </select>${SRC.axes.length > 1 ? html`<span>Plot against</span><span class="seg">${SRC.axes.map((a) => html`<button id=${"axis-" + a.key} type="button" aria-pressed=${String(axis.key === a.key)} onClick=${() => update({axis: a.key})}>${a.label}</button>`)}</span>` : null}</div>
+      ${borrowed && SRC.borrowed_notice[axis.key] ? html`<p id="cost-notice" class="ver cost-notice">${SRC.borrowed_notice[axis.key].replaceAll("{index}", indexLabel)}</p>` : null}
       <div class="tabs" role="tablist">
         ${tab("all", "All models")}
         ${tab("compare", state.keys.length ? "Compare (" + state.keys.length + ")" : "Compare")}
       </div>
       ${state.view === "all" ? html`<${AllView} ...${props} />` : html`<${CompareView} ...${props} />`}
       <footer>
-        <p>Benchmark data from <a href="https://artificialanalysis.ai" target="_blank" rel="noopener">Artificial Analysis</a>.</p>
-        <p>Cost per task is the cost of their benchmark workload, not of a typical API call.</p>
+        <p>Benchmark data from ${Object.values(DATA.sources).map((src, i) => [i ? (i === Object.keys(DATA.sources).length - 1 ? " and " : ", ") : "", html`<a href=${src.attribution.url} target="_blank" rel="noopener">${src.attribution.name}</a>`])}. Each source is shown on its own; scores are never combined.</p>
+        ${SRC.key === "aa" ? html`<p>Cost per task is the cost of their benchmark workload, not of a typical API call.</p>` : null}
         <p>${DATA.app.name + " " + DATA.app.version}</p>
       </footer>
     </div>`;
@@ -2087,12 +2650,13 @@ def testing_mode_enabled() -> bool:
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="model_ladder",
-        description="Compare model effort levels by available Artificial Analysis indexes and cost per task.",
+        description="Compare model effort levels by score and price from separate benchmark sources.",
         epilog="Runtime home: ~/.model_ladder/ (override with MODEL_LADDER_HOME).",
     )
     parser.add_argument("command", nargs="?", choices=("refresh", "build"),
                         help="refresh: always fetch first; build: never fetch")
     parser.add_argument("--no-refresh", action="store_true", help="never fetch, even if the data is old")
+    parser.add_argument("--source", choices=SOURCE_KEYS, help="fetch only this source")
     parser.add_argument("--no-open", action="store_true", help="do not open the page in a browser")
     parser.add_argument("--output", type=Path, help="write the page here instead of the runtime home")
     parser.add_argument("--version", action="version", version=f"Model Ladder {VERSION}")
@@ -2111,9 +2675,9 @@ def _quota_line(result: dict) -> str:
     return text
 
 
-def _is_stale(snapshot: dict, config: dict, now: datetime) -> bool:
+def _is_stale(snapshot: dict, config: dict, now: datetime, source: str = "aa") -> bool:
     checked = _utc(datetime.fromisoformat(snapshot["last_checked"]))
-    return _utc(now) - checked > timedelta(hours=config["max_age_hours"])
+    return _utc(now) - checked > timedelta(hours=source_max_age(config, source))
 
 
 def _complain(message: str) -> None:
@@ -2125,7 +2689,7 @@ def _status(message: str) -> None:
 
 
 def main(argv: list[str] | None = None, *, now: datetime | None = None, fetch=fetch_all,
-         get_key=get_api_key, open_page=webbrowser.open) -> int:
+         get_key=get_api_key, open_page=webbrowser.open, fetchers=None, sources=SOURCE_KEYS) -> int:
     args = build_parser().parse_args(argv)
     now = now or datetime.now(timezone.utc)
     try:
@@ -2134,41 +2698,55 @@ def main(argv: list[str] | None = None, *, now: datetime | None = None, fetch=fe
         _complain(str(error))
         return 1
     home = runtime_home()
-    try:
-        paths = load_snapshots(home)
-        newest = read_snapshot(paths[0]) if paths else None
-    except StoreError as error:
-        _complain(str(error))
-        return 1
-
-    if args.command == "build" or args.no_refresh:
-        should_fetch = False
-    elif args.command == "refresh" or newest is None:
-        should_fetch = True
-    else:
-        should_fetch = _is_stale(newest, config, now)
-
-    if should_fetch:
+    registered = {"aa": lambda config, newest: fetch(get_key(config)),
+                  "aicd": lambda config, newest: fetch_ai_coding_daily(),
+                  "fc": lambda config, newest: fetch_frontiercode((newest or {}).get("etag")), **(fetchers or {})}
+    registered = {key: func for key, func in registered.items() if func is not None}
+    snapshots, unavailable, reported = {}, {}, False
+    for key in sources:
         try:
-            result = fetch(get_key(config))
-            save_snapshot(home, result, now)
-            print(_quota_line(result))
-        except (KeyUnavailable, FetchError, StoreError) as error:
+            paths = load_snapshots(home, key)
+            snapshots[key] = read_snapshot(paths[0], key) if paths else None
+        except StoreError as error:
             _complain(str(error))
-            if newest is None:
-                return 1
-        except OSError as error:
-            _complain(f"cannot save snapshot: {error}")
-            if newest is None:
-                return 1
-    elif newest is None:
-        _complain("no snapshot yet; run model_ladder refresh to fetch one")
+            unavailable[key] = str(error)
+            reported = True
+    for key in sources:
+        newest = snapshots.get(key)
+        if key in unavailable or key not in registered or (args.source and args.source != key):
+            continue
+        if args.command == "build" or args.no_refresh:
+            continue
+        if args.command != "refresh" and newest is not None and not _is_stale(newest, config, now, key):
+            continue
+        try:
+            result = registered[key](config, newest)
+            path = save_snapshot(home, result, now, key)
+            snapshots[key] = read_snapshot(path, key)
+            write_status(home, key, now, None)
+            if key == "aa" and not result.get("not_modified"):
+                print(_quota_line(result))
+            elif result.get("not_modified"):
+                print(f"{SOURCE_SPECS[key]['label']}: unchanged.")
+            else:
+                print(f"{SOURCE_SPECS[key]['label']}: {len(result['models'])} configurations.")
+        except (KeyUnavailable, FetchError, StoreError, OSError) as error:
+            message = f"cannot save snapshot: {error}" if isinstance(error, OSError) else str(error)
+            _complain(message)
+            reported = True
+            try:
+                write_status(home, key, now, message)
+            except OSError as status_error:
+                _complain(f"cannot save status: {status_error}")
+    if not any(snapshots.values()):
+        if not reported:
+            _complain("no snapshot yet; run model_ladder refresh to fetch one")
         return 1
 
     output = args.output.expanduser() if args.output else home / "model_ladder.html"
     try:
         _status("Building the page…")
-        build_page(home, output)
+        build_page(home, output, unavailable=unavailable)
     except (OSError, StoreError, ValueError) as error:
         _complain(f"cannot build the page: {error}")
         return 1

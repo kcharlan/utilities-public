@@ -1,14 +1,17 @@
 # Model Ladder
 
-Model Ladder compares the effort levels of AI models by their Artificial Analysis
-available index scores and by what one task costs. One command fetches the
-current data and builds a single offline page with:
+Model Ladder compares model effort levels using a registry of Artificial Analysis,
+AI Coding Daily and FrontierCode sources. Each source is shown on its own; scores
+are never combined. One command fetches current data and builds an offline page with:
 
+- a source bar with each source's latest check or update and any fetch failure;
 - an index selector for the Intelligence Index and available domain indexes;
   Coding and Agentic appear when the API supplies scores for them;
+- an axis switch when a source offers more than one measure, with values and
+  frontier comparisons displayed in the selected unit;
 - an all-models view: every model scored in the selected index, the overall frontier, and a sortable
   table filterable by creator and by text (matching creator, family or the full
-  model name, so tags are searchable);
+  model name, so tags are searchable); source-specific columns are sortable too;
 - a compare view for the model families you pick: an effort ladder per family
   (in fixed effort order from the highest level to the lowest; this table is not
   header-sortable, the other tables sort by header), a whole-point Pareto ladder, what one step
@@ -19,7 +22,21 @@ current data and builds a single offline page with:
   added or removed model, any index score or cost), so a refetch that changes only fields
   the page does not use leaves the last real change visible.
 
-The page states facts. It makes no recommendation. Same data in, same page out.
+The page states facts. The same data produces the same comparisons.
+
+## Starting point ladder
+
+In Compare, choose a starting row to see the selected frontier from highest score
+to lowest, with the steps above and below that row. A dominated starting row is
+inserted and identified as off the ladder. Rows without the selected axis value
+cannot be placed; the view falls back to the cheapest frontier row.
+
+## Freshness
+
+The source bar distinguishes when data was last checked from a source's published
+date. If a fetch fails, the page identifies the failure and shows the last saved
+snapshot. When a published date is over 30 days old, a quiet note states when the
+source last published results.
 
 ## Indexes and cost
 
@@ -50,7 +67,7 @@ written to disk, placed on a command line or embedded in the page.
 ## Commands
 
 ```
-model_ladder [refresh|build] [--no-refresh] [--no-open] [--output PATH] [--version]
+model_ladder [refresh|build] [--source {aa,aicd,fc}] [--no-refresh] [--no-open] [--output PATH] [--version]
 ```
 
 | Command | What it does |
@@ -59,6 +76,7 @@ model_ladder [refresh|build] [--no-refresh] [--no-open] [--output PATH] [--versi
 | `model_ladder refresh` | Always fetches, then builds and opens. |
 | `model_ladder build` | Builds from the newest snapshot; never fetches. |
 | `--no-refresh` | Never fetch, even if the data is old. |
+| `--source KEY` | Fetch only the named source; the page still includes saved snapshots from all sources. |
 | `--no-open` | Do not open the page in a browser. |
 | `--output PATH` | Write the page there instead of the runtime home. |
 | `--version` | Print the version. |
@@ -115,11 +133,14 @@ in the launcher.
 files 0600:
 
 - `config.json`: written on first run. Keys `op_item`, `op_vault`, `op_field`,
-  `max_age_hours` (a positive number of hours, at most 87600, ten years).
+  `max_age_hours` (a positive number of hours, at most 87600, ten years), and
+  `source_max_age_hours` (per-source ages for `aicd` and `fc`, default 24 hours).
 - `snapshots/<UTC timestamp>.json.gz` (directory mode 0700): each fetch as
   delivered, newest 60 kept. A fetch identical to the newest snapshot adds no
   file; it only updates that snapshot's check time, which is what
   `max_age_hours` is measured from.
+- `snapshots/<source>/`: separate private snapshot directories for other sources.
+- `status.json`: the last attempt and error, if any, for each source.
 - `model_ladder.html`: the built page, replaced atomically.
 
 Nothing is written inside the repository.
@@ -151,8 +172,20 @@ node tools/deploy_copies.mjs --only model_ladder
 The installed command is `~/Library/Scripts/model_ladder`. Repository updates do
 not update it; deploy again after changes.
 
-## Attribution and data
+## Sources
 
-Data is provided by [Artificial Analysis](https://artificialanalysis.ai/) and is
-shown with attribution. Redistribution needs their permission, so fetched data
-stays in the runtime home and must never be committed to this repository.
+- [Artificial Analysis](https://artificialanalysis.ai/) supplies index scores,
+  model creators and cost per task. A refresh follows pagination: currently a
+  full fetch makes four requests.
+- [AI Coding Daily](https://aicodingdaily.com/leaderboard) supplies total and
+  category points, cost and time per prompt. Its published maxima set the points
+  scales. A model in different harnesses is treated as a separate family. Some
+  configurations have no cost; use the time axis to include them. The site hides
+  older models from its served table, so they do not appear here. A refresh makes
+  one GET request.
+- [FrontierCode 2.0](https://cognition.com/frontiercode) supplies scores, harnesses,
+  cost and output tokens per rollout, and flagged-run rates. A refresh makes two
+  requests: the JSON feed and the page for its current version and changelog.
+
+Fetched data stays in the runtime home and must never be committed to this
+repository. Artificial Analysis data requires their permission to redistribute.

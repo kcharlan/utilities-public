@@ -1,6 +1,7 @@
 """Shared pytest defaults for Model Ladder."""
 import os
 import sys
+import urllib.request
 from pathlib import Path
 
 import pytest
@@ -13,6 +14,13 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from tools.testkit import load_launcher  # noqa: E402
 
 os.environ.setdefault("UTILITIES_TESTING", "1")
+
+
+@pytest.fixture(autouse=True)
+def block_network(monkeypatch):
+    def denied(*args, **kwargs):
+        raise AssertionError("network access in a test")
+    monkeypatch.setattr(urllib.request, "urlopen", denied)
 
 
 @pytest.fixture(autouse=True)

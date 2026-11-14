@@ -5,6 +5,9 @@ from datetime import datetime, timedelta, timezone
 import pytest
 
 from helpers import model
+from test_fetch import Opener, Response
+from test_source_fc import FC_FIXTURE
+from test_source_aicd import AICD_FIXTURE
 
 NOW = datetime(2026, 11, 5, 12, 0, 0, tzinfo=timezone.utc)
 RATE = {"limit": 100, "remaining": 95, "reset": 1_800_000_000}
@@ -36,11 +39,15 @@ class Env:
         self.fetch = Fetch()
         self.built = []
         self.opened = []
-        monkeypatch.setattr(ml, "build_page", lambda home, output: self.built.append((home, output)))
+        self.sources = ("aa",)
+        self.fetchers = {}
+        self.real_build = ml.build_page
+        monkeypatch.setattr(ml, "build_page", lambda home, output, **kwargs: self.built.append((home, output)))
 
     def run(self, *argv, now=NOW, get_key=None):
         return self.ml.main(list(argv), now=now, fetch=self.fetch,
-                            get_key=get_key or (lambda config: SECRET), open_page=self.opened.append)
+                            get_key=get_key or (lambda config: SECRET), open_page=self.opened.append,
+                            sources=self.sources, fetchers=self.fetchers)
 
     def seed(self, age_hours, models=None):
         when = NOW - timedelta(hours=age_hours)
@@ -58,6 +65,125 @@ def test_cli_first_run_fetches(env, tmp_path):
     assert env.fetch.calls == [SECRET]
     assert len(env.ml.load_snapshots(tmp_path / "ml-home")) == 1
     assert len(env.built) == 1
+
+
+def test_cli_one_source_failing_still_builds(env, capsys):
+    env.sources = ("aa", "aicd", "fc")
+    env.fetchers = {"aicd": lambda config, newest: fetched(),
+                    "fc": lambda config, newest: (_ for _ in ()).throw(env.ml.FetchError("synthetic failure"))}
+    assert env.run("refresh") == 0
+    assert "synthetic failure" in capsys.readouterr().err
+    assert env.ml.read_status(env.ml.runtime_home())["fc"]["error"] == "synthetic failure"
+    assert len(env.built) == 1
+
+
+@pytest.mark.parametrize("source", ["aicd", "fc"])
+def test_real_fetcher_failure_preserves_snapshot_and_builds(env, monkeypatch, capsys, source):
+    ml = env.ml
+    home = ml.ensure_runtime_home(ml.runtime_home())
+    env.seed(100)
+    previous = (ml.parse_ai_coding_daily(AICD_FIXTURE) if source == "aicd" else
+                {"models": ml.validate_frontiercode(FC_FIXTURE), "index_version": "2.0", "rate_limit": {}})
+    prior = ml.save_snapshot(home, previous, NOW - timedelta(days=2), source)
+    before = prior.read_bytes()
+    response = Response({"data": {"Invented Model": {}}, "harness": {}, "efforts": {}})
+    if source == "aicd":
+        response._body = b"\xff"
+    opener = Opener([response])
+    calls = []
+    env.sources = ("aa", "aicd", "fc") if source == "aicd" else ("aa", "fc")
+    env.fetchers = {source: lambda config, newest: (ml.fetch_ai_coding_daily(opener) if source == "aicd" else ml.fetch_frontiercode(None, opener))}
+    if source == "aicd":
+        env.fetchers["fc"] = lambda config, newest: calls.append("fc") or {"models": ml.validate_frontiercode(FC_FIXTURE), "index_version": "2.0", "rate_limit": {}}
+    monkeypatch.setattr(ml, "build_page", env.real_build)
+    assert env.run("refresh") == 0
+    assert prior.read_bytes() == before
+    assert ml.load_snapshots(home, source) == [prior]
+    error = ml.read_status(home)[source]["error"]
+    assert ("AI Coding Daily" if source == "aicd" else "FrontierCode 2.0") in error
+    assert error in capsys.readouterr().err
+    page = (home / "model_ladder.html").read_text()
+    assert error in page and "Model Ladder" in page
+    if source == "aicd": assert calls == ["fc"]
+
+
+def test_cli_source_option_fetches_one(env):
+    env.sources = ("aa", "aicd")
+    calls = []
+    env.fetchers = {"aicd": lambda config, newest: calls.append("aicd") or fetched()}
+    assert env.run("refresh", "--source", "aa") == 0
+    assert not calls and len(env.fetch.calls) == 1
+
+
+def test_cli_all_sources_failing_without_snapshots_exits_1(env, capsys):
+    env.sources = ("aa", "aicd")
+    env.fetch.error = env.ml.FetchError("synthetic aa failure")
+    def fail(config, newest):
+        raise env.ml.FetchError("synthetic aicd failure")
+    env.fetchers = {"aicd": fail}
+    assert env.run("refresh") == 1
+    assert "synthetic aa failure" in capsys.readouterr().err
+    assert not env.built
+
+
+def test_cli_corrupt_source_does_not_block_healthy_source(env, capsys):
+    env.sources = ("aa", "aicd")
+    directory = env.ml.snapshot_dir(env.ml.runtime_home(), "aicd")
+    broken = directory / "20261101T120000Z.json.gz"
+    broken.write_bytes(b"synthetic invalid snapshot")
+    calls = []
+    env.fetchers = {"aicd": lambda config, newest: calls.append(1)}
+    assert env.run("refresh") == 0
+    assert not calls and broken.read_bytes() == b"synthetic invalid snapshot"
+    assert str(broken) in capsys.readouterr().err and env.built
+
+
+@pytest.mark.parametrize("arguments", [(), ("--source", "aicd")])
+def test_cli_source_without_fetcher_is_skipped(env, arguments):
+    env.sources = ("aa", "aicd")
+    env.fetchers = {"aicd": None}
+    env.seed(0)
+    assert env.run("refresh", *arguments) == 0
+    assert "aicd" not in env.ml.read_status(env.ml.runtime_home())
+    assert env.built
+
+
+def test_cli_source_max_age_per_source(env, tmp_path):
+    env.sources = ("aa", "aicd")
+    home = env.ml.ensure_runtime_home(env.ml.runtime_home())
+    (home / "config.json").write_text(json.dumps({"max_age_hours": 2, "source_max_age_hours": {"aicd": 5}}))
+    env.seed(3)
+    env.ml.save_snapshot(home, fetched(), NOW - timedelta(hours=4), "aicd")
+    calls = []
+    env.fetchers = {"aicd": lambda config, newest: calls.append(1) or fetched()}
+    assert env.run() == 0 and len(env.fetch.calls) == 1 and not calls
+    assert env.run(now=NOW + timedelta(hours=2)) == 0 and calls == [1]
+
+
+def test_cli_fc_not_modified_updates_check_time(env):
+    env.sources = ("fc",)
+    home = env.ml.runtime_home()
+    result = {"models": [], "index_version": "2.0", "rate_limit": {}, "etag": '"synthetic"'}
+    path = env.ml.save_snapshot(home, result, NOW - timedelta(hours=1), "fc")
+    env.fetchers = {"fc": lambda config, newest: {"not_modified": True, "etag": newest["etag"]}}
+    assert env.run("refresh") == 0
+    assert env.ml.load_snapshots(home, "fc") == [path]
+    assert env.ml.read_snapshot(path, "fc")["last_checked"] == NOW.isoformat()
+
+
+def test_cli_aicd_rejected_keeps_snapshot(env):
+    from test_source_aicd import AICD_FIXTURE
+    env.sources = ("aicd",)
+    home = env.ml.runtime_home()
+    path = env.ml.save_snapshot(home, env.ml.parse_ai_coding_daily(AICD_FIXTURE), NOW, "aicd")
+    before = path.read_bytes()
+    message = "AI Coding Daily changed its leaderboard columns; keeping the last good data"
+    def fail(config, newest):
+        raise env.ml.FetchError(message)
+    env.fetchers = {"aicd": fail}
+    assert env.run("refresh") == 0
+    assert path.read_bytes() == before and env.ml.read_status(home)["aicd"]["error"] == message
+    assert env.built
 
 
 def test_cli_fresh_snapshot_skips_fetch(env):
@@ -162,7 +288,7 @@ def test_cli_quota_line_survives_missing_headers(env, capsys):
 def test_cli_prints_output_path_and_passes_it(env, tmp_path, capsys, monkeypatch):
     env.seed(1)
 
-    def build(home, output):
+    def build(home, output, **kwargs):
         captured = capsys.readouterr()
         assert captured.out == "Building the page…\n"
         assert captured.err == ""

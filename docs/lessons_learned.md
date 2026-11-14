@@ -1,5 +1,23 @@
 # Lessons learned
 
+## Share visible-text rules between page and table parsers
+
+When a source contract uses page text for table cells, reuse the same handling
+of hidden script and style content. Test both header validation and row identity
+with hidden content so invisible markup cannot reject data or rename a model.
+
+## Preserve the complete snapshot contract for new sources
+
+A parser can produce valid records and still fail on its first save when it
+omits common store metadata. Exercise the fetch, save, read and offline build
+path together with synthetic source data, including sources without quotas.
+
+## Validate nested persisted status before use
+
+A valid JSON object can still contain invalid per-source entries. Validate each
+entry's shape at the read boundary and test recovery through the page build, so
+a malformed status for one source cannot prevent healthy data from rendering.
+
 ## Keep static metadata in step with runtime content
 
 The AI timeline updated its browser title at runtime but left the HTML title
@@ -2611,3 +2629,25 @@ Git Fleet's dependency scope claimed external includes were retained even though
 the parser skips them, and its detail header offered an unwired scan button.
 Test report descriptions against the actual boundary and check rendered controls
 as well as their supporting APIs.
+
+## 2026-11-13: Carry axis units through explanatory copy
+
+An axis label can include a per-unit qualifier that a generic quantity name
+omits. Check the full unit and per descriptor in charts, tables, change panels,
+and explanatory notes, including borrowed measures, so a time per prompt is not
+described only as time.
+
+## 2026-11-13: Validate external keys as own members
+
+An object lookup accepts inherited names such as `constructor` and `__proto__`.
+When restoring an external token, require the expected type and membership in the
+actual keys before using it as a selector; test both URL and stored state.
+
+## 2026-11-13: Validate source boundaries and displayed changes
+
+Decode errors and feeds that flatten to zero rows must fail inside the source
+fetcher before replacing a last-good snapshot. Exercise the real fetcher through
+refresh and page generation, including a later source, to verify isolation.
+Filter change rows using the same score formatting as the renderer, while keeping
+raw scores for frontier calculations. Borrowed-axis notes must identify the
+source and unit of the borrowed values, including per-prompt costs.

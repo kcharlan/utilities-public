@@ -1,5 +1,25 @@
 """Synthetic API-shaped model builders. Every name here is invented."""
 import re
+import json
+from pathlib import Path
+
+from tools.testkit import load_launcher
+
+
+def fake_row(family, rung, score, axes, harness, extras=None) -> dict:
+    name = family + (f" ({rung})" if rung else "")
+    return {"slug": re.sub(r"[^a-z0-9]", "-", name.lower()), "name": name,
+            "maker": harness, "family": family, "family_key": json.dumps([harness, family], separators=(",", ":")),
+            "rung": rung, "tags": [], "scores": score, "axes": axes, "cost": axes.get("cost"),
+            "extras": extras or {}, "total_cost": None, "release_date": None, "problem": None}
+
+
+def fake_source(key, rows, **fields) -> dict:
+    ml = load_launcher(Path(__file__).resolve().parents[1] / "model_ladder")
+    config = {"max_age_hours": 12, "source_max_age_hours": {}}
+    source = ml.build_source_entry(key, None, None, {}, config)
+    source.update(rows=rows, **fields)
+    return source
 
 
 def model(name, index=None, cost=None, maker="Example Lab", slug=None, release="2026-01-01", total=None, scores=None) -> dict:
