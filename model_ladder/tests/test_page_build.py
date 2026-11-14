@@ -80,6 +80,21 @@ def test_build_page_isolates_unreadable_source(ml, tmp_path, capsys):
     assert str(broken) in capsys.readouterr().err
 
 
+@pytest.mark.parametrize("entry", [None, "invalid", []])
+def test_build_page_recovers_from_invalid_source_status(ml, tmp_path, capsys, entry):
+    seed(ml, ladder_models())
+    home = ml.runtime_home()
+    (home / "status.json").write_text(json.dumps({"fc": entry}))
+    output = tmp_path / "page.html"
+    ml.build_page(home, output)
+    payload = payload_of(output.read_text())
+    assert payload["sources"]["aa"]["available"]
+    assert payload["sources"]["fc"]["error"] is None
+    assert payload["sources"]["fc"]["last_attempt"] is None
+    diagnostic = capsys.readouterr().err
+    assert "status.json" in diagnostic and len(diagnostic.splitlines()) == 1
+
+
 def test_payload_includes_empty_default_and_scored_domain(ml):
     payload = ml.build_payload({"aa": (snapshot([model("Example", scores={"finance": 42})]), None)}, CONFIG)
     assert [(i["key"], i["count"]) for i in payload["sources"]["aa"]["indexes"]] == [("intelligence", 0), ("finance", 1)]

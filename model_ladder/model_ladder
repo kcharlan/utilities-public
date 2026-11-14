@@ -478,6 +478,14 @@ def read_status(home: Path) -> dict:
         data = json.loads(path.read_text(encoding="utf-8"))
         if not isinstance(data, dict):
             raise ValueError("not an object")
+        for source, entry in data.items():
+            if (not isinstance(entry, dict) or not isinstance(entry.get("last_attempt"), str)
+                    or "error" not in entry or not isinstance(entry["error"], (str, type(None)))):
+                raise ValueError(f"invalid status for {source}")
+            try:
+                datetime.fromisoformat(entry["last_attempt"])
+            except ValueError:
+                raise ValueError(f"invalid status for {source}") from None
         return data
     except FileNotFoundError:
         return {}

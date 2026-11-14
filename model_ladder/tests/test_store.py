@@ -111,6 +111,17 @@ def test_unreadable_status_reads_empty(ml, home, capsys):
     assert len(capsys.readouterr().err.splitlines()) == 1
 
 
+@pytest.mark.parametrize("entry", [None, "invalid", [], {},
+                                   {"last_attempt": None, "error": None},
+                                   {"last_attempt": "invalid", "error": None},
+                                   {"last_attempt": "2026-11-01T12:00:00+00:00", "error": []}])
+def test_invalid_source_status_reads_empty(ml, home, capsys, entry):
+    (home / "status.json").write_text(json.dumps({"fc": entry}))
+    assert ml.read_status(home) == {}
+    diagnostic = capsys.readouterr().err
+    assert "status.json" in diagnostic and len(diagnostic.splitlines()) == 1
+
+
 def test_unchanged_fetch_refreshes_published_and_etag(ml, home):
     path = ml.save_snapshot(home, {**result(), "etag": "old", "published": None}, T0)
     ml.save_snapshot(home, {**result(), "etag": "new", "published": {"date": "2026-01-01", "note": "synthetic"}}, T0 + timedelta(hours=1))

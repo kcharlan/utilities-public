@@ -1,5 +1,11 @@
 # Lessons learned
 
+## Validate nested persisted status before use
+
+A valid JSON object can still contain invalid per-source entries. Validate each
+entry's shape at the read boundary and test recovery through the page build, so
+a malformed status for one source cannot prevent healthy data from rendering.
+
 ## Keep static metadata in step with runtime content
 
 The AI timeline updated its browser title at runtime but left the HTML title
