@@ -223,6 +223,40 @@ def test_unchanged_fetch_refreshes_published_and_etag(ml, home):
     assert len(ml.load_snapshots(home)) == 1
 
 
+def test_changed_feed_carries_published_forward(ml, home):
+    metadata = {"published": {"date": "2026-01-01", "note": "synthetic"}, "current_version": "2.1"}
+    ml.save_snapshot(home, {**result(version="2.0"), **metadata}, T0, "fc")
+    path = ml.save_snapshot(home, result([model("Example (high)", 51, 1.0)], version="2.0"), T0 + timedelta(hours=1), "fc")
+    saved = ml.read_snapshot(path, "fc")
+    assert {key: saved[key] for key in metadata} == metadata
+
+
+def test_carry_forward_adds_no_keys(ml, home):
+    ml.save_snapshot(home, result(), T0)
+    path = ml.save_snapshot(home, result(version=6), T0 + timedelta(hours=1))
+    saved = ml.read_snapshot(path)
+    assert "published" not in saved and "current_version" not in saved
+
+
+def test_page_failure_keeps_published(ml, home):
+    metadata = {"published": {"date": "2026-01-01", "note": "synthetic"}, "current_version": "2.1"}
+    path = ml.save_snapshot(home, {**result(version="2.0"), **metadata}, T0, "fc")
+    assert ml.save_snapshot(home, {"not_modified": True}, T0 + timedelta(hours=1), "fc") == path
+    saved = ml.read_snapshot(path, "fc")
+    assert {key: saved[key] for key in metadata} == metadata
+
+
+@pytest.mark.parametrize("changed", [False, True])
+def test_page_without_changelog_clears_published(ml, home, changed):
+    metadata = {"published": {"date": "2026-01-01", "note": "synthetic"}, "current_version": "2.1"}
+    first = ml.save_snapshot(home, {**result(version="2.0"), **metadata}, T0, "fc")
+    models = [model("Example (high)", 51, 1.0)] if changed else None
+    path = ml.save_snapshot(home, {**result(models, version="2.0"), "published": None, "current_version": None}, T0 + timedelta(hours=1), "fc")
+    assert (path != first) == changed
+    saved = ml.read_snapshot(path, "fc")
+    assert saved["published"] is None and saved["current_version"] is None
+
+
 def test_maximum_changes_snapshot_identity(ml, home):
     ml.save_snapshot(home, {**result(), "index_maxima": {"intelligence": 100}}, T0)
     ml.save_snapshot(home, {**result(), "index_maxima": {"intelligence": 120}}, T0 + timedelta(hours=1))

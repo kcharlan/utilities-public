@@ -1,5 +1,12 @@
 # Lessons learned
 
+## 2026-11-13: Distinguish missing metadata from an explicit absence
+
+At a fetch/store boundary, omit page metadata when retrieval or parsing fails,
+and carry missing keys from the selected readable snapshot. A successful parse
+with no match must return explicit `None` so it clears stale metadata. Test both
+unchanged and changed feeds, including a parse failure after a partial match.
+
 ## 2026-11-13: Select readable snapshots consistently
 
 Use the same newest-readable selection for store comparisons, CLI freshness,

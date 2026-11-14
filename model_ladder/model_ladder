@@ -594,7 +594,7 @@ def fetch_frontiercode(etag: str | None, open_url=None) -> dict:
         headers["If-None-Match"] = etag
     _status("Fetching FrontierCode 2.0 data…")
     status, body, response_headers = _get(urllib.request.Request(FC_DATA_URL, headers=headers), "FrontierCode 2.0", open_url, allow_304=True)
-    result = {"etag": response_headers.get("ETag") or etag, "published": None, "current_version": None}
+    result = {"etag": response_headers.get("ETag") or etag}
     if status == 304:
         result["not_modified"] = True
     else:
@@ -608,7 +608,8 @@ def fetch_frontiercode(etag: str | None, open_url=None) -> dict:
         _, body, _ = _get(urllib.request.Request(FC_PAGE_URL, headers={"User-Agent": USER_AGENT}), "FrontierCode 2.0 page", open_url)
         text = page_text(body.decode("utf-8"))
         version = re.search(r"FrontierCode (\d+(?:\.\d+)+) Current", text)
-        result["current_version"] = version.group(1) if version else None
+        current_version = version.group(1) if version else None
+        published = None
         changelog = text.find("Changelog")
         if changelog >= 0:
             dates = list(re.finditer(r"\b(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec) (\d{1,2}), (\d{4})\b", text[changelog:]))
@@ -619,9 +620,10 @@ def fetch_frontiercode(etag: str | None, open_url=None) -> dict:
                 note = section[first.end():dates[1].start() if len(dates) > 1 else None].strip()
                 if len(note) > 160:
                     note = note[:159].rsplit(" ", 1)[0] + "…"
-                result["published"] = {"date": date, "note": note}
+                published = {"date": date, "note": note}
+        result.update(published=published, current_version=current_version)
     except Exception:
-        result.update(published=None, current_version=None)
+        pass
     return result
 
 
@@ -731,6 +733,8 @@ def save_snapshot(home: Path, result: dict, now: datetime, source: str = "aa") -
             "index_version": result["index_version"],
             "rate_limit": result["rate_limit"],
             "models": result["models"],
+            **{key: newest[key] for key in ("published", "current_version")
+               if newest is not None and key in newest and key not in result},
             **{key: result[key] for key in ("index_maxima", "published", "etag", "current_version") if key in result},
         })
     for broken, message in skipped:

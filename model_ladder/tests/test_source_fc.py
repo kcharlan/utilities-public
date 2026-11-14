@@ -83,8 +83,29 @@ def test_fc_sends_etag_and_handles_304(ml):
 @pytest.mark.parametrize("error", [http_error(500), RuntimeError("synthetic page failure")])
 def test_fc_page_failure_is_tolerated(ml, error):
     result = ml.fetch_frontiercode(None, Opener([Response(FC_FIXTURE), error]))
-    assert result["published"] is None and result["current_version"] is None
+    assert "published" not in result and "current_version" not in result
     assert result["models"]
+
+
+def test_fc_not_modified_page_failure_omits_page_keys(ml):
+    result = ml.fetch_frontiercode('"old"', Opener([http_error(304), http_error(500)]))
+    assert result == {"not_modified": True, "etag": '"old"'}
+
+
+@pytest.mark.parametrize("failure", ["decode", "parse"])
+def test_fc_page_decode_or_parse_failure_omits_page_keys(ml, failure):
+    page = HtmlResponse(FC_HTML if failure == "decode" else
+                        "FrontierCode 2.1 Current Changelog Feb 30, 2026 invalid")
+    if failure == "decode":
+        page._body = b"\xff"
+    result = ml.fetch_frontiercode(None, Opener([Response(FC_FIXTURE), page]))
+    assert result["models"]
+    assert "published" not in result and "current_version" not in result
+
+
+def test_fc_page_without_changelog_gives_none(ml):
+    result = ml.fetch_frontiercode(None, Opener([Response(FC_FIXTURE), HtmlResponse("No metadata")]))
+    assert result["published"] is None and result["current_version"] is None
 
 
 def test_fc_user_agent(ml):
