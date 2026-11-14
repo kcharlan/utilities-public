@@ -59,6 +59,12 @@ test("changes compare selected axis and visible extras at display precision", ()
   assert.deepEqual(m.changesToShow(changes, "whole", "test", axis, extras).map(r => r.slug), ["extra", "time"]);
 });
 
+test("FC decimal changes use displayed score precision", () => {
+  const change = (slug, score) => ({slug, scores: {score}, axes: {cost: [1, 1]}, extras: {}});
+  const changes = {changed: [change("hidden", [73.46, 73.47]), change("visible", [73.44, 73.46])]};
+  assert.deepEqual(m.changesToShow(changes, "decimal", "score", AA_AXIS).map(r => r.slug), ["visible"]);
+});
+
 test("findings use each axis unit and its extremes wording", () => {
   const rows = select(FIXTURE, "whole");
   const pareto = m.paretoRows(rows), steps = m.familySteps(rows);

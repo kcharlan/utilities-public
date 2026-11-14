@@ -64,6 +64,14 @@ def test_fc_page_version_and_date(ml):
     assert result["etag"] == '"example"'
 
 
+def test_fc_long_published_note_truncates_at_word_boundary(ml):
+    note = "invented " * 30
+    result = ml.fetch_frontiercode(None, Opener([Response(FC_FIXTURE), HtmlResponse("<h2>Changelog</h2><b>Nov 4, 2026</b><span>" + note + "</span>")]))
+    published = result["published"]["note"]
+    assert published == " ".join(["invented"] * 17) + "…"
+    assert len(published) <= 160
+
+
 def test_fc_sends_etag_and_handles_304(ml):
     opener = Opener([http_error(304), HtmlResponse(FC_HTML)])
     result = ml.fetch_frontiercode('"old"', opener)

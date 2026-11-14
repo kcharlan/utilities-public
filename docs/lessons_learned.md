@@ -2642,3 +2642,12 @@ described only as time.
 An object lookup accepts inherited names such as `constructor` and `__proto__`.
 When restoring an external token, require the expected type and membership in the
 actual keys before using it as a selector; test both URL and stored state.
+
+## 2026-11-13: Validate source boundaries and displayed changes
+
+Decode errors and feeds that flatten to zero rows must fail inside the source
+fetcher before replacing a last-good snapshot. Exercise the real fetcher through
+refresh and page generation, including a later source, to verify isolation.
+Filter change rows using the same score formatting as the renderer, while keeping
+raw scores for frontier calculations. Borrowed-axis notes must identify the
+source and unit of the borrowed values, including per-prompt costs.

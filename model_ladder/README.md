@@ -181,7 +181,8 @@ not update it; deploy again after changes.
   category points, cost and time per prompt. Its published maxima set the points
   scales. A model in different harnesses is treated as a separate family. Some
   configurations have no cost; use the time axis to include them. The site hides
-  older models from its served table, so they do not appear here.
+  older models from its served table, so they do not appear here. A refresh makes
+  one GET request.
 - [FrontierCode 2.0](https://cognition.com/frontiercode) supplies scores, harnesses,
   cost and output tokens per rollout, and flagged-run rates. A refresh makes two
   requests: the JSON feed and the page for its current version and changelog.

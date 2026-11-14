@@ -196,6 +196,19 @@ def test_start_without_axis_value_falls_back(open_page, ml):
     expect(page.locator("#start-unplaced")).to_contain_text("has no cost per prompt")
 
 
+def test_aicd_borrowed_money_findings_provenance(open_page, ml):
+    payload = synthetic_payload(ml)
+    src = payload["sources"]["aicd"]
+    src["axes"].append({"key": "cost", "label": "Cost per prompt", "unit": "money", "per": "per prompt"})
+    page = open_page(payload)
+    page.click("#source-aicd")
+    page.click("#axis-cost")
+    page.select_option("#index-select", "category")
+    compare(page)
+    add(page, "invented one")
+    expect(page.locator("#say .note")).to_have_text("Values in these sentences are overall cost per prompt, including cost per point.")
+
+
 def test_category_table_only_for_category_sources(open_page, ml):
     payload = synthetic_payload(ml)
     payload["sources"]["aicd"]["indexes"][0]["max"] = 100
@@ -330,6 +343,23 @@ def test_fc_source_end_to_end(open_page, ml, tmp_path):
     expect(page.locator("#source-version")).to_have_text("FrontierCode 2.1 is now current; this page shows 2.0.")
 
 
+def test_empty_fc_refresh_shows_failure_with_saved_data(open_page, ml, tmp_path, monkeypatch):
+    from test_fetch import Opener, Response
+    from test_source_fc import FC_FIXTURE
+    home = ml.ensure_runtime_home(tmp_path / "fc-refresh")
+    monkeypatch.setenv("MODEL_LADDER_HOME", str(home))
+    old = {"models": ml.validate_frontiercode(FC_FIXTURE), "index_version": "2.0", "rate_limit": {}}
+    prior = ml.save_snapshot(home, old, NOW - timedelta(days=1), "fc")
+    opener = Opener([Response({"data": {"Invented Model": {}}, "harness": {}, "efforts": {}})])
+    assert ml.main(["refresh", "--no-open"], now=NOW, sources=("fc",),
+                   fetchers={"fc": lambda config, newest: ml.fetch_frontiercode(None, opener)}) == 0
+    assert ml.load_snapshots(home, "fc") == [prior]
+    page = open_page(ml.build_payload({"aa": (snapshot(ladder_models()), None), "fc": (ml.read_snapshot(prior, "fc"), None)}, CONFIG, status=ml.read_status(home)))
+    page.click("#source-fc")
+    expect(page.locator("#source-error")).to_contain_text("FrontierCode 2.0: feed has no configurations")
+    expect(page.locator("#all-table")).to_contain_text("Example Model")
+
+
 def test_aicd_source_end_to_end(open_page, ml, tmp_path):
     from test_source_aicd import AICD_FIXTURE
     from test_fetch import Opener
@@ -352,6 +382,12 @@ def test_aicd_source_end_to_end(open_page, ml, tmp_path):
     header = page.locator("#all-table th[data-k='scores.laravel']")
     header.click()
     expect(header).to_have_attribute("aria-sort", "ascending")
+    scores = [float(value) for value in page.locator("#all-table td[data-c='scores.laravel']").all_text_contents()]
+    assert len(scores) == 4 and scores == sorted(scores)
+    header.click()
+    expect(header).to_have_attribute("aria-sort", "descending")
+    scores = [float(value) for value in page.locator("#all-table td[data-c='scores.laravel']").all_text_contents()]
+    assert scores == sorted(scores, reverse=True)
     page.locator("#all-table input[type=checkbox]").first.check()
     compare(page)
     assert page.locator("#categories thead th").count() == 6
@@ -359,6 +395,27 @@ def test_aicd_source_end_to_end(open_page, ml, tmp_path):
     widths = page.locator("#categories tbody tr:first-child i").evaluate_all("els => els.map(e => parseFloat(e.style.width))")
     # Chromium serializes CSS percentages to four decimal places.
     assert widths == pytest.approx([11, 12 / 110 * 100, 13 / 120 * 100, 14 / 130 * 100, 15 / 140 * 100], abs=0.00005)
+
+
+@pytest.mark.parametrize("mixed", [False, True])
+def test_fc_decimal_changes_render_only_visible_changes(open_page, ml, tmp_path, mixed):
+    from test_source_fc import FC_FIXTURE
+    result = {"models": ml.validate_frontiercode(FC_FIXTURE), "index_version": "2.0", "rate_limit": {}}
+    path = ml.save_snapshot(tmp_path / "fc-changes", result, NOW, "fc")
+    payload = ml.build_payload({"aa": (snapshot(ladder_models()), None), "fc": (ml.read_snapshot(path, "fc"), None)}, CONFIG)
+    payload["sources"]["fc"]["changes"] = {"from": "2026-11-01T00:00:00Z", "to": "2026-11-05T10:00:00Z", "version": None, "added": [], "removed": [], "maxima": {}, "changed": [
+        {"slug": "invented", "name": "Invented", "scores": {"score": [73.46, 73.47]}, "axes": {"cost": [1, 2 if mixed else 1]}, "extras": {}}]}
+    page = open_page(payload)
+    page.click("#source-fc")
+    compare(page)
+    page.click("#mode-decimal")
+    page.locator("#changes summary").click()
+    text = page.locator("#changes").inner_text()
+    if mixed:
+        assert "score 73.5; cost $1.00 to $2.00" in text
+        assert "73.5 to 73.5" not in text
+    else:
+        assert "Nothing changed that shows in decimals." in text
 
 
 def test_aicd_changes_version_wording(open_page, ml):

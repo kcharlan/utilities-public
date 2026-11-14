@@ -521,7 +521,11 @@ def parse_ai_coding_daily(html: str) -> dict:
 def fetch_ai_coding_daily(open_url=None) -> dict:
     _status("Fetching AI Coding Daily data…")
     _, body, _ = _get(urllib.request.Request(AICD_URL, headers={"User-Agent": USER_AGENT}), "AI Coding Daily", open_url)
-    return parse_ai_coding_daily(body.decode("utf-8"))
+    try:
+        html = body.decode("utf-8")
+    except UnicodeDecodeError:
+        raise FetchError("AI Coding Daily: invalid UTF-8") from None
+    return parse_ai_coding_daily(html)
 
 
 def classify_ai_coding_daily(records) -> list[dict]:
@@ -564,6 +568,8 @@ def validate_frontiercode(data) -> list[dict]:
                 raise FetchError(f"{prefix} {field} is invalid")
             records.append({"model": model, "effort": effort, "harness": data["harness"].get(model, "Unknown harness"),
                             **{field: main.get(field) for field in ("new_score", "correct", "cost", "tokens", "flagged_rate")}})
+    if not records:
+        raise FetchError("FrontierCode 2.0: feed has no configurations")
     return records
 
 
@@ -1187,9 +1193,10 @@ function findings(pareto, steps, mode, axis) {
   return out;
 }
 
+function scoreText(raw, mode) { return mode === "decimal" ? raw.toFixed(1) : String(wholePoints(raw)); }
 function changesToShow(changes, mode, key, axis, extras) {
   if (!changes || !changes.changed) return [];
-  function shownScore(raw) { return raw === null ? null : mode === "decimal" ? raw : wholePoints(raw); }
+  function shownScore(raw) { return raw === null ? null : scoreText(raw, mode); }
   return changes.changed.filter(function (item) {
     // Unscored in this index before and after: the view never lists the model, so its cost is not news here.
     if (item.scores[key][0] === null && item.scores[key][1] === null) return false;
@@ -1210,7 +1217,7 @@ var api = {
   paretoRows: paretoRows, familySteps: familySteps, sortRows: sortRows,
   findings: findings, money: money, dataAge: dataAge, changesToShow: changesToShow,
   lowerFirst: lowerFirst, formatAxis: formatAxis, checkedText: checkedText, dayText: dayText, formatExtra: formatExtra,
-  dominatedReason: dominatedReason, rungLabel: rungLabel, showPoints: showPoints, startLadder: startLadder, stepSentence: stepSentence
+  dominatedReason: dominatedReason, rungLabel: rungLabel, showPoints: showPoints, scoreText: scoreText, startLadder: startLadder, stepSentence: stepSentence
 };
 if (typeof module !== "undefined") module.exports = api; else window.ladderMath = api;
 // ladder-math:end
@@ -1479,7 +1486,7 @@ APP_JS = r"""
     return withTime ? d.toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" })
       : d.toLocaleDateString(undefined, { dateStyle: "medium" });
   }
-  function scoreText(raw, mode) { return mode === "decimal" ? raw.toFixed(1) : String(M.wholePoints(raw)); }
+  const scoreText = M.scoreText;
   function signedPoints(v, mode) {
     if (v === null || v === undefined) return "";
     if (v === 0) return mode === "decimal" ? "0.0" : "0";
@@ -1993,7 +2000,7 @@ APP_JS = r"""
 
       <section id="say">
         <h2>What the numbers say</h2>
-        ${borrowed ? html`<p class="note">${axis.unit === "money" ? "Costs in these sentences are Intelligence Index costs." : "Values in these sentences are overall " + quantity + (axis.unit === "time" ? " per prompt" : "") + ", including " + quantity + " per point."}</p>` : null}
+        ${borrowed ? html`<p class="note">${axis.unit === "money" && SRC.key === "aa" ? "Costs in these sentences are Intelligence Index costs." : "Values in these sentences are overall " + quantity + (axis.per === "per prompt" && axis.unit !== "tokens" ? " per prompt" : "") + ", including " + quantity + " per point."}</p>` : null}
         ${notes.length ? html`<ul id="findings" class="find box">${notes.map((n, i) => html`<li key=${i}>${n}</li>`)}</ul>`
           : html`<p id="findings" class="empty box">Nothing to report for this selection.</p>`}
       </section>

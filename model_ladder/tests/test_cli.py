@@ -5,6 +5,9 @@ from datetime import datetime, timedelta, timezone
 import pytest
 
 from helpers import model
+from test_fetch import Opener, Response
+from test_source_fc import FC_FIXTURE
+from test_source_aicd import AICD_FIXTURE
 
 NOW = datetime(2026, 11, 5, 12, 0, 0, tzinfo=timezone.utc)
 RATE = {"limit": 100, "remaining": 95, "reset": 1_800_000_000}
@@ -38,6 +41,7 @@ class Env:
         self.opened = []
         self.sources = ("aa",)
         self.fetchers = {}
+        self.real_build = ml.build_page
         monkeypatch.setattr(ml, "build_page", lambda home, output, **kwargs: self.built.append((home, output)))
 
     def run(self, *argv, now=NOW, get_key=None):
@@ -71,6 +75,36 @@ def test_cli_one_source_failing_still_builds(env, capsys):
     assert "synthetic failure" in capsys.readouterr().err
     assert env.ml.read_status(env.ml.runtime_home())["fc"]["error"] == "synthetic failure"
     assert len(env.built) == 1
+
+
+@pytest.mark.parametrize("source", ["aicd", "fc"])
+def test_real_fetcher_failure_preserves_snapshot_and_builds(env, monkeypatch, capsys, source):
+    ml = env.ml
+    home = ml.ensure_runtime_home(ml.runtime_home())
+    env.seed(100)
+    previous = (ml.parse_ai_coding_daily(AICD_FIXTURE) if source == "aicd" else
+                {"models": ml.validate_frontiercode(FC_FIXTURE), "index_version": "2.0", "rate_limit": {}})
+    prior = ml.save_snapshot(home, previous, NOW - timedelta(days=2), source)
+    before = prior.read_bytes()
+    response = Response({"data": {"Invented Model": {}}, "harness": {}, "efforts": {}})
+    if source == "aicd":
+        response._body = b"\xff"
+    opener = Opener([response])
+    calls = []
+    env.sources = ("aa", "aicd", "fc") if source == "aicd" else ("aa", "fc")
+    env.fetchers = {source: lambda config, newest: (ml.fetch_ai_coding_daily(opener) if source == "aicd" else ml.fetch_frontiercode(None, opener))}
+    if source == "aicd":
+        env.fetchers["fc"] = lambda config, newest: calls.append("fc") or {"models": ml.validate_frontiercode(FC_FIXTURE), "index_version": "2.0", "rate_limit": {}}
+    monkeypatch.setattr(ml, "build_page", env.real_build)
+    assert env.run("refresh") == 0
+    assert prior.read_bytes() == before
+    assert ml.load_snapshots(home, source) == [prior]
+    error = ml.read_status(home)[source]["error"]
+    assert ("AI Coding Daily" if source == "aicd" else "FrontierCode 2.0") in error
+    assert error in capsys.readouterr().err
+    page = (home / "model_ladder.html").read_text()
+    assert error in page and "Model Ladder" in page
+    if source == "aicd": assert calls == ["fc"]
 
 
 def test_cli_source_option_fetches_one(env):
