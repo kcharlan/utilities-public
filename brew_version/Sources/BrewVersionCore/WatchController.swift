@@ -61,6 +61,8 @@ public enum AutomaticCheckSchedule: Equatable, Sendable {
     /// real version can't be read and `includeSelfUpdating` is off.
     public private(set) var hiddenSelfUpdatingCount = 0
     public var amberCount: Int { state.watched.filter(\.isAmber).count }
+    /// Follows the Other updates list when enabled; viewing the list never clears it.
+    public var badgedOtherCount: Int { state.badgeOtherUpdates ? others.count : 0 }
     public var nextAutomaticCheck: AutomaticCheckSchedule {
         guard canSave else { return .blocked }
         guard !isChecking else { return .checking }
@@ -312,6 +314,10 @@ public enum AutomaticCheckSchedule: Equatable, Sendable {
     public func setIncludeSelfUpdating(_ on: Bool) {
         guard canSave else { return }
         var candidate = state; candidate.includeSelfUpdating = on; if commit(candidate) { log.record("setting", ["key": "includeSelfUpdating", "value": .bool(on)]) }
+    }
+    public func setBadgeOtherUpdates(_ on: Bool) {
+        guard canSave else { return }
+        var candidate = state; candidate.badgeOtherUpdates = on; if commit(candidate) { log.record("setting", ["key": "badgeOtherUpdates", "value": .bool(on)]) }
     }
     public func checkIfDue() async {
         guard networkAvailable,

@@ -134,7 +134,7 @@ struct StatusContent: View {
     }
     /// Variable length fits the item to its mug. Square length pads every
     /// image to the bar's 22pt thickness, leaving wide gaps beside the
-    /// narrower mug; the amber dot widens the item by a few points instead.
+    /// narrower mug; either dot widens the item by a few points instead.
     static func makeItem(in bar: NSStatusBar = .system) -> NSStatusItem {
         bar.statusItem(withLength: NSStatusItem.variableLength)
     }

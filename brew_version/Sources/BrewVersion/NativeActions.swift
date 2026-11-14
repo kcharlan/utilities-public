@@ -15,23 +15,26 @@ import Observation
 }
 struct StatusPresentation {
     let amberCount: Int
+    var otherCount: Int = 0
+    enum Badge { case none, watched, other }
+    var badge: Badge { amberCount > 0 ? .watched : (otherCount > 0 ? .other : .none) }
     var accessibility: String {
-        if amberCount == 0 { return "Brew Version, no watched updates" }
-        return "Brew Version, \(amberCount) watched update\(amberCount == 1 ? "" : "s") available"
+        let watched = amberCount == 0 ? "Brew Version, no watched updates" : "Brew Version, \(amberCount) watched update\(amberCount == 1 ? "" : "s") available"
+        guard otherCount > 0 else { return watched }
+        return watched + ", \(otherCount) other update\(otherCount == 1 ? "" : "s")"
     }
 }
-/// The menu bar mug. On macOS 27 the menu bar ignores a status button's
-/// `contentTintColor` and draws a tinted template image black, which vanishes
-/// on a dark bar. The alert mug therefore draws its own colours: its drawing
-/// handler runs in the bar's appearance, so the text-coloured outline follows
-/// light and dark, and the amber dot matches the dot on an amber watch row.
+/// The menu bar mug resolves its outline and other-updates dot in the bar's
+/// appearance. A watched update takes precedence and draws one amber dot.
+/// Badged images draw their own colours because macOS 27 ignores a status
+/// button's contentTintColor when drawing template images.
 @MainActor enum StatusIcon {
     static let dotDiameter: CGFloat = 7
     /// How far the dot extends past the mug's right edge.
     static let dotOverhang: CGFloat = 3
     static func image(for presentation: StatusPresentation) -> NSImage? {
         guard let mug = NSImage(systemSymbolName: "mug", accessibilityDescription: presentation.accessibility) else { return nil }
-        guard presentation.amberCount > 0, let outline = mug.withSymbolConfiguration(.init(paletteColors: [.textColor])) else {
+        guard presentation.badge != .none, let outline = mug.withSymbolConfiguration(.init(paletteColors: [.textColor])) else {
             mug.isTemplate = true
             return mug
         }
@@ -44,7 +47,7 @@ struct StatusPresentation {
             NSGraphicsContext.current?.compositingOperation = .clear
             NSBezierPath(ovalIn: dot.insetBy(dx: -1, dy: -1)).fill()
             NSGraphicsContext.restoreGraphicsState()
-            NSColor.systemOrange.setFill()
+            (presentation.badge == .watched ? NSColor.systemOrange : NSColor.textColor).setFill()
             NSBezierPath(ovalIn: dot).fill()
             return true
         }
@@ -62,7 +65,7 @@ struct StatusPresentation {
     }
     private func observe() {
         withObservationTracking {
-            changed(StatusPresentation(amberCount: controller.amberCount))
+            changed(StatusPresentation(amberCount: controller.amberCount, otherCount: controller.badgedOtherCount))
         } onChange: { [weak self] in Task { @MainActor in self?.observe() } }
     }
 }

@@ -174,6 +174,7 @@ public struct AppState: Codable, Equatable, Sendable {
     /// Like `brew outdated --greedy`: also list self-updating casks whose
     /// installed version can't be read from their app.
     public var includeSelfUpdating = false
+    public var badgeOtherUpdates = false
     public var confirmWithBrew = true
     public var announcedInterval: CheckInterval = .announcedStandard
     public static let currentSchema = 1
@@ -185,7 +186,7 @@ public struct AppState: Codable, Equatable, Sendable {
 extension AppState {
     private enum CodingKeys: String, CodingKey {
         case schema, watched, interval, showOtherUpdates, otherUpdatesCollapsed, lastCheck, lastCatalogFetch,
-             listingCache, catalogInterval, includeSelfUpdating, tapWatched, tapListingCache, confirmWithBrew, announcedInterval
+             listingCache, catalogInterval, includeSelfUpdating, badgeOtherUpdates, tapWatched, tapListingCache, confirmWithBrew, announcedInterval
     }
     // Settings added after 1.0.1 default when absent, so earlier saved state
     // loads normally instead of being set aside as unreadable.
@@ -201,6 +202,7 @@ extension AppState {
                   listingCache: try c.decode([URL: CachedListing].self, forKey: .listingCache))
         catalogInterval = try c.decodeIfPresent(CheckInterval.self, forKey: .catalogInterval) ?? .catalogStandard
         includeSelfUpdating = try c.decodeIfPresent(Bool.self, forKey: .includeSelfUpdating) ?? false
+        badgeOtherUpdates = try c.decodeIfPresent(Bool.self, forKey: .badgeOtherUpdates) ?? false
         confirmWithBrew = try c.decodeIfPresent(Bool.self, forKey: .confirmWithBrew) ?? true
         announcedInterval = try c.decodeIfPresent(CheckInterval.self, forKey: .announcedInterval) ?? .announcedStandard
         watched += try c.decodeIfPresent([WatchEntry].self, forKey: .tapWatched) ?? []
@@ -221,6 +223,7 @@ extension AppState {
         try c.encode(listingCache.filter { $0.value.listing.name.tap != nil }, forKey: .tapListingCache)
         try c.encode(catalogInterval, forKey: .catalogInterval)
         try c.encode(includeSelfUpdating, forKey: .includeSelfUpdating)
+        try c.encode(badgeOtherUpdates, forKey: .badgeOtherUpdates)
         try c.encode(confirmWithBrew, forKey: .confirmWithBrew)
         try c.encode(announcedInterval, forKey: .announcedInterval)
     }
