@@ -63,8 +63,8 @@ import BrewVersionCore
             RunLoop.current.run(until: Date().addingTimeInterval(0.025))
         }
         let size = view.fittingSize
-        // The new checking controls and unavailable-brew caption render at 747 points.
-        guard abs(size.width - width) < 0.5, size.height > 100, size.height <= (width == 460 ? 800 : 560) else { fatalError("Invalid maintained layout \(size), expected width \(width)") }
+        // Settings has a taller bound to fit its controls and captions.
+        guard abs(size.width - width) < 0.5, size.height > 100, size.height <= (width == 460 ? 824 : 560) else { fatalError("Invalid maintained layout \(size), expected width \(width)") }
         view.frame.size = size
         window.setContentSize(size)
         view.layoutSubtreeIfNeeded()

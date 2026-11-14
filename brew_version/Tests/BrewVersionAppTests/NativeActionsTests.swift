@@ -486,20 +486,8 @@ private struct ReopenCatalogTransport: HTTPTransport {
         defer { try? FileManager.default.removeItem(at: home) }
         for count in [0, 3, 12] {
             let fixture = home.appendingPathComponent("case-\(count)")
-            let store = WatchStore(fileURL: fixture.appendingPathComponent("state.json"))
-            var state = AppState.initial; state.showOtherUpdates = count == 3; state.otherUpdatesCollapsed = false
-            // The fixture's one other update is a self-updating cask with no readable app.
-            state.includeSelfUpdating = true
-            state.watched = (0..<count).map {
-                let listing = Listing(name: PackageName("synthetic-reopen-\($0)")!, kind: .formula, version: "2-synthetic")
-                return WatchEntry(name: listing.name, kind: .formula, lastListing: listing)
-            }
-            try store.save(state)
-            let prefix = fixture.appendingPathComponent("synthetic-prefix")
-            try FileManager.default.createDirectory(at: prefix.appendingPathComponent("Cellar"), withIntermediateDirectories: true)
-            try FileManager.default.createDirectory(at: prefix.appendingPathComponent("Caskroom/synthetic-fallback/1-synthetic"), withIntermediateDirectories: true)
-            let controller = WatchController(transport: ReopenCatalogTransport(), installed: InstalledReader(prefixes: HomebrewPrefix.detectAll(candidates: [prefix]), applicationDirectories: []), store: store, notifier: QuietNotifier(), catalogClient: CatalogClient(transport: ReopenCatalogTransport(), cacheDirectory: fixture.appendingPathComponent("catalog")))
-            if count == 3 { await controller.refreshCatalogIfDue(); #expect(controller.others.count == 1) }
+            let controller = try await makeOtherUpdatesController(fixture: fixture, count: count)
+            if count == 3 { #expect(controller.others.count == 1) }
             let notifier = UserNotifier(service: NotificationServiceStub())
             let settings = SettingsWindowController(controller: controller, notifier: notifier, login: LoginItem(service: LoginServiceStub()), activate: {}, present: { _ in })
             let focus = PopoverFocus()
@@ -816,6 +804,20 @@ private struct ReopenCatalogTransport: HTTPTransport {
             #expect(packageCommand(listing, installed: InstalledVersion(version: "1.0", source: .caskroomFallback)) == "brew upgrade \(flag)synthetic-command")
         }
     }
+    @Test func statusObservationReportsOtherUpdates() async throws {
+        let home = FileManager.default.temporaryDirectory.appendingPathComponent("brew-version-synthetic-other-status-" + UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: home) }
+        let controller = try await makeOtherUpdatesController(fixture: home)
+        #expect(controller.others.count == 1)
+        var values: [String] = []
+        let observation = StatusObservation(controller: controller) { values.append($0.accessibility) }
+        controller.setBadgeOtherUpdates(true)
+        try await waitUntil { values.last?.contains("1 other update") == true }
+        #expect(values.last == "Brew Version, no watched updates, 1 other update")
+        controller.setBadgeOtherUpdates(false)
+        try await waitUntil { values.last == "Brew Version, no watched updates" }
+        withExtendedLifetime(observation) {}
+    }
     @Test func statusObservationPublishesAmberChanges() async throws {
         let home = FileManager.default.temporaryDirectory.appendingPathComponent("brew-version-synthetic-status-" + UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: home) }
@@ -974,10 +976,55 @@ private struct ReopenCatalogTransport: HTTPTransport {
             #expect(outlineIsLight ? brightness > 0.8 : brightness < 0.3, "outline brightness \(brightness) in \(appearance.rawValue)")
         }
     }
+    @Test func otherStatusIconUsesMugColorDot() throws {
+        let idle = try #require(StatusIcon.image(for: StatusPresentation(amberCount: 0)))
+        let amber = try #require(StatusIcon.image(for: StatusPresentation(amberCount: 1)))
+        let other = try #require(StatusIcon.image(for: StatusPresentation(amberCount: 0, otherCount: 2)))
+        #expect(!other.isTemplate && other.size == amber.size)
+        for (appearance, light) in [(NSAppearance.Name.darkAqua, true), (.aqua, false), (.vibrantDark, true), (.vibrantLight, false)] {
+            let pixels = try statusIconPixels(other, appearance: appearance)
+            #expect(pixels.filter(\.isAmber).isEmpty)
+            let dot = pixels.filter { $0.x > idle.size.width && $0.y > other.size.height / 2 }
+            #expect(!dot.isEmpty)
+            let brightness = dot.map(\.brightness).reduce(0, +) / Double(max(dot.count, 1))
+            #expect(light ? brightness > 0.8 : brightness < 0.3)
+        }
+    }
+    @Test func watchedDotWinsOverOtherDot() throws {
+        let presentation = StatusPresentation(amberCount: 1, otherCount: 5)
+        #expect(presentation.badge == .watched)
+        let idle = try #require(StatusIcon.image(for: StatusPresentation(amberCount: 0)))
+        let image = try #require(StatusIcon.image(for: presentation))
+        for appearance in [NSAppearance.Name.darkAqua, .aqua, .vibrantDark, .vibrantLight] {
+            let pixels = try statusIconPixels(image, appearance: appearance)
+            #expect(pixels.contains { $0.isAmber && $0.x > idle.size.width && $0.y > image.size.height / 2 })
+        }
+    }
+    @Test func statusObservationRestoresOtherDotAfterSkip() async throws {
+        let home = FileManager.default.temporaryDirectory.appendingPathComponent("brew-version-synthetic-skip-status-" + UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: home) }
+        let listing = Listing(name: PackageName("synthetic-status")!, kind: .formula, version: "2-synthetic")
+        var entry = WatchEntry(name: listing.name, kind: listing.kind)
+        entry.lastListing = listing
+        entry.installed = InstalledVersion(version: "1-synthetic", source: .cellar)
+        let controller = try await makeOtherUpdatesController(fixture: home, watched: entry)
+        controller.setBadgeOtherUpdates(true)
+        var values: [StatusPresentation] = []
+        let observation = StatusObservation(controller: controller) { values.append($0) }
+        let initial = try #require(values.last)
+        #expect(initial.amberCount > 0 && initial.otherCount > 0 && initial.badge == .watched)
+        controller.skip(entry.name)
+        try await waitUntil { values.last?.amberCount == 0 && values.last?.badge == .other }
+        #expect(values.last?.otherCount == initial.otherCount)
+        withExtendedLifetime(observation) {}
+    }
     @Test func nativeActionPolicies() {
         #expect(StatusPresentation(amberCount: 0).accessibility == "Brew Version, no watched updates")
         #expect(StatusPresentation(amberCount: 1).accessibility == "Brew Version, 1 watched update available")
         #expect(StatusPresentation(amberCount: 3).accessibility == "Brew Version, 3 watched updates available")
+        #expect(StatusPresentation(amberCount: 0, otherCount: 1).accessibility == "Brew Version, no watched updates, 1 other update")
+        #expect(StatusPresentation(amberCount: 0, otherCount: 3).accessibility == "Brew Version, no watched updates, 3 other updates")
+        #expect(StatusPresentation(amberCount: 1, otherCount: 2).accessibility == "Brew Version, 1 watched update available, 2 other updates")
         // StatusPanelTests exercises session ownership; the former transient
         // popover close veto consumed clicks before a button action arrived.
         #expect(installedSourceNote(InstalledVersion(version: "1-synthetic", source: .caskroomFallback)) != nil)
@@ -1024,6 +1071,24 @@ private struct IconPixel {
 }
 @MainActor private func nativeScrollViews(_ view: NSView) -> [NSScrollView] {
     (view as? NSScrollView).map { [$0] } ?? view.subviews.flatMap(nativeScrollViews)
+}
+@MainActor private func makeOtherUpdatesController(fixture: URL, count: Int = 3, watched: WatchEntry? = nil) async throws -> WatchController {
+    let store = WatchStore(fileURL: fixture.appendingPathComponent("state.json"))
+    var state = AppState.initial; state.showOtherUpdates = count == 3; state.otherUpdatesCollapsed = false
+    // The fixture's one other update is a self-updating cask with no readable app.
+    state.includeSelfUpdating = true
+    state.watched = (0..<count).map {
+        let listing = Listing(name: PackageName("synthetic-reopen-\($0)")!, kind: .formula, version: "2-synthetic")
+        return WatchEntry(name: listing.name, kind: .formula, lastListing: listing)
+    }
+    if let watched { state.watched.append(watched) }
+    try store.save(state)
+    let prefix = fixture.appendingPathComponent("synthetic-prefix")
+    try FileManager.default.createDirectory(at: prefix.appendingPathComponent("Cellar"), withIntermediateDirectories: true)
+    try FileManager.default.createDirectory(at: prefix.appendingPathComponent("Caskroom/synthetic-fallback/1-synthetic"), withIntermediateDirectories: true)
+    let controller = WatchController(transport: ReopenCatalogTransport(), installed: InstalledReader(prefixes: HomebrewPrefix.detectAll(candidates: [prefix]), applicationDirectories: []), store: store, notifier: QuietNotifier(), catalogClient: CatalogClient(transport: ReopenCatalogTransport(), cacheDirectory: fixture.appendingPathComponent("catalog")))
+    if count == 3 { await controller.refreshCatalogIfDue() }
+    return controller
 }
 @MainActor private final class ChangeFlag { var changed = false }
 struct QuietNotifier: Notifier {}
