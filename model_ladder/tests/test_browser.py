@@ -37,7 +37,7 @@ def payload_for(ml, models=None, *, previous=None, checked=None):
     snap = snapshot(models if models is not None else ladder_models(),
                     when=(NOW - timedelta(hours=2)).isoformat(),
                     checked=checked)
-    return ml.build_payload(snap, previous, CONFIG)
+    return ml.build_payload({"aa": (snap, previous)}, CONFIG)
 
 
 @pytest.fixture(scope="module")

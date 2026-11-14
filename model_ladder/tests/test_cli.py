@@ -36,11 +36,14 @@ class Env:
         self.fetch = Fetch()
         self.built = []
         self.opened = []
-        monkeypatch.setattr(ml, "build_page", lambda home, output: self.built.append((home, output)))
+        self.sources = ("aa",)
+        self.fetchers = {}
+        monkeypatch.setattr(ml, "build_page", lambda home, output, **kwargs: self.built.append((home, output)))
 
     def run(self, *argv, now=NOW, get_key=None):
         return self.ml.main(list(argv), now=now, fetch=self.fetch,
-                            get_key=get_key or (lambda config: SECRET), open_page=self.opened.append)
+                            get_key=get_key or (lambda config: SECRET), open_page=self.opened.append,
+                            sources=self.sources, fetchers=self.fetchers)
 
     def seed(self, age_hours, models=None):
         when = NOW - timedelta(hours=age_hours)
@@ -58,6 +61,69 @@ def test_cli_first_run_fetches(env, tmp_path):
     assert env.fetch.calls == [SECRET]
     assert len(env.ml.load_snapshots(tmp_path / "ml-home")) == 1
     assert len(env.built) == 1
+
+
+def test_cli_one_source_failing_still_builds(env, capsys):
+    env.sources = ("aa", "aicd", "fc")
+    env.fetchers = {"aicd": lambda config, newest: fetched(),
+                    "fc": lambda config, newest: (_ for _ in ()).throw(env.ml.FetchError("synthetic failure"))}
+    assert env.run("refresh") == 0
+    assert "synthetic failure" in capsys.readouterr().err
+    assert env.ml.read_status(env.ml.runtime_home())["fc"]["error"] == "synthetic failure"
+    assert len(env.built) == 1
+
+
+def test_cli_source_option_fetches_one(env):
+    env.sources = ("aa", "aicd")
+    calls = []
+    env.fetchers = {"aicd": lambda config, newest: calls.append("aicd") or fetched()}
+    assert env.run("refresh", "--source", "aa") == 0
+    assert not calls and len(env.fetch.calls) == 1
+
+
+def test_cli_all_sources_failing_without_snapshots_exits_1(env, capsys):
+    env.sources = ("aa", "aicd")
+    env.fetch.error = env.ml.FetchError("synthetic aa failure")
+    def fail(config, newest):
+        raise env.ml.FetchError("synthetic aicd failure")
+    env.fetchers = {"aicd": fail}
+    assert env.run("refresh") == 1
+    assert "synthetic aa failure" in capsys.readouterr().err
+    assert not env.built
+
+
+def test_cli_corrupt_source_does_not_block_healthy_source(env, capsys):
+    env.sources = ("aa", "aicd")
+    directory = env.ml.snapshot_dir(env.ml.runtime_home(), "aicd")
+    broken = directory / "20261101T120000Z.json.gz"
+    broken.write_bytes(b"synthetic invalid snapshot")
+    calls = []
+    env.fetchers = {"aicd": lambda config, newest: calls.append(1)}
+    assert env.run("refresh") == 0
+    assert not calls and broken.read_bytes() == b"synthetic invalid snapshot"
+    assert str(broken) in capsys.readouterr().err and env.built
+
+
+@pytest.mark.parametrize("arguments", [(), ("--source", "aicd")])
+def test_cli_source_without_fetcher_is_skipped(env, arguments):
+    env.sources = ("aa", "aicd")
+    env.fetchers = {"aicd": None}
+    env.seed(0)
+    assert env.run("refresh", *arguments) == 0
+    assert "aicd" not in env.ml.read_status(env.ml.runtime_home())
+    assert env.built
+
+
+def test_cli_source_max_age_per_source(env, tmp_path):
+    env.sources = ("aa", "aicd")
+    home = env.ml.ensure_runtime_home(env.ml.runtime_home())
+    (home / "config.json").write_text(json.dumps({"max_age_hours": 2, "source_max_age_hours": {"aicd": 5}}))
+    env.seed(3)
+    env.ml.save_snapshot(home, fetched(), NOW - timedelta(hours=4), "aicd")
+    calls = []
+    env.fetchers = {"aicd": lambda config, newest: calls.append(1) or fetched()}
+    assert env.run() == 0 and len(env.fetch.calls) == 1 and not calls
+    assert env.run(now=NOW + timedelta(hours=2)) == 0 and calls == [1]
 
 
 def test_cli_fresh_snapshot_skips_fetch(env):
@@ -162,7 +228,7 @@ def test_cli_quota_line_survives_missing_headers(env, capsys):
 def test_cli_prints_output_path_and_passes_it(env, tmp_path, capsys, monkeypatch):
     env.seed(1)
 
-    def build(home, output):
+    def build(home, output, **kwargs):
         captured = capsys.readouterr()
         assert captured.out == "Building the page…\n"
         assert captured.err == ""

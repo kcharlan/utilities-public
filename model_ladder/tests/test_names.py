@@ -52,7 +52,7 @@ def test_classify_row_shape(ml):
         "slug": "s1", "name": "Alpha Test 1 (High, Tag)", "maker": "Example Lab", "family": "Alpha Test 1",
         "family_key": '["Example Lab", "Alpha Test 1"]', "rung": "high", "tags": ["Tag"],
         "scores": {key: 50 if key == "intelligence" else None for key, *_ in ml.INDEXES},
-        "cost": 2.5, "total_cost": 9.0, "release_date": "2026-02-03", "problem": None,
+        "cost": 2.5, "axes": {"cost": 2.5}, "extras": {}, "total_cost": 9.0, "release_date": "2026-02-03", "problem": None,
     }
 
 

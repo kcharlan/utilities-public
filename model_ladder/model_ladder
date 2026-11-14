@@ -15,6 +15,7 @@ import http.client
 import json
 import math
 import os
+import re
 import subprocess
 import sys
 import tempfile
@@ -32,7 +33,8 @@ VERSION = "1.1.4"
 # ---------------------------------------------------------------------------
 
 CONFIG_FILENAME = "config.json"
-DEFAULT_CONFIG = {"op_item": "", "op_vault": "", "op_field": "credential", "max_age_hours": 12}
+DEFAULT_CONFIG = {"op_item": "", "op_vault": "", "op_field": "credential", "max_age_hours": 12,
+                  "source_max_age_hours": {"aicd": 24, "fc": 24}}
 MAX_AGE_LIMIT = 87600  # ten years in hours; larger values overflow date arithmetic
 
 
@@ -77,13 +79,24 @@ def load_config() -> dict:
     if not isinstance(loaded, dict):
         raise ValueError(f"{path} must contain a JSON object")
     config = {**DEFAULT_CONFIG, **loaded}
+    ages = loaded.get("source_max_age_hours", {})
+    if not isinstance(ages, dict):
+        raise ValueError(f"{path}: source_max_age_hours must be an object")
+    config["source_max_age_hours"] = {**DEFAULT_CONFIG["source_max_age_hours"], **ages}
     for key in ("op_item", "op_vault", "op_field"):
         if not isinstance(config[key], str):
             raise ValueError(f"{path}: {key} must be a string")
     age = config["max_age_hours"]
     if isinstance(age, bool) or not isinstance(age, (int, float)) or not 0 < age <= MAX_AGE_LIMIT:
         raise ValueError(f"{path}: max_age_hours must be a positive number of at most {MAX_AGE_LIMIT}")
+    for key, age in config["source_max_age_hours"].items():
+        if isinstance(age, bool) or not isinstance(age, (int, float)) or not 0 < age <= MAX_AGE_LIMIT:
+            raise ValueError(f"{path}: source_max_age_hours.{key} must be a positive number of at most {MAX_AGE_LIMIT}")
     return config
+
+
+def source_max_age(config: dict, key: str) -> float:
+    return config["max_age_hours"] if key == "aa" else config.get("source_max_age_hours", {}).get(key, DEFAULT_CONFIG["source_max_age_hours"][key])
 
 
 # ---------------------------------------------------------------------------
@@ -169,6 +182,8 @@ def classify(models: list[dict]) -> list[dict]:
             "tags": parts["tags"],
             "scores": scores,
             "cost": cost,
+            "axes": {"cost": cost},
+            "extras": {},
             "total_cost": cost_block.get("total_cost"),
             "release_date": item.get("release_date"),
             "problem": parts["problem"],
@@ -283,21 +298,26 @@ def _is_finite_number(value) -> bool:
     return _is_number(value) and math.isfinite(value)
 
 
-def _fetch_page(key: str, number: int, open_url) -> tuple[dict, dict]:
+def _get(request, label: str, open_url=None, http_failure=None, allow_304=False):
+    try:
+        with (open_url or urllib.request.urlopen)(request, timeout=30) as response:
+            return getattr(response, "status", 200), response.read(), response.headers
+    except urllib.error.HTTPError as error:
+        if allow_304 and error.code == 304:
+            return 304, b"", error.headers
+        raise (http_failure(error) if http_failure else FetchError(f"{label} returned HTTP {error.code}")) from None
+    except urllib.error.URLError as error:
+        raise FetchError(f"Could not reach {label}: {error.reason}") from None
+    except http.client.HTTPException as error:
+        raise FetchError(f"{label} response was incomplete or malformed ({type(error).__name__})") from None
+    except (OSError, TimeoutError) as error:
+        raise FetchError(f"Could not reach {label}: {error}") from None
+
+
+def _fetch_page(key: str, number: int, open_url=None) -> tuple[dict, dict]:
     request = urllib.request.Request(f"{API_URL}?page={number}",
                                      headers={"x-api-key": key, "Accept": "application/json"})
-    try:
-        with open_url(request, timeout=30) as response:
-            body, headers = response.read(), response.headers
-    except urllib.error.HTTPError as error:
-        raise _http_failure(error) from None
-    except urllib.error.URLError as error:
-        raise FetchError(f"Could not reach Artificial Analysis: {error.reason}") from None
-    except http.client.HTTPException as error:
-        raise FetchError(f"Artificial Analysis response was incomplete or malformed "
-                         f"({type(error).__name__})") from None
-    except (OSError, TimeoutError) as error:
-        raise FetchError(f"Could not reach Artificial Analysis: {error}") from None
+    _, body, headers = _get(request, "Artificial Analysis", open_url, _http_failure)
     try:
         envelope = json.loads(body)
     except ValueError:
@@ -314,7 +334,7 @@ def _fetch_page(key: str, number: int, open_url) -> tuple[dict, dict]:
     return envelope, headers
 
 
-def fetch_all(key: str, open_url=urllib.request.urlopen) -> dict:
+def fetch_all(key: str, open_url=None) -> dict:
     """Fetch every page; return models, index version and the last rate-limit headers."""
     models: list = []
     version = None
@@ -387,12 +407,18 @@ def _write_snapshot(path: Path, data: dict) -> None:
     atomic_write_bytes(path, gzip.compress(json.dumps(data).encode("utf-8")))
 
 
-def load_snapshots(home: Path) -> list[Path]:
+def snapshot_dir(home: Path, source: str = "aa") -> Path:
+    root = ensure_runtime_home(home / SNAPSHOT_DIR)
+    return root if source == "aa" else ensure_runtime_home(root / source)
+
+
+def load_snapshots(home: Path, source: str = "aa") -> list[Path]:
     """Snapshot files, newest first by file name."""
-    return sorted((home / SNAPSHOT_DIR).glob("*" + SNAPSHOT_SUFFIX), key=lambda p: p.name, reverse=True)
+    root = home / SNAPSHOT_DIR
+    return sorted((root if source == "aa" else root / source).glob("*" + SNAPSHOT_SUFFIX), key=lambda p: p.name, reverse=True)
 
 
-def read_snapshot(path: Path) -> dict:
+def read_snapshot(path: Path, source: str = "aa") -> dict:
     try:
         with gzip.open(path, "rb") as stream:
             data = json.loads(stream.read().decode("utf-8"))
@@ -402,7 +428,10 @@ def read_snapshot(path: Path) -> dict:
         raise StoreError(f"cannot read {path}: not a version {SCHEMA} snapshot")
     if not isinstance(data.get("models"), list):
         raise StoreError(f"cannot read {path}: missing the models list")
-    if not _is_number(data.get("index_version")):
+    if source == "fc":
+        if not isinstance(data.get("index_version"), str) or not re.fullmatch(r"\d+(?:\.\d+)+", data["index_version"]):
+            raise StoreError(f"cannot read {path}: missing the dotted index_version")
+    elif not _is_number(data.get("index_version")):
         raise StoreError(f"cannot read {path}: missing the numeric index_version")
     for field in ("fetched_at", "last_checked"):
         try:
@@ -412,19 +441,23 @@ def read_snapshot(path: Path) -> dict:
     return data
 
 
-def save_snapshot(home: Path, result: dict, now: datetime) -> Path:
+def save_snapshot(home: Path, result: dict, now: datetime, source: str = "aa") -> Path:
     """Store a fetch. An unchanged one only refreshes the newest file's last_checked."""
     moment = _utc(now).replace(microsecond=0)
-    ensure_runtime_home(home / SNAPSHOT_DIR)
-    existing = load_snapshots(home)
+    directory = snapshot_dir(home, source)
+    existing = load_snapshots(home, source)
     if existing:
-        newest = read_snapshot(existing[0])
-        if newest["models"] == result["models"] and newest["index_version"] == result["index_version"]:
+        newest = read_snapshot(existing[0], source)
+        if result.get("not_modified") or (newest["models"] == result["models"] and newest["index_version"] == result["index_version"] and newest.get("index_maxima") == result.get("index_maxima")):
             newest["last_checked"] = moment.isoformat()
-            newest["rate_limit"] = result["rate_limit"]
+            for key in ("rate_limit", "published", "etag", "current_version"):
+                if key in result:
+                    newest[key] = result[key]
             _write_snapshot(existing[0], newest)
             return existing[0]
-    path = home / SNAPSHOT_DIR / (moment.strftime("%Y%m%dT%H%M%SZ") + SNAPSHOT_SUFFIX)
+    if result.get("not_modified"):
+        raise StoreError("not modified, but there is no snapshot to keep")
+    path = directory / (moment.strftime("%Y%m%dT%H%M%SZ") + SNAPSHOT_SUFFIX)
     _write_snapshot(path, {
         "schema": SCHEMA,
         "fetched_at": moment.isoformat(),
@@ -432,10 +465,32 @@ def save_snapshot(home: Path, result: dict, now: datetime) -> Path:
         "index_version": result["index_version"],
         "rate_limit": result["rate_limit"],
         "models": result["models"],
+        **{key: result[key] for key in ("index_maxima", "published", "etag", "current_version") if key in result},
     })
-    for old in load_snapshots(home)[KEEP:]:
+    for old in load_snapshots(home, source)[KEEP:]:
         old.unlink()
     return path
+
+
+def read_status(home: Path) -> dict:
+    path = home / "status.json"
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+        if not isinstance(data, dict):
+            raise ValueError("not an object")
+        return data
+    except FileNotFoundError:
+        return {}
+    except (OSError, ValueError) as error:
+        _complain(f"cannot read {path}: {error}")
+        return {}
+
+
+def write_status(home: Path, source: str, attempt: datetime, error: str | None) -> None:
+    ensure_runtime_home(home)
+    status = read_status(home)
+    status[source] = {"last_attempt": _utc(attempt).isoformat(), "error": error}
+    atomic_write_bytes(home / "status.json", (json.dumps(status, indent=2) + "\n").encode())
 
 
 # ---------------------------------------------------------------------------
@@ -443,20 +498,53 @@ def save_snapshot(home: Path, result: dict, now: datetime) -> Path:
 # ---------------------------------------------------------------------------
 
 
-def diff_rows(old: dict | None, new: dict) -> dict | None:
+SOURCE_KEYS = ("aa", "aicd", "fc")
+SOURCE_SPECS = {
+    "aa": {"label": "Artificial Analysis", "attribution": {"name": "Artificial Analysis", "url": "https://artificialanalysis.ai/"},
+           "indexes": [{"key": key, "label": label, "short": short, "borrowed": key != "intelligence", "max": None} for key, _, label, short in INDEXES],
+           "axes": [{"key": "cost", "label": "Cost per task", "unit": "money", "per": "per task"}],
+           "default_axis": "cost", "group_label": "Creator", "version_label": "Intelligence Index v{version}",
+           "has_quota": True, "notice": lambda rows: None,
+           "borrowed_notice": {"cost": "Costs here are from the Intelligence Index run. Artificial Analysis publishes no cost for the {index} index, so every cost, frontier and cost per point on this page pairs these scores with that cost."},
+           "extras": [], "classify": classify},
+    **{key: {"label": label, "attribution": {"name": name, "url": url}, "indexes": [], "axes": [], "extras": [],
+             "default_axis": None, "group_label": "Harness", "version_label": "", "has_quota": False,
+             "notice": lambda rows: None, "borrowed_notice": {}, "classify": lambda models: []}
+       for key, label, name, url in (("aicd", "AI Coding Daily", "AI Coding Daily", "https://aicodingdaily.com/leaderboard"),
+                                     ("fc", "FrontierCode 2.0", "Cognition", "https://cognition.com/frontiercode"))},
+}
+
+
+def _row_path(row: dict, path: str):
+    value = row
+    for part in path.split("."):
+        if not isinstance(value, dict):
+            return None
+        value = value.get(part)
+    return value
+
+
+def diff_rows(old: dict | None, new: dict, source: str = "aa") -> dict | None:
     """What changed between two snapshots, by slug. Raw values, no rounding."""
     if old is None:
         return None
-    before = {row["slug"]: row for row in classify(old["models"])}
-    after = {row["slug"]: row for row in classify(new["models"])}
+    spec = SOURCE_SPECS[source]
+    before = {row["slug"]: row for row in spec["classify"](old["models"])}
+    after = {row["slug"]: row for row in spec["classify"](new["models"])}
     changed = []
     for slug, row in after.items():
         prior = before.get(slug)
-        if prior and (prior["scores"] != row["scores"] or prior["cost"] != row["cost"]):
+        extras = {item["path"]: [_row_path(prior, item["path"]), _row_path(row, item["path"])]
+                  for item in spec["extras"] if prior and item["path"] != "tested" and item["path"] != "extras.tested"}
+        extras = {key: pair for key, pair in extras.items() if pair[0] != pair[1]}
+        if prior and (prior["scores"] != row["scores"] or prior["axes"] != row["axes"] or extras):
             changed.append({"slug": slug, "name": row["name"],
-                            "scores": {key: [prior["scores"][key], row["scores"][key]] for key, *_ in INDEXES},
-                            "cost": [prior["cost"], row["cost"]]})
+                            "scores": {item["key"]: [prior["scores"].get(item["key"]), row["scores"].get(item["key"])] for item in spec["indexes"]},
+                            "axes": {item["key"]: [prior["axes"].get(item["key"]), row["axes"].get(item["key"])] for item in spec["axes"]},
+                            "extras": extras})
+    old_max, new_max = old.get("index_maxima", {}), new.get("index_maxima", {})
     return {
+        "source": source,
         "from": old["fetched_at"],
         "to": new["fetched_at"],
         "version": None if old["index_version"] == new["index_version"]
@@ -464,6 +552,7 @@ def diff_rows(old: dict | None, new: dict) -> dict | None:
         "added": [row["name"] for slug, row in after.items() if slug not in before],
         "removed": [row["name"] for slug, row in before.items() if slug not in after],
         "changed": changed,
+        "maxima": {key: [old_max.get(key), new_max.get(key)] for key in old_max.keys() | new_max.keys() if old_max.get(key) != new_max.get(key)},
     }
 
 
@@ -471,27 +560,35 @@ def diff_rows(old: dict | None, new: dict) -> dict | None:
 # Page build
 # ---------------------------------------------------------------------------
 
-PAGE_SCHEMA = 2
+PAGE_SCHEMA = 3
 
 
-def build_payload(snapshot: dict, previous: dict | None, config: dict) -> dict:
-    """Everything the page shows; all analysis happens in the page's JavaScript."""
-    rows = classify(snapshot["models"])
-    indexes = [{"key": key, "label": label, "short": short,
-                "count": sum(row["scores"][key] is not None for row in rows)}
-               for key, _, label, short in INDEXES]
+def build_source_entry(key: str, newest: dict | None, previous: dict | None, status: dict, config: dict) -> dict:
+    spec = SOURCE_SPECS[key]
+    rows = spec["classify"](newest["models"]) if newest else []
+    indexes = [{**item, "max": (newest or {}).get("index_maxima", {}).get(item["key"], item.get("max")),
+                "count": sum(row["scores"].get(item["key"]) is not None for row in rows)} for item in spec["indexes"]]
+    indexes = [item for item in indexes if item["count"] or item["key"] == DEFAULT_INDEX]
+    entry = {field: spec[field] for field in ("label", "attribution", "axes", "default_axis", "group_label", "borrowed_notice", "extras", "has_quota")}
+    entry.update({"key": key, "indexes": indexes, "available": newest is not None,
+                  "version_label": spec["version_label"].format(version=newest["index_version"]) if newest else "",
+                  "version": newest["index_version"] if newest else None,
+                  "rate_limit": (newest or {}).get("rate_limit") or {"limit": None, "remaining": None, "reset": None},
+                  "max_age_hours": source_max_age(config, key), "rows": rows,
+                  "notice": spec["notice"](rows) if newest else None,
+                  "changes": diff_rows(previous, newest, key) if newest else None,
+                  "last_attempt": status.get("last_attempt"), "error": status.get("error")})
+    entry.update({field: (newest or {}).get(field) for field in ("fetched_at", "last_checked", "published", "current_version")})
+    return entry
+
+
+def build_payload(inputs: dict, config: dict, status: dict | None = None) -> dict:
     return {
         "schema": PAGE_SCHEMA,
         "app": {"name": "Model Ladder", "version": VERSION},
-        "fetched_at": snapshot["fetched_at"],
-        "last_checked": snapshot["last_checked"],
-        "max_age_hours": config["max_age_hours"],
-        "index_version": snapshot["index_version"],
-        "rate_limit": snapshot.get("rate_limit") or {"limit": None, "remaining": None, "reset": None},
         "rung_order": list(RUNG_ORDER),
-        "rows": rows,
-        "indexes": [index for index in indexes if index["count"] or index["key"] == DEFAULT_INDEX],
-        "changes": diff_rows(previous, snapshot),
+        "default_source": "aa",
+        "sources": {key: build_source_entry(key, *inputs.get(key, (None, None)), (status or {}).get(key, {}), config) for key in SOURCE_KEYS},
     }
 
 
@@ -518,10 +615,10 @@ def render_page(payload: dict) -> bytes:
 
 
 def _shows_a_change(diff: dict) -> bool:
-    return bool(diff["version"] or diff["added"] or diff["removed"] or diff["changed"])
+    return bool(diff["version"] or diff["added"] or diff["removed"] or diff["changed"] or diff["maxima"])
 
 
-def _last_real_change(older: list[Path], snapshot: dict) -> dict | None:
+def _last_real_change(older: list[Path], snapshot: dict, source: str = "aa") -> dict | None:
     """The newest older snapshot that differs from snapshot in what the page shows.
 
     A new snapshot is stored whenever any delivered field differs, including fields the page
@@ -530,23 +627,35 @@ def _last_real_change(older: list[Path], snapshot: dict) -> dict | None:
     """
     for path in older:
         try:
-            candidate = read_snapshot(path)
+            candidate = read_snapshot(path, source)
         except StoreError as error:
             _complain(f"{error}; skipping it for the list of changes")
             continue
-        if _shows_a_change(diff_rows(candidate, snapshot)):
+        if _shows_a_change(diff_rows(candidate, snapshot, source)):
             return candidate
     return None
 
 
-def build_page(home: Path, output: Path) -> None:
+def build_page(home: Path, output: Path, *, unavailable=None) -> None:
     """Build from the newest snapshot, comparing with the last older one that differs in what is shown."""
-    paths = load_snapshots(home)
-    if not paths:
+    inputs, unavailable = {}, dict(unavailable or {})
+    for key in SOURCE_KEYS:
+        if key in unavailable:
+            continue
+        try:
+            paths = load_snapshots(home, key)
+            if paths:
+                snapshot = read_snapshot(paths[0], key)
+                inputs[key] = (snapshot, _last_real_change(paths[1:], snapshot, key))
+        except StoreError as error:
+            _complain(str(error))
+            unavailable[key] = str(error)
+    if not inputs:
         raise StoreError("no snapshot to build from")
-    snapshot = read_snapshot(paths[0])
-    previous = _last_real_change(paths[1:], snapshot)
-    atomic_write_bytes(output, render_page(build_payload(snapshot, previous, load_config())))
+    status = read_status(home)
+    for key, error in unavailable.items():
+        status[key] = {**status.get(key, {}), "error": error}
+    atomic_write_bytes(output, render_page(build_payload(inputs, load_config(), status)))
 
 
 # ---------------------------------------------------------------------------
@@ -755,14 +864,14 @@ function findings(pareto, steps, mode) {
   return out;
 }
 
-function changesToShow(changes, mode, key) {
+function changesToShow(changes, mode, key, axisKey) {
   if (!changes || !changes.changed) return [];
   function shownScore(raw) { return raw === null ? null : mode === "decimal" ? raw : wholePoints(raw); }
   return changes.changed.filter(function (item) {
     // Unscored in this index before and after: the view never lists the model, so its cost is not news here.
     if (item.scores[key][0] === null && item.scores[key][1] === null) return false;
     var scoreMoved = shownScore(item.scores[key][0]) !== shownScore(item.scores[key][1]);
-    var costMoved = money(item.cost[0]) !== money(item.cost[1]);
+    var costMoved = money(item.axes[axisKey][0]) !== money(item.axes[axisKey][1]);
     return scoreMoved || costMoved;
   });
 }
@@ -908,7 +1017,8 @@ APP_JS = r"""
   const html = window.htm.bind(h);
 
   const DATA = JSON.parse(document.getElementById("payload").textContent);
-  const ALL_ROWS = DATA.rows;
+  const SRC = DATA.sources[DATA.default_source];
+  const ALL_ROWS = SRC.rows;
   const ORDER = DATA.rung_order;
   const RUNGS = M.presentRungs(ALL_ROWS, ORDER);
   const KNOWN_FAMILIES = {};
@@ -948,7 +1058,7 @@ APP_JS = r"""
   function clean(raw) {
     if (!raw || typeof raw !== "object" || Array.isArray(raw)) return null;
     const s = defaults();
-    if (DATA.indexes.some((i) => i.key === raw.index)) s.index = raw.index;
+    if (SRC.indexes.some((i) => i.key === raw.index)) s.index = raw.index;
     if (raw.view === "all" || raw.view === "compare") s.view = raw.view;
     if (Array.isArray(raw.keys)) {
       s.keys = raw.keys.filter((k, i) => typeof k === "string" && raw.keys.indexOf(k) === i).slice(0, LIMIT);
@@ -1139,8 +1249,8 @@ APP_JS = r"""
       const timer = setInterval(() => setNow(Date.now()), 60000);
       return () => clearInterval(timer);
     }, []);
-    const age = M.dataAge(DATA.last_checked, now, DATA.max_age_hours);
-    const rl = DATA.rate_limit || {};
+    const age = M.dataAge(SRC.last_checked, now, SRC.max_age_hours);
+    const rl = SRC.rate_limit || {};
     const copy = () => {
       let pending;
       try { pending = navigator.clipboard.writeText(COMMAND); } catch (e) { pending = Promise.reject(e); }
@@ -1152,8 +1262,8 @@ APP_JS = r"""
     const reset = rl.reset ? new Date(rl.reset * 1000) : null;
     return html`<div class="status">
       <span id="status-age" class=${age.stale ? "age stale" : "age"}>${age.text}</span>
-      <span>Fetched <b>${when(DATA.fetched_at, true)}</b></span>
-      <span>Intelligence Index <b>${"v" + DATA.index_version}</b></span>
+      <span>Fetched <b>${when(SRC.fetched_at, true)}</b></span>
+      <span>Intelligence Index <b>${"v" + SRC.version}</b></span>
       <span><b>${view.rows.length}</b>${view.rows.length !== ALL_ROWS.length ? html` of <b>${ALL_ROWS.length}</b>` : null} scored models</span>
       <span id="status-attention"><b>${view.attention.length}</b>${view.attention.length === 1 ? " needs" : " need"} attention</span>
       <span id="status-quota">${rl.remaining !== null && rl.remaining !== undefined && rl.limit !== null && rl.limit !== undefined
@@ -1174,16 +1284,16 @@ APP_JS = r"""
   }
 
   function Changes({ mode, index }) {
-    const c = DATA.changes;
+    const c = SRC.changes;
     if (!c) return null;
-    const shown = M.changesToShow(c, mode, index);
+    const shown = M.changesToShow(c, mode, index, "cost");
     const empty = !c.version && !c.added.length && !c.removed.length && !shown.length;
     const describe = (item) => {
       const parts = [];
       const a = item.scores[index][0] === null ? "no score" : scoreText(item.scores[index][0], mode);
       const b = item.scores[index][1] === null ? "no score" : scoreText(item.scores[index][1], mode);
       parts.push(a === b ? "score " + a : "score " + a + " to " + b);
-      const ca = M.money(item.cost[0]) || "no cost", cb = M.money(item.cost[1]) || "no cost";
+      const ca = M.money(item.axes.cost[0]) || "no cost", cb = M.money(item.axes.cost[1]) || "no cost";
       parts.push(ca === cb ? "cost " + ca : "cost " + ca + " to " + cb);
       return parts.join("; ");
     };
@@ -1505,7 +1615,7 @@ APP_JS = r"""
     const tab = (view, label) => html`<button role="tab" type="button" id=${"tab-" + view} aria-selected=${String(state.view === view)}
       onClick=${() => update({ view })}>${label}</button>`;
     const view = viewFor(state.index), borrowed = state.index !== "intelligence";
-    const indexInfo = DATA.indexes.find((i) => i.key === state.index);
+    const indexInfo = SRC.indexes.find((i) => i.key === state.index);
     const indexLabel = indexInfo.label, indexShort = indexInfo.short;
     const props = { state, update, onSort, toggleKey, view, borrowed, indexLabel, indexShort };
     return html`<div class="wrap">
@@ -1516,7 +1626,7 @@ APP_JS = r"""
       <${Attention} view=${view} />
       <${Changes} mode=${state.mode} index=${state.index} />
       <div class="index-bar"><label for="index-select">Scored by</label><select id="index-select" value=${state.index} onChange=${(e) => update({ index: e.currentTarget.value })}>
-        ${DATA.indexes.filter((i) => i.key === "intelligence" || i.count > 0).map((i) => html`<option key=${i.key} value=${i.key}>${i.label} (${i.count})</option>`)}
+        ${SRC.indexes.filter((i) => i.key === "intelligence" || i.count > 0).map((i) => html`<option key=${i.key} value=${i.key}>${i.label} (${i.count})</option>`)}
       </select></div>
       ${borrowed ? html`<p id="cost-notice" class="ver cost-notice">Costs here are from the Intelligence Index run. Artificial Analysis publishes no cost for the ${indexLabel} index, so every cost, frontier and cost per point on this page pairs these scores with that cost.</p>` : null}
       <div class="tabs" role="tablist">
@@ -2093,6 +2203,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("command", nargs="?", choices=("refresh", "build"),
                         help="refresh: always fetch first; build: never fetch")
     parser.add_argument("--no-refresh", action="store_true", help="never fetch, even if the data is old")
+    parser.add_argument("--source", choices=SOURCE_KEYS, help="fetch only this source")
     parser.add_argument("--no-open", action="store_true", help="do not open the page in a browser")
     parser.add_argument("--output", type=Path, help="write the page here instead of the runtime home")
     parser.add_argument("--version", action="version", version=f"Model Ladder {VERSION}")
@@ -2111,9 +2222,9 @@ def _quota_line(result: dict) -> str:
     return text
 
 
-def _is_stale(snapshot: dict, config: dict, now: datetime) -> bool:
+def _is_stale(snapshot: dict, config: dict, now: datetime, source: str = "aa") -> bool:
     checked = _utc(datetime.fromisoformat(snapshot["last_checked"]))
-    return _utc(now) - checked > timedelta(hours=config["max_age_hours"])
+    return _utc(now) - checked > timedelta(hours=source_max_age(config, source))
 
 
 def _complain(message: str) -> None:
@@ -2125,7 +2236,7 @@ def _status(message: str) -> None:
 
 
 def main(argv: list[str] | None = None, *, now: datetime | None = None, fetch=fetch_all,
-         get_key=get_api_key, open_page=webbrowser.open) -> int:
+         get_key=get_api_key, open_page=webbrowser.open, fetchers=None, sources=SOURCE_KEYS) -> int:
     args = build_parser().parse_args(argv)
     now = now or datetime.now(timezone.utc)
     try:
@@ -2134,41 +2245,53 @@ def main(argv: list[str] | None = None, *, now: datetime | None = None, fetch=fe
         _complain(str(error))
         return 1
     home = runtime_home()
-    try:
-        paths = load_snapshots(home)
-        newest = read_snapshot(paths[0]) if paths else None
-    except StoreError as error:
-        _complain(str(error))
-        return 1
-
-    if args.command == "build" or args.no_refresh:
-        should_fetch = False
-    elif args.command == "refresh" or newest is None:
-        should_fetch = True
-    else:
-        should_fetch = _is_stale(newest, config, now)
-
-    if should_fetch:
+    registered = {"aa": lambda config, newest: fetch(get_key(config)), **(fetchers or {})}
+    registered = {key: func for key, func in registered.items() if func is not None}
+    snapshots, unavailable, reported = {}, {}, False
+    for key in sources:
         try:
-            result = fetch(get_key(config))
-            save_snapshot(home, result, now)
-            print(_quota_line(result))
-        except (KeyUnavailable, FetchError, StoreError) as error:
+            paths = load_snapshots(home, key)
+            snapshots[key] = read_snapshot(paths[0], key) if paths else None
+        except StoreError as error:
             _complain(str(error))
-            if newest is None:
-                return 1
-        except OSError as error:
-            _complain(f"cannot save snapshot: {error}")
-            if newest is None:
-                return 1
-    elif newest is None:
-        _complain("no snapshot yet; run model_ladder refresh to fetch one")
+            unavailable[key] = str(error)
+            reported = True
+    for key in sources:
+        newest = snapshots.get(key)
+        if key in unavailable or key not in registered or (args.source and args.source != key):
+            continue
+        if args.command == "build" or args.no_refresh:
+            continue
+        if args.command != "refresh" and newest is not None and not _is_stale(newest, config, now, key):
+            continue
+        try:
+            result = registered[key](config, newest)
+            path = save_snapshot(home, result, now, key)
+            snapshots[key] = read_snapshot(path, key)
+            write_status(home, key, now, None)
+            if key == "aa" and not result.get("not_modified"):
+                print(_quota_line(result))
+            elif result.get("not_modified"):
+                print(f"{SOURCE_SPECS[key]['label']}: unchanged.")
+            else:
+                print(f"{SOURCE_SPECS[key]['label']}: {len(result['models'])} configurations.")
+        except (KeyUnavailable, FetchError, StoreError, OSError) as error:
+            message = f"cannot save snapshot: {error}" if isinstance(error, OSError) else str(error)
+            _complain(message)
+            reported = True
+            try:
+                write_status(home, key, now, message)
+            except OSError as status_error:
+                _complain(f"cannot save status: {status_error}")
+    if not any(snapshots.values()):
+        if not reported:
+            _complain("no snapshot yet; run model_ladder refresh to fetch one")
         return 1
 
     output = args.output.expanduser() if args.output else home / "model_ladder.html"
     try:
         _status("Building the page…")
-        build_page(home, output)
+        build_page(home, output, unavailable=unavailable)
     except (OSError, StoreError, ValueError) as error:
         _complain(f"cannot build the page: {error}")
         return 1

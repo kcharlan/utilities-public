@@ -50,7 +50,7 @@ written to disk, placed on a command line or embedded in the page.
 ## Commands
 
 ```
-model_ladder [refresh|build] [--no-refresh] [--no-open] [--output PATH] [--version]
+model_ladder [refresh|build] [--source {aa,aicd,fc}] [--no-refresh] [--no-open] [--output PATH] [--version]
 ```
 
 | Command | What it does |
@@ -59,6 +59,7 @@ model_ladder [refresh|build] [--no-refresh] [--no-open] [--output PATH] [--versi
 | `model_ladder refresh` | Always fetches, then builds and opens. |
 | `model_ladder build` | Builds from the newest snapshot; never fetches. |
 | `--no-refresh` | Never fetch, even if the data is old. |
+| `--source KEY` | Fetch only the named source; the page still includes saved snapshots from all sources. |
 | `--no-open` | Do not open the page in a browser. |
 | `--output PATH` | Write the page there instead of the runtime home. |
 | `--version` | Print the version. |
@@ -115,11 +116,14 @@ in the launcher.
 files 0600:
 
 - `config.json`: written on first run. Keys `op_item`, `op_vault`, `op_field`,
-  `max_age_hours` (a positive number of hours, at most 87600, ten years).
+  `max_age_hours` (a positive number of hours, at most 87600, ten years), and
+  `source_max_age_hours` (per-source ages for `aicd` and `fc`, default 24 hours).
 - `snapshots/<UTC timestamp>.json.gz` (directory mode 0700): each fetch as
   delivered, newest 60 kept. A fetch identical to the newest snapshot adds no
   file; it only updates that snapshot's check time, which is what
   `max_age_hours` is measured from.
+- `snapshots/<source>/`: separate private snapshot directories for other sources.
+- `status.json`: the last attempt and error, if any, for each source.
 - `model_ladder.html`: the built page, replaced atomically.
 
 Nothing is written inside the repository.

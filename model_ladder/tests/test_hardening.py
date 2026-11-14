@@ -23,6 +23,8 @@ def test_invalid_json_config_names_the_file(ml, tmp_path):
     ("op_item", 5), ("op_vault", None), ("op_field", ["x"]),
     ("max_age_hours", "12"), ("max_age_hours", True), ("max_age_hours", 0),
     ("max_age_hours", -3), ("max_age_hours", None), ("max_age_hours", float("inf")),
+    ("source_max_age_hours", {"aicd": "12"}), ("source_max_age_hours", {"aicd": True}),
+    ("source_max_age_hours", {"aicd": 0}), ("source_max_age_hours", {"aicd": None}),
 ])
 def test_config_value_types_are_validated(ml, tmp_path, key, bad):
     write_config(ml, tmp_path, json.dumps({key: bad}))
@@ -90,6 +92,9 @@ def test_env_key_is_stripped(ml):
 def test_absurd_max_age_is_rejected(ml, tmp_path, text):
     write_config(ml, tmp_path, '{"max_age_hours": ' + text + "}")
     with pytest.raises(ValueError, match=r"config.json.*max_age_hours"):
+        ml.load_config()
+    write_config(ml, tmp_path, '{"source_max_age_hours": {"aicd": ' + text + "}}")
+    with pytest.raises(ValueError, match=r"config.json.*source_max_age_hours"):
         ml.load_config()
 
 

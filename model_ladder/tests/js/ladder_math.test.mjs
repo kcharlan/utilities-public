@@ -318,24 +318,24 @@ test("unscored rows follow the selection order, then effort order", () => {
 test("changes filter uses per-index scores including null", () => {
   const changes = {
     changed: [
-      { slug: "a", name: "A", scores: {intelligence: [61.8, 62.2]}, cost: [1, 1] },
-      { slug: "b", name: "B", scores: {intelligence: [61.4, 61.6]}, cost: [1, 1] },
-      { slug: "c", name: "C", scores: {intelligence: [50, 50]}, cost: [1.2341, 1.2349] },
-      { slug: "d", name: "D", scores: {intelligence: [50, 50]}, cost: [1.23, 1.25] },
-      { slug: "e", name: "E", scores: {intelligence: [null, 0]}, cost: [1, 1] },
-      { slug: "f", name: "F", scores: {intelligence: [null, null]}, cost: [1, 1] },
+      { slug: "a", name: "A", scores: {intelligence: [61.8, 62.2]}, axes: {cost: [1, 1]} },
+      { slug: "b", name: "B", scores: {intelligence: [61.4, 61.6]}, axes: {cost: [1, 1]} },
+      { slug: "c", name: "C", scores: {intelligence: [50, 50]}, axes: {cost: [1.2341, 1.2349]} },
+      { slug: "d", name: "D", scores: {intelligence: [50, 50]}, axes: {cost: [1.23, 1.25]} },
+      { slug: "e", name: "E", scores: {intelligence: [null, 0]}, axes: {cost: [1, 1]} },
+      { slug: "f", name: "F", scores: {intelligence: [null, null]}, axes: {cost: [1, 1]} },
     ],
   };
-  assert.deepEqual(m.changesToShow(changes, "whole", "intelligence").map((c) => c.slug), ["b", "d", "e"]);
-  assert.deepEqual(m.changesToShow(changes, "decimal", "intelligence").map((c) => c.slug), ["a", "b", "d", "e"]);
+  assert.deepEqual(m.changesToShow(changes, "whole", "intelligence", "cost").map((c) => c.slug), ["b", "d", "e"]);
+  assert.deepEqual(m.changesToShow(changes, "decimal", "intelligence", "cost").map((c) => c.slug), ["a", "b", "d", "e"]);
   const domain = {changed: [
-    {slug: "appears", scores: {finance: [null, 0]}, cost: [1, 1]},
-    {slug: "disappears", scores: {finance: [5, null]}, cost: [1, 1]},
-    {slug: "unchanged", scores: {finance: [null, null]}, cost: [1, 1]},
+    {slug: "appears", scores: {finance: [null, 0]}, axes: {cost: [1, 1]}},
+    {slug: "disappears", scores: {finance: [5, null]}, axes: {cost: [1, 1]}},
+    {slug: "unchanged", scores: {finance: [null, null]}, axes: {cost: [1, 1]}},
     // Not scored in this index before or after, so the view does not list it: a cost change alone stays out.
-    {slug: "cost-only-unscored", scores: {finance: [null, null]}, cost: [1, 2]},
-    {slug: "cost-only-scored", scores: {finance: [7, 7]}, cost: [1, 2]},
+    {slug: "cost-only-unscored", scores: {finance: [null, null]}, axes: {cost: [1, 2]}},
+    {slug: "cost-only-scored", scores: {finance: [7, 7]}, axes: {cost: [1, 2]}},
   ]};
-  assert.deepEqual(m.changesToShow(domain, "whole", "finance").map(c => c.slug), ["appears", "disappears", "cost-only-scored"]);
+  assert.deepEqual(m.changesToShow(domain, "whole", "finance", "cost").map(c => c.slug), ["appears", "disappears", "cost-only-scored"]);
   assert.deepEqual(m.changesToShow(null, "whole"), []);
 });
