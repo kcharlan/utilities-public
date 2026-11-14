@@ -26,6 +26,53 @@ function loadMath() {
 const m = loadMath();
 const ORDER = ["max", "xhigh", "high", "medium", "low", "minimal", "non-reasoning"];
 const MAKER = "Example Lab";
+const AA_AXIS = {key: "cost", label: "Cost per task", unit: "money", per: "per task"};
+const AXIS_FORMAT_CASES = [
+  [null, "money", ""], [1.25, "money", "$1.25"],
+  [59.6, "time", "1:00"], [3599.6, "time", "1:00:00"],
+  [999, "tokens", "999 tokens"], [1499, "tokens", "1k tokens"],
+];
+
+test("axis formatting, labels and checked freshness", () => {
+  for (const [value, unit, expected] of AXIS_FORMAT_CASES) assert.equal(m.formatAxis(value, unit), expected);
+  assert.equal(m.lowerFirst("Output tokens"), "output tokens");
+  assert.equal(m.lowerFirst(""), "");
+  const now = Date.parse("2026-01-02T00:00:00Z");
+  assert.deepEqual(m.checkedText("2026-01-01T23:30:00Z", now, 12), {text: "Checked less than an hour ago", stale: false});
+  assert.deepEqual(m.checkedText("2026-01-01T00:00:00Z", now, 12), {text: "Checked 24 hours ago", stale: true});
+  assert.deepEqual(m.checkedText("invalid", now, 12), {text: "Check time unknown", stale: true});
+});
+
+test("rows use the selected axis and retain missing values", () => {
+  const rows = [{scores: {test: 5}, axes: {time: 12}}, {scores: {test: 4}, axes: {}}];
+  assert.deepEqual(m.rowsForIndex(rows, "test", "time").map(r => r.cost), [12, null]);
+});
+
+test("changes compare selected axis and visible extras at display precision", () => {
+  const axis = {key: "time", label: "Time per prompt", unit: "time", per: "per prompt"};
+  const extras = [{path: "extras.quality", label: "Quality", kind: "points"},
+    {path: "extras.tested", label: "Tested", kind: "date"}];
+  const change = (slug, time, quality, tested) => ({slug, scores: {test: [50, 50]},
+    axes: {time}, extras: {"extras.quality": quality, "extras.tested": tested}});
+  const changes = {changed: [change("hidden", [60.1, 60.4], [1.001, 1.004], ["2026-01-01", "2026-01-02"]),
+    change("extra", [60, 60], [1, 1.02], [null, null]), change("time", [60, 61], [1, 1], [null, null])]};
+  assert.deepEqual(m.changesToShow(changes, "whole", "test", axis, extras).map(r => r.slug), ["extra", "time"]);
+});
+
+test("findings use each axis unit and its extremes wording", () => {
+  const rows = select(FIXTURE, "whole");
+  const pareto = m.paretoRows(rows), steps = m.familySteps(rows);
+  for (const [axis, least, most, unit] of [
+    [AA_AXIS, "Cheapest", "Most expensive", "$"],
+    [{key: "time", label: "Time per prompt", unit: "time", per: "per prompt"}, "Least time per point", "Most time per point", ":"],
+    [{key: "tokens", label: "Output tokens", unit: "tokens", per: "per prompt"}, "Fewest output tokens per point", "Most output tokens per point", "tokens"],
+  ]) {
+    const text = m.findings(pareto, steps, "whole", axis).join("\n");
+    assert.ok(text.includes(least));
+    assert.ok(text.includes(most));
+    assert.ok(text.includes(unit));
+  }
+});
 
 function row(family, rung, index, cost, extra = {}) {
   return {
@@ -180,7 +227,7 @@ test("effort range", () => {
 
 test("findings", () => {
   const selected = select(FIXTURE, "whole");
-  const out = m.findings(m.paretoRows(selected), m.familySteps(selected), "whole");
+  const out = m.findings(m.paretoRows(selected), m.familySteps(selected), "whole", AA_AXIS);
   assert.deepEqual(out, [
     "Beta Test 1 Max is dominated: Alpha Test 1 High scores 3 higher for $0.50 less per task.",
     "Alpha Test 1 XHigh is dominated: Alpha Test 1 High scores the same for $3.00 less per task.",
@@ -193,25 +240,25 @@ test("findings", () => {
 test("findings in decimal mode print one decimal and omit a repeated step", () => {
   const rows = [row("Iota Test", "low", 10, 1), row("Iota Test", "high", 20.5, 3)];
   const selected = select(rows, "decimal", { hi: "high", lo: "low" });
-  const out = m.findings(m.paretoRows(selected), m.familySteps(selected), "decimal");
+  const out = m.findings(m.paretoRows(selected), m.familySteps(selected), "decimal", AA_AXIS);
   assert.deepEqual(out, ["Cheapest step on the frontier: Iota Test Low to Iota Test High, $0.19 per point."]);
   const costly = [row("Kappa Test", "high", 20, 1), row("Kappa Test", "max", 19.4, 3)];
   const sel2 = select(costly, "decimal");
-  const text = m.findings(m.paretoRows(sel2), m.familySteps(sel2), "decimal");
+  const text = m.findings(m.paretoRows(sel2), m.familySteps(sel2), "decimal", AA_AXIS);
   assert.ok(text.includes("Kappa Test High to Max adds $2.00 per task and scores 0.6 lower."), text.join("|"));
 });
 
 test("dominated reason is the findings sentence after the label", () => {
   const pareto = m.paretoRows(select(FIXTURE, "whole"));
-  const reasons = pareto.filter((r) => r.status === "dominated").map((r) => m.dominatedReason(r, "whole"));
+  const reasons = pareto.filter((r) => r.status === "dominated").map((r) => m.dominatedReason(r, "whole", AA_AXIS));
   assert.deepEqual(reasons, [
     "Alpha Test 1 High scores 3 higher for $0.50 less per task",
     "Alpha Test 1 High scores the same for $3.00 less per task",
   ]);
   const same = [row("Mu Test", "high", 50, 4), row("Nu Test", "high", 40, 4)];
   const sameCost = m.paretoRows(select(same, "whole")).find((r) => r.status === "dominated");
-  assert.equal(m.dominatedReason(sameCost, "whole"), "Mu Test High scores 10 higher for the same cost per task");
-  assert.equal(m.dominatedReason({ status: "frontier", by: null }, "whole"), null);
+  assert.equal(m.dominatedReason(sameCost, "whole", AA_AXIS), "Mu Test High scores 10 higher for the same cost per task");
+  assert.equal(m.dominatedReason({ status: "frontier", by: null }, "whole", AA_AXIS), null);
   assert.equal(m.rungLabel("xhigh"), "XHigh");
 });
 
@@ -326,8 +373,8 @@ test("changes filter uses per-index scores including null", () => {
       { slug: "f", name: "F", scores: {intelligence: [null, null]}, axes: {cost: [1, 1]} },
     ],
   };
-  assert.deepEqual(m.changesToShow(changes, "whole", "intelligence", "cost").map((c) => c.slug), ["b", "d", "e"]);
-  assert.deepEqual(m.changesToShow(changes, "decimal", "intelligence", "cost").map((c) => c.slug), ["a", "b", "d", "e"]);
+  assert.deepEqual(m.changesToShow(changes, "whole", "intelligence", AA_AXIS).map((c) => c.slug), ["b", "d", "e"]);
+  assert.deepEqual(m.changesToShow(changes, "decimal", "intelligence", AA_AXIS).map((c) => c.slug), ["a", "b", "d", "e"]);
   const domain = {changed: [
     {slug: "appears", scores: {finance: [null, 0]}, axes: {cost: [1, 1]}},
     {slug: "disappears", scores: {finance: [5, null]}, axes: {cost: [1, 1]}},
@@ -336,6 +383,6 @@ test("changes filter uses per-index scores including null", () => {
     {slug: "cost-only-unscored", scores: {finance: [null, null]}, axes: {cost: [1, 2]}},
     {slug: "cost-only-scored", scores: {finance: [7, 7]}, axes: {cost: [1, 2]}},
   ]};
-  assert.deepEqual(m.changesToShow(domain, "whole", "finance", "cost").map(c => c.slug), ["appears", "disappears", "cost-only-scored"]);
+  assert.deepEqual(m.changesToShow(domain, "whole", "finance", AA_AXIS).map(c => c.slug), ["appears", "disappears", "cost-only-scored"]);
   assert.deepEqual(m.changesToShow(null, "whole"), []);
 });

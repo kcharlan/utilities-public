@@ -2617,3 +2617,10 @@ Git Fleet's dependency scope claimed external includes were retained even though
 the parser skips them, and its detail header offered an unwired scan button.
 Test report descriptions against the actual boundary and check rendered controls
 as well as their supporting APIs.
+
+## 2026-11-13: Carry axis units through explanatory copy
+
+An axis label can include a per-unit qualifier that a generic quantity name
+omits. Check the full unit and per descriptor in charts, tables, change panels,
+and explanatory notes, including borrowed measures, so a time per prompt is not
+described only as time.

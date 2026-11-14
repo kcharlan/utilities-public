@@ -8,7 +8,7 @@ from urllib.parse import quote
 import pytest
 from playwright.sync_api import expect, sync_playwright
 
-from helpers import MAKER, indexed_ladder_models, ladder_models, model, snapshot
+from helpers import MAKER, fake_row, fake_source, indexed_ladder_models, ladder_models, model, snapshot
 
 PROJECT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(PROJECT.parent))
@@ -53,12 +53,13 @@ def open_page(chromium, ml, tmp_path):
     assert not tmp_path.resolve().is_relative_to(PROJECT.parent.resolve())
     opened = []
 
-    def _open(payload=None, *, fragment="", color_scheme="light", width=1280, height=900, init_script=None):
+    def _open(payload=None, *, fragment="", color_scheme="light", width=1280, height=900, init_script=None,
+              locale=None, timezone_id=None):
         payload = payload or payload_for(ml)
         path = tmp_path / f"page-{len(opened)}.html"
         path.write_bytes(ml.render_page(payload))
         context = chromium.new_context(viewport={"width": width, "height": height},
-                                       color_scheme=color_scheme, service_workers="block")
+                                       color_scheme=color_scheme, service_workers="block", locale=locale, timezone_id=timezone_id)
         context.set_offline(True)
         blocked = block_external_requests(context)
         if init_script:
@@ -112,6 +113,232 @@ def alpha_and_beta(page):
     page.keyboard.press("Escape")
     page.select_option("#effort-hi", "max")
     page.select_option("#effort-lo", "medium")
+
+
+def test_source_bar_lists_every_source(open_page):
+    page = open_page()
+    assert texts(page, ".sources button") == [
+        "Artificial AnalysisChecked 2 hours ago",
+        "AI Coding DailyNo data yet",
+        "FrontierCode 2.0No data yet",
+    ]
+    expect(page.locator("#source-aa")).to_have_attribute("aria-pressed", "true")
+
+
+def synthetic_payload(ml):
+    payload = payload_for(ml)
+    rows = [fake_row("Invented One", "high", {"test": 60, "category": 40}, {"time": 120, "tokens": 2000}, "Fictional Harness",
+                     {"points": 1.234, "number": -2.345, "percent": .1234, "tested": "2026-10-02"}),
+            fake_row("Invented One", "medium", {"test": 50, "category": 35}, {"time": 60, "tokens": 1000}, "Fictional Harness",
+                     {"points": 3.456, "number": 4.567, "percent": .4567, "tested": "2026-10-03"}),
+            fake_row("Invented Two", "high", {"test": 45, "category": 30}, {"time": 180, "tokens": 3000}, "Imaginary Harness"),
+            fake_row("Invented Three", "high", {"test": 40, "category": 25}, {}, "Imaginary Harness")]
+    rows.append(fake_row("Invented One", "max", {"test": 65, "category": 45}, {"time": 90, "tokens": 1500}, "Fictional Harness"))
+    payload["sources"]["aicd"] = fake_source("aicd", rows, available=True,
+        indexes=[{"key": "test", "label": "Test Index", "short": "test", "count": 5, "borrowed": False},
+                 {"key": "category", "label": "Category", "short": "category", "count": 5, "borrowed": True}],
+        axes=[{"key": "time", "label": "Time per prompt", "unit": "time", "per": "per prompt"},
+              {"key": "tokens", "label": "Output tokens", "unit": "tokens", "per": "per prompt"}],
+        default_axis="time", fetched_at="2026-11-05T10:00:00Z", last_checked="2026-11-05T11:00:00Z",
+        published={"date": "2026-10-02", "note": "Invented update"},
+        borrowed_notice={"time": "Overall time per prompt for {index}.", "tokens": "Overall output tokens for {index}."},
+        extras=[{"path": "extras.points", "label": "Points", "kind": "points"},
+                {"path": "extras.number", "label": "Number", "kind": "number2"},
+                {"path": "extras.percent", "label": "Percent", "kind": "percent1"},
+                {"path": "extras.tested", "label": "Tested", "kind": "date"}])
+    return payload
+
+
+def test_source_without_data(open_page):
+    page = open_page()
+    page.click("#source-fc")
+    expect(page.locator("p.empty")).to_have_text("No data from FrontierCode 2.0 yet. Run model_ladder refresh --source fc.")
+    expect(page.locator(".tabs")).to_have_count(0)
+
+
+def test_failure_banner(open_page, ml):
+    payload = synthetic_payload(ml)
+    payload["sources"]["aicd"].update(last_attempt="2026-11-05T11:30:00Z", error="Invented failure")
+    page = open_page(payload, locale="en-US", timezone_id="UTC")
+    page.click("#source-aicd")
+    expect(page.locator("#source-error")).to_have_text("The last fetch on Nov 5, 2026, 11:30 AM failed: Invented failure. This page shows data fetched Nov 5, 2026, 10:00 AM.")
+
+
+def test_quiet_source_note(open_page, ml):
+    page = open_page(synthetic_payload(ml), locale="en-US")
+    page.click("#source-aicd")
+    expect(page.locator("#source-quiet")).to_have_text("No new results from AI Coding Daily since Oct 2, 2026.")
+
+
+def test_harness_replaces_creator(open_page, ml):
+    page = open_page(synthetic_payload(ml))
+    page.click("#source-aicd")
+    assert "Harness" in page.locator("#all-table th[data-k=maker]").inner_text()
+    assert texts(page, "#all-creator option")[0] == "All harnesses"
+
+
+def test_axis_switch(open_page, ml):
+    page = open_page(synthetic_payload(ml))
+    page.click("#source-aicd")
+    page.click("#axis-tokens")
+    page.click("#axis-time")
+    assert page.locator("#all-table th[data-k=cost]").inner_text().startswith("Time per prompt")
+    assert texts(page, "#all-table tr:has(.pill.f) [data-c=family]") == ["Invented One", "Invented One"]
+
+
+def test_extra_columns_sort(open_page, ml):
+    page = open_page(synthetic_payload(ml), locale="en-US")
+    page.click("#source-aicd")
+    row = page.locator("#all-table tbody tr").filter(has_text="High").first
+    for value in ["1.23", "−2.35", "12.3%", "Oct 2, 2026"]:
+        assert value in row.inner_text()
+    page.click("#all-table th[data-k='extras.points']")
+    assert texts(page, "#all-table tbody tr [data-c='extras.points']") == ["1.23", "3.46", "", "", ""]
+
+
+def test_date_only_values_keep_their_day(open_page, ml):
+    page = open_page(synthetic_payload(ml), locale="en-US", timezone_id="America/Los_Angeles")
+    page.click("#source-aicd")
+    assert "Oct 2, 2026" in page.locator("#source-aicd").inner_text()
+    assert "Oct 2, 2026" in page.locator("#all-table").inner_text()
+
+
+@pytest.mark.parametrize("fields,expected,classes", [
+    ({"available": False}, "No data yet", ["failed"]),
+    ({"error": "failure", "last_attempt": "2026-11-05T11:30:00Z"},
+     "Fetch failed Nov 5, 2026; showing Nov 5, 2026", ["failed"]),
+    ({}, "Updated Oct 2, 2026, checked 1 hour ago", []),
+    ({"published": None, "fetched_at": "2026-10-01T00:00:00Z"}, "Checked 1 hour ago", []),
+    ({"published": None, "last_checked": "2026-11-03T00:00:00Z"}, "Checked 2 days ago", ["stale"]),
+])
+def test_source_freshness_lines(open_page, ml, fields, expected, classes):
+    payload = synthetic_payload(ml)
+    payload["sources"]["aicd"].update(fields)
+    page = open_page(payload, locale="en-US", timezone_id="UTC")
+    button = page.locator("#source-aicd")
+    assert expected in button.inner_text()
+    for name in ("failed", "stale"):
+        assert (name in (button.get_attribute("class") or "").split()) == (name in classes)
+
+
+def test_fc_version_banner(open_page, ml, monkeypatch, tmp_path):
+    payload = synthetic_payload(ml)
+    source = payload["sources"]["aicd"]
+    spec = {**ml.SOURCE_SPECS["fc"], "indexes": source["indexes"], "axes": source["axes"],
+            "default_axis": "time", "extras": source["extras"], "classify": lambda rows: rows}
+    monkeypatch.setitem(ml.SOURCE_SPECS, "fc", spec)
+    home = ml.ensure_runtime_home(tmp_path / "saved-fc")
+    path = ml.save_snapshot(home, {"models": source["rows"], "index_version": "2.0", "current_version": "2.1", "rate_limit": {}}, NOW, "fc")
+    payload["sources"]["fc"] = ml.build_source_entry("fc", ml.read_snapshot(path, "fc"), None, {}, CONFIG)
+    page = open_page(payload)
+    page.click("#source-fc")
+    expect(page.locator("#source-version")).to_have_text("FrontierCode 2.1 is now current; this page shows 2.0.")
+    payload["sources"]["fc"]["current_version"] = "2.0"
+    same = open_page(payload)
+    same.click("#source-fc")
+    expect(same.locator("#source-version")).to_have_count(0)
+
+
+def test_per_source_state(open_page, ml):
+    page = open_page(synthetic_payload(ml))
+    page.click("#source-aicd")
+    page.click("#axis-tokens")
+    page.select_option("#index-select", "category")
+    page.locator("#all-table input[type=checkbox]").first.check()
+    page.click("#source-aa")
+    page.click("#source-aicd")
+    expect(page.locator("#axis-tokens")).to_have_attribute("aria-pressed", "true")
+    expect(page.locator("#index-select")).to_have_value("category")
+    assert page.locator("#all-table input[type=checkbox]:checked").count() > 0
+
+
+@pytest.mark.parametrize("storage", [False, True])
+def test_old_state_migrates_to_aa(open_page, storage):
+    old = {"view": "all", "index": "intelligence", "keys": [], "hi": "high", "lo": "medium", "sorts": {}, "mode": "decimal"}
+    script = f"localStorage.setItem('model_ladder.state', {json.dumps(json.dumps(old))})" if storage else None
+    fragment = "" if storage else "#" + quote(json.dumps(old))
+    page = open_page(fragment=fragment, init_script=script)
+    state = json.loads(page.evaluate("localStorage.getItem('model_ladder.state')"))
+    assert state["source"] == "aa"
+    assert state["per"]["aa"]["hi"] == "high"
+    assert state["mode"] == "decimal"
+
+
+@pytest.mark.parametrize("axis,header,value,unit,tick,up,down,per_point,note,finding", [
+    ("time", "Time per prompt", "2:00", "time", "0:50", "+1:00", "−1:00", "0:06", "takes no more time", "0:02 per point"),
+    ("tokens", "Output tokens", "2k tokens", "output tokens", "1k tokens", "+1k tokens", "−1k tokens", "100 tokens", "uses no more output tokens", "33 tokens per point"),
+])
+def test_axis_strings_follow_axis(open_page, ml, axis, header, value, unit, tick, up, down, per_point, note, finding):
+    payload = synthetic_payload(ml)
+    payload["sources"]["aicd"]["changes"] = {"from": "2026-11-01T00:00:00Z", "to": "2026-11-05T10:00:00Z",
+        "version": None, "added": [], "removed": [], "maxima": {}, "changed": [{"slug": "invented-one-high", "name": "Invented One (high)",
+        "scores": {"test": [60, 60], "category": [40, 40]}, "axes": {"time": [60, 120], "tokens": [1000, 2000]}, "extras": {}}]}
+    page = open_page(payload)
+    page.click("#source-aicd")
+    page.click("#axis-" + axis)
+    assert header in page.locator("#all-table th[data-k=cost]").inner_text()
+    assert value in page.locator("#all-table").inner_text()
+    assert f"Invented One High: 60.0, {value}" in page.locator("svg circle title").all_text_contents()
+    assert tick in page.locator("svg[role=img] text").all_text_contents()
+    assert header.lower() in page.locator("svg[role=img]").first.get_attribute("aria-label").lower()
+    assert unit in page.locator("svg[role=img]").first.text_content().lower()
+    assert "Dominated" in page.locator("#all-table").inner_text()
+    assert "No " + unit in page.locator("#all-table").inner_text()
+    assert "$" not in page.locator("#all-table").inner_text()
+    page.locator("#changes summary").click()
+    assert unit in page.locator("#changes").inner_text().lower()
+    page.locator("#all-table input[type=checkbox]").first.check()
+    page.click("#tab-compare")
+    assert header in page.locator("#steps-table").inner_text()
+    assert "$" not in page.locator("#steps-table").inner_text()
+    assert unit in page.locator("#steps p.note").inner_text().lower()
+    assert note in page.locator("#steps-table").inner_text()
+    assert up in texts(page, "#steps-table td[data-c='up.cost']")
+    assert down in texts(page, "#steps-table td[data-c='down.cost']")
+    assert per_point in texts(page, "#steps-table td[data-c='up.perPoint']")
+    assert "60.0" in page.locator("#steps-table .raw").all_text_contents()
+    assert ("Time per point" if axis == "time" else "Output tokens per point") in page.locator("#steps-table").inner_text()
+    assert "$" not in page.locator("#pareto-table").inner_text()
+    assert finding in page.locator("#findings").inner_text()
+    assert ("Least time per point" if axis == "time" else "Fewest output tokens per point") in page.locator("#findings").inner_text()
+    assert ("0:30 less per prompt" if axis == "time" else "500 tokens less per prompt") in page.locator("#pareto-table .reason").inner_text()
+    page.select_option("#index-select", "category")
+    assert page.locator("#cost-notice").inner_text() == ("Overall time per prompt for Category." if axis == "time" else "Overall output tokens for Category.")
+    assert page.locator("#say .note").inner_text() == ("Values in these sentences are overall time per prompt, including time per point." if axis == "time" else "Values in these sentences are overall output tokens, including output tokens per point.")
+
+
+def test_changes_extras_and_maxima(open_page, ml, monkeypatch, tmp_path):
+    payload = synthetic_payload(ml)
+    source = payload["sources"]["aicd"]
+    spec = {**ml.SOURCE_SPECS["aicd"], "indexes": source["indexes"], "axes": source["axes"],
+            "default_axis": "time", "extras": source["extras"], "classify": lambda rows: rows}
+    monkeypatch.setitem(ml.SOURCE_SPECS, "aicd", spec)
+    home = ml.ensure_runtime_home(tmp_path / "saved-aicd")
+    rows = source["rows"]
+    old_rows = [{**row, "extras": {**row["extras"], "points": 1.234}} if row is rows[0] else row for row in rows]
+    new_rows = [{**row, "extras": {**row["extras"], "points": 2.345}} if row is rows[0] else row for row in rows]
+    old_path = ml.save_snapshot(home, {"models": old_rows, "index_version": 1, "rate_limit": {}, "index_maxima": {"test": 100}}, NOW - timedelta(days=2), "aicd")
+    new_path = ml.save_snapshot(home, {"models": new_rows, "index_version": 1, "rate_limit": {}, "index_maxima": {"test": 100}}, NOW - timedelta(days=1), "aicd")
+    newest = ml.read_snapshot(new_path, "aicd")
+    previous = ml._last_real_change([old_path], newest, "aicd")
+    assert previous is not None
+    payload["sources"]["aicd"] = ml.build_source_entry("aicd", newest, previous, {}, CONFIG)
+    page = open_page(payload)
+    page.click("#source-aicd")
+    if not page.locator("#changes").get_attribute("open"):
+        page.locator("#changes summary").click()
+    text = page.locator("#changes").inner_text()
+    assert "Points" in text and "1.23" in text and "2.35" in text
+    scale_path = ml.save_snapshot(home, {"models": new_rows, "index_version": 1, "rate_limit": {}, "index_maxima": {"test": 200}}, NOW, "aicd")
+    scale = ml.read_snapshot(scale_path, "aicd")
+    scale_previous = ml._last_real_change([new_path], scale, "aicd")
+    assert scale_previous is not None
+    payload["sources"]["aicd"] = ml.build_source_entry("aicd", scale, scale_previous, {}, CONFIG)
+    scale_page = open_page(payload)
+    scale_page.click("#source-aicd")
+    scale_page.locator("#changes summary").click()
+    text = scale_page.locator("#changes").inner_text()
+    assert "Test Index" in text and "100" in text and "200" in text and "not comparable" in text
 
 
 def test_index_selector_and_borrowed_costs(open_page, ml):
@@ -529,19 +756,21 @@ def test_stale_highlight(open_page, ml):
     expect(age).to_have_text("Data is 3 days old")
 
 
-def test_copy_refresh_command(open_page):
-    page = open_page(init_script="""Object.defineProperty(navigator, 'clipboard', {configurable: true,
+def test_copy_refresh_command(open_page, ml):
+    page = open_page(synthetic_payload(ml), init_script="""Object.defineProperty(navigator, 'clipboard', {configurable: true,
         value: {writeText: async (text) => { window.__copied = text; }}});""")
+    page.click("#source-aicd")
     page.click("#copy-refresh")
     expect(page.locator("#copy-refresh")).to_have_text("Copied")
-    assert page.evaluate("window.__copied") == "model_ladder refresh"
+    assert page.evaluate("window.__copied") == "model_ladder refresh --source aicd"
 
 
-def test_copy_refresh_fallback(open_page):
-    page = open_page(init_script="""Object.defineProperty(navigator, 'clipboard', {configurable: true,
+def test_copy_refresh_fallback(open_page, ml):
+    page = open_page(synthetic_payload(ml), init_script="""Object.defineProperty(navigator, 'clipboard', {configurable: true,
         value: {writeText: () => Promise.reject(new Error('denied'))}});""")
+    page.click("#source-aicd")
     page.click("#copy-refresh")
-    expect(page.locator(".cmd")).to_have_text("model_ladder refresh")
+    expect(page.locator(".cmd")).to_have_text("model_ladder refresh --source aicd")
 
 
 def test_dark_theme_renders(open_page):

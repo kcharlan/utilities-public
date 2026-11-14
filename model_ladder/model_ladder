@@ -734,9 +734,9 @@ function presentRungs(rows, rungOrder) {
   return rungOrder.filter(function (rung) { return seen[rung]; });
 }
 
-function rowsForIndex(rows, key) {
+function rowsForIndex(rows, key, axisKey) {
   return rows.filter(function (row) { return typeof row.scores[key] === "number"; })
-    .map(function (row) { return Object.assign({}, row, { index: row.scores[key] }); });
+    .map(function (row) { return Object.assign({}, row, { index: row.scores[key], cost: (row.axes || {})[axisKey] ?? null }); });
 }
 
 function unscoredRows(rows, key, opts) {
@@ -828,24 +828,48 @@ function money(v) {
   return "$" + (size === 0 || Number(small) >= 0.1 ? size.toFixed(2) : small);
 }
 
+function lowerFirst(text) { return text.charAt(0).toLowerCase() + text.slice(1); }
+function formatAxis(value, unit) {
+  if (value === null || value === undefined) return "";
+  if (unit === "money") return money(value);
+  if (unit === "tokens") return value < 1000 ? Math.round(value) + " tokens" : Math.round(value / 1000) + "k tokens";
+  var seconds = Math.round(value), hours = Math.floor(seconds / 3600), minutes = Math.floor(seconds % 3600 / 60);
+  return (hours ? hours + ":" + String(minutes).padStart(2, "0") : String(minutes)) + ":" + String(seconds % 60).padStart(2, "0");
+}
+function checkedText(iso, nowMs, maxAgeHours) {
+  var age = dataAge(iso, nowMs, maxAgeHours), text = age.text;
+  if (text === "Data is less than an hour old") text = "Checked less than an hour ago";
+  else if (/^Data is .+ old$/.test(text)) text = text.replace(/^Data is (.+) old$/, "Checked $1 ago");
+  else text = "Check time unknown";
+  return {text: text, stale: age.stale};
+}
+function dayText(date) { return new Date(date + "T00:00:00Z").toLocaleDateString(undefined, {dateStyle: "medium", timeZone: "UTC"}); }
+function formatExtra(value, kind) {
+  if (value === null || value === undefined) return "";
+  if (kind === "date") return dayText(value);
+  if (kind === "percent1") return (value * 100).toFixed(1) + "%";
+  if (kind === "number2") return (value < 0 ? "−" : "") + Math.abs(value).toFixed(2);
+  return value.toFixed(2);
+}
+
 function showPoints(value, mode) {
   return mode === "decimal" ? Math.abs(value).toFixed(1) : String(Math.round(Math.abs(value)));
 }
 
-function dominatedReason(row, mode) {
+function dominatedReason(row, mode, axis) {
   if (row.status !== "dominated" || !row.by) return null;
   var gap = row.by.score - row.score;
   var saved = Math.round((row.cost - row.by.cost) * FLOAT_NOISE) / FLOAT_NOISE;
   var head = row.by.label + " scores ";
-  if (gap === 0) return head + "the same for " + money(saved) + " less per task";
-  if (saved > 0) return head + showPoints(gap, mode) + " higher for " + money(saved) + " less per task";
-  return head + showPoints(gap, mode) + " higher for the same cost per task";
+  if (gap === 0) return head + "the same for " + formatAxis(saved, axis.unit) + " less " + axis.per;
+  if (saved > 0) return head + showPoints(gap, mode) + " higher for " + formatAxis(saved, axis.unit) + " less " + axis.per;
+  return head + showPoints(gap, mode) + " higher for the same " + lowerFirst(axis.label);
 }
 
-function findings(pareto, steps, mode) {
+function findings(pareto, steps, mode, axis) {
   var out = [];
   pareto.forEach(function (row) {
-    var reason = dominatedReason(row, mode);
+    var reason = dominatedReason(row, mode, axis);
     if (reason) out.push(row.label + " is dominated: " + reason + ".");
   });
   var cheapest = null;
@@ -856,31 +880,38 @@ function findings(pareto, steps, mode) {
     if (dearest === null || row.up.perPoint > dearest.up.perPoint) dearest = row;
   });
   if (cheapest) {
-    out.push("Cheapest step on the frontier: " + cheapest.label + " to " + cheapest.up.to.label +
-      ", " + money(cheapest.up.perPoint) + " per point.");
+    var least = {money: "Cheapest", time: "Least time per point", tokens: "Fewest output tokens per point"}[axis.unit];
+    var most = {money: "Most expensive", time: "Most time per point", tokens: "Most output tokens per point"}[axis.unit];
+    out.push(least + " step on the frontier: " + cheapest.label + " to " + cheapest.up.to.label +
+      ", " + formatAxis(cheapest.up.perPoint, axis.unit) + " per point.");
     if (dearest !== cheapest) {
-      out.push("Most expensive step on the frontier: " + dearest.label + " to " + dearest.up.to.label +
-        ", " + money(dearest.up.perPoint) + " per point.");
+      out.push(most + " step on the frontier: " + dearest.label + " to " + dearest.up.to.label +
+        ", " + formatAxis(dearest.up.perPoint, axis.unit) + " per point.");
     }
   }
   steps.forEach(function (row) {
     var up = row.up;
     if (!up || up.points > 0 || up.cost === null || up.cost <= 0) return;
     var tail = up.points === 0 ? "no points." : "scores " + showPoints(up.points, mode) + " lower.";
-    out.push(row.label + " to " + rungLabel(up.to.rung) + " adds " + money(up.cost) + " per task and " + tail);
+    out.push(row.label + " to " + rungLabel(up.to.rung) + " adds " + formatAxis(up.cost, axis.unit) + " " + axis.per + " and " + tail);
   });
   return out;
 }
 
-function changesToShow(changes, mode, key, axisKey) {
+function changesToShow(changes, mode, key, axis, extras) {
   if (!changes || !changes.changed) return [];
   function shownScore(raw) { return raw === null ? null : mode === "decimal" ? raw : wholePoints(raw); }
   return changes.changed.filter(function (item) {
     // Unscored in this index before and after: the view never lists the model, so its cost is not news here.
     if (item.scores[key][0] === null && item.scores[key][1] === null) return false;
     var scoreMoved = shownScore(item.scores[key][0]) !== shownScore(item.scores[key][1]);
-    var costMoved = money(item.axes[axisKey][0]) !== money(item.axes[axisKey][1]);
-    return scoreMoved || costMoved;
+    var pair = item.axes[axis.key] || [null, null];
+    var costMoved = formatAxis(pair[0], axis.unit) !== formatAxis(pair[1], axis.unit);
+    var extrasMoved = (extras || []).some(function (col) {
+      var values = (item.extras || {})[col.path];
+      return col.kind !== "date" && values && formatExtra(values[0], col.kind) !== formatExtra(values[1], col.kind);
+    });
+    return scoreMoved || costMoved || extrasMoved;
   });
 }
 
@@ -889,6 +920,7 @@ var api = {
   presentRungs: presentRungs, selectRows: selectRows, rowsForIndex: rowsForIndex, unscoredRows: unscoredRows, frontier: frontier,
   paretoRows: paretoRows, familySteps: familySteps, sortRows: sortRows,
   findings: findings, money: money, dataAge: dataAge, changesToShow: changesToShow,
+  lowerFirst: lowerFirst, formatAxis: formatAxis, checkedText: checkedText, dayText: dayText, formatExtra: formatExtra,
   dominatedReason: dominatedReason, rungLabel: rungLabel, showPoints: showPoints
 };
 if (typeof module !== "undefined") module.exports = api; else window.ladderMath = api;
@@ -917,11 +949,23 @@ PAGE_CSS = r"""
 body { margin: 0; background: var(--bg); color: var(--ink); font-family: var(--font); font-size: 15px; line-height: 1.45;
   padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px)); padding-block: 20px 40px; }
 .wrap { max-width: 1180px; margin: 0 auto; display: flex; flex-direction: column; gap: 20px; }
+.body { display: contents; }
 header { display: flex; flex-direction: column; gap: 10px; }
 h1 { font-size: 26px; font-weight: 700; margin: 0; letter-spacing: -0.01em; }
 h2 { font-size: 18px; font-weight: 600; margin: 0; text-wrap: balance; }
 h3 { font-size: 14px; font-weight: 600; margin: 0 0 4px; }
 .sub { color: var(--muted); margin: 2px 0 0; max-width: 70ch; }
+.sources { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); border: 1px solid var(--line); border-radius: 10px; overflow: hidden; background: var(--panel); }
+.sources button { position: relative; display: flex; flex-direction: column; gap: 2px; border: 0; border-left: 1px solid var(--line); border-radius: 0; background: none; padding: 10px 14px 11px 16px; text-align: left; }
+.sources button:first-child { border-left: 0; }
+.sources button::before { content: ""; position: absolute; left: 0; top: 0; bottom: 0; width: 4px; background: var(--front); }
+.sources button.failed::before, .sources button.stale::before { background: var(--warn); }
+.sources button span { font-weight: 700; font-size: 16px; }
+.sources small { font-size: 13px; color: var(--muted); }
+.sources .failed small { color: var(--warn); font-weight: 600; }
+.sources button[aria-pressed="true"] { background: var(--dom-bg); }
+.sources button[aria-pressed="true"] span { text-decoration: underline; text-decoration-thickness: 2px; text-underline-offset: 4px; }
+@media (max-width: 640px) { .sources { grid-template-columns: 1fr; } .sources button { border-left: 0; border-top: 1px solid var(--line); } .sources button:first-child { border-top: 0; } }
 .status { display: flex; flex-wrap: wrap; gap: 8px 18px; align-items: center; color: var(--muted); font-size: 14px; }
 .status b { color: var(--ink); font-weight: 600; }
 .age { background: var(--front-bg); color: var(--front); padding: 2px 10px; border-radius: 999px; font-weight: 600; }
@@ -1025,25 +1069,21 @@ APP_JS = r"""
   const html = window.htm.bind(h);
 
   const DATA = JSON.parse(document.getElementById("payload").textContent);
-  const SRC = DATA.sources[DATA.default_source];
-  const ALL_ROWS = SRC.rows;
+  let SRC, ALL_ROWS, RUNGS, KNOWN_FAMILIES;
   const ORDER = DATA.rung_order;
-  const RUNGS = M.presentRungs(ALL_ROWS, ORDER);
-  const KNOWN_FAMILIES = {};
-  ALL_ROWS.forEach((r) => { KNOWN_FAMILIES[r.family_key] = { family: r.family, maker: r.maker }; });
   const views = {};
-  function viewFor(key) {
-    if (!views[key]) {
-      const rows = M.rowsForIndex(ALL_ROWS, key), families = M.families(rows), familyByKey = {};
+  function viewFor(key, axis) {
+    const cacheKey = SRC.key + ":" + key + ":" + axis;
+    if (!views[cacheKey]) {
+      const rows = M.rowsForIndex(ALL_ROWS, key, axis), families = M.families(rows), familyByKey = {};
       families.forEach((f) => { familyByKey[f.key] = f; });
-      views[key] = { rows, families, familyByKey, allKeys: families.map((f) => f.key),
+      views[cacheKey] = { rows, families, familyByKey, allKeys: families.map((f) => f.key),
         makers: Array.from(new Set(rows.map((r) => r.maker))).sort(), attention: rows.filter((r) => r.problem) };
     }
-    return views[key];
+    return views[cacheKey];
   }
   const LIMIT = 8;
   const STORAGE_KEY = "model_ladder.state";
-  const COMMAND = "model_ladder refresh";
   const MINUS = "−";
   const STEP_KEYS = ["up.points", "up.cost", "up.perPoint", "down.points", "down.cost", "down.perPoint"];
   const SORT_KEYS = {
@@ -1060,29 +1100,36 @@ APP_JS = r"""
   };
 
   // ---- state: hash first, then storage, then defaults ----
-  function defaults() {
-    return { view: "all", index: "intelligence", keys: [], hi: RUNGS[0] || null, lo: RUNGS[RUNGS.length - 1] || null, mode: "whole", sorts: {} };
+  function sourceDefaults(src) {
+    const rungs = M.presentRungs(src.rows, ORDER);
+    return { index: src.indexes[0]?.key || null, axis: src.default_axis, keys: [], hi: rungs[0] || null, lo: rungs[rungs.length - 1] || null, sorts: {}, start: null };
   }
+  function defaults() { return {view: "all", mode: "whole", source: DATA.default_source, per: {[DATA.default_source]: sourceDefaults(DATA.sources[DATA.default_source])}}; }
   function clean(raw) {
     if (!raw || typeof raw !== "object" || Array.isArray(raw)) return null;
     const s = defaults();
-    if (SRC.indexes.some((i) => i.key === raw.index)) s.index = raw.index;
     if (raw.view === "all" || raw.view === "compare") s.view = raw.view;
-    if (Array.isArray(raw.keys)) {
-      s.keys = raw.keys.filter((k, i) => typeof k === "string" && raw.keys.indexOf(k) === i).slice(0, LIMIT);
-    }
-    if (RUNGS.indexOf(raw.hi) !== -1) s.hi = raw.hi;
-    if (RUNGS.indexOf(raw.lo) !== -1) s.lo = raw.lo;
-    if (RUNGS.indexOf(s.hi) > RUNGS.indexOf(s.lo)) { s.hi = RUNGS[0] || null; s.lo = RUNGS[RUNGS.length - 1] || null; }
     if (raw.mode === "whole" || raw.mode === "decimal") s.mode = raw.mode;
-    if (raw.sorts && typeof raw.sorts === "object" && !Array.isArray(raw.sorts)) {
-      Object.keys(SORT_KEYS).forEach((table) => {
-        const v = raw.sorts[table];
-        if (v && SORT_KEYS[table].indexOf(v.key) !== -1 && (v.dir === "asc" || v.dir === "desc")) {
-          s.sorts[table] = { key: v.key, dir: v.dir };
-        }
+    const legacy = !raw.per && ["index", "keys", "hi", "lo", "sorts"].some((k) => k in raw);
+    const per = legacy ? {aa: raw} : raw.per || {};
+    if (!legacy && DATA.sources[raw.source]) s.source = raw.source;
+    Object.keys(DATA.sources).forEach((key) => {
+      const src = DATA.sources[key], value = per[key];
+      if (!value || typeof value !== "object" || Array.isArray(value)) return;
+      const p = sourceDefaults(src), rungs = M.presentRungs(src.rows, ORDER);
+      if (src.indexes.some((i) => i.key === value.index)) p.index = value.index;
+      if (src.axes.some((a) => a.key === value.axis)) p.axis = value.axis;
+      if (Array.isArray(value.keys)) p.keys = value.keys.filter((k, i) => typeof k === "string" && value.keys.indexOf(k) === i).slice(0, LIMIT);
+      if (rungs.includes(value.hi)) p.hi = value.hi;
+      if (rungs.includes(value.lo)) p.lo = value.lo;
+      if (rungs.indexOf(p.hi) > rungs.indexOf(p.lo)) { p.hi = rungs[0] || null; p.lo = rungs[rungs.length - 1] || null; }
+      if (value.sorts && typeof value.sorts === "object" && !Array.isArray(value.sorts)) Object.keys(SORT_KEYS).forEach((table) => {
+        const v = value.sorts[table], allowed = SORT_KEYS[table].concat(table === "all" ? src.extras.map((c) => c.path) : []);
+        if (v && allowed.includes(v.key) && (v.dir === "asc" || v.dir === "desc")) p.sorts[table] = {key: v.key, dir: v.dir};
       });
-    }
+      if (typeof value.start === "string") p.start = value.start;
+      s.per[key] = p;
+    });
     return s;
   }
   function parse(text) {
@@ -1121,9 +1168,10 @@ APP_JS = r"""
     if (v === 0) return mode === "decimal" ? "0.0" : "0";
     return (v > 0 ? "+" : MINUS) + M.showPoints(v, mode);
   }
-  function signedMoney(v) {
+  const QUANTITY = {money: "cost", time: "time", tokens: "output tokens"};
+  function signedAxis(v, axis) {
     if (v === null || v === undefined) return "";
-    return (v > 0 ? "+" : v < 0 ? MINUS : "") + M.money(v);
+    return (v > 0 ? "+" : v < 0 ? MINUS : "") + M.formatAxis(Math.abs(v), axis.unit);
   }
   function missingName(key) {
     try {
@@ -1143,8 +1191,8 @@ APP_JS = r"""
     return html`<td data-c="score" data-v=${row.score}><span class="num">${scoreText(row.index, mode)}</span>${
       mode === "whole" ? html`<span class="raw">${row.index.toFixed(1)}</span>` : null}</td>`;
   }
-  function CostCell({ row, borrowed }) {
-    return html`<td data-c="cost" class=${borrowed ? "borrowed" : ""}>${M.money(row.cost)}</td>`;
+  function CostCell({ row, borrowed, axis }) {
+    return html`<td data-c="cost" class=${borrowed ? "borrowed" : ""}>${M.formatAxis(row.cost, axis.unit)}</td>`;
   }
 
   function Th({ table, k, label, sorts, onSort, cls }) {
@@ -1158,27 +1206,29 @@ APP_JS = r"""
       onClick=${() => onSort(table, k)} onKeyDown=${onKey}>${label}${active ? (cur.dir === "desc" ? " ▼" : " ▲") : ""}</th>`;
   }
 
-  function StepCells({ step, mode, kind, borrowed }) {
+  function StepCells({ step, mode, kind, borrowed, axis }) {
     const base = kind + ".";
     if (!step) {
       return ["points", "cost", "perPoint"].map((f, i) => html`<td class=${"step" + (i === 0 ? " b" : borrowed ? " borrowed" : "")} data-c=${base + f}></td>`);
     }
-    const per = step.perPoint !== null ? M.money(step.perPoint) : (step.note || "");
+    const note = step.note === "costs no more" && axis.unit !== "money" ? (axis.unit === "time" ? "takes no more time" : "uses no more output tokens") : step.note;
+    const per = step.perPoint !== null ? M.formatAxis(step.perPoint, axis.unit) : (note || "");
     return [
       html`<td class="step b" data-c=${base + "points"}>${signedPoints(step.points, mode)}</td>`,
-      html`<td class=${"step" + (borrowed ? " borrowed" : "")} data-c=${base + "cost"}>${signedMoney(step.cost)}</td>`,
+      html`<td class=${"step" + (borrowed ? " borrowed" : "")} data-c=${base + "cost"}>${signedAxis(step.cost, axis)}</td>`,
       html`<td class=${"step" + (step.note ? " note" : "") + (borrowed ? " borrowed" : "")} data-c=${base + "perPoint"}>${per}</td>`,
     ];
   }
 
-  function StepHeads({ table, sorts, onSort }) {
+  function StepHeads({ table, sorts, onSort, axis }) {
     const p = { table, sorts, onSort };
+    const quantity = {money: "Cost", time: "Time", tokens: "Output tokens"}[axis.unit];
     return [
       html`<${Th} ...${p} k="up.points" label="Points" cls="b" />`,
-      html`<${Th} ...${p} k="up.cost" label="Cost" />`,
-      html`<${Th} ...${p} k="up.perPoint" label="Cost per point" />`,
+      html`<${Th} ...${p} k="up.cost" label=${quantity} />`,
+      html`<${Th} ...${p} k="up.perPoint" label=${quantity + " per point"} />`,
       html`<${Th} ...${p} k="down.points" label="Points" cls="b" />`,
-      html`<${Th} ...${p} k="down.cost" label="Cost" />`,
+      html`<${Th} ...${p} k="down.cost" label=${quantity} />`,
       html`<${Th} ...${p} k="down.perPoint" label="Saved per point" />`,
     ];
   }
@@ -1196,7 +1246,7 @@ APP_JS = r"""
       <text x=${PAD.l - 6} y=${y(v) + 4} text-anchor="end">${v}</text></g>`);
   }
 
-  function Scatter({ rows, front, color, title, borrowed }) {
+  function Scatter({ rows, front, color, title, borrowed, axis }) {
     const costs = rows.map((r) => r.cost);
     let lo = Math.min.apply(null, costs), hi = Math.max.apply(null, costs);
     if (lo === hi) { lo /= 2; hi *= 2; } else { lo /= 1.3; hi *= 1.3; }
@@ -1212,15 +1262,15 @@ APP_JS = r"""
       <${YAxis} lo=${ylo} hi=${yhi} y=${y} />
       ${logTicks(lo, hi).map((v) => html`<g key=${"x" + v}>
         <line class="grid" x1=${x(v)} x2=${x(v)} y1=${PAD.t} y2=${H - PAD.b} />
-        <text x=${x(v)} y=${H - PAD.b + 16} text-anchor="middle">${"$" + v}</text></g>`)}
-      <text x=${(PAD.l + W - PAD.r) / 2} y=${H - 6} text-anchor="middle">${borrowed ? "Overall cost per task, log scale" : "Cost per task, log scale"}</text>
+        <text x=${x(v)} y=${H - PAD.b + 16} text-anchor="middle">${axis.unit === "money" ? "$" + v : M.formatAxis(v, axis.unit)}</text></g>`)}
+      <text x=${(PAD.l + W - PAD.r) / 2} y=${H - 6} text-anchor="middle">${(borrowed ? "Overall " + M.lowerFirst(axis.label) : axis.label) + ", log scale"}</text>
       ${d ? html`<path class=${borrowed ? "stair borrowed" : "stair"} d=${d} />` : null}
       ${rows.map((r) => {
         const c = color(r);
         const filled = onFront.has(r.slug);
         return html`<circle key=${r.slug} cx=${x(r.cost)} cy=${y(r.score)} r="4.5"
           fill=${filled ? c : "var(--panel)"} stroke=${c} stroke-width="1.8">
-          <title>${r.label + ": " + scoreText(r.index, "decimal") + ", " + M.money(r.cost) + (borrowed ? " overall" : "")}</title></circle>`;
+          <title>${r.label + ": " + scoreText(r.index, "decimal") + ", " + M.formatAxis(r.cost, axis.unit) + (borrowed ? " overall" : "")}</title></circle>`;
       })}
     </svg>`;
   }
@@ -1259,6 +1309,7 @@ APP_JS = r"""
     }, []);
     const age = M.dataAge(SRC.last_checked, now, SRC.max_age_hours);
     const rl = SRC.rate_limit || {};
+    const COMMAND = "model_ladder refresh --source " + SRC.key;
     const copy = () => {
       let pending;
       try { pending = navigator.clipboard.writeText(COMMAND); } catch (e) { pending = Promise.reject(e); }
@@ -1271,12 +1322,13 @@ APP_JS = r"""
     return html`<div class="status">
       <span id="status-age" class=${age.stale ? "age stale" : "age"}>${age.text}</span>
       <span>Fetched <b>${when(SRC.fetched_at, true)}</b></span>
-      <span>Intelligence Index <b>${"v" + SRC.version}</b></span>
+      <span>${SRC.version_label}</span>
+      ${SRC.published && SRC.published.note ? html`<span>${SRC.published.note}</span>` : null}
       <span><b>${view.rows.length}</b>${view.rows.length !== ALL_ROWS.length ? html` of <b>${ALL_ROWS.length}</b>` : null} scored models</span>
       <span id="status-attention"><b>${view.attention.length}</b>${view.attention.length === 1 ? " needs" : " need"} attention</span>
-      <span id="status-quota">${rl.remaining !== null && rl.remaining !== undefined && rl.limit !== null && rl.limit !== undefined
+      ${SRC.has_quota ? html`<span id="status-quota">${rl.remaining !== null && rl.remaining !== undefined && rl.limit !== null && rl.limit !== undefined
         ? html`<b>${rl.remaining}</b> of ${rl.limit} requests left at the last fetch${reset && !isNaN(reset.getTime()) ? ", resets " + when(reset.toISOString(), true) : ""}`
-        : "Request quota unknown"}</span>
+        : "Request quota unknown"}</span>` : null}
       <button id="copy-refresh" type="button" onClick=${copy}>${copied === "done" ? "Copied" : "Copy refresh command"}</button>
       ${copied === "failed" ? html`<span>Copy this command: <code class="cmd">${COMMAND}</code></span>` : null}
     </div>`;
@@ -1291,34 +1343,43 @@ APP_JS = r"""
     </section>`;
   }
 
-  function Changes({ mode, index }) {
+  function Changes({ mode, index, axis }) {
     const c = SRC.changes;
     if (!c) return null;
-    const shown = M.changesToShow(c, mode, index, "cost");
-    const empty = !c.version && !c.added.length && !c.removed.length && !shown.length;
+    const shown = M.changesToShow(c, mode, index, axis, SRC.extras);
+    const maximum = (c.maxima || {})[index];
+    const empty = !c.version && !maximum && !c.added.length && !c.removed.length && !shown.length;
     const describe = (item) => {
       const parts = [];
       const a = item.scores[index][0] === null ? "no score" : scoreText(item.scores[index][0], mode);
       const b = item.scores[index][1] === null ? "no score" : scoreText(item.scores[index][1], mode);
       parts.push(a === b ? "score " + a : "score " + a + " to " + b);
-      const ca = M.money(item.axes.cost[0]) || "no cost", cb = M.money(item.axes.cost[1]) || "no cost";
-      parts.push(ca === cb ? "cost " + ca : "cost " + ca + " to " + cb);
+      const pair = item.axes[axis.key] || [null, null], quantity = QUANTITY[axis.unit];
+      const ca = M.formatAxis(pair[0], axis.unit) || "no " + quantity, cb = M.formatAxis(pair[1], axis.unit) || "no " + quantity;
+      parts.push(ca === cb ? quantity + " " + ca : quantity + " " + ca + " to " + cb);
+      SRC.extras.filter((col) => col.kind !== "date").forEach((col) => {
+        const values = (item.extras || {})[col.path];
+        if (!values) return;
+        const a = M.formatExtra(values[0], col.kind), b = M.formatExtra(values[1], col.kind);
+        if (a !== b) parts.push(col.label + " " + (a || "none") + " to " + (b || "none"));
+      });
       return parts.join("; ");
     };
     return html`<details id="changes" class="box changes" open=${!!c.version}>
       <summary>What changed between ${when(c.from)} and ${when(c.to)}</summary>
       <div class="changes-body">
         ${c.version ? html`<p class="ver">Intelligence Index version changed from ${c.version[0]} to ${c.version[1]}. Scores from different versions are not comparable.</p>` : null}
+        ${maximum ? html`<p class="ver">${SRC.indexes.find((i) => i.key === index).label} maximum changed from ${maximum[0]} to ${maximum[1]}. Scores are not comparable.</p>` : null}
         ${c.added.length ? html`<div data-changes="added"><h3>Added (${c.added.length})</h3><ul>${c.added.map((n, i) => html`<li key=${i}>${n}</li>`)}</ul></div>` : null}
         ${c.removed.length ? html`<div data-changes="removed"><h3>Removed (${c.removed.length})</h3><ul>${c.removed.map((n, i) => html`<li key=${i}>${n}</li>`)}</ul></div>` : null}
-        ${shown.length ? html`<div><h3>Score or cost changed (${shown.length})</h3><ul>${shown.map((item) => html`<li key=${item.slug}>${item.name}: ${describe(item)}</li>`)}</ul></div>` : null}
+        ${shown.length ? html`<div><h3>Score or ${QUANTITY[axis.unit]}${SRC.extras.length ? " or extras" : ""} changed (${shown.length})</h3><ul>${shown.map((item) => html`<li key=${item.slug}>${item.name}: ${describe(item)}</li>`)}</ul></div>` : null}
         ${empty ? html`<p class="note">Nothing changed that shows in ${mode === "whole" ? "whole points" : "decimals"}.</p>` : null}
       </div>
     </details>`;
   }
 
   // ---- all models view ----
-  function AllView({ state, onSort, toggleKey, view, borrowed, indexLabel }) {
+  function AllView({ state, onSort, toggleKey, view, borrowed, indexLabel, axis }) {
     const [creator, setCreator] = useState("");
     const [query, setQuery] = useState("");
     useEffect(() => { if (creator && !view.makers.includes(creator)) setCreator(""); }, [view, creator]);
@@ -1329,23 +1390,24 @@ APP_JS = r"""
       return sel.map((r) => Object.assign(r, {
         effort: effortValue(r), tagText: r.tags.length ? r.tags.join(", ") : null, status: status[r.slug] || null,
       }));
-    }, [state.mode, state.index]);
+    }, [state.mode, state.index, state.axis, SRC.key]);
     const front = useMemo(() => M.frontier(rows), [rows]);
     const visible = ordered(M.searchRows(rows, query).filter((r) => !creator || r.maker === creator), "all", state.sorts);
     const priced = rows.filter((r) => r.status);
     const full = state.keys.length >= LIMIT;
     const p = { table: "all", sorts: state.sorts, onSort };
+    const label = borrowed ? "Overall " + M.lowerFirst(axis.label) : axis.label, quantity = QUANTITY[axis.unit];
     return html`<div class="view">
       <section>
         <h2>Every scored model</h2>
-        <p class="note">Each point is one model variant with a cost per task. The green staircase is the frontier: nothing scores at least as high for less.</p>
-        ${priced.length ? html`<div class="box chart solo"><${Scatter} rows=${priced} front=${front} title=${indexLabel + " against cost per task"} borrowed=${borrowed}
-          color=${(r) => (r.status === "frontier" ? "var(--front)" : "var(--muted)")} /></div>` : html`<p class="empty">No scored model has a cost per task.</p>`}
+        <p class="note">Each point is one model variant with a ${M.lowerFirst(axis.label)}. The green staircase is the frontier: nothing scores at least as high for less.</p>
+        ${priced.length ? html`<div class="box chart solo"><${Scatter} rows=${priced} front=${front} title=${indexLabel + " against " + M.lowerFirst(label)} borrowed=${borrowed} axis=${axis}
+          color=${(r) => (r.status === "frontier" ? "var(--front)" : "var(--muted)")} /></div>` : html`<p class="empty">No scored model has a ${M.lowerFirst(axis.label)}.</p>`}
       </section>
       <section>
         <div class="filters">
-          <select id="all-creator" aria-label="Creator" value=${creator} onChange=${(e) => setCreator(e.currentTarget.value)}>
-            <option value="">All creators</option>
+          <select id="all-creator" aria-label=${SRC.group_label} value=${creator} onChange=${(e) => setCreator(e.currentTarget.value)}>
+            <option value="">All ${M.lowerFirst(SRC.group_label)}${SRC.group_label.endsWith("s") ? "es" : "s"}</option>
             ${view.makers.map((m) => html`<option key=${m} value=${m}>${m}</option>`)}
           </select>
           <input id="all-filter" type="search" placeholder="Filter by name or creator" aria-label="Filter by name or creator"
@@ -1355,12 +1417,13 @@ APP_JS = r"""
         <div class="box scroll"><table id="all-table">
           <thead><tr>
             <th class="l">Compare</th>
-            <${Th} ...${p} k="maker" label="Creator" cls="l" />
+            <${Th} ...${p} k="maker" label=${SRC.group_label} cls="l" />
             <${Th} ...${p} k="family" label="Model" cls="l" />
             <${Th} ...${p} k="effort" label="Effort" cls="l" />
             <${Th} ...${p} k="tagText" label="Tags" cls="l" />
             <${Th} ...${p} k="score" label="Index" />
-            <${Th} ...${p} k="cost" label=${borrowed ? "Overall cost per task" : "Cost per task"} />
+            ${SRC.extras.map((col) => html`<${Th} ...${p} k=${col.path} label=${col.label} />`)}
+            <${Th} ...${p} k="cost" label=${label} />
             <${Th} ...${p} k="release_date" label="Released" />
             <${Th} ...${p} k="status" label="Frontier" cls="l" />
           </tr></thead>
@@ -1374,10 +1437,11 @@ APP_JS = r"""
               <td class="l" data-c="effort">${r.problem ? "Unclassified" : (r.rung ? M.rungLabel(r.rung) : "")}</td>
               <td class="l" data-c="tags">${r.tagText || ""}</td>
               <${ScoreCell} row=${r} mode=${state.mode} />
-              <${CostCell} row=${r} borrowed=${borrowed} />
-              <td data-c="release_date">${r.release_date || ""}</td>
+              ${SRC.extras.map((col) => html`<td data-c=${col.path}>${M.formatExtra(window.ladderCore.pathValue(r, col.path), col.kind)}</td>`)}
+              <${CostCell} row=${r} borrowed=${borrowed} axis=${axis} />
+              <td data-c="release_date">${r.release_date ? M.dayText(r.release_date) : ""}</td>
               <td class="l" data-c="status">${r.status === "frontier" ? html`<span class="pill f">Frontier</span>`
-                : r.status === "dominated" ? html`<span class="pill d">Dominated</span>` : html`<span class="pill n">No cost</span>`}</td>
+                : r.status === "dominated" ? html`<span class="pill d">Dominated</span>` : html`<span class="pill n">No ${quantity}</span>`}</td>
             </tr>`;
           })}</tbody>
         </table></div>
@@ -1473,7 +1537,7 @@ APP_JS = r"""
     </div>`;
   }
 
-  function CompareView({ state, update, onSort, toggleKey, view, borrowed, indexLabel, indexShort }) {
+  function CompareView({ state, update, onSort, toggleKey, view, borrowed, indexLabel, indexShort, axis }) {
     const present = state.keys.filter((k) => view.familyByKey[k]);
     const controls = html`<${Controls} state=${state} update=${update} toggleKey=${toggleKey} view=${view} indexShort=${indexShort} />`;
     const missing = M.unscoredRows(ALL_ROWS, state.index, { keys: state.keys, hi: state.hi, lo: state.lo, rungOrder: ORDER, mode: state.mode });
@@ -1493,7 +1557,8 @@ APP_JS = r"""
     const sel = M.selectRows(view.rows, { keys: present, hi: state.hi, lo: state.lo, rungOrder: ORDER, mode });
     const steps = M.familySteps(sel);
     const pareto = M.paretoRows(sel);
-    const notes = M.findings(pareto, steps, mode);
+    const notes = M.findings(pareto, steps, mode, axis);
+    const quantity = QUANTITY[axis.unit], label = borrowed ? "Overall " + M.lowerFirst(axis.label) : axis.label;
     [sel, steps, pareto].forEach((list) => list.forEach((r) => { r.effort = effortValue(r); }));
     const color = (r) => colorOf(state.keys, r.family_key);
 
@@ -1523,13 +1588,13 @@ APP_JS = r"""
           <div class="box scroll"><table id="ladder-table">
             <thead>
               <tr class="grp"><th></th>${fams.map((k) => html`<th key=${k} colspan="2" class="b"><${Dot} color=${colorOf(state.keys, k)} />${view.familyByKey[k].family}</th>`)}</tr>
-              <tr><th>Effort</th>${fams.map((k) => [html`<th class="b">Index</th>`, html`<th>${borrowed ? "Overall cost per task" : "Cost per task"}</th>`])}</tr>
+              <tr><th>Effort</th>${fams.map((k) => [html`<th class="b">Index</th>`, html`<th>${label}</th>`])}</tr>
             </thead>
             <tbody>${rungs.map((rung) => html`<tr key=${rung}><th>${M.rungLabel(rung)}</th>${fams.map((k) => {
               const r = cell(k, rung);
               return r ? [html`<td class="b" data-c="score" data-v=${r.score}><span class="num">${scoreText(r.index, mode)}</span>${
                 mode === "whole" ? html`<span class="raw">${r.index.toFixed(1)}</span>` : null}</td>`,
-                html`<${CostCell} row=${r} borrowed=${borrowed} />`]
+                html`<${CostCell} row=${r} borrowed=${borrowed} axis=${axis} />`]
                 : [html`<td class=${missingCell(k, rung) ? "b none" : "b"}>${missingCell(k, rung) ? "No score" : ""}</td>`, html`<td></td>`];
             })}</tr>`)}</tbody>
           </table></div>
@@ -1538,22 +1603,22 @@ APP_JS = r"""
 
       <section id="steps">
         <h2>Steps within each model</h2>
-        <p class="note">What one step of effort costs or saves. Steps always follow the effort order, however the table is sorted.</p>
+        <p class="note">${axis.unit === "money" ? "What one step of effort costs or saves." : axis.unit === "time" ? "What one step of effort takes or saves in time." : "What one step of effort uses or saves in output tokens."} Steps always follow the effort order, however the table is sorted.</p>
         ${steps.length ? html`<div class="box scroll"><table id="steps-table">
           <thead>${groupRow(4)}<tr>
             <${Th} ...${sp} k="family" label="Model" cls="l" />
             <${Th} ...${sp} k="effort" label="Effort" cls="l" />
             <${Th} ...${sp} k="score" label="Index" />
-            <${Th} ...${sp} k="cost" label=${borrowed ? "Overall cost per task" : "Cost per task"} />
-            <${StepHeads} ...${sp} />
+            <${Th} ...${sp} k="cost" label=${label} />
+            <${StepHeads} ...${sp} axis=${axis} />
           </tr></thead>
           <tbody>${stepRows.map((r) => html`<tr key=${r.slug}>
             <td class="l" data-c="family"><${Dot} color=${color(r)} />${r.family}</td>
             <td class="l" data-c="effort">${M.rungLabel(r.rung)}</td>
             <${ScoreCell} row=${r} mode=${mode} />
-            <${CostCell} row=${r} borrowed=${borrowed} />
-            <${StepCells} step=${r.up} mode=${mode} kind="up" borrowed=${borrowed} />
-            <${StepCells} step=${r.down} mode=${mode} kind="down" borrowed=${borrowed} />
+            <${CostCell} row=${r} borrowed=${borrowed} axis=${axis} />
+            <${StepCells} step=${r.up} mode=${mode} kind="up" borrowed=${borrowed} axis=${axis} />
+            <${StepCells} step=${r.down} mode=${mode} kind="down" borrowed=${borrowed} axis=${axis} />
           </tr>`)}</tbody>
         </table></div>` : html`<p class="empty box">None of the selected models has effort levels in this range.</p>`}
       </section>
@@ -1561,34 +1626,34 @@ APP_JS = r"""
       <section id="pareto">
         <h2>Pareto ladder</h2>
         <p class="note">A row is on the frontier when nothing else in the selection scores at least as high for less. Steps run between neighbouring frontier rows.${
-          unpriced && pareto.length ? " " + unpriced + (unpriced === 1 ? " selected row has" : " selected rows have") + " no cost and " + (unpriced === 1 ? "is" : "are") + " left out." : ""}</p>
+          unpriced && pareto.length ? " " + unpriced + (unpriced === 1 ? " selected row has" : " selected rows have") + " no " + quantity + " and " + (unpriced === 1 ? "is" : "are") + " left out." : ""}</p>
         ${pareto.length ? html`<div class="stack">
           <div class="box chart solo"><${Scatter} rows=${pareto} front=${pareto.filter((r) => r.status === "frontier")} color=${color}
-            title=${"Selected rows: " + indexLabel + " against cost per task"} borrowed=${borrowed} /></div>
+            title=${"Selected rows: " + indexLabel + " against " + M.lowerFirst(label)} borrowed=${borrowed} axis=${axis} /></div>
           <div class="box scroll"><table id="pareto-table">
             <thead>${groupRow(4)}<tr>
               <${Th} ...${pp} k="label" label="Model and effort" cls="l" />
               <${Th} ...${pp} k="score" label="Index" />
-              <${Th} ...${pp} k="cost" label=${borrowed ? "Overall cost per task" : "Cost per task"} />
+              <${Th} ...${pp} k="cost" label=${label} />
               <${Th} ...${pp} k="status" label="Status" cls="l" />
-              <${StepHeads} ...${pp} />
+              <${StepHeads} ...${pp} axis=${axis} />
             </tr></thead>
             <tbody>${paretoRows.map((r) => html`<tr key=${r.slug} class=${r.status === "dominated" ? "dom" : ""}>
               <td class="l" data-c="label"><${Dot} color=${color(r)} />${r.label}</td>
               <${ScoreCell} row=${r} mode=${mode} />
-              <${CostCell} row=${r} borrowed=${borrowed} />
+              <${CostCell} row=${r} borrowed=${borrowed} axis=${axis} />
               <td class="l" data-c="status">${r.status === "frontier" ? html`<span class="pill f">Frontier</span>` : html`<span class="pill d">Dominated</span>`}</td>
               ${r.status === "frontier"
-                ? [html`<${StepCells} step=${r.up} mode=${mode} kind="up" borrowed=${borrowed} />`, html`<${StepCells} step=${r.down} mode=${mode} kind="down" borrowed=${borrowed} />`]
-                : html`<td colspan="6" class="reason b">${M.dominatedReason(r, mode)}</td>`}
+                ? [html`<${StepCells} step=${r.up} mode=${mode} kind="up" borrowed=${borrowed} axis=${axis} />`, html`<${StepCells} step=${r.down} mode=${mode} kind="down" borrowed=${borrowed} axis=${axis} />`]
+                : html`<td colspan="6" class="reason b">${M.dominatedReason(r, mode, axis)}</td>`}
             </tr>`)}</tbody>
           </table></div>
-        </div>` : html`<p class="empty box">None of the selected rows has a cost per task.</p>`}
+        </div>` : html`<p class="empty box">None of the selected rows has a ${M.lowerFirst(axis.label)}.</p>`}
       </section>
 
       <section id="say">
         <h2>What the numbers say</h2>
-        ${borrowed ? html`<p class="note">Costs in these sentences are Intelligence Index costs.</p>` : null}
+        ${borrowed ? html`<p class="note">${axis.unit === "money" ? "Costs in these sentences are Intelligence Index costs." : "Values in these sentences are overall " + quantity + (axis.unit === "time" ? " per prompt" : "") + ", including " + quantity + " per point."}</p>` : null}
         ${notes.length ? html`<ul id="findings" class="find box">${notes.map((n, i) => html`<li key=${i}>${n}</li>`)}</ul>`
           : html`<p id="findings" class="empty box">Nothing to report for this selection.</p>`}
       </section>
@@ -1597,10 +1662,14 @@ APP_JS = r"""
 
   // ---- app ----
   function App() {
-    const [state, setState] = useState(initialState);
+    const [saved, setState] = useState(initialState);
+    SRC = DATA.sources[saved.source]; ALL_ROWS = SRC.rows;
+    RUNGS = M.presentRungs(ALL_ROWS, ORDER); KNOWN_FAMILIES = {};
+    ALL_ROWS.forEach((r) => { KNOWN_FAMILIES[r.family_key] = {family: r.family, maker: r.maker}; });
+    const state = Object.assign({}, sourceDefaults(SRC), saved.per[saved.source] || {}, {view: saved.view, mode: saved.mode});
     // Layout effect: the hash and storage are current as soon as the change renders,
     // so a reload or bookmark right after a click keeps it.
-    useLayoutEffect(() => { saveState(state); }, [state]);
+    useLayoutEffect(() => { saveState(saved); }, [saved]);
     // Layout effect: the listener is attached before the first paint, so a hash change
     // right after the page loads is never missed.
     useLayoutEffect(() => {
@@ -1608,7 +1677,18 @@ APP_JS = r"""
       window.addEventListener("hashchange", onHash);
       return () => window.removeEventListener("hashchange", onHash);
     }, []);
-    const update = (patch) => setState((prev) => Object.assign({}, prev, typeof patch === "function" ? patch(prev) : patch));
+    const update = (patch) => setState((prev) => {
+      const current = Object.assign({}, sourceDefaults(DATA.sources[prev.source]), prev.per[prev.source] || {}, {view: prev.view, mode: prev.mode});
+      const changes = typeof patch === "function" ? patch(current) : patch;
+      const next = Object.assign({}, prev), per = Object.assign({}, prev.per), sourceState = Object.assign({}, current);
+      Object.keys(changes).forEach((key) => {
+        if (key === "view" || key === "mode" || key === "source") next[key] = changes[key];
+        else sourceState[key] = changes[key];
+      });
+      delete sourceState.view; delete sourceState.mode;
+      per[prev.source] = sourceState; next.per = per;
+      return next;
+    });
     const toggleKey = (key) => update((s) => {
       if (s.keys.indexOf(key) !== -1) return { keys: s.keys.filter((k) => k !== key) };
       return s.keys.length < LIMIT ? { keys: s.keys.concat([key]) } : {};
@@ -1622,29 +1702,47 @@ APP_JS = r"""
     });
     const tab = (view, label) => html`<button role="tab" type="button" id=${"tab-" + view} aria-selected=${String(state.view === view)}
       onClick=${() => update({ view })}>${label}</button>`;
-    const view = viewFor(state.index), borrowed = state.index !== "intelligence";
+    const view = viewFor(state.index, state.axis), borrowed = !!SRC.indexes.find((i) => i.key === state.index)?.borrowed;
     const indexInfo = SRC.indexes.find((i) => i.key === state.index);
-    const indexLabel = indexInfo.label, indexShort = indexInfo.short;
-    const props = { state, update, onSort, toggleKey, view, borrowed, indexLabel, indexShort };
+    const axis = SRC.axes.find((a) => a.key === state.axis), indexLabel = indexInfo?.label || "", indexShort = indexInfo?.short || "";
+    const props = { state, update, onSort, toggleKey, view, borrowed, indexLabel, indexShort, axis };
+    const now = Date.now();
+    const failed = (src) => src.error && Date.parse(src.last_attempt) > Date.parse(src.last_checked);
     return html`<div class="wrap">
       <header>
-        <div><h1>Model Ladder</h1><p class="sub">Effort levels compared by ${borrowed ? "the " + indexLabel + " index" : indexLabel} and cost per task.</p></div>
-        <${Status} view=${view} />
+        <div><h1>Model Ladder</h1><p class="sub">${SRC.key === "aa" ? "Effort levels compared by " + (borrowed ? "the " + indexLabel + " index" : indexLabel) + " and cost per task." : axis ? "Effort levels compared by " + SRC.label + " " + M.lowerFirst(indexLabel) + " and " + M.lowerFirst(axis.label) + "." : ""}</p></div>
+        <nav class="sources" aria-label="Data source">${Object.keys(DATA.sources).map((key) => {
+          const src = DATA.sources[key], checked = M.checkedText(src.last_checked, now, src.max_age_hours);
+          const text = !src.available ? "No data yet" : failed(src) ? "Fetch failed " + when(src.last_attempt) + "; showing " + when(src.fetched_at)
+            : src.published ? "Updated " + M.dayText(src.published.date) + ", " + M.lowerFirst(checked.text) : checked.text;
+          return html`<button id=${"source-" + key} type="button" aria-pressed=${String(saved.source === key)} class=${(!src.available || failed(src) ? "failed " : "") + (checked.stale ? "stale" : "")} onClick=${() => update({source: key})}><span>${src.label}</span><small>${text}</small></button>`;
+        })}</nav>
+        ${SRC.available ? html`<${Status} view=${view} />` : null}
       </header>
+      ${!SRC.available ? html`<p class="empty">No data from ${SRC.label} yet. Run model_ladder refresh --source ${SRC.key}.</p>` : html`<${FragmentBody} ...${props} failed=${failed(SRC)} now=${now} tab=${tab} />`}
+    </div>`;
+  }
+  function FragmentBody({state, update, onSort, toggleKey, view, borrowed, indexLabel, indexShort, axis, failed, now, tab}) {
+    const props = {state, update, onSort, toggleKey, view, borrowed, indexLabel, indexShort, axis};
+    return html`<div class="body">
+      ${failed ? html`<p id="source-error" class="ver">The last fetch on ${when(SRC.last_attempt, true)} failed: ${SRC.error}. This page shows data fetched ${when(SRC.fetched_at, true)}.</p>` : null}
+      ${SRC.published && now - Date.parse(SRC.published.date + "T00:00:00Z") > 30 * 864e5 ? html`<p id="source-quiet" class="note">No new results from ${SRC.label} since ${M.dayText(SRC.published.date)}.</p>` : null}
+      ${SRC.notice ? html`<p id="source-notice" class="note">${SRC.notice}</p>` : null}
+      ${SRC.key === "fc" && SRC.current_version && SRC.current_version !== SRC.version ? html`<p id="source-version" class="ver">FrontierCode ${SRC.current_version} is now current; this page shows ${SRC.version}.</p>` : null}
       <${Attention} view=${view} />
-      <${Changes} mode=${state.mode} index=${state.index} />
+      <${Changes} mode=${state.mode} index=${state.index} axis=${axis} />
       <div class="index-bar"><label for="index-select">Scored by</label><select id="index-select" value=${state.index} onChange=${(e) => update({ index: e.currentTarget.value })}>
-        ${SRC.indexes.filter((i) => i.key === "intelligence" || i.count > 0).map((i) => html`<option key=${i.key} value=${i.key}>${i.label} (${i.count})</option>`)}
-      </select></div>
-      ${borrowed ? html`<p id="cost-notice" class="ver cost-notice">Costs here are from the Intelligence Index run. Artificial Analysis publishes no cost for the ${indexLabel} index, so every cost, frontier and cost per point on this page pairs these scores with that cost.</p>` : null}
+        ${SRC.indexes.filter((i, n) => n === 0 || i.count > 0).map((i) => html`<option key=${i.key} value=${i.key}>${i.label} (${i.count})</option>`)}
+      </select>${SRC.axes.length > 1 ? html`<span>Plot against</span><span class="seg">${SRC.axes.map((a) => html`<button id=${"axis-" + a.key} type="button" aria-pressed=${String(axis.key === a.key)} onClick=${() => update({axis: a.key})}>${a.label}</button>`)}</span>` : null}</div>
+      ${borrowed && SRC.borrowed_notice[axis.key] ? html`<p id="cost-notice" class="ver cost-notice">${SRC.borrowed_notice[axis.key].replaceAll("{index}", indexLabel)}</p>` : null}
       <div class="tabs" role="tablist">
         ${tab("all", "All models")}
         ${tab("compare", state.keys.length ? "Compare (" + state.keys.length + ")" : "Compare")}
       </div>
       ${state.view === "all" ? html`<${AllView} ...${props} />` : html`<${CompareView} ...${props} />`}
       <footer>
-        <p>Benchmark data from <a href="https://artificialanalysis.ai" target="_blank" rel="noopener">Artificial Analysis</a>.</p>
-        <p>Cost per task is the cost of their benchmark workload, not of a typical API call.</p>
+        <p>Benchmark data from <a href=${SRC.attribution.url} target="_blank" rel="noopener">${SRC.attribution.name}</a>.</p>
+        ${SRC.key === "aa" ? html`<p>Cost per task is the cost of their benchmark workload, not of a typical API call.</p>` : null}
         <p>${DATA.app.name + " " + DATA.app.version}</p>
       </footer>
     </div>`;

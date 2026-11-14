@@ -4,11 +4,14 @@ Model Ladder compares the effort levels of AI models by their Artificial Analysi
 available index scores and by what one task costs. One command fetches the
 current data and builds a single offline page with:
 
+- a source bar with each source's latest check or update and any fetch failure;
 - an index selector for the Intelligence Index and available domain indexes;
   Coding and Agentic appear when the API supplies scores for them;
+- an axis switch when a source offers more than one measure, with values and
+  frontier comparisons displayed in the selected unit;
 - an all-models view: every model scored in the selected index, the overall frontier, and a sortable
   table filterable by creator and by text (matching creator, family or the full
-  model name, so tags are searchable);
+  model name, so tags are searchable); source-specific columns are sortable too;
 - a compare view for the model families you pick: an effort ladder per family
   (in fixed effort order from the highest level to the lowest; this table is not
   header-sortable, the other tables sort by header), a whole-point Pareto ladder, what one step
