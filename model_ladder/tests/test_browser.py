@@ -168,6 +168,19 @@ def test_start_off_ladder(open_page):
     expect(page.locator("#start-ladder")).to_contain_text("Alpha Test 1 XHigh (start)")
 
 
+def test_start_ladder_layout(open_page, ml):
+    page = open_page(synthetic_payload(ml))
+    page.click("#source-aicd")
+    compare(page)
+    add(page, "invented one")
+    page.keyboard.press("Escape")
+    assert page.locator("#start-ladder .rung .node").count() == 2
+    assert page.locator("#start-ladder .rung .score").count() == 2
+    assert page.locator("#start-ladder .rung .x").count() == 2
+    assert page.locator("#start-ladder .start-side table tbody tr").count() == 3
+    assert page.locator("#start-ladder .ladder").evaluate("e => getComputedStyle(e).alignSelf") == "start"
+
+
 def test_start_without_axis_value_falls_back(open_page, ml):
     payload = synthetic_payload(ml)
     src = payload["sources"]["aicd"]

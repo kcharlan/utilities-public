@@ -1239,16 +1239,34 @@ body { margin: 0; background: var(--bg); color: var(--ink); font-family: var(--f
   padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px)); padding-block: 20px 40px; }
 .wrap { max-width: 1180px; margin: 0 auto; display: flex; flex-direction: column; gap: 20px; }
 .body { display: contents; }
-.start-layout { display: grid; grid-template-columns: minmax(0, 2fr) minmax(220px, 1fr); gap: 16px; }
-.ladder { list-style: none; padding: 0; margin: 0; }
-.ladder li { padding: 8px 12px; border-bottom: 1px solid var(--line); }
-.ladder .start { background: var(--front-bg); border-left: 4px solid var(--front); }
-.ladder .step { color: var(--muted); padding-left: 28px; }
-.start-side { padding: 14px; }
-.start-side ul { padding-left: 20px; }
+.start-layout { display: grid; grid-template-columns: minmax(0, 7fr) minmax(0, 4fr); gap: 16px; align-items: start; }
+.ladder { list-style: none; padding: 14px 16px 14px 14px; margin: 0; align-self: start; }
+.ladder li { display: grid; grid-template-columns: 34px minmax(0, 1fr) 4ch 8ch; gap: 0 14px; align-items: center; position: relative; }
+.ladder li.rung { padding: 7px 0; }
+.ladder li.rung::before, .ladder li.step::before { content: ""; position: absolute; left: 16px; top: 0; bottom: 0; width: 2px; background: var(--line); }
+.ladder li.rung:first-child::before { top: 50%; }
+.ladder li.rung:last-child::before { bottom: 50%; }
+.ladder .node { grid-column: 1; justify-self: center; width: 14px; height: 14px; border-radius: 50%; border: 2.5px solid var(--c); background: var(--panel); position: relative; }
+.ladder .who { min-width: 0; }
+.ladder .score { font-size: 22px; font-weight: 700; font-variant-numeric: tabular-nums; text-align: right; }
+.ladder .x { color: var(--muted); text-align: right; font-variant-numeric: tabular-nums; }
+.ladder li.start { background: var(--front-bg); border-radius: 8px; margin: 4px -8px; padding: 9px 8px; }
+.ladder li.start::before { left: 24px; }
+.ladder li.start .node { background: var(--c); width: 18px; height: 18px; }
+.ladder .tag { display: inline-block; margin-left: 8px; font-size: 12px; font-weight: 600; color: var(--front); }
+.ladder li.step { grid-template-columns: 34px minmax(0, 1fr); color: var(--muted); font-size: 13px; min-height: 24px; }
+.ladder li.step span { grid-column: 2; }
+.start-side { padding: 12px 14px; display: flex; flex-direction: column; gap: 8px; }
+.start-side h3 { margin: 0; }
+.start-side ul { margin: 0; padding-left: 18px; }
+.start-side table { font-size: 14px; font-variant-numeric: tabular-nums; }
+.start-side th, .start-side td { padding: 4px 6px; white-space: nowrap; }
+.start-side th:first-child, .start-side td:first-child { text-align: left; }
+.start-side tr.off td { color: var(--muted); }
 .category-bar { display: block; height: 5px; background: var(--line); min-width: 80px; }
 .category-bar i { display: block; height: 100%; background: var(--accent); }
-@media (max-width: 700px) { .start-layout { grid-template-columns: 1fr; } }
+@media (max-width: 860px) { .start-layout { grid-template-columns: 1fr; } }
+@media (max-width: 450px) { .ladder li { grid-template-columns: 24px minmax(0, 1fr) 3ch 6ch; gap: 0 6px; } .ladder li.rung::before, .ladder li.step::before { left: 11px; } .ladder li.start::before { left: 19px; } .ladder li.step { grid-template-columns: 24px minmax(0, 1fr); } }
 header { display: flex; flex-direction: column; gap: 10px; }
 h1 { font-size: 26px; font-weight: 700; margin: 0; letter-spacing: -0.01em; }
 h2 { font-size: 18px; font-weight: 600; margin: 0; text-wrap: balance; }
@@ -1891,10 +1909,10 @@ APP_JS = r"""
           <p class="note">The selection's frontier on ${axisName}, highest score at the top. Each line between rungs is the step to the next rung: up if this one fails, down to try for less.</p>
           ${starting.unplaced ? html`<p id="start-unplaced" class="ver">${starting.unplaced.label} has no ${axisName}, so it can't be placed on this ladder. Showing the ladder from ${starting.start.label} instead.</p>` : null}
           <div class="start-layout"><ol class="ladder box">${starting.rungs.map((r, i) => [
-            i ? html`<li class="step">${M.stepSentence(starting.steps[i - 1].step, starting.steps[i - 1].direction, axis, mode)}</li>` : null,
-            html`<li class=${r.slug === starting.start.slug ? "start" : ""}><${Dot} color=${color(r)} /><strong>${r.label}</strong> · ${scoreText(r.index, mode)} · ${M.formatAxis(r.cost, axis.unit)} ${r.slug === starting.start.slug ? (starting.startOn ? "Start" : "Start, off the ladder") : ""}</li>`
+            i ? html`<li class="step"><span>${M.stepSentence(starting.steps[i - 1].step, starting.steps[i - 1].direction, axis, mode)}</span></li>` : null,
+            html`<li class=${"rung" + (r.slug === starting.start.slug ? " start" : "")} style=${"--c:" + color(r)}><span class="node"></span><span class="who"><strong>${r.label}</strong>${r.slug === starting.start.slug ? html`<span class="tag">${starting.startOn ? "Start" : "Start, off the ladder"}</span>` : null}</span><span class="score">${scoreText(r.index, mode)}</span><span class="x">${M.formatAxis(r.cost, axis.unit)}</span></li>`
           ])}</ol><aside class="box start-side">
-            <h3>${starting.start.family}</h3><ul>${sel.filter((r) => r.family_key === starting.start.family_key).map((r) => html`<li>${M.rungLabel(r.rung) || r.label}: ${scoreText(r.index, mode)}, ${M.formatAxis(r.cost, axis.unit)}${starting.offLadder.some((d) => d.slug === r.slug) ? " (off ladder)" : ""}</li>`)}</ul>
+            <h3>${starting.start.family} at each effort</h3><div class="scroll"><table><thead><tr><th>Effort</th><th>Score</th><th>${axis.label}</th></tr></thead><tbody>${sel.filter((r) => r.family_key === starting.start.family_key).map((r) => html`<tr class=${starting.offLadder.some((d) => d.slug === r.slug) ? "off" : ""}><td>${M.rungLabel(r.rung) || r.label}${starting.offLadder.some((d) => d.slug === r.slug) ? " (off ladder)" : ""}</td><td>${scoreText(r.index, mode)}</td><td>${M.formatAxis(r.cost, axis.unit)}</td></tr>`)}</tbody></table></div>
             ${starting.offLadder.length ? html`<h3>Off the ladder</h3><ul>${starting.offLadder.map((r) => html`<li>${r.label}${r.slug === starting.start.slug ? " (start)" : ""}: ${M.dominatedReason(r, mode, axis)}.</li>`)}</ul>` : null}
             ${starting.unpriced.length ? html`<h3>Not on this ladder</h3><p>No ${axisName}: ${starting.unpriced.map((r) => r.label).join(", ")}.</p>` : null}
           </aside></div>` : html`<p class="empty box">None of the selected rows has a ${axisName}.</p>`}
