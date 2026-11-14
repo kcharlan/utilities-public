@@ -106,6 +106,42 @@ function select(rows, mode, extra = {}) {
 }
 const labels = (rows) => rows.map((r) => r.label);
 
+test("starting ladder places frontier, dominated and unpriced starts", () => {
+  const rows = select(FIXTURE, "whole");
+  const base = m.startLadder(rows, null);
+  assert.deepEqual(labels(base.rungs), labels(m.frontier(rows)).reverse());
+  const dominated = rows.find(r => r.label === "Alpha Test 1 XHigh");
+  const chosen = m.startLadder(rows, dominated.slug);
+  assert.equal(chosen.start.slug, dominated.slug);
+  assert.equal(chosen.startOn, false);
+  assert.equal(chosen.offLadder[0].slug, dominated.slug);
+  assert.ok(chosen.rungs.some(r => r.slug === dominated.slug));
+  assert.deepEqual(labels(chosen.rungs), ["Alpha Test 1 Max", "Alpha Test 1 High", "Alpha Test 1 XHigh", "Beta Test 1 XHigh", "Alpha Test 1 Medium", "Beta Test 1 High", "Beta Test 1 Medium"]);
+  const absent = {...rows[0], slug: "no-price", cost: null};
+  const fallback = m.startLadder([...rows, absent], absent.slug);
+  assert.equal(fallback.unplaced.slug, absent.slug);
+  assert.equal(fallback.start.slug, m.frontier(rows)[0].slug);
+  const ties = select([row("Tie A", "high", 50, 4), row("Tie B", "high", 50, 4)], "whole");
+  const tied = m.startLadder(ties, null);
+  assert.equal(m.stepSentence(tied.steps[0].step, tied.steps[0].direction, AA_AXIS, "whole"), "Same score and cost per task");
+});
+
+test("step sentences cover every copy rule for money and time", () => {
+  for (const [axis, x, per] of [[AA_AXIS, "$2.00", "$1.00"], [{label: "Time per prompt", unit: "time"}, "0:02", "0:01"]]) {
+    const a = axis.label[0].toLowerCase() + axis.label.slice(1);
+    for (const [step, direction, expected] of [
+      [{points: 0, cost: 0}, "up", `Same score and ${a}`],
+      [{points: 0, cost: -2}, "up", `Same score for ${x} less`],
+      [{points: 0, cost: 2}, "up", `Same score for ${x} more`],
+      [{points: 2, cost: 2, perPoint: 1}, "up", `+2 points for +${x} (${per} per point)`],
+      [{points: 2, cost: -2}, "up", `+2 points for ${x} less`],
+      [{points: 2, cost: 0}, "up", `+2 points for the same ${a}`],
+      [{points: -2, cost: -2, perPoint: 1}, "down", `−2 points to save ${x} (${per} per point)`],
+      [{points: -1, cost: 2}, "down", "−1 point and saves nothing"],
+    ]) assert.equal(m.stepSentence(step, direction, axis, "whole"), expected);
+  }
+});
+
 test("whole points rounds halves up", () => {
   const cases = [[61.8, 62], [62.2, 62], [61.5, 62], [61.4, 61], [0.5, 1], [28.5, 29], [64.6, 65]];
   for (const [raw, want] of cases) assert.equal(m.wholePoints(raw), want, String(raw));

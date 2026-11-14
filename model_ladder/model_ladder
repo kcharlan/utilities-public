@@ -3,7 +3,8 @@
 # requires-python = ">=3.12,<3.16"
 # dependencies = []
 # ///
-"""Model Ladder: compare model effort levels by Intelligence Index and cost per task.
+"""Model Ladder: compare model effort levels from Artificial Analysis,
+AI Coding Daily and FrontierCode.
 
 Runtime home: ~/.model_ladder/ (override with MODEL_LADDER_HOME), holding
 config.json, snapshots/ (newest 60 fetches, gzip) and the built offline page model_ladder.html.
@@ -27,7 +28,7 @@ from datetime import datetime, timedelta, timezone
 from html.parser import HTMLParser
 from pathlib import Path
 
-VERSION = "1.1.4"
+VERSION = "1.2.0"
 USER_AGENT = f"model_ladder/{VERSION}"
 FC_DATA_URL = "https://cognition.com/data/frontier-code-2.0/data.json"
 FC_PAGE_URL = "https://cognition.com/frontiercode"
@@ -1107,6 +1108,43 @@ function showPoints(value, mode) {
   return mode === "decimal" ? Math.abs(value).toFixed(1) : String(Math.round(Math.abs(value)));
 }
 
+function startLadder(sel, startSlug) {
+  var pareto = paretoRows(sel);
+  var front = pareto.filter(function (r) { return r.status === "frontier"; });
+  var unpriced = sel.filter(function (r) { return !priced(r); });
+  var chosen = sel.filter(function (r) { return r.slug === startSlug; })[0] || front[0] || null;
+  var unplaced = chosen && !priced(chosen) ? chosen : null;
+  var start = unplaced ? (front[0] || null) : chosen;
+  if (!start) return { rungs: [], start: null, startOn: false, unplaced: unplaced, steps: [], offLadder: [], unpriced: unpriced };
+  var startRow = pareto.filter(function (r) { return r.slug === start.slug; })[0];
+  var startOn = startRow.status === "frontier";
+  var rungs = front.slice().reverse();
+  if (!startOn) {
+    var at = rungs.findIndex(function (r) { return r.score < startRow.score || (r.score === startRow.score && r.cost > startRow.cost); });
+    rungs.splice(at === -1 ? rungs.length : at, 0, startRow);
+  }
+  var s = rungs.indexOf(startRow), steps = [];
+  for (var i = 1; i < rungs.length; i += 1) {
+    steps.push(i <= s ? { direction: "up", step: makeStep(rungs[i], rungs[i - 1], "up") }
+                      : { direction: "down", step: makeStep(rungs[i - 1], rungs[i], "down") });
+  }
+  var offLadder = pareto.filter(function (r) { return r.status === "dominated"; })
+    .sort(function (a, b) { return (b.slug === start.slug) - (a.slug === start.slug); });
+  return { rungs: rungs, start: startRow, startOn: startOn, unplaced: unplaced, steps: steps, offLadder: offLadder, unpriced: unpriced };
+}
+
+function stepSentence(step, direction, axis, mode) {
+  var points = showPoints(step.points, mode), p = points + (Number(points) === 1 ? " point" : " points");
+  var x = formatAxis(Math.abs(step.cost), axis.unit), a = lowerFirst(axis.label);
+  if (step.points === 0) return step.cost === 0 ? "Same score and " + a : "Same score for " + x + (step.cost < 0 ? " less" : " more");
+  if (direction === "up") {
+    if (step.perPoint != null) return "+" + p + " for +" + x + " (" + formatAxis(step.perPoint, axis.unit) + " per point)";
+    return "+" + p + (step.cost < 0 ? " for " + x + " less" : " for the same " + a);
+  }
+  if (step.perPoint != null) return "−" + p + " to save " + x + " (" + formatAxis(step.perPoint, axis.unit) + " per point)";
+  return "−" + p + " and saves nothing";
+}
+
 function dominatedReason(row, mode, axis) {
   if (row.status !== "dominated" || !row.by) return null;
   var gap = row.by.score - row.score;
@@ -1172,7 +1210,7 @@ var api = {
   paretoRows: paretoRows, familySteps: familySteps, sortRows: sortRows,
   findings: findings, money: money, dataAge: dataAge, changesToShow: changesToShow,
   lowerFirst: lowerFirst, formatAxis: formatAxis, checkedText: checkedText, dayText: dayText, formatExtra: formatExtra,
-  dominatedReason: dominatedReason, rungLabel: rungLabel, showPoints: showPoints
+  dominatedReason: dominatedReason, rungLabel: rungLabel, showPoints: showPoints, startLadder: startLadder, stepSentence: stepSentence
 };
 if (typeof module !== "undefined") module.exports = api; else window.ladderMath = api;
 // ladder-math:end
@@ -1201,6 +1239,16 @@ body { margin: 0; background: var(--bg); color: var(--ink); font-family: var(--f
   padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px)); padding-block: 20px 40px; }
 .wrap { max-width: 1180px; margin: 0 auto; display: flex; flex-direction: column; gap: 20px; }
 .body { display: contents; }
+.start-layout { display: grid; grid-template-columns: minmax(0, 2fr) minmax(220px, 1fr); gap: 16px; }
+.ladder { list-style: none; padding: 0; margin: 0; }
+.ladder li { padding: 8px 12px; border-bottom: 1px solid var(--line); }
+.ladder .start { background: var(--front-bg); border-left: 4px solid var(--front); }
+.ladder .step { color: var(--muted); padding-left: 28px; }
+.start-side { padding: 14px; }
+.start-side ul { padding-left: 20px; }
+.category-bar { display: block; height: 5px; background: var(--line); min-width: 80px; }
+.category-bar i { display: block; height: 100%; background: var(--accent); }
+@media (max-width: 700px) { .start-layout { grid-template-columns: 1fr; } }
 header { display: flex; flex-direction: column; gap: 10px; }
 h1 { font-size: 26px; font-weight: 700; margin: 0; letter-spacing: -0.01em; }
 h2 { font-size: 18px; font-weight: 600; margin: 0; text-wrap: balance; }
@@ -1826,12 +1874,35 @@ APP_JS = r"""
     const unpriced = sel.length - pareto.length;
     const sp = { table: "steps", sorts: state.sorts, onSort };
     const pp = { table: "pareto", sorts: state.sorts, onSort };
+    const starting = M.startLadder(sel, state.start);
+    const categories = SRC.indexes.filter((i) => i.borrowed && i.max != null && i.max > 0);
+    const axisName = M.lowerFirst(axis.label);
     const groupRow = (lead) => html`<tr class="grp"><th colspan=${lead}></th>
       <th colspan="3" class="b">One step up</th><th colspan="3" class="b">One step down</th></tr>`;
 
     return html`<div class="view">
       ${controls}
       ${note}
+      <section id="start-ladder">
+        <div class="group"><label for="start-select">Start from</label><select id="start-select" value=${state.start && sel.some((r) => r.slug === state.start) ? state.start : starting.start?.slug || ""} onChange=${(e) => update({start: e.currentTarget.value})}>
+          ${sel.map((r) => html`<option key=${r.slug} value=${r.slug}>${r.label}</option>`)}
+        </select></div>
+        ${starting.start ? html`<h2>Ladder from ${starting.start.label}</h2>
+          <p class="note">The selection's frontier on ${axisName}, highest score at the top. Each line between rungs is the step to the next rung: up if this one fails, down to try for less.</p>
+          ${starting.unplaced ? html`<p id="start-unplaced" class="ver">${starting.unplaced.label} has no ${axisName}, so it can't be placed on this ladder. Showing the ladder from ${starting.start.label} instead.</p>` : null}
+          <div class="start-layout"><ol class="ladder box">${starting.rungs.map((r, i) => [
+            i ? html`<li class="step">${M.stepSentence(starting.steps[i - 1].step, starting.steps[i - 1].direction, axis, mode)}</li>` : null,
+            html`<li class=${r.slug === starting.start.slug ? "start" : ""}><${Dot} color=${color(r)} /><strong>${r.label}</strong> · ${scoreText(r.index, mode)} · ${M.formatAxis(r.cost, axis.unit)} ${r.slug === starting.start.slug ? (starting.startOn ? "Start" : "Start, off the ladder") : ""}</li>`
+          ])}</ol><aside class="box start-side">
+            <h3>${starting.start.family}</h3><ul>${sel.filter((r) => r.family_key === starting.start.family_key).map((r) => html`<li>${M.rungLabel(r.rung) || r.label}: ${scoreText(r.index, mode)}, ${M.formatAxis(r.cost, axis.unit)}${starting.offLadder.some((d) => d.slug === r.slug) ? " (off ladder)" : ""}</li>`)}</ul>
+            ${starting.offLadder.length ? html`<h3>Off the ladder</h3><ul>${starting.offLadder.map((r) => html`<li>${r.label}${r.slug === starting.start.slug ? " (start)" : ""}: ${M.dominatedReason(r, mode, axis)}.</li>`)}</ul>` : null}
+            ${starting.unpriced.length ? html`<h3>Not on this ladder</h3><p>No ${axisName}: ${starting.unpriced.map((r) => r.label).join(", ")}.</p>` : null}
+          </aside></div>` : html`<p class="empty box">None of the selected rows has a ${axisName}.</p>`}
+      </section>
+      ${categories.length ? html`<section id="categories"><h2>Score by category</h2>
+        <p class="note">Each bar is scaled to that category's maximum. Categories share the overall ${axisName}.</p>
+        <div class="box scroll"><table><thead><tr><th class="l">Model and effort</th>${categories.map((c) => html`<th>${c.label}</th>`)}</tr></thead>
+        <tbody>${sel.map((r) => html`<tr><th class="l">${r.label}</th>${categories.map((c) => { const value = r.scores[c.key]; return html`<td>${value == null ? "" : html`${value.toFixed(1)}<span class="category-bar"><i style=${"width: " + (value / c.max * 100) + "%"}></i></span>`}</td>`; })}</tr>`)}</tbody></table></div></section>` : null}
       <section id="ladder">
         <h2>Effort ladder</h2>
         ${fams.length ? html`<div class=${sel.some((r) => r.rank !== null) ? "pair" : ""}>
@@ -1992,7 +2063,7 @@ APP_JS = r"""
       </div>
       ${state.view === "all" ? html`<${AllView} ...${props} />` : html`<${CompareView} ...${props} />`}
       <footer>
-        <p>Benchmark data from <a href=${SRC.attribution.url} target="_blank" rel="noopener">${SRC.attribution.name}</a>.</p>
+        <p>Benchmark data from ${Object.values(DATA.sources).map((src, i) => [i ? (i === Object.keys(DATA.sources).length - 1 ? " and " : ", ") : "", html`<a href=${src.attribution.url} target="_blank" rel="noopener">${src.attribution.name}</a>`])}. Each source is shown on its own; scores are never combined.</p>
         ${SRC.key === "aa" ? html`<p>Cost per task is the cost of their benchmark workload, not of a typical API call.</p>` : null}
         <p>${DATA.app.name + " " + DATA.app.version}</p>
       </footer>
@@ -2554,7 +2625,7 @@ def testing_mode_enabled() -> bool:
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="model_ladder",
-        description="Compare model effort levels by available Artificial Analysis indexes and cost per task.",
+        description="Compare model effort levels by score and price from separate benchmark sources.",
         epilog="Runtime home: ~/.model_ladder/ (override with MODEL_LADDER_HOME).",
     )
     parser.add_argument("command", nargs="?", choices=("refresh", "build"),

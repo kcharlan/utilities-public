@@ -149,6 +149,65 @@ def synthetic_payload(ml):
     return payload
 
 
+def test_start_ladder_default_and_choice(open_page):
+    page = open_page()
+    alpha_and_beta(page)
+    expect(page.locator("#start-ladder h2")).to_have_text("Ladder from Beta Test 1 Medium")
+    options = page.locator("#start-select option")
+    choice = options.last.get_attribute("value")
+    page.select_option("#start-select", choice)
+    page.reload()
+    expect(page.locator("#start-select")).to_have_value(choice)
+
+
+def test_start_off_ladder(open_page):
+    page = open_page()
+    alpha_and_beta(page)
+    page.select_option("#start-select", label="Alpha Test 1 XHigh")
+    expect(page.locator("#start-ladder .start")).to_contain_text("Start, off the ladder")
+    expect(page.locator("#start-ladder")).to_contain_text("Alpha Test 1 XHigh (start)")
+
+
+def test_start_without_axis_value_falls_back(open_page, ml):
+    payload = synthetic_payload(ml)
+    src = payload["sources"]["aicd"]
+    src["axes"].append({"key": "cost", "label": "Cost per prompt", "unit": "money", "per": "per prompt"})
+    src["rows"][0]["axes"]["cost"] = 2
+    page = open_page(payload)
+    page.click("#source-aicd")
+    compare(page)
+    add(page, "invented one")
+    page.keyboard.press("Escape")
+    page.click("#axis-cost")
+    page.select_option("#start-select", label="Invented One Medium")
+    expect(page.locator("#start-unplaced")).to_contain_text("has no cost per prompt")
+
+
+def test_category_table_only_for_category_sources(open_page, ml):
+    payload = synthetic_payload(ml)
+    payload["sources"]["aicd"]["indexes"][0]["max"] = 100
+    payload["sources"]["aicd"]["indexes"][1]["max"] = 80
+    page = open_page(payload)
+    alpha_and_beta(page)
+    expect(page.locator("#categories")).to_have_count(0)
+    page.click("#source-aicd")
+    compare(page)
+    add(page, "invented one")
+    page.keyboard.press("Escape")
+    expect(page.locator("#categories th")).to_contain_text(["Model and effort", "Category"])
+    expect(page.locator("#categories tbody td").first).to_contain_text("40.0")
+    assert page.locator("#categories tbody td i").first.evaluate("e => e.style.width") == "50%"
+    expect(page.locator("#categories .note")).to_contain_text("overall time per prompt")
+    page.click("#axis-tokens")
+    expect(page.locator("#categories .note")).to_contain_text("overall output tokens")
+
+
+def test_footer_attribution_lists_every_source(open_page):
+    page = open_page()
+    assert texts(page, "footer a") == ["Artificial Analysis", "AI Coding Daily", "Cognition"]
+    expect(page.locator("footer")).to_contain_text("Each source is shown on its own; scores are never combined.")
+
+
 def test_source_without_data(open_page):
     page = open_page()
     page.click("#source-fc")
@@ -260,7 +319,9 @@ def test_fc_source_end_to_end(open_page, ml, tmp_path):
 
 def test_aicd_source_end_to_end(open_page, ml, tmp_path):
     from test_source_aicd import AICD_FIXTURE
-    result = ml.parse_ai_coding_daily(AICD_FIXTURE)
+    from test_fetch import Opener
+    from test_source_fc import HtmlResponse
+    result = ml.fetch_ai_coding_daily(Opener([HtmlResponse(AICD_FIXTURE)]))
     path = ml.save_snapshot(tmp_path / "aicd-home", result, NOW, "aicd")
     saved = ml.read_snapshot(path, "aicd")
     page = open_page(ml.build_payload({"aa": (snapshot(ladder_models()), None), "aicd": (saved, None)}, CONFIG))
@@ -278,6 +339,13 @@ def test_aicd_source_end_to_end(open_page, ml, tmp_path):
     header = page.locator("#all-table th[data-k='scores.laravel']")
     header.click()
     expect(header).to_have_attribute("aria-sort", "ascending")
+    page.locator("#all-table input[type=checkbox]").first.check()
+    compare(page)
+    assert page.locator("#categories thead th").count() == 6
+    assert texts(page, "#categories tbody tr:first-child td") == ["11.0", "12.0", "13.0", "14.0", "15.0"]
+    widths = page.locator("#categories tbody tr:first-child i").evaluate_all("els => els.map(e => parseFloat(e.style.width))")
+    # Chromium serializes CSS percentages to four decimal places.
+    assert widths == pytest.approx([11, 12 / 110 * 100, 13 / 120 * 100, 14 / 130 * 100, 15 / 140 * 100], abs=0.00005)
 
 
 def test_aicd_changes_version_wording(open_page, ml):

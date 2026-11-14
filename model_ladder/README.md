@@ -1,8 +1,8 @@
 # Model Ladder
 
-Model Ladder compares the effort levels of AI models by their Artificial Analysis
-available index scores and by what one task costs. One command fetches the
-current data and builds a single offline page with:
+Model Ladder compares model effort levels using a registry of Artificial Analysis,
+AI Coding Daily and FrontierCode sources. Each source is shown on its own; scores
+are never combined. One command fetches current data and builds an offline page with:
 
 - a source bar with each source's latest check or update and any fetch failure;
 - an index selector for the Intelligence Index and available domain indexes;
@@ -22,7 +22,21 @@ current data and builds a single offline page with:
   added or removed model, any index score or cost), so a refetch that changes only fields
   the page does not use leaves the last real change visible.
 
-The page states facts. It makes no recommendation. Same data in, same page out.
+The page states facts. The same data produces the same comparisons.
+
+## Starting point ladder
+
+In Compare, choose a starting row to see the selected frontier from highest score
+to lowest, with the steps above and below that row. A dominated starting row is
+inserted and identified as off the ladder. Rows without the selected axis value
+cannot be placed; the view falls back to the cheapest frontier row.
+
+## Freshness
+
+The source bar distinguishes when data was last checked from a source's published
+date. If a fetch fails, the page identifies the failure and shows the last saved
+snapshot. When a published date is over 30 days old, a quiet note states when the
+source last published results.
 
 ## Indexes and cost
 
