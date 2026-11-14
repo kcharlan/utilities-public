@@ -1112,7 +1112,7 @@ APP_JS = r"""
     if (raw.mode === "whole" || raw.mode === "decimal") s.mode = raw.mode;
     const legacy = !raw.per && ["index", "keys", "hi", "lo", "sorts"].some((k) => k in raw);
     const per = legacy ? {aa: raw} : raw.per || {};
-    if (!legacy && DATA.sources[raw.source]) s.source = raw.source;
+    if (!legacy && typeof raw.source === "string" && Object.keys(DATA.sources).includes(raw.source)) s.source = raw.source;
     Object.keys(DATA.sources).forEach((key) => {
       const src = DATA.sources[key], value = per[key];
       if (!value || typeof value !== "object" || Array.isArray(value)) return;
@@ -1222,7 +1222,7 @@ APP_JS = r"""
 
   function StepHeads({ table, sorts, onSort, axis }) {
     const p = { table, sorts, onSort };
-    const quantity = {money: "Cost", time: "Time", tokens: "Output tokens"}[axis.unit];
+    const quantity = QUANTITY[axis.unit].charAt(0).toUpperCase() + QUANTITY[axis.unit].slice(1);
     return [
       html`<${Th} ...${p} k="up.points" label="Points" cls="b" />`,
       html`<${Th} ...${p} k="up.cost" label=${quantity} />`,

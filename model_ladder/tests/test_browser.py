@@ -264,6 +264,17 @@ def test_old_state_migrates_to_aa(open_page, storage):
     assert state["mode"] == "decimal"
 
 
+@pytest.mark.parametrize("source", ["constructor", "__proto__", "invented-unknown", None, []])
+@pytest.mark.parametrize("storage", [False, True])
+def test_unknown_source_restores_aa(open_page, source, storage):
+    state = {"view": "all", "mode": "whole", "source": source, "per": {}}
+    script = f"localStorage.setItem('model_ladder.state', {json.dumps(json.dumps(state))})" if storage else None
+    fragment = "" if storage else "#" + quote(json.dumps(state))
+    page = open_page(fragment=fragment, init_script=script)
+    expect(page.locator("#source-aa")).to_have_attribute("aria-pressed", "true")
+    assert json.loads(page.evaluate("localStorage.getItem('model_ladder.state')"))["source"] == "aa"
+
+
 @pytest.mark.parametrize("axis,header,value,unit,tick,up,down,per_point,note,finding", [
     ("time", "Time per prompt", "2:00", "time", "0:50", "+1:00", "−1:00", "0:06", "takes no more time", "0:02 per point"),
     ("tokens", "Output tokens", "2k tokens", "output tokens", "1k tokens", "+1k tokens", "−1k tokens", "100 tokens", "uses no more output tokens", "33 tokens per point"),
@@ -272,7 +283,9 @@ def test_axis_strings_follow_axis(open_page, ml, axis, header, value, unit, tick
     payload = synthetic_payload(ml)
     payload["sources"]["aicd"]["changes"] = {"from": "2026-11-01T00:00:00Z", "to": "2026-11-05T10:00:00Z",
         "version": None, "added": [], "removed": [], "maxima": {}, "changed": [{"slug": "invented-one-high", "name": "Invented One (high)",
-        "scores": {"test": [60, 60], "category": [40, 40]}, "axes": {"time": [60, 120], "tokens": [1000, 2000]}, "extras": {}}]}
+        "scores": {"test": [60, 60], "category": [40, 40]}, "axes": {"time": [60, 120], "tokens": [1000, 2000]}, "extras": {}},
+        {"slug": "invented-three-high", "name": "Invented Three (high)", "scores": {"test": [40, 40], "category": [25, 25]},
+         "axes": {"time": [None, 60], "tokens": [None, 1000]}, "extras": {}}]}
     page = open_page(payload)
     page.click("#source-aicd")
     page.click("#axis-" + axis)
@@ -286,9 +299,16 @@ def test_axis_strings_follow_axis(open_page, ml, axis, header, value, unit, tick
     assert "No " + unit in page.locator("#all-table").inner_text()
     assert "$" not in page.locator("#all-table").inner_text()
     page.locator("#changes summary").click()
-    assert unit in page.locator("#changes").inner_text().lower()
+    changes = page.locator("#changes").inner_text()
+    assert ("time 1:00 to 2:00" if axis == "time" else "output tokens 1k tokens to 2k tokens") in changes
+    assert ("time no time to 1:00" if axis == "time" else "output tokens no output tokens to 1k tokens") in changes
+    assert "$" not in changes
     page.locator("#all-table input[type=checkbox]").first.check()
+    page.locator("#all-table tr").filter(has_text="Invented Three").locator("input[type=checkbox]").check()
     page.click("#tab-compare")
+    assert value in texts(page, "#ladder-table td[data-c=cost]")
+    assert "$" not in page.locator("#ladder-table").inner_text()
+    assert ("1 selected row has no time and is left out." if axis == "time" else "1 selected row has no output tokens and is left out.") in page.locator("#pareto p.note").inner_text()
     assert header in page.locator("#steps-table").inner_text()
     assert "$" not in page.locator("#steps-table").inner_text()
     assert unit in page.locator("#steps p.note").inner_text().lower()
@@ -305,6 +325,20 @@ def test_axis_strings_follow_axis(open_page, ml, axis, header, value, unit, tick
     page.select_option("#index-select", "category")
     assert page.locator("#cost-notice").inner_text() == ("Overall time per prompt for Category." if axis == "time" else "Overall output tokens for Category.")
     assert page.locator("#say .note").inner_text() == ("Values in these sentences are overall time per prompt, including time per point." if axis == "time" else "Values in these sentences are overall output tokens, including output tokens per point.")
+
+
+@pytest.mark.parametrize("axis,label", [("time", "time per prompt"), ("tokens", "output tokens")])
+def test_missing_axis_empty_states(open_page, ml, axis, label):
+    payload = synthetic_payload(ml)
+    for row in payload["sources"]["aicd"]["rows"]:
+        row["axes"][axis] = None
+    page = open_page(payload)
+    page.click("#source-aicd")
+    page.click("#axis-" + axis)
+    expect(page.locator(".view p.empty")).to_have_text("No scored model has a " + label + ".")
+    page.locator("#all-table input[type=checkbox]").first.check()
+    page.click("#tab-compare")
+    expect(page.locator("#pareto p.empty")).to_have_text("None of the selected rows has a " + label + ".")
 
 
 def test_changes_extras_and_maxima(open_page, ml, monkeypatch, tmp_path):

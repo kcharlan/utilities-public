@@ -2624,3 +2624,9 @@ An axis label can include a per-unit qualifier that a generic quantity name
 omits. Check the full unit and per descriptor in charts, tables, change panels,
 and explanatory notes, including borrowed measures, so a time per prompt is not
 described only as time.
+
+## 2026-11-13: Validate external keys as own members
+
+An object lookup accepts inherited names such as `constructor` and `__proto__`.
+When restoring an external token, require the expected type and membership in the
+actual keys before using it as a selector; test both URL and stored state.
