@@ -1,5 +1,30 @@
 # Lessons learned
 
+## 2026-11-13: Choose a default source that has data
+
+Select the first available source for a fresh page while preserving explicit
+legacy source selection, even when that source has no data. Test both fresh and
+restored state with the usual first source unavailable.
+
+## 2026-11-13: Tie optional columns to source data
+
+Show optional columns when the selected source has the corresponding data,
+independent of visible-row filters. Test source switching and filtered views.
+
+## 2026-11-13: Distinguish missing metadata from an explicit absence
+
+At a fetch/store boundary, omit page metadata when retrieval or parsing fails,
+and carry missing keys from the selected readable snapshot. A successful parse
+with no match must return explicit `None` so it clears stale metadata. Test both
+unchanged and changed feeds, including a parse failure after a partial match.
+
+## 2026-11-13: Select readable snapshots consistently
+
+Use the same newest-readable selection for store comparisons, CLI freshness,
+and page building. Preserve unreadable files until a successful save, and test
+colliding timestamps, failed writes, and separated fetch and read errors so a
+damaged newest file cannot block recovery or hide healthy older data.
+
 ## Share visible-text rules between page and table parsers
 
 When a source contract uses page text for table cells, reuse the same handling

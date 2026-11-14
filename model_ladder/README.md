@@ -5,13 +5,15 @@ AI Coding Daily and FrontierCode sources. Each source is shown on its own; score
 are never combined. One command fetches current data and builds an offline page with:
 
 - a source bar with each source's latest check or update and any fetch failure;
+  on a first visit, the first source with data is selected in source-bar order;
 - an index selector for the Intelligence Index and available domain indexes;
   Coding and Agentic appear when the API supplies scores for them;
 - an axis switch when a source offers more than one measure, with values and
   frontier comparisons displayed in the selected unit;
 - an all-models view: every model scored in the selected index, the overall frontier, and a sortable
   table filterable by creator and by text (matching creator, family or the full
-  model name, so tags are searchable); source-specific columns are sortable too;
+  model name, so tags are searchable); source-specific columns are sortable too,
+  and Released appears when the selected source has release dates;
 - a compare view for the model families you pick: an effort ladder per family
   (in fixed effort order from the highest level to the lowest; this table is not
   header-sortable, the other tables sort by header), a whole-point Pareto ladder, what one step
@@ -37,6 +39,10 @@ The source bar distinguishes when data was last checked from a source's publishe
 date. If a fetch fails, the page identifies the failure and shows the last saved
 snapshot. When a published date is over 30 days old, a quiet note states when the
 source last published results.
+
+If the newest saved snapshot cannot be read, Model Ladder reports the problem
+and uses the newest readable snapshot for freshness and page building. A source
+with no readable snapshot can be fetched again under the normal refresh rules.
 
 ## Indexes and cost
 
@@ -72,9 +78,9 @@ model_ladder [refresh|build] [--source {aa,aicd,fc}] [--no-refresh] [--no-open] 
 
 | Command | What it does |
 | --- | --- |
-| `model_ladder` | Fetches if the newest snapshot is older than `max_age_hours` (or missing), builds the page, opens it. |
+| `model_ladder` | Fetches if the newest readable snapshot is older than `max_age_hours` (or missing), builds the page, opens it. |
 | `model_ladder refresh` | Always fetches, then builds and opens. |
-| `model_ladder build` | Builds from the newest snapshot; never fetches. |
+| `model_ladder build` | Builds from the newest readable snapshot; never fetches. |
 | `--no-refresh` | Never fetch, even if the data is old. |
 | `--source KEY` | Fetch only the named source; the page still includes saved snapshots from all sources. |
 | `--no-open` | Do not open the page in a browser. |
@@ -136,9 +142,16 @@ files 0600:
   `max_age_hours` (a positive number of hours, at most 87600, ten years), and
   `source_max_age_hours` (per-source ages for `aicd` and `fc`, default 24 hours).
 - `snapshots/<UTC timestamp>.json.gz` (directory mode 0700): each fetch as
-  delivered, newest 60 kept. A fetch identical to the newest snapshot adds no
+  delivered, newest 60 kept. A fetch identical to the newest readable snapshot adds no
   file; it only updates that snapshot's check time, which is what
-  `max_age_hours` is measured from.
+  `max_age_hours` is measured from. If a timestamp is already in use, a new
+  snapshot uses `<UTC timestamp>_<ordinal:06d>.json.gz` with an increasing
+  ordinal.
+- After a successful save or update, unreadable files skipped before the
+  selected snapshot are renamed with `.unreadable` appended; if that name is
+  occupied, a numbered suffix precedes `.unreadable`. These files are kept
+  indefinitely outside discovery and pruning and can be deleted manually.
+  Building or reading alone does not move them.
 - `snapshots/<source>/`: separate private snapshot directories for other sources.
 - `status.json`: the last attempt and error, if any, for each source.
 - `model_ladder.html`: the built page, replaced atomically.

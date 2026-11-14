@@ -57,6 +57,16 @@ def test_status_reaches_payload(ml):
     assert data["sources"]["fc"]["error"] == "failed"
 
 
+@pytest.mark.parametrize("available,expected", [
+    ([], "aa"), (["aa"], "aa"), (["aicd"], "aicd"), (["fc"], "fc"),
+    (["aa", "aicd"], "aa"), (["aa", "fc"], "aa"),
+    (["aicd", "fc"], "aicd"), (["aa", "aicd", "fc"], "aa"),
+])
+def test_default_source_is_first_with_data(ml, available, expected):
+    inputs = {key: (snapshot([]), None) for key in available}
+    assert ml.build_payload(inputs, CONFIG)["default_source"] == expected
+
+
 def test_unavailable_source_entry_is_complete(ml):
     data = ml.build_payload({}, CONFIG)
     for key in ml.SOURCE_KEYS:
@@ -76,8 +86,30 @@ def test_build_page_isolates_unreadable_source(ml, tmp_path, capsys):
     payload = payload_of(output.read_text())
     assert payload["sources"]["aa"]["available"]
     assert not payload["sources"]["fc"]["available"]
-    assert str(broken) in payload["sources"]["fc"]["error"]
+    assert payload["sources"]["fc"]["error"] is None
+    assert str(broken) in payload["sources"]["fc"]["store_error"]
     assert str(broken) in capsys.readouterr().err
+
+
+def test_build_page_uses_older_readable_snapshot(ml, tmp_path, capsys):
+    seed(ml, gamma_free(), when=datetime(2026, 11, 1, tzinfo=timezone.utc))
+    healthy = seed(ml, ladder_models(), when=datetime(2026, 11, 3, tzinfo=timezone.utc))
+    broken = seed(ml, with_unused_field_change())
+    broken.write_bytes(b"synthetic invalid")
+    out = tmp_path / "page.html"
+    ml.build_page(ml.runtime_home(), out)
+    aa = payload_of(out.read_text())["sources"]["aa"]
+    assert aa["fetched_at"] == ml.read_snapshot(healthy)["fetched_at"]
+    assert aa["changes"]["added"] == ["Gamma Test 1"]
+    assert aa["store_error"] is None
+    assert str(broken) in capsys.readouterr().err
+
+
+def test_build_page_absent_source_has_no_store_error(ml, tmp_path):
+    seed(ml, ladder_models())
+    out = tmp_path / "page.html"
+    ml.build_page(ml.runtime_home(), out)
+    assert payload_of(out.read_text())["sources"]["fc"]["store_error"] is None
 
 
 @pytest.mark.parametrize("entry", [None, "invalid", []])

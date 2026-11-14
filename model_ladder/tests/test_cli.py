@@ -126,16 +126,18 @@ def test_cli_all_sources_failing_without_snapshots_exits_1(env, capsys):
     assert not env.built
 
 
-def test_cli_corrupt_source_does_not_block_healthy_source(env, capsys):
+def test_cli_all_corrupt_source_refetches(env, capsys):
     env.sources = ("aa", "aicd")
     directory = env.ml.snapshot_dir(env.ml.runtime_home(), "aicd")
     broken = directory / "20261101T120000Z.json.gz"
     broken.write_bytes(b"synthetic invalid snapshot")
     calls = []
-    env.fetchers = {"aicd": lambda config, newest: calls.append(1)}
-    assert env.run("refresh") == 0
-    assert not calls and broken.read_bytes() == b"synthetic invalid snapshot"
-    assert str(broken) in capsys.readouterr().err and env.built
+    env.fetchers = {"aicd": lambda config, newest: calls.append(newest) or fetched()}
+    assert env.run("refresh", "--source", "aicd") == 0
+    assert calls == [None] and not env.fetch.calls
+    assert broken.with_name(broken.name + ".unreadable").read_bytes() == b"synthetic invalid snapshot"
+    err = capsys.readouterr().err
+    assert str(broken) in err and "Traceback" not in err and env.built
 
 
 @pytest.mark.parametrize("arguments", [(), ("--source", "aicd")])
@@ -260,15 +262,47 @@ def test_cli_fetch_failure_without_snapshot(env, capsys):
     assert env.built == []
 
 
-def test_cli_unreadable_snapshot(env, capsys):
+def test_cli_corrupt_newest_falls_back_and_recovers(env, capsys):
     older = env.seed(30)
     newest = env.seed(20, models=[model("Alpha Test 1", 40, 1.0)])
     newest.write_bytes(newest.read_bytes()[:20])
-    assert env.run() == 1
+    assert env.run() == 0
     err = capsys.readouterr().err
-    assert str(newest) in err and "Traceback" not in err and err.startswith("Model Ladder: cannot read")
-    assert older.exists() and newest.exists()
-    assert env.fetch.calls == [] and env.built == []
+    assert str(newest) in err and "Traceback" not in err
+    assert older.exists() and newest.with_name(newest.name + ".unreadable").exists()
+    assert env.fetch.calls == [SECRET] and env.built
+    assert env.run() == 0
+    assert capsys.readouterr().err == ""
+
+
+def test_cli_unreadable_source_failure_still_builds(env, monkeypatch, capsys):
+    from test_page_build import payload_of
+    env.sources = ("aa", "aicd")
+    env.seed(1)
+    broken = env.ml.snapshot_dir(env.ml.runtime_home(), "aicd") / "20261101T120000Z.json.gz"
+    broken.write_bytes(b"synthetic invalid")
+    calls = []
+    def fail(config, newest):
+        calls.append(newest)
+        raise env.ml.FetchError("synthetic fetch failure")
+    env.fetchers = {"aicd": fail}
+    monkeypatch.setattr(env.ml, "build_page", env.real_build)
+    assert env.run("refresh", "--source", "aicd") == 0
+    assert calls == [None] and broken.read_bytes() == b"synthetic invalid"
+    source = payload_of((env.ml.runtime_home() / "model_ladder.html").read_text())["sources"]["aicd"]
+    assert source["error"] == "synthetic fetch failure" and str(broken) in source["store_error"]
+    err = capsys.readouterr().err
+    assert err.count(str(broken)) == 1 and "Traceback" not in err
+
+
+@pytest.mark.parametrize("arguments", [("build",), ("--no-refresh",)])
+def test_build_never_renames_snapshots(env, capsys, arguments):
+    env.seed(30)
+    broken = env.seed(20, models=[model("Alpha Test 1", 40, 1.0)])
+    broken.write_bytes(b"synthetic invalid")
+    assert env.run(*arguments) == 0
+    assert broken.read_bytes() == b"synthetic invalid" and env.built
+    assert capsys.readouterr().err == ""
 
 
 def test_cli_prints_quota(env, capsys):
@@ -403,7 +437,7 @@ def test_cli_snapshot_without_index_version(env, capsys):
     data = json.loads(gzip.decompress(path.read_bytes()))
     del data["index_version"]
     path.write_bytes(gzip.compress(json.dumps(data).encode()))
-    assert env.run("refresh") == 1
+    assert env.run("refresh") == 0
     err = assert_one_line(capsys)
     assert str(path) in err and "index_version" in err
 
