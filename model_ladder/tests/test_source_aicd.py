@@ -41,6 +41,17 @@ def test_aicd_two_groups_keep_effort(ml):
     rows = ml.classify_ai_coding_daily(ml.parse_ai_coding_daily(AICD_FIXTURE)['models'])
     assert (rows[0]['family'], rows[0]['rung'], rows[0]['maker']) == ('Example (Tag)', 'high', 'Harness One')
 
+@pytest.mark.parametrize('where', ['header', 'identity'])
+def test_aicd_hidden_text_is_excluded(ml, where):
+    if where == 'header':
+        html = AICD_FIXTURE.replace('Model</th>', 'Model<script>ignored()</script><style>ignored</style></th>')
+    else:
+        html = AICD_FIXTURE.replace('Example (Tag) (High)</a>', 'Example (Tag) (High)<script>ignored()</script><style>ignored</style></a>', 1)
+        html = html.replace('Harness One <time', 'Harness One<script>ignored()</script><style>ignored</style> <time', 1)
+    row = ml.classify_ai_coding_daily(ml.parse_ai_coding_daily(html)['models'])[0]
+    assert (row['name'], row['maker'], row['family'], row['rung']) == ('Example (Tag) (High)', 'Harness One', 'Example (Tag)', 'high')
+    assert row['slug'] == '/invented|high|Harness One'
+
 @pytest.mark.parametrize('changed', [AICD_FIXTURE.replace('Model</th>', 'Changed</th>'), AICD_FIXTURE.replace('</thead>', '<th>extra</th></thead>'), AICD_FIXTURE.replace('<th rowspan="2">Video</th>', ''), AICD_FIXTURE.replace('max 900', 'max 0')])
 def test_aicd_rejects_changed_header(ml, changed):
     with pytest.raises(ml.FetchError, match='changed its leaderboard columns'):

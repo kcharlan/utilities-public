@@ -1,5 +1,11 @@
 # Lessons learned
 
+## Share visible-text rules between page and table parsers
+
+When a source contract uses page text for table cells, reuse the same handling
+of hidden script and style content. Test both header validation and row identity
+with hidden content so invisible markup cannot reject data or rename a model.
+
 ## Preserve the complete snapshot contract for new sources
 
 A parser can produce valid records and still fail on its first save when it
