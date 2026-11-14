@@ -126,6 +126,17 @@ def test_cli_source_max_age_per_source(env, tmp_path):
     assert env.run(now=NOW + timedelta(hours=2)) == 0 and calls == [1]
 
 
+def test_cli_fc_not_modified_updates_check_time(env):
+    env.sources = ("fc",)
+    home = env.ml.runtime_home()
+    result = {"models": [], "index_version": "2.0", "rate_limit": {}, "etag": '"synthetic"'}
+    path = env.ml.save_snapshot(home, result, NOW - timedelta(hours=1), "fc")
+    env.fetchers = {"fc": lambda config, newest: {"not_modified": True, "etag": newest["etag"]}}
+    assert env.run("refresh") == 0
+    assert env.ml.load_snapshots(home, "fc") == [path]
+    assert env.ml.read_snapshot(path, "fc")["last_checked"] == NOW.isoformat()
+
+
 def test_cli_fresh_snapshot_skips_fetch(env):
     env.seed(1)
     assert env.run() == 0

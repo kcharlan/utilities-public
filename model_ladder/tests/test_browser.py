@@ -239,6 +239,25 @@ def test_fc_version_banner(open_page, ml, monkeypatch, tmp_path):
     expect(same.locator("#source-version")).to_have_count(0)
 
 
+def test_fc_source_end_to_end(open_page, ml, tmp_path):
+    from test_source_fc import FC_FIXTURE
+    result = {"models": ml.validate_frontiercode(FC_FIXTURE), "index_version": "2.0",
+              "current_version": "2.1", "rate_limit": {}}
+    path = ml.save_snapshot(tmp_path / "fc-home", result, NOW, "fc")
+    saved = ml.read_snapshot(path, "fc")
+    page = open_page(ml.build_payload({"aa": (snapshot(ladder_models()), None), "fc": (saved, None)}, CONFIG))
+    page.click("#source-fc")
+    assert "Score" in page.locator("#index-select").inner_text()
+    assert "Harness" in page.locator("#all-table th[data-k=maker]").inner_text()
+    assert "Flagged runs" in page.locator("#all-table").inner_text()
+    assert "12.5%" in page.locator("#all-table").inner_text()
+    assert "Cost per rollout" in page.locator("#all-table").inner_text()
+    page.click("#axis-tokens")
+    assert "Output tokens per rollout" in page.locator("#all-table").inner_text()
+    assert "blocking criterion" in page.locator("#source-notice").inner_text()
+    expect(page.locator("#source-version")).to_have_text("FrontierCode 2.1 is now current; this page shows 2.0.")
+
+
 def test_per_source_state(open_page, ml):
     page = open_page(synthetic_payload(ml))
     page.click("#source-aicd")

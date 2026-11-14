@@ -24,9 +24,14 @@ import urllib.request
 import webbrowser
 import zlib
 from datetime import datetime, timedelta, timezone
+from html.parser import HTMLParser
 from pathlib import Path
 
 VERSION = "1.1.4"
+USER_AGENT = f"model_ladder/{VERSION}"
+FC_DATA_URL = "https://cognition.com/data/frontier-code-2.0/data.json"
+FC_PAGE_URL = "https://cognition.com/frontiercode"
+FC_VERSION = "2.0"
 
 # ---------------------------------------------------------------------------
 # Config and atomic writes
@@ -382,6 +387,114 @@ def validate_models(models: list) -> None:
                 raise FetchError(f"{label}: field cost_per_task.total_cost must be a finite number")
 
 
+def page_text(html: str) -> str:
+    class TextParser(HTMLParser):
+        def __init__(self):
+            super().__init__()
+            self.parts = []
+            self.hidden = 0
+
+        def handle_starttag(self, tag, attrs):
+            self.parts.append(" ")
+            if tag in ("script", "style"):
+                self.hidden += 1
+
+        def handle_endtag(self, tag):
+            if tag in ("script", "style") and self.hidden:
+                self.hidden -= 1
+            self.parts.append(" ")
+
+        def handle_data(self, data):
+            if not self.hidden:
+                self.parts.append(data)
+
+    parser = TextParser()
+    parser.feed(html)
+    return " ".join("".join(parser.parts).split())
+
+
+def validate_frontiercode(data) -> list[dict]:
+    if not isinstance(data, dict):
+        raise FetchError("FrontierCode 2.0: feed must be an object")
+    for field in ("data", "harness", "efforts"):
+        if not isinstance(data.get(field), dict) or (field == "data" and not data[field]):
+            raise FetchError(f"FrontierCode 2.0: {field} must be {'a non-empty' if field == 'data' else 'an'} object")
+    records = []
+    for model, efforts in data["data"].items():
+        if not isinstance(efforts, dict):
+            raise FetchError(f"FrontierCode 2.0: {model} efforts must be an object")
+        for effort, entry in efforts.items():
+            prefix = f"FrontierCode 2.0: {model} {effort}:"
+            if effort not in (*EFFORTS, "none", "na"):
+                raise FetchError(f"{prefix} effort is unknown")
+            main = entry.get("main") if isinstance(entry, dict) else None
+            if not isinstance(main, dict):
+                raise FetchError(f"{prefix} main must be an object")
+            for field in ("new_score", "correct", "cost", "tokens", "flagged_rate"):
+                value = main.get(field)
+                nullable = field in ("correct", "tokens", "flagged_rate")
+                if field in main and ((value is None and nullable) or (_is_finite_number(value) and
+                    (field not in ("cost", "tokens") or value >= 0) and
+                    (field != "new_score" or 0 <= value <= 1))):
+                    continue
+                raise FetchError(f"{prefix} {field} is invalid")
+            records.append({"model": model, "effort": effort, "harness": data["harness"].get(model, "Unknown harness"),
+                            **{field: main.get(field) for field in ("new_score", "correct", "cost", "tokens", "flagged_rate")}})
+    return records
+
+
+def classify_frontiercode(records) -> list[dict]:
+    rows = []
+    for record in records:
+        model, effort, maker = record["model"], record["effort"], record["harness"]
+        rung = NON_REASONING if effort == "none" else None if effort == "na" else effort
+        cost = record["cost"] or None
+        rows.append({"slug": f"{model}|{effort}", "name": model if effort == "na" else f"{model} ({effort})",
+                     "maker": maker, "family": model, "family_key": _family_key(maker, model), "rung": rung,
+                     "tags": [], "scores": {"score": round(record["new_score"] * 100, 2)},
+                     "cost": cost, "axes": {"cost": cost, "tokens": record["tokens"] or None},
+                     "extras": {"flagged": record["flagged_rate"]}, "total_cost": None,
+                     "release_date": None, "problem": None})
+    return rows
+
+
+def fetch_frontiercode(etag: str | None, open_url=None) -> dict:
+    headers = {"User-Agent": USER_AGENT, "Accept": "application/json"}
+    if etag:
+        headers["If-None-Match"] = etag
+    _status("Fetching FrontierCode 2.0 data…")
+    status, body, response_headers = _get(urllib.request.Request(FC_DATA_URL, headers=headers), "FrontierCode 2.0", open_url, allow_304=True)
+    result = {"etag": response_headers.get("ETag") or etag, "published": None, "current_version": None}
+    if status == 304:
+        result["not_modified"] = True
+    else:
+        try:
+            data = json.loads(body)
+        except (ValueError, UnicodeDecodeError):
+            raise FetchError("FrontierCode 2.0: invalid JSON") from None
+        result.update(models=validate_frontiercode(data), index_version=FC_VERSION,
+                      rate_limit={"limit": None, "remaining": None, "reset": None})
+    try:
+        _, body, _ = _get(urllib.request.Request(FC_PAGE_URL, headers={"User-Agent": USER_AGENT}), "FrontierCode 2.0 page", open_url)
+        text = page_text(body.decode("utf-8"))
+        version = re.search(r"FrontierCode (\d+(?:\.\d+)+) Current", text)
+        result["current_version"] = version.group(1) if version else None
+        changelog = text.find("Changelog")
+        if changelog >= 0:
+            dates = list(re.finditer(r"\b(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec) (\d{1,2}), (\d{4})\b", text[changelog:]))
+            if dates:
+                first = dates[0]
+                date = datetime.strptime(first.group(), "%b %d, %Y").date().isoformat()
+                section = text[changelog:]
+                note = section[first.end():dates[1].start() if len(dates) > 1 else None].strip()
+                if len(note) > 160:
+                    note = note[:159].rsplit(" ", 1)[0] + "…"
+                result["published"] = {"date": date, "note": note}
+    except Exception:
+        result.update(published=None, current_version=None)
+    return result
+
+
 # ---------------------------------------------------------------------------
 # Store
 # ---------------------------------------------------------------------------
@@ -519,7 +632,15 @@ SOURCE_SPECS = {
              "default_axis": None, "group_label": "Harness", "version_label": "", "has_quota": False,
              "notice": lambda rows: None, "borrowed_notice": {}, "classify": lambda models: []}
        for key, label, name, url in (("aicd", "AI Coding Daily", "AI Coding Daily", "https://aicodingdaily.com/leaderboard"),
-                                     ("fc", "FrontierCode 2.0", "Cognition", "https://cognition.com/frontiercode"))},
+                                     )},
+    "fc": {"label": "FrontierCode 2.0", "attribution": {"name": "Cognition", "url": FC_PAGE_URL},
+           "indexes": [{"key": "score", "label": "Score", "short": "Score", "borrowed": False}],
+           "axes": [{"key": "cost", "label": "Cost per rollout", "unit": "money", "per": "per rollout"},
+                    {"key": "tokens", "label": "Output tokens per rollout", "unit": "tokens", "per": "per rollout"}],
+           "default_axis": "cost", "group_label": "Harness", "version_label": "FrontierCode {version}",
+           "has_quota": False, "notice": lambda rows: "A run that fails a blocking criterion scores 0. Cost is the mean USD spend per rollout at list API pricing, including public discounts, not what a subscription charges.",
+           "borrowed_notice": {}, "extras": [{"key": "flagged", "label": "Flagged runs", "kind": "percent1", "path": "extras.flagged"}],
+           "classify": classify_frontiercode},
 }
 
 
@@ -2351,7 +2472,8 @@ def main(argv: list[str] | None = None, *, now: datetime | None = None, fetch=fe
         _complain(str(error))
         return 1
     home = runtime_home()
-    registered = {"aa": lambda config, newest: fetch(get_key(config)), **(fetchers or {})}
+    registered = {"aa": lambda config, newest: fetch(get_key(config)),
+                  "fc": lambda config, newest: fetch_frontiercode((newest or {}).get("etag")), **(fetchers or {})}
     registered = {key: func for key, func in registered.items() if func is not None}
     snapshots, unavailable, reported = {}, {}, False
     for key in sources:

@@ -158,8 +158,16 @@ node tools/deploy_copies.mjs --only model_ladder
 The installed command is `~/Library/Scripts/model_ladder`. Repository updates do
 not update it; deploy again after changes.
 
-## Attribution and data
+## Sources
 
-Data is provided by [Artificial Analysis](https://artificialanalysis.ai/) and is
-shown with attribution. Redistribution needs their permission, so fetched data
-stays in the runtime home and must never be committed to this repository.
+- [Artificial Analysis](https://artificialanalysis.ai/) supplies index scores,
+  model creators and cost per task. A refresh follows pagination: currently a
+  full fetch makes four requests.
+- [AI Coding Daily](https://aicodingdaily.com/leaderboard) is reserved for its
+  leaderboard scores, time and output tokens. Its fetcher is not yet available.
+- [FrontierCode 2.0](https://cognition.com/frontiercode) supplies scores, harnesses,
+  cost and output tokens per rollout, and flagged-run rates. A refresh makes two
+  requests: the JSON feed and the page for its current version and changelog.
+
+Fetched data stays in the runtime home and must never be committed to this
+repository. Artificial Analysis data requires their permission to redistribute.
