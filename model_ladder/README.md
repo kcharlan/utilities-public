@@ -38,6 +38,10 @@ date. If a fetch fails, the page identifies the failure and shows the last saved
 snapshot. When a published date is over 30 days old, a quiet note states when the
 source last published results.
 
+If the newest saved snapshot cannot be read, Model Ladder reports the problem
+and uses the newest readable snapshot for freshness and page building. A source
+with no readable snapshot can be fetched again under the normal refresh rules.
+
 ## Indexes and cost
 
 The API supplies cost per task for the Intelligence Index run only. Other indexes
@@ -72,9 +76,9 @@ model_ladder [refresh|build] [--source {aa,aicd,fc}] [--no-refresh] [--no-open] 
 
 | Command | What it does |
 | --- | --- |
-| `model_ladder` | Fetches if the newest snapshot is older than `max_age_hours` (or missing), builds the page, opens it. |
+| `model_ladder` | Fetches if the newest readable snapshot is older than `max_age_hours` (or missing), builds the page, opens it. |
 | `model_ladder refresh` | Always fetches, then builds and opens. |
-| `model_ladder build` | Builds from the newest snapshot; never fetches. |
+| `model_ladder build` | Builds from the newest readable snapshot; never fetches. |
 | `--no-refresh` | Never fetch, even if the data is old. |
 | `--source KEY` | Fetch only the named source; the page still includes saved snapshots from all sources. |
 | `--no-open` | Do not open the page in a browser. |
@@ -136,9 +140,16 @@ files 0600:
   `max_age_hours` (a positive number of hours, at most 87600, ten years), and
   `source_max_age_hours` (per-source ages for `aicd` and `fc`, default 24 hours).
 - `snapshots/<UTC timestamp>.json.gz` (directory mode 0700): each fetch as
-  delivered, newest 60 kept. A fetch identical to the newest snapshot adds no
+  delivered, newest 60 kept. A fetch identical to the newest readable snapshot adds no
   file; it only updates that snapshot's check time, which is what
-  `max_age_hours` is measured from.
+  `max_age_hours` is measured from. If a timestamp is already in use, a new
+  snapshot uses `<UTC timestamp>_<ordinal:06d>.json.gz` with an increasing
+  ordinal.
+- After a successful save or update, unreadable files skipped before the
+  selected snapshot are renamed with `.unreadable` appended; if that name is
+  occupied, a numbered suffix precedes `.unreadable`. These files are kept
+  indefinitely outside discovery and pruning and can be deleted manually.
+  Building or reading alone does not move them.
 - `snapshots/<source>/`: separate private snapshot directories for other sources.
 - `status.json`: the last attempt and error, if any, for each source.
 - `model_ladder.html`: the built page, replaced atomically.

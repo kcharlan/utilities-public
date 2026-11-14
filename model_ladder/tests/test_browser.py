@@ -72,7 +72,7 @@ def open_page(chromium, ml, tmp_path):
         guard.__enter__()
         opened.append((context, page, guard, blocked, dialogs))
         page.goto(path.as_uri() + fragment)
-        expect(page.locator("#status-age")).to_be_visible()
+        expect(page.locator(".sources")).to_be_visible()
         return page
 
     yield _open
@@ -81,6 +81,15 @@ def open_page(chromium, ml, tmp_path):
         assert_no_external_resources(page, blocked)
         assert dialogs == []
         context.close()
+
+
+def test_unreadable_source_names_the_error(ml, open_page):
+    payload = payload_for(ml)
+    payload["sources"]["aa"] = fake_source("aa", [], available=False, store_error="cannot read synthetic snapshot: invalid")
+    page = open_page(payload)
+    expect(page.locator("#source-aa small")).to_have_text("Snapshot unreadable")
+    assert "failed" in page.locator("#source-aa").get_attribute("class").split()
+    expect(page.locator(".empty")).to_have_text("Model Ladder cannot read synthetic snapshot: invalid. Run model_ladder refresh --source aa to fetch it again.")
 
 
 def texts(page, selector):

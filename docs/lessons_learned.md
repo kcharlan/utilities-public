@@ -1,5 +1,12 @@
 # Lessons learned
 
+## 2026-11-13: Select readable snapshots consistently
+
+Use the same newest-readable selection for store comparisons, CLI freshness,
+and page building. Preserve unreadable files until a successful save, and test
+colliding timestamps, failed writes, and separated fetch and read errors so a
+damaged newest file cannot block recovery or hide healthy older data.
+
 ## Share visible-text rules between page and table parsers
 
 When a source contract uses page text for table cells, reuse the same handling

@@ -633,6 +633,7 @@ KEEP = 60
 SCHEMA = 1
 SNAPSHOT_DIR = "snapshots"
 SNAPSHOT_SUFFIX = ".json.gz"
+UNREADABLE_SUFFIX = ".unreadable"
 
 
 class StoreError(Exception):
@@ -659,6 +660,17 @@ def load_snapshots(home: Path, source: str = "aa") -> list[Path]:
     """Snapshot files, newest first by file name."""
     root = home / SNAPSHOT_DIR
     return sorted((root if source == "aa" else root / source).glob("*" + SNAPSHOT_SUFFIX), key=lambda p: p.name, reverse=True)
+
+
+def newest_snapshot(home: Path, source: str = "aa") -> tuple[Path | None, dict | None, list[tuple[Path, str]]]:
+    """Select the newest readable snapshot without altering the store."""
+    skipped = []
+    for path in load_snapshots(home, source):
+        try:
+            return path, read_snapshot(path, source), skipped
+        except StoreError as error:
+            skipped.append((path, str(error)))
+    return None, None, skipped
 
 
 def read_snapshot(path: Path, source: str = "aa") -> dict:
@@ -689,28 +701,53 @@ def save_snapshot(home: Path, result: dict, now: datetime, source: str = "aa") -
     moment = _utc(now).replace(microsecond=0)
     directory = snapshot_dir(home, source)
     existing = load_snapshots(home, source)
-    if existing:
-        newest = read_snapshot(existing[0], source)
+    newest_path, newest, skipped = newest_snapshot(home, source)
+    if newest is not None:
         if result.get("not_modified") or (newest["models"] == result["models"] and newest["index_version"] == result["index_version"] and newest.get("index_maxima") == result.get("index_maxima")):
             newest["last_checked"] = moment.isoformat()
             for key in ("rate_limit", "published", "etag", "current_version"):
                 if key in result:
                     newest[key] = result[key]
-            _write_snapshot(existing[0], newest)
-            return existing[0]
-    if result.get("not_modified"):
-        raise StoreError("not modified, but there is no snapshot to keep")
-    path = directory / (moment.strftime("%Y%m%dT%H%M%SZ") + SNAPSHOT_SUFFIX)
-    _write_snapshot(path, {
-        "schema": SCHEMA,
-        "fetched_at": moment.isoformat(),
-        "last_checked": moment.isoformat(),
-        "index_version": result["index_version"],
-        "rate_limit": result["rate_limit"],
-        "models": result["models"],
-        **{key: result[key] for key in ("index_maxima", "published", "etag", "current_version") if key in result},
-    })
-    for old in load_snapshots(home, source)[KEEP:]:
+            _write_snapshot(newest_path, newest)
+            path = newest_path
+        else:
+            path = None
+    else:
+        path = None
+    if path is None:
+        if result.get("not_modified"):
+            raise StoreError("not modified, but there is no snapshot to keep")
+        timestamp = moment.strftime("%Y%m%dT%H%M%SZ")
+        pattern = re.compile(re.escape(timestamp) + r"(?:_(\d{6}))?" + re.escape(SNAPSHOT_SUFFIX) + r"$")
+        ordinals = [int(match.group(1) or 0) for item in existing if (match := pattern.fullmatch(item.name))]
+        ordinal = max(ordinals, default=-1) + 1
+        if ordinal >= 10**6:
+            raise StoreError(f"snapshot filename ordinals exhausted for {timestamp}")
+        path = directory / (timestamp + (f"_{ordinal:06d}" if ordinal else "") + SNAPSHOT_SUFFIX)
+        _write_snapshot(path, {
+            "schema": SCHEMA,
+            "fetched_at": moment.isoformat(),
+            "last_checked": moment.isoformat(),
+            "index_version": result["index_version"],
+            "rate_limit": result["rate_limit"],
+            "models": result["models"],
+            **{key: result[key] for key in ("index_maxima", "published", "etag", "current_version") if key in result},
+        })
+    for broken, message in skipped:
+        destination = broken.with_name(broken.name + UNREADABLE_SUFFIX)
+        ordinal = 1
+        while True:
+            try:
+                os.link(broken, destination)
+                break
+            except FileExistsError:
+                destination = broken.with_name(f"{broken.name}.{ordinal}{UNREADABLE_SUFFIX}")
+                ordinal += 1
+        destination.chmod(0o600)
+        broken.unlink()
+        _complain(f"set aside an unreadable snapshot: {message}")
+    retained = [item for item in load_snapshots(home, source) if item != path]
+    for old in retained[KEEP - 1:]:
         old.unlink()
     return path
 
@@ -829,7 +866,7 @@ def diff_rows(old: dict | None, new: dict, source: str = "aa") -> dict | None:
 PAGE_SCHEMA = 3
 
 
-def build_source_entry(key: str, newest: dict | None, previous: dict | None, status: dict, config: dict) -> dict:
+def build_source_entry(key: str, newest: dict | None, previous: dict | None, status: dict, config: dict, store_error: str | None = None) -> dict:
     spec = SOURCE_SPECS[key]
     rows = spec["classify"](newest["models"]) if newest else []
     indexes = [{**item, "max": (newest or {}).get("index_maxima", {}).get(item["key"], item.get("max")),
@@ -843,18 +880,18 @@ def build_source_entry(key: str, newest: dict | None, previous: dict | None, sta
                   "max_age_hours": source_max_age(config, key), "rows": rows,
                   "notice": spec["notice"](rows) if newest else None,
                   "changes": diff_rows(previous, newest, key) if newest else None,
-                  "last_attempt": status.get("last_attempt"), "error": status.get("error")})
+                  "last_attempt": status.get("last_attempt"), "error": status.get("error"), "store_error": store_error})
     entry.update({field: (newest or {}).get(field) for field in ("fetched_at", "last_checked", "published", "current_version")})
     return entry
 
 
-def build_payload(inputs: dict, config: dict, status: dict | None = None) -> dict:
+def build_payload(inputs: dict, config: dict, status: dict | None = None, store_errors: dict[str, str] | None = None) -> dict:
     return {
         "schema": PAGE_SCHEMA,
         "app": {"name": "Model Ladder", "version": VERSION},
         "rung_order": list(RUNG_ORDER),
         "default_source": "aa",
-        "sources": {key: build_source_entry(key, *inputs.get(key, (None, None)), (status or {}).get(key, {}), config) for key in SOURCE_KEYS},
+        "sources": {key: build_source_entry(key, *inputs.get(key, (None, None)), (status or {}).get(key, {}), config, (store_errors or {}).get(key)) for key in SOURCE_KEYS},
     }
 
 
@@ -902,26 +939,22 @@ def _last_real_change(older: list[Path], snapshot: dict, source: str = "aa") -> 
     return None
 
 
-def build_page(home: Path, output: Path, *, unavailable=None) -> None:
+def build_page(home: Path, output: Path) -> None:
     """Build from the newest snapshot, comparing with the last older one that differs in what is shown."""
-    inputs, unavailable = {}, dict(unavailable or {})
+    inputs, store_errors = {}, {}
     for key in SOURCE_KEYS:
-        if key in unavailable:
-            continue
-        try:
+        path, snapshot, skipped = newest_snapshot(home, key)
+        for _, message in skipped:
+            _complain(message)
+        if snapshot is not None:
             paths = load_snapshots(home, key)
-            if paths:
-                snapshot = read_snapshot(paths[0], key)
-                inputs[key] = (snapshot, _last_real_change(paths[1:], snapshot, key))
-        except StoreError as error:
-            _complain(str(error))
-            unavailable[key] = str(error)
+            inputs[key] = (snapshot, _last_real_change(paths[paths.index(path) + 1:], snapshot, key))
+        elif skipped:
+            store_errors[key] = skipped[0][1]
     if not inputs:
         raise StoreError("no snapshot to build from")
     status = read_status(home)
-    for key, error in unavailable.items():
-        status[key] = {**status.get(key, {}), "error": error}
-    atomic_write_bytes(output, render_page(build_payload(inputs, load_config(), status)))
+    atomic_write_bytes(output, render_page(build_payload(inputs, load_config(), status, store_errors)))
 
 
 # ---------------------------------------------------------------------------
@@ -2060,13 +2093,13 @@ APP_JS = r"""
         <div><h1>Model Ladder</h1><p class="sub">${SRC.key === "aa" ? "Effort levels compared by " + (borrowed ? "the " + indexLabel + " index" : indexLabel) + " and cost per task." : axis ? "Effort levels compared by " + SRC.label + " " + M.lowerFirst(indexLabel) + " and " + M.lowerFirst(axis.label) + "." : ""}</p></div>
         <nav class="sources" aria-label="Data source">${Object.keys(DATA.sources).map((key) => {
           const src = DATA.sources[key], checked = M.checkedText(src.last_checked, now, src.max_age_hours);
-          const text = !src.available ? "No data yet" : failed(src) ? "Fetch failed " + when(src.last_attempt) + "; showing " + when(src.fetched_at)
+          const text = !src.available ? (src.store_error ? "Snapshot unreadable" : "No data yet") : failed(src) ? "Fetch failed " + when(src.last_attempt) + "; showing " + when(src.fetched_at)
             : src.published ? "Updated " + M.dayText(src.published.date) + ", " + M.lowerFirst(checked.text) : checked.text;
           return html`<button id=${"source-" + key} type="button" aria-pressed=${String(saved.source === key)} class=${(!src.available || failed(src) ? "failed " : "") + (checked.stale ? "stale" : "")} onClick=${() => update({source: key})}><span>${src.label}</span><small>${text}</small></button>`;
         })}</nav>
         ${SRC.available ? html`<${Status} view=${view} />` : null}
       </header>
-      ${!SRC.available ? html`<p class="empty">No data from ${SRC.label} yet. Run model_ladder refresh --source ${SRC.key}.</p>` : html`<${FragmentBody} ...${props} failed=${failed(SRC)} now=${now} tab=${tab} />`}
+      ${!SRC.available ? (SRC.store_error ? html`<p class="empty">Model Ladder ${SRC.store_error}. Run model_ladder refresh --source ${SRC.key} to fetch it again.</p>` : html`<p class="empty">No data from ${SRC.label} yet. Run model_ladder refresh --source ${SRC.key}.</p>`) : html`<${FragmentBody} ...${props} failed=${failed(SRC)} now=${now} tab=${tab} />`}
     </div>`;
   }
   function FragmentBody({state, update, onSort, toggleKey, view, borrowed, indexLabel, indexShort, axis, failed, now, tab}) {
@@ -2702,18 +2735,13 @@ def main(argv: list[str] | None = None, *, now: datetime | None = None, fetch=fe
                   "aicd": lambda config, newest: fetch_ai_coding_daily(),
                   "fc": lambda config, newest: fetch_frontiercode((newest or {}).get("etag")), **(fetchers or {})}
     registered = {key: func for key, func in registered.items() if func is not None}
-    snapshots, unavailable, reported = {}, {}, False
+    snapshots, skipped_messages, reported = {}, [], False
     for key in sources:
-        try:
-            paths = load_snapshots(home, key)
-            snapshots[key] = read_snapshot(paths[0], key) if paths else None
-        except StoreError as error:
-            _complain(str(error))
-            unavailable[key] = str(error)
-            reported = True
+        _, snapshots[key], skipped = newest_snapshot(home, key)
+        skipped_messages.extend(message for _, message in skipped)
     for key in sources:
         newest = snapshots.get(key)
-        if key in unavailable or key not in registered or (args.source and args.source != key):
+        if key not in registered or (args.source and args.source != key):
             continue
         if args.command == "build" or args.no_refresh:
             continue
@@ -2739,6 +2767,9 @@ def main(argv: list[str] | None = None, *, now: datetime | None = None, fetch=fe
             except OSError as status_error:
                 _complain(f"cannot save status: {status_error}")
     if not any(snapshots.values()):
+        for message in skipped_messages:
+            _complain(message)
+            reported = True
         if not reported:
             _complain("no snapshot yet; run model_ladder refresh to fetch one")
         return 1
@@ -2746,7 +2777,7 @@ def main(argv: list[str] | None = None, *, now: datetime | None = None, fetch=fe
     output = args.output.expanduser() if args.output else home / "model_ladder.html"
     try:
         _status("Building the page…")
-        build_page(home, output, unavailable=unavailable)
+        build_page(home, output)
     except (OSError, StoreError, ValueError) as error:
         _complain(f"cannot build the page: {error}")
         return 1
