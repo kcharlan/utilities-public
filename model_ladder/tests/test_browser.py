@@ -237,10 +237,46 @@ def test_category_table_only_for_category_sources(open_page, ml):
     expect(page.locator("#categories .note")).to_contain_text("overall output tokens")
 
 
-def test_footer_attribution_lists_every_source(open_page):
+def test_footer_attribution_lists_every_source(open_page, ml):
     page = open_page()
     assert texts(page, "footer a") == ["Artificial Analysis", "AI Coding Daily", "Cognition"]
     expect(page.locator("footer")).to_contain_text("Each source is shown on its own; scores are never combined.")
+    expect(page.locator("footer")).to_contain_text(ml.VERSION)
+
+
+def test_released_column_only_with_dates(open_page, ml):
+    payload = synthetic_payload(ml)
+    payload["sources"]["aa"]["rows"][0]["release_date"] = "2026-10-02"
+    page = open_page(payload)
+    expect(page.locator('#all-table th[data-k="release_date"]')).to_have_count(1)
+    expect(page.locator('#all-table td[data-c="release_date"]')).to_have_count(len(payload["sources"]["aa"]["rows"]))
+    page.fill("#all-filter", "no matching synthetic model")
+    expect(page.locator('#all-table th[data-k="release_date"]')).to_have_count(1)
+    expect(page.locator('#all-table td[data-c="release_date"]')).to_have_count(0)
+    page.fill("#all-filter", "")
+    page.click("#source-aicd")
+    expect(page.locator('#all-table th[data-k="release_date"]')).to_have_count(0)
+    expect(page.locator('#all-table td[data-c="release_date"]')).to_have_count(0)
+    page.click("#source-aa")
+    expect(page.locator('#all-table th[data-k="release_date"]')).to_have_count(1)
+    expect(page.locator('#all-table td[data-c="release_date"]')).to_have_count(len(payload["sources"]["aa"]["rows"]))
+
+
+def test_page_opens_on_source_with_data(open_page, ml):
+    payload = ml.build_payload({"aicd": (snapshot([]), None)}, CONFIG)
+    page = open_page(payload)
+    expect(page.locator("#source-aicd")).to_have_attribute("aria-pressed", "true")
+
+
+@pytest.mark.parametrize("storage", [False, True])
+def test_old_state_keeps_aa_without_data(open_page, ml, storage):
+    payload = ml.build_payload({"aicd": (snapshot([]), None)}, CONFIG)
+    old = {"view": "all", "index": "intelligence", "keys": [], "hi": "high", "lo": "medium", "sorts": {}, "mode": "decimal"}
+    script = f"localStorage.setItem('model_ladder.state', {json.dumps(json.dumps(old))})" if storage else None
+    fragment = "" if storage else "#" + quote(json.dumps(old))
+    page = open_page(payload, fragment=fragment, init_script=script)
+    expect(page.locator("#source-aa")).to_have_attribute("aria-pressed", "true")
+    assert json.loads(page.evaluate("localStorage.getItem('model_ladder.state')"))["source"] == "aa"
 
 
 def test_source_without_data(open_page):

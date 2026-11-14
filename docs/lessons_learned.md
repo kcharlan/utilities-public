@@ -1,5 +1,16 @@
 # Lessons learned
 
+## 2026-11-13: Choose a default source that has data
+
+Select the first available source for a fresh page while preserving explicit
+legacy source selection, even when that source has no data. Test both fresh and
+restored state with the usual first source unavailable.
+
+## 2026-11-13: Tie optional columns to source data
+
+Show optional columns when the selected source has the corresponding data,
+independent of visible-row filters. Test source switching and filtered views.
+
 ## 2026-11-13: Distinguish missing metadata from an explicit absence
 
 At a fetch/store boundary, omit page metadata when retrieval or parsing fails,

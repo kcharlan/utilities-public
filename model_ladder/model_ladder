@@ -28,7 +28,7 @@ from datetime import datetime, timedelta, timezone
 from html.parser import HTMLParser
 from pathlib import Path
 
-VERSION = "1.2.0"
+VERSION = "1.2.1"
 USER_AGENT = f"model_ladder/{VERSION}"
 FC_DATA_URL = "https://cognition.com/data/frontier-code-2.0/data.json"
 FC_PAGE_URL = "https://cognition.com/frontiercode"
@@ -890,12 +890,13 @@ def build_source_entry(key: str, newest: dict | None, previous: dict | None, sta
 
 
 def build_payload(inputs: dict, config: dict, status: dict | None = None, store_errors: dict[str, str] | None = None) -> dict:
+    sources = {key: build_source_entry(key, *inputs.get(key, (None, None)), (status or {}).get(key, {}), config, (store_errors or {}).get(key)) for key in SOURCE_KEYS}
     return {
         "schema": PAGE_SCHEMA,
         "app": {"name": "Model Ladder", "version": VERSION},
         "rung_order": list(RUNG_ORDER),
-        "default_source": "aa",
-        "sources": {key: build_source_entry(key, *inputs.get(key, (None, None)), (status or {}).get(key, {}), config, (store_errors or {}).get(key)) for key in SOURCE_KEYS},
+        "default_source": next((key for key in SOURCE_KEYS if sources[key]["available"]), "aa"),
+        "sources": sources,
     }
 
 
@@ -1473,6 +1474,7 @@ APP_JS = r"""
     if (raw.mode === "whole" || raw.mode === "decimal") s.mode = raw.mode;
     const legacy = !raw.per && ["index", "keys", "hi", "lo", "sorts"].some((k) => k in raw);
     const per = legacy ? {aa: raw} : raw.per || {};
+    if (legacy) s.source = "aa";
     if (!legacy && typeof raw.source === "string" && Object.keys(DATA.sources).includes(raw.source)) s.source = raw.source;
     Object.keys(DATA.sources).forEach((key) => {
       const src = DATA.sources[key], value = per[key];
@@ -1757,6 +1759,7 @@ APP_JS = r"""
     const priced = rows.filter((r) => r.status);
     const full = state.keys.length >= LIMIT;
     const p = { table: "all", sorts: state.sorts, onSort };
+    const hasReleaseDates = ALL_ROWS.some((r) => r.release_date);
     const label = borrowed ? "Overall " + M.lowerFirst(axis.label) : axis.label, quantity = QUANTITY[axis.unit];
     return html`<div class="view">
       <section>
@@ -1785,7 +1788,7 @@ APP_JS = r"""
             <${Th} ...${p} k="score" label="Index" />
             ${SRC.extras.map((col) => html`<${Th} ...${p} k=${col.path} label=${col.label} />`)}
             <${Th} ...${p} k="cost" label=${label} />
-            <${Th} ...${p} k="release_date" label="Released" />
+            ${hasReleaseDates ? html`<${Th} ...${p} k="release_date" label="Released" />` : null}
             <${Th} ...${p} k="status" label="Frontier" cls="l" />
           </tr></thead>
           <tbody>${visible.map((r) => {
@@ -1800,7 +1803,7 @@ APP_JS = r"""
               <${ScoreCell} row=${r} mode=${state.mode} />
               ${SRC.extras.map((col) => html`<td data-c=${col.path}>${M.formatExtra(window.ladderCore.pathValue(r, col.path), col.kind)}</td>`)}
               <${CostCell} row=${r} borrowed=${borrowed} axis=${axis} />
-              <td data-c="release_date">${r.release_date ? M.dayText(r.release_date) : ""}</td>
+              ${hasReleaseDates ? html`<td data-c="release_date">${r.release_date ? M.dayText(r.release_date) : ""}</td>` : null}
               <td class="l" data-c="status">${r.status === "frontier" ? html`<span class="pill f">Frontier</span>`
                 : r.status === "dominated" ? html`<span class="pill d">Dominated</span>` : html`<span class="pill n">No ${quantity}</span>`}</td>
             </tr>`;

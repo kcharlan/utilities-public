@@ -5,13 +5,15 @@ AI Coding Daily and FrontierCode sources. Each source is shown on its own; score
 are never combined. One command fetches current data and builds an offline page with:
 
 - a source bar with each source's latest check or update and any fetch failure;
+  on a first visit, the first source with data is selected in source-bar order;
 - an index selector for the Intelligence Index and available domain indexes;
   Coding and Agentic appear when the API supplies scores for them;
 - an axis switch when a source offers more than one measure, with values and
   frontier comparisons displayed in the selected unit;
 - an all-models view: every model scored in the selected index, the overall frontier, and a sortable
   table filterable by creator and by text (matching creator, family or the full
-  model name, so tags are searchable); source-specific columns are sortable too;
+  model name, so tags are searchable); source-specific columns are sortable too,
+  and Released appears when the selected source has release dates;
 - a compare view for the model families you pick: an effort ladder per family
   (in fixed effort order from the highest level to the lowest; this table is not
   header-sortable, the other tables sort by header), a whole-point Pareto ladder, what one step

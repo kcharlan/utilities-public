@@ -57,6 +57,16 @@ def test_status_reaches_payload(ml):
     assert data["sources"]["fc"]["error"] == "failed"
 
 
+@pytest.mark.parametrize("available,expected", [
+    ([], "aa"), (["aa"], "aa"), (["aicd"], "aicd"), (["fc"], "fc"),
+    (["aa", "aicd"], "aa"), (["aa", "fc"], "aa"),
+    (["aicd", "fc"], "aicd"), (["aa", "aicd", "fc"], "aa"),
+])
+def test_default_source_is_first_with_data(ml, available, expected):
+    inputs = {key: (snapshot([]), None) for key in available}
+    assert ml.build_payload(inputs, CONFIG)["default_source"] == expected
+
+
 def test_unavailable_source_entry_is_complete(ml):
     data = ml.build_payload({}, CONFIG)
     for key in ml.SOURCE_KEYS:
