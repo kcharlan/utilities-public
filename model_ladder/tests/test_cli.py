@@ -137,6 +137,21 @@ def test_cli_fc_not_modified_updates_check_time(env):
     assert env.ml.read_snapshot(path, "fc")["last_checked"] == NOW.isoformat()
 
 
+def test_cli_aicd_rejected_keeps_snapshot(env):
+    from test_source_aicd import AICD_FIXTURE
+    env.sources = ("aicd",)
+    home = env.ml.runtime_home()
+    path = env.ml.save_snapshot(home, env.ml.parse_ai_coding_daily(AICD_FIXTURE), NOW, "aicd")
+    before = path.read_bytes()
+    message = "AI Coding Daily changed its leaderboard columns; keeping the last good data"
+    def fail(config, newest):
+        raise env.ml.FetchError(message)
+    env.fetchers = {"aicd": fail}
+    assert env.run("refresh") == 0
+    assert path.read_bytes() == before and env.ml.read_status(home)["aicd"]["error"] == message
+    assert env.built
+
+
 def test_cli_fresh_snapshot_skips_fetch(env):
     env.seed(1)
     assert env.run() == 0

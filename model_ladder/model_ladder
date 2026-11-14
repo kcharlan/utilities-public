@@ -32,6 +32,7 @@ USER_AGENT = f"model_ladder/{VERSION}"
 FC_DATA_URL = "https://cognition.com/data/frontier-code-2.0/data.json"
 FC_PAGE_URL = "https://cognition.com/frontiercode"
 FC_VERSION = "2.0"
+AICD_URL = "https://aicodingdaily.com/leaderboard"
 
 # ---------------------------------------------------------------------------
 # Config and atomic writes
@@ -117,13 +118,13 @@ def _whole_name(text: str, problem: str) -> dict:
     return {"family": text, "rung": None, "tags": [], "problem": problem}
 
 
-def split_name(name: str) -> dict:
+def split_name(name: str, last_group: bool = False) -> dict:
     """Split a display name into family, effort rung and tags using string operations only."""
     text = name.strip()
     if text.endswith(")") and "(" in text:
         start = text.rfind("(")
         family, inner = text[:start].rstrip(), text[start + 1:-1]
-        if "(" in family or ")" in family:
+        if ("(" in family or ")" in family) and not (last_group and inner.strip().lower() in EFFORTS):
             return _whole_name(text, "more than one group")
         words = [w.strip() for w in inner.split(",") if w.strip()]
     else:
@@ -413,6 +414,123 @@ def page_text(html: str) -> str:
     return " ".join("".join(parser.parts).split())
 
 
+AICD_CATEGORIES = (("laravel", "Laravel code quality", "Laravel"), ("react_ts", "React-TS code quality", "React-TS"),
+                   ("bug_finding", "Bug finding", "Bug finding"), ("python", "Python code quality", "Python"),
+                   ("edge_cases", "Edge-case testing", "Edge cases"))
+
+
+def parse_ai_coding_daily(html: str) -> dict:
+    class TableParser(HTMLParser):
+        def __init__(self):
+            super().__init__()
+            self.tables = 0
+            self.inside = False
+            self.headers, self.rows = [], []
+            self.row = self.cell = None
+            self.in_time = False
+
+        def handle_starttag(self, tag, attrs):
+            attrs = dict(attrs)
+            if tag == "table":
+                self.tables += 1
+                self.inside = True
+            elif self.inside and tag == "tr":
+                self.row = []
+            elif self.inside and tag in ("td", "th"):
+                self.cell = {"tag": tag, "parts": [], "harness": [], "colspan": "colspan" in attrs, "href": None, "date": None}
+            elif self.cell is not None:
+                self.cell["parts"].append(" ")
+                self.cell["harness"].append(" ")
+                if tag == "a": self.cell["href"] = attrs.get("href")
+                if tag == "time":
+                    self.in_time = True
+                    self.cell["date"] = attrs.get("datetime")
+
+        def handle_endtag(self, tag):
+            if tag in ("td", "th") and self.cell is not None:
+                self.cell["text"] = " ".join("".join(self.cell["parts"]).split())
+                self.cell["harness"] = " ".join("".join(self.cell["harness"]).split())
+                if tag == "th": self.headers.append(self.cell["text"])
+                elif self.row is not None: self.row.append(self.cell)
+                self.cell = None
+            elif tag == "tr" and self.row is not None:
+                if self.row: self.rows.append(self.row)
+                self.row = None
+            elif tag == "table": self.inside = False
+            elif self.cell is not None:
+                if tag == "time": self.in_time = False
+                self.cell["parts"].append(" ")
+                self.cell["harness"].append(" ")
+
+        def handle_data(self, data):
+            if self.cell is not None:
+                self.cell["parts"].append(data)
+                if not self.in_time: self.cell["harness"].append(data)
+
+    parser = TableParser()
+    parser.feed(html)
+    patterns = [r"#", r"Model", r"Total points \(max (\d+)\)", r"Avg cost per prompt", r"Avg time per prompt", r"Video", r"Tested with", r"Points per project", r"Penalty Points deducted for INCONSISTENT results across attempts\.", r"Laravel Code Quality \(max (\d+)\)", r"React-TS Code Quality \(max (\d+)\)", r"Bug Finding Test \(max (\d+)\)", r"Python Code Quality \(max (\d+)\)", r"Edge-case Testing \(4 projects, max (\d+)\)"]
+    matches = [re.fullmatch(pattern, value) for pattern, value in zip(patterns, parser.headers)]
+    if parser.tables != 1 or len(parser.headers) != len(patterns) or not all(matches) or any(int(m.group(1)) <= 0 for m in matches if m.groups()):
+        raise FetchError("AI Coding Daily changed its leaderboard columns; keeping the last good data")
+    maxima = dict(zip(("total", *(key for key, _, _ in AICD_CATEGORIES)), (int(m.group(1)) for m in matches if m.groups())))
+    records = []
+    for cells in parser.rows:
+        if len(cells) == 1 and cells[0]["colspan"]: continue
+        rank = cells[0]["text"] if cells else "?"
+        def fail(column, value):
+            raise FetchError(f"AI Coding Daily row {rank}: {column} {value!r} is not in the expected format")
+        if len(cells) != 13: fail("cells", str(len(cells)))
+        def number(index, label):
+            value = cells[index]["text"]
+            if not re.fullmatch(r"\d+(?:\.\d+)?", value): fail(label, value)
+            return float(value)
+        cost = cells[3]["text"]
+        if cost == "N/A": cost = None
+        elif re.fullmatch(r"\$\d+(?:\.\d+)?", cost): cost = float(cost[1:]) or None
+        else: fail("Cost", cost)
+        duration = cells[4]["text"]
+        if not re.fullmatch(r"\d+:[0-5]\d(?::[0-5]\d)?", duration): fail("Time", duration)
+        seconds = 0
+        for part in duration.split(":"): seconds = seconds * 60 + int(part)
+        tested = cells[6]["date"]
+        try:
+            if not tested or not re.fullmatch(r"\d{4}-\d{2}-\d{2}", tested): raise ValueError()
+            datetime.strptime(tested, "%Y-%m-%d")
+        except ValueError: fail("Tested with", cells[6]["text"])
+        penalty = cells[12]["text"]
+        if not re.fullmatch(r"(?:0|[−-]\d+(?:\.\d+)?)", penalty): fail("Penalty", penalty)
+        records.append({"model": cells[1]["text"], "href": cells[1]["href"], "harness": cells[6]["harness"],
+                        "scores": {"total": number(2, "Total"), **{key: number(i, label) for i, (key, label, _) in enumerate(AICD_CATEGORIES, 7)}},
+                        "cost": cost, "time": seconds or None, "tested": tested, "penalty": float(penalty.replace("−", "-"))})
+    if not records: raise FetchError("AI Coding Daily: the leaderboard has no rows")
+    published = None
+    match = re.search(r"Last update: ([A-Z][a-z]+ \d{1,2})(?:st|nd|rd|th)?, (\d{4})(?: \(([^)]*)\))?", page_text(html))
+    if match:
+        try: published = {"date": datetime.strptime(f"{match[1]}, {match[2]}", "%B %d, %Y").date().isoformat(), "note": match[3] or ""}
+        except ValueError: pass
+    return {"models": records, "index_version": maxima["total"], "index_maxima": maxima, "published": published, "rate_limit": {}}
+
+
+def fetch_ai_coding_daily(open_url=None) -> dict:
+    _status("Fetching AI Coding Daily data…")
+    _, body, _ = _get(urllib.request.Request(AICD_URL, headers={"User-Agent": USER_AGENT}), "AI Coding Daily", open_url)
+    return parse_ai_coding_daily(body.decode("utf-8"))
+
+
+def classify_ai_coding_daily(records) -> list[dict]:
+    rows = []
+    for record in records:
+        name, maker = record["model"], record["harness"]
+        parts = split_name(name, last_group=True)
+        rows.append({"slug": f"{record['href'] or name}|{parts['rung']}|{maker}", "name": name, "maker": maker,
+                     "family": parts["family"], "family_key": _family_key(maker, parts["family"]), "rung": parts["rung"],
+                     "tags": parts["tags"], "problem": parts["problem"], "scores": record["scores"], "cost": record["cost"],
+                     "axes": {"cost": record["cost"], "time": record["time"]}, "extras": {"penalty": record["penalty"], "tested": record["tested"]},
+                     "total_cost": None, "release_date": None})
+    return rows
+
+
 def validate_frontiercode(data) -> list[dict]:
     if not isinstance(data, dict):
         raise FetchError("FrontierCode 2.0: feed must be an object")
@@ -628,11 +746,18 @@ SOURCE_SPECS = {
            "has_quota": True, "notice": lambda rows: None,
            "borrowed_notice": {"cost": "Costs here are from the Intelligence Index run. Artificial Analysis publishes no cost for the {index} index, so every cost, frontier and cost per point on this page pairs these scores with that cost."},
            "extras": [], "classify": classify},
-    **{key: {"label": label, "attribution": {"name": name, "url": url}, "indexes": [], "axes": [], "extras": [],
-             "default_axis": None, "group_label": "Harness", "version_label": "", "has_quota": False,
-             "notice": lambda rows: None, "borrowed_notice": {}, "classify": lambda models: []}
-       for key, label, name, url in (("aicd", "AI Coding Daily", "AI Coding Daily", "https://aicodingdaily.com/leaderboard"),
-                                     )},
+    "aicd": {"label": "AI Coding Daily", "attribution": {"name": "AI Coding Daily", "url": AICD_URL},
+             "indexes": [{"key": "total", "label": "Total points", "short": "Total", "borrowed": False}] +
+                        [{"key": key, "label": label, "short": short, "borrowed": True} for key, label, short in AICD_CATEGORIES],
+             "axes": [{"key": "cost", "label": "Cost per prompt", "unit": "money", "per": "per prompt"},
+                      {"key": "time", "label": "Time per prompt", "unit": "time", "per": "per prompt"}],
+             "default_axis": "time", "group_label": "Harness", "version_label": "Total points out of {version}", "has_quota": False,
+             "notice": lambda rows: "Scores are for each model running in the harness named beside it." + (f" {sum(row['axes']['cost'] is None for row in rows)} configurations have no cost per prompt; plot against time to include them." if any(row['axes']['cost'] is None for row in rows) else ""),
+             "borrowed_notice": {"cost": "Costs here are the overall cost per prompt. AI Coding Daily publishes no cost for {index} alone, so every cost, frontier and cost per point on this page pairs these scores with that cost.",
+                                 "time": "Times here are the overall time per prompt. AI Coding Daily publishes no time for {index} alone, so every time, frontier and time per point on this page pairs these scores with that time."},
+             "extras": [{"key": key, "label": short, "kind": "points", "path": f"scores.{key}"} for key, _, short in AICD_CATEGORIES] +
+                       [{"key": "penalty", "label": "Penalty", "kind": "number2", "path": "extras.penalty"}, {"key": "tested", "label": "Tested", "kind": "date", "path": "extras.tested"}],
+             "classify": classify_ai_coding_daily},
     "fc": {"label": "FrontierCode 2.0", "attribution": {"name": "Cognition", "url": FC_PAGE_URL},
            "indexes": [{"key": "score", "label": "Score", "short": "Score", "borrowed": False}],
            "axes": [{"key": "cost", "label": "Cost per rollout", "unit": "money", "per": "per rollout"},
@@ -1489,7 +1614,7 @@ APP_JS = r"""
     return html`<details id="changes" class="box changes" open=${!!c.version}>
       <summary>What changed between ${when(c.from)} and ${when(c.to)}</summary>
       <div class="changes-body">
-        ${c.version ? html`<p class="ver">Intelligence Index version changed from ${c.version[0]} to ${c.version[1]}. Scores from different versions are not comparable.</p>` : null}
+        ${c.version ? html`<p class="ver">${SRC.key === "aicd" ? `AI Coding Daily changed its maximum from ${c.version[0]} to ${c.version[1]} points. Scores before and after are not comparable.` : `Intelligence Index version changed from ${c.version[0]} to ${c.version[1]}. Scores from different versions are not comparable.`}</p>` : null}
         ${maximum ? html`<p class="ver">${SRC.indexes.find((i) => i.key === index).label} maximum changed from ${maximum[0]} to ${maximum[1]}. Scores are not comparable.</p>` : null}
         ${c.added.length ? html`<div data-changes="added"><h3>Added (${c.added.length})</h3><ul>${c.added.map((n, i) => html`<li key=${i}>${n}</li>`)}</ul></div>` : null}
         ${c.removed.length ? html`<div data-changes="removed"><h3>Removed (${c.removed.length})</h3><ul>${c.removed.map((n, i) => html`<li key=${i}>${n}</li>`)}</ul></div>` : null}
@@ -2473,6 +2598,7 @@ def main(argv: list[str] | None = None, *, now: datetime | None = None, fetch=fe
         return 1
     home = runtime_home()
     registered = {"aa": lambda config, newest: fetch(get_key(config)),
+                  "aicd": lambda config, newest: fetch_ai_coding_daily(),
                   "fc": lambda config, newest: fetch_frontiercode((newest or {}).get("etag")), **(fetchers or {})}
     registered = {key: func for key, func in registered.items() if func is not None}
     snapshots, unavailable, reported = {}, {}, False

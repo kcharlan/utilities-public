@@ -163,8 +163,11 @@ not update it; deploy again after changes.
 - [Artificial Analysis](https://artificialanalysis.ai/) supplies index scores,
   model creators and cost per task. A refresh follows pagination: currently a
   full fetch makes four requests.
-- [AI Coding Daily](https://aicodingdaily.com/leaderboard) is reserved for its
-  leaderboard scores, time and output tokens. Its fetcher is not yet available.
+- [AI Coding Daily](https://aicodingdaily.com/leaderboard) supplies total and
+  category points, cost and time per prompt. Its published maxima set the points
+  scales. A model in different harnesses is treated as a separate family. Some
+  configurations have no cost; use the time axis to include them. The site hides
+  older models from its served table, so they do not appear here.
 - [FrontierCode 2.0](https://cognition.com/frontiercode) supplies scores, harnesses,
   cost and output tokens per rollout, and flagged-run rates. A refresh makes two
   requests: the JSON feed and the page for its current version and changelog.

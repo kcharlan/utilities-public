@@ -1,5 +1,11 @@
 # Lessons learned
 
+## Preserve the complete snapshot contract for new sources
+
+A parser can produce valid records and still fail on its first save when it
+omits common store metadata. Exercise the fetch, save, read and offline build
+path together with synthetic source data, including sources without quotas.
+
 ## Validate nested persisted status before use
 
 A valid JSON object can still contain invalid per-source entries. Validate each

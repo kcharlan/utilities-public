@@ -258,6 +258,38 @@ def test_fc_source_end_to_end(open_page, ml, tmp_path):
     expect(page.locator("#source-version")).to_have_text("FrontierCode 2.1 is now current; this page shows 2.0.")
 
 
+def test_aicd_source_end_to_end(open_page, ml, tmp_path):
+    from test_source_aicd import AICD_FIXTURE
+    result = ml.parse_ai_coding_daily(AICD_FIXTURE)
+    path = ml.save_snapshot(tmp_path / "aicd-home", result, NOW, "aicd")
+    saved = ml.read_snapshot(path, "aicd")
+    page = open_page(ml.build_payload({"aa": (snapshot(ladder_models()), None), "aicd": (saved, None)}, CONFIG))
+    page.click("#source-aicd")
+    expect(page.locator("#axis-time")).to_have_attribute("aria-pressed", "true")
+    page.select_option("#index-select", "laravel")
+    assert "overall time per prompt" in page.locator("body").inner_text()
+    expect(page.locator("svg .stair.borrowed")).to_be_visible()
+    expect(page.locator("#all-table tr").filter(has_text="Low").locator(".pill.f")).to_be_visible()
+    page.click("#axis-cost")
+    assert "overall cost per prompt" in page.locator("body").inner_text().lower()
+    assert "No cost" in page.locator("#all-table tr").filter(has_text="Low").inner_text()
+    assert "Overall cost per prompt" in page.locator("#all-table th[data-k=cost]").inner_text()
+    assert "Laravel" in page.locator("#all-table").inner_text()
+    header = page.locator("#all-table th[data-k='scores.laravel']")
+    header.click()
+    expect(header).to_have_attribute("aria-sort", "ascending")
+
+
+def test_aicd_changes_version_wording(open_page, ml):
+    from test_source_aicd import AICD_FIXTURE
+    result = ml.parse_ai_coding_daily(AICD_FIXTURE)
+    old = {**result, "index_version": 800, "fetched_at": (NOW - timedelta(days=1)).isoformat()}
+    new = {**result, "fetched_at": NOW.isoformat()}
+    page = open_page(ml.build_payload({"aa": (snapshot(ladder_models()), None), "aicd": (new, old)}, CONFIG))
+    page.click("#source-aicd")
+    expect(page.locator("#changes .ver").first).to_have_text("AI Coding Daily changed its maximum from 800 to 900 points. Scores before and after are not comparable.")
+
+
 def test_per_source_state(open_page, ml):
     page = open_page(synthetic_payload(ml))
     page.click("#source-aicd")
@@ -364,7 +396,7 @@ def test_changes_extras_and_maxima(open_page, ml, monkeypatch, tmp_path):
     payload = synthetic_payload(ml)
     source = payload["sources"]["aicd"]
     spec = {**ml.SOURCE_SPECS["aicd"], "indexes": source["indexes"], "axes": source["axes"],
-            "default_axis": "time", "extras": source["extras"], "classify": lambda rows: rows}
+            "default_axis": "time", "extras": source["extras"], "classify": lambda rows: rows, "notice": lambda rows: None}
     monkeypatch.setitem(ml.SOURCE_SPECS, "aicd", spec)
     home = ml.ensure_runtime_home(tmp_path / "saved-aicd")
     rows = source["rows"]

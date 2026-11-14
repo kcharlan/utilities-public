@@ -35,6 +35,11 @@ def test_two_groups_unclassified(ml):
     assert (r["family"], r["rung"], r["problem"]) == ("Alpha (Beta) Test (High)", None, "more than one group")
 
 
+def test_last_group_option(ml):
+    r = ml.split_name("Example (Tag) (High)", last_group=True)
+    assert (r["family"], r["rung"], r["problem"]) == ("Example (Tag)", "high", None)
+
+
 def test_two_efforts_unclassified(ml):
     r = ml.split_name("Alpha Test 1 (High, Low)")
     assert (r["family"], r["rung"], r["problem"]) == ("Alpha Test 1 (High, Low)", None, "two effort words")
