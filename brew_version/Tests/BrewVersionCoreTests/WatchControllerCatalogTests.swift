@@ -86,6 +86,51 @@ extension WatchControllerTests {
         await c.add(PackageName("synthetic-formula")!, kind: .formula)
         #expect(c.others.isEmpty && c.state.watched.count == 1)
     }
+    @Test func otherUpdatesBadgeFollowsListAndSetting() async throws {
+        let f = try InstallationFixture()
+        let oldKeg = try f.install("prefix/Cellar/synthetic-formula/1", kind: .formula)
+        let directory = f.root.appendingPathComponent("cache"); _ = try await seedCatalog(directory)
+        let stateURL = f.root.appendingPathComponent("state/state.json")
+        let c = WatchController(transport: StubTransport([:]), installed: f.reader(), store: WatchStore(fileURL: stateURL),
+                                notifier: RecordingNotifier(), catalogClient: CatalogClient(transport: StubTransport([:]), cacheDirectory: directory))
+        await c.hydrateCatalog()
+        #expect(c.others.count == 1 && c.badgedOtherCount == 0)
+        c.setBadgeOtherUpdates(true)
+        #expect(c.badgedOtherCount == 1 && c.badgedOtherCount == c.others.count)
+        #expect(WatchStore(fileURL: stateURL).load().state.badgeOtherUpdates)
+        c.acknowledgeAlerts(); c.popoverClosed()
+        #expect(c.badgedOtherCount == 1)
+        let others = c.others
+        c.setBadgeOtherUpdates(false)
+        #expect(c.badgedOtherCount == 0 && c.others == others)
+        c.setBadgeOtherUpdates(true)
+        #expect(c.badgedOtherCount == 1)
+        try f.install("prefix/Cellar/synthetic-formula/2", kind: .formula)
+        try f.fm.removeItem(at: oldKeg)
+        #expect(c.badgedOtherCount == 1)
+        await c.checkNow()
+        #expect(c.badgedOtherCount == 0 && c.others.isEmpty)
+    }
+    @Test func otherUpdatesBadgeClearsWhenListEmpties() async throws {
+        let f = try InstallationFixture()
+        try f.install("prefix/Cellar/synthetic-formula/1", kind: .formula)
+        let directory = f.root.appendingPathComponent("cache"); _ = try await seedCatalog(directory)
+        let name = PackageName("synthetic-formula")!
+        let c = WatchController(transport: StubTransport([watchURL(name): [watchResponse("2")]]), installed: f.reader(),
+                                store: WatchStore(fileURL: f.root.appendingPathComponent("state/first.json")), notifier: RecordingNotifier(),
+                                catalogClient: CatalogClient(transport: StubTransport([:]), cacheDirectory: directory))
+        await c.hydrateCatalog(); c.setBadgeOtherUpdates(true)
+        #expect(c.badgedOtherCount == 1)
+        await c.add(name, kind: .formula)
+        #expect(c.badgedOtherCount == 0 && c.others.isEmpty)
+        let second = WatchController(transport: StubTransport([:]), installed: f.reader(),
+                                     store: WatchStore(fileURL: f.root.appendingPathComponent("state/second.json")), notifier: RecordingNotifier(),
+                                     catalogClient: CatalogClient(transport: StubTransport([:]), cacheDirectory: directory))
+        await second.hydrateCatalog(); second.setBadgeOtherUpdates(true)
+        #expect(second.badgedOtherCount == 1)
+        second.setShowOtherUpdates(false)
+        #expect(second.badgedOtherCount == 0 && second.others.isEmpty)
+    }
     @Test func stopWatchingReturnsItToOthers() async throws {
         let f = try InstallationFixture()
         try f.install("prefix/Cellar/synthetic-formula/1", kind: .formula)

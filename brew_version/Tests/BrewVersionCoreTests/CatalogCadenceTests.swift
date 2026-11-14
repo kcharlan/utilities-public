@@ -28,14 +28,17 @@ private func repeatedCatalog(_ count: Int, cask: String = syntheticCaskList) -> 
     @Test func savedStateWithoutNewSettingsLoadsWithDefaults() throws {
         let f = WatchFixture(); defer { f.clean() }
         var state = AppState.initial; state.catalogInterval = CheckInterval(minutes: 240)!; state.includeSelfUpdating = true
+        state.badgeOtherUpdates = true
         try f.store.save(state)
         // Remove the keys a 1.0.1 state file never had.
         var object = try #require(try JSONSerialization.jsonObject(with: Data(contentsOf: f.file)) as? [String: Any])
         object.removeValue(forKey: "catalogInterval"); object.removeValue(forKey: "includeSelfUpdating")
+        object.removeValue(forKey: "badgeOtherUpdates")
         try JSONSerialization.data(withJSONObject: object).write(to: f.file)
         let load = f.store.load()
         #expect(load.problem == nil && load.canSave)
         #expect(load.state.catalogInterval == .catalogStandard && !load.state.includeSelfUpdating)
+        #expect(!load.state.badgeOtherUpdates)
         #expect(!FileManager.default.fileExists(atPath: f.file.path + ".bad"))
     }
     @Test func catalogIntervalPresetsAndDefault() {
@@ -105,11 +108,14 @@ private func repeatedCatalog(_ count: Int, cask: String = syntheticCaskList) -> 
                                 catalogClient: CatalogClient(transport: repeatedCatalog(1, cask: casks), cacheDirectory: f.root.appendingPathComponent("catalog")))
         await c.refreshCatalogIfDue()
         // The readable app is really behind, so it stays; the unreadable one is hidden.
+        c.setBadgeOtherUpdates(true)
         #expect(c.others.map(\.listing.name.rawValue) == ["synthetic-cask"])
+        #expect(c.badgedOtherCount == 1 && c.badgedOtherCount == c.others.count)
         #expect(c.others.first?.installed.source == .appBundle)
         #expect(c.hiddenSelfUpdatingCount == 1)
         c.setIncludeSelfUpdating(true)
         #expect(c.others.map(\.listing.name.rawValue) == ["synthetic-cask", "synthetic-unreadable"])
+        #expect(c.badgedOtherCount == 2 && c.badgedOtherCount == c.others.count)
         #expect(c.hiddenSelfUpdatingCount == 0)
         #expect(store.load().state.includeSelfUpdating)
     }
