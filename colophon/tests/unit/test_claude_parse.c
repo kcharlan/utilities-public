@@ -279,6 +279,90 @@ TEST(claude_subagent_filename_uses_parent_identity) {
   ASSERT_EQ(0, rmdir(directory));
 }
 
+static void parse_subagent_text(const char *bytes, ClaudeRecord *out) {
+  char root[1024], parent[1200], dir[1300], path[1400];
+  snprintf(root, sizeof root, "%s/synthetic-handback-XXXXXX", getenv("COLOPHON_HOME"));
+  ASSERT_TRUE(mkdtemp(root));
+  snprintf(parent, sizeof parent, "%s/synthetic-parent", root);
+  snprintf(dir, sizeof dir, "%s/subagents", parent);
+  snprintf(path, sizeof path, "%s/agent-synthetic-child.jsonl", dir);
+  ASSERT_EQ(0, mkdir(parent, 0700)); ASSERT_EQ(0, mkdir(dir, 0700));
+  FILE *f = fopen(path, "w"); ASSERT_TRUE(f);
+  ASSERT_TRUE(fputs(bytes, f) >= 0); ASSERT_EQ(0, fclose(f));
+  DiscoveredLog key = {.path = {path, (uint32_t)strlen(path)}, .size = (int64_t)strlen(bytes)};
+  ASSERT_EQ(ERR_OK, claude_parse(&key, STR_LIT("/synthetic/projects"), (Str){0}, out).code);
+  ASSERT_EQ(0, unlink(path)); ASSERT_EQ(0, rmdir(dir));
+  ASSERT_EQ(0, rmdir(parent)); ASSERT_EQ(0, rmdir(root));
+}
+#define HB_PROMPT "{\"type\":\"user\",\"timestamp\":\"2020-01-01T00:00:00Z\",\"message\":{\"content\":\"Synthetic request\"}}\n"
+#define HB_CALL(stop, msg) "{\"type\":\"assistant\",\"timestamp\":\"2020-01-01T00:00:01Z\",\"message\":{\"stop_reason\":" stop ",\"content\":[{\"type\":\"tool_use\",\"id\":\"synthetic-hb\",\"name\":\"SubagentHandback\",\"input\":{" msg "}}]}}\n"
+#define HB_RESULT(id, err) "{\"type\":\"user\",\"timestamp\":\"2020-01-01T00:00:02Z\",\"message\":{\"content\":[{\"type\":\"tool_result\",\"tool_use_id\":\"" id "\",\"is_error\":" err "}]}}\n"
+#define HB_TEXT "{\"type\":\"assistant\",\"timestamp\":\"2020-01-01T00:00:03Z\",\"message\":{\"stop_reason\":\"end_turn\",\"content\":[{\"type\":\"text\",\"text\":\"Synthetic later answer\"}]}}\n"
+#define HB_UNRESOLVED "{\"type\":\"assistant\",\"timestamp\":\"2020-01-01T00:00:03Z\",\"message\":{\"stop_reason\":\"tool_use\",\"content\":[{\"type\":\"tool_use\",\"id\":\"synthetic-other\",\"name\":\"Read\"}]}}\n"
+#define HB_NEW "{\"type\":\"user\",\"timestamp\":\"2020-01-01T00:00:04Z\",\"message\":{\"content\":\"Synthetic next request\"}}\n"
+#define HB_CALL_TEXT HB_CALL("\"tool_use\"", "\"message\":\"Synthetic handback report\"")
+#define HB_SUCCESS HB_PROMPT HB_CALL_TEXT HB_RESULT("synthetic-hb", "false")
+static void handback_check(const char *rows, size_t turn, const char *kind, int64_t end) {
+  ClaudeRecord r = {0}; parse_subagent_text(rows, &r);
+  ASSERT_TRUE(str_equal(r.turns[turn]->end_kind, (Str){kind, (uint32_t)strlen(kind)}));
+  if (end) { ASSERT_TRUE(r.turns[turn]->end_ms.present); ASSERT_EQ(end, r.turns[turn]->end_ms.value); }
+  ASSERT_EQ(1, *(__int128 *)omap_get(&r.tools[0].other, STR_LIT("SubagentHandback")));
+  claude_record_destroy(&r);
+}
+TEST(claude_subagent_handback_success_completion) {
+  handback_check(HB_SUCCESS, 0, "completed", 1577836802000LL);
+  handback_check(HB_PROMPT HB_CALL("null", "\"message\":\"Synthetic handback report\"") HB_RESULT("synthetic-hb", "false"), 0, "completed", 1577836802000LL);
+}
+TEST(claude_subagent_handback_success_answer) {
+  ClaudeRecord r = {0}; parse_subagent_text(HB_SUCCESS, &r);
+  ASSERT_TRUE(str_equal(r.answers[0], STR_LIT("Synthetic handback report")));
+  ASSERT_TRUE(r.answer_ms[0].present); ASSERT_EQ(1577836801000LL, r.answer_ms[0].value);
+  claude_record_destroy(&r);
+}
+TEST(claude_subagent_handback_unmatched_results_open) {
+  handback_check(HB_PROMPT HB_CALL_TEXT, 0, "open", 0);
+  handback_check(HB_PROMPT HB_CALL_TEXT HB_RESULT("synthetic-hb", "true"), 0, "open", 0);
+  handback_check(HB_PROMPT HB_CALL_TEXT HB_RESULT("synthetic-foreign", "false"), 0, "open", 0);
+}
+TEST(claude_subagent_handback_unmatched_answer) {
+  const char *cases[] = {HB_PROMPT HB_CALL_TEXT, HB_PROMPT HB_CALL_TEXT HB_RESULT("synthetic-hb", "true"), HB_PROMPT HB_CALL_TEXT HB_RESULT("synthetic-foreign", "false")};
+  for (size_t i = 0; i < 3; i++) {
+    ClaudeRecord r = {0}; parse_subagent_text(cases[i], &r);
+    ASSERT_TRUE(str_equal(r.answers[0], STR_LIT("Synthetic handback report")));
+    ASSERT_TRUE(r.answer_ms[0].present); ASSERT_EQ(1577836801000LL, r.answer_ms[0].value); claude_record_destroy(&r);
+  }
+}
+TEST(claude_subagent_handback_unknown_last_clock) {
+  handback_check(HB_SUCCESS "{\"type\":\"synthetic-unknown\",\"timestamp\":\"2020-01-01T00:00:05Z\"}\n", 0, "completed", 1577836805000LL);
+}
+TEST(claude_subagent_handback_later_text_completion) { handback_check(HB_SUCCESS HB_TEXT, 0, "completed", 1577836803000LL); }
+TEST(claude_subagent_handback_later_text_answer) {
+  ClaudeRecord r = {0}; parse_subagent_text(HB_SUCCESS HB_TEXT, &r);
+  ASSERT_TRUE(str_equal(r.answers[0], STR_LIT("Synthetic later answer"))); ASSERT_TRUE(r.answer_ms[0].present);
+  ASSERT_EQ(1577836803000LL, r.answer_ms[0].value); claude_record_destroy(&r);
+}
+TEST(claude_subagent_handback_later_tool_open) { handback_check(HB_SUCCESS HB_UNRESOLVED, 0, "open", 0); }
+TEST(claude_subagent_handback_new_prompt_independent) {
+  handback_check(HB_SUCCESS HB_NEW HB_TEXT, 0, "completed", 1577836802000LL);
+  handback_check(HB_SUCCESS HB_NEW HB_TEXT, 1, "completed", 1577836803000LL);
+}
+TEST(claude_subagent_handback_delayed_result_open) { handback_check(HB_PROMPT HB_CALL_TEXT HB_NEW HB_RESULT("synthetic-hb", "false"), 1, "open", 0); }
+TEST(claude_subagent_handback_duplicate_result_open) { handback_check(HB_SUCCESS HB_UNRESOLVED HB_RESULT("synthetic-hb", "false"), 0, "open", 0); }
+TEST(claude_subagent_handback_error_consumes_id) { handback_check(HB_PROMPT HB_CALL_TEXT HB_RESULT("synthetic-hb", "true") HB_RESULT("synthetic-hb", "false"), 0, "open", 0); }
+TEST(claude_subagent_handback_invalid_message_preserves_answer) {
+  const char *cases[] = {HB_PROMPT HB_TEXT HB_CALL("null", ""), HB_PROMPT HB_TEXT HB_CALL("null", "\"message\":\"\""), HB_PROMPT HB_TEXT HB_CALL("null", "\"message\":42")};
+  for (size_t i = 0; i < 3; i++) { ClaudeRecord r = {0}; parse_subagent_text(cases[i], &r);
+    ASSERT_TRUE(str_equal(r.answers[0], STR_LIT("Synthetic later answer"))); ASSERT_TRUE(r.answer_ms[0].present);
+    ASSERT_EQ(1577836803000LL, r.answer_ms[0].value); ASSERT_EQ(1, *(__int128 *)omap_get(&r.tools[0].other, STR_LIT("SubagentHandback"))); claude_record_destroy(&r); }
+}
+TEST(claude_subagent_handback_main_session_open) {
+  ClaudeRecord r = {0}; parse_text(HB_SUCCESS, &r);
+  ASSERT_TRUE(str_equal(r.turns[0]->end_kind, STR_LIT("open"))); ASSERT_EQ(1, *(__int128 *)omap_get(&r.tools[0].other, STR_LIT("SubagentHandback"))); claude_record_destroy(&r);
+}
+TEST(claude_subagent_handback_main_session_no_answer) {
+  ClaudeRecord r = {0}; parse_text(HB_SUCCESS, &r); ASSERT_EQ(0, r.answers[0].n); ASSERT_FALSE(r.answer_ms[0].present); claude_record_destroy(&r);
+}
+
 TEST(claude_scan_unreadable_stores_are_incomplete) {
   char root[1024], desktop[1300], swap[1300], listing[1300], child[1400];
   snprintf(root, sizeof root, "%s/synthetic-completeness-XXXXXX",

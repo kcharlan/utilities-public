@@ -409,3 +409,9 @@ recording IDs alongside valid entries so one bad key cannot reject the batch.
 Antigravity model names inherited from earlier records are not observations of
 number bindings. Persist the name source and keep its associated number separate
 so a later numbered request cannot teach an unrelated name.
+
+Protocol handbacks need synthetic transcript coverage.
+
+Completion signals and answers can move from assistant text into tool calls
+and results. Cover those protocol transitions with synthetic transcripts,
+including delayed, duplicate, error and later-event cases.

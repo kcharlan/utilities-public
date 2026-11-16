@@ -387,6 +387,15 @@ Orphans remain standalone session rows with their usable label, nickname,
 depth and attempted parent identity; their spawn turn requires a resolved
 parent transcript.
 
+For Claude subagents, a successful user tool result matching a
+`SubagentHandback` call in the current turn completes that turn. An error
+consumes the call without completing it; results from earlier turns and
+duplicates do not complete a later turn. A nonempty string handback message
+becomes the answer at the call's timestamp, and later assistant text can
+replace it. Later assistant stop reasons and other events still determine the
+final state and end clock. Main sessions do not use these handback rules.
+Open turns follow the existing `corpus_quiet` quiet-time handling.
+
 Desktop metadata is read from
 `<desktop-dir>/claude-code-sessions/<account>/<org>/local_*.json` and matched
 by `cliSessionId`. These JSON files and subagent sidecars are never edited.

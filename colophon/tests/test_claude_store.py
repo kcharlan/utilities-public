@@ -597,3 +597,26 @@ def test_claude_catalog_alias_preserves_canonical_provider_and_pricing(tmp_path,
     # Google uses its catalog tier; OpenAI uses the bundled context boundary.
     expected = 0.0239 if provider == "google" else 0.0079
     assert payload["sessions"][0]["own_usage"]["cost_usd"] == pytest.approx(expected)
+
+
+def test_claude_subagent_handback_completed_after_quiet(tmp_path):
+    import os
+    run = NativeRun(tmp_path)
+    parent = run.claude_session('synthetic-parent')
+    rows = [
+        {'type': 'user', 'timestamp': '2020-01-01T00:00:00Z', 'message': {'content': 'Synthetic request'}},
+        {'type': 'assistant', 'timestamp': '2020-01-01T00:00:01Z', 'message': {'stop_reason': 'tool_use', 'content': [
+            {'type': 'tool_use', 'id': 'synthetic-hb', 'name': 'SubagentHandback', 'input': {'message': 'Synthetic handback report'}}]}},
+        {'type': 'user', 'timestamp': '2020-01-01T00:00:02Z', 'message': {'content': [
+            {'type': 'tool_result', 'tool_use_id': 'synthetic-hb', 'is_error': False}]}},
+    ]
+    child = run.claude_session('agent-synthetic-child', directory=parent.parent / 'synthetic-parent/subagents', rows=rows)
+    os.utime(child, (1577836802, 1577836802))
+    result = run.build()
+    assert result.returncode == 0, result.stderr
+    agent = run.payload()['subagents']['synthetic-parent/agent-synthetic-child']
+    turn, = agent['turns']
+    assert turn['status'] == 'completed'
+    assert turn['duration_ms'] == 2000
+    assert turn['final_answer']['text'] == 'Synthetic handback report'
+    assert 'abandoned' not in agent['flags']

@@ -64,6 +64,7 @@ bool claude_known_type(Str kind) {
 typedef struct {
   ClaudeRecord *r;
   Omap shell_ids;
+  Omap handback_ids;
   bool interrupted, api_error, completed;
   size_t capacity;
 } Parse;
@@ -212,6 +213,7 @@ static Err on_record(void *context, const ReaderRecord *row) {
   }
   if (prompt) {
     finish(p);
+    omap_destroy(&p->handback_ids);
     p->interrupted = p->api_error = p->completed = false;
     if (r->turn_count == p->capacity) {
       size_t n = p->capacity ? p->capacity * 2 : 8;
@@ -310,21 +312,36 @@ static Err on_record(void *context, const ReaderRecord *row) {
       TRY(record_append(&r->arena, (void **)&r->tool_facts, &r->tool_count,
                         &r->tool_capacity, sizeof fact, &fact));
       TRY(claude_tool_count(&r->arena, &r->tools[turn], name, false));
+      if (r->parent_session.p && str_equal(type, STR_LIT("assistant")) &&
+          str_equal(name, STR_LIT("SubagentHandback"))) {
+        if (id.n)
+          TRY(omap_put(&p->handback_ids, id, (void *)1));
+        Str answer = text(get(get(q, "input"), "message"));
+        if (answer.n) {
+          TRY(copy(&r->arena, answer, &r->answers[turn]));
+          r->answer_ms[turn] = at;
+        }
+      }
       if (str_equal(name, STR_LIT("Bash"))) {
         if (id.n)
           TRY(omap_put(&p->shell_ids, id, (void *)(uintptr_t)(turn + 1)));
       }
-    } else if (str_equal(block, STR_LIT("tool_result")) &&
-               yyjson_is_true(get(q, "is_error"))) {
-      size_t owner = (size_t)(uintptr_t)omap_get(&p->shell_ids,
-                                                 text(get(q, "tool_use_id")));
+    } else if (str_equal(block, STR_LIT("tool_result"))) {
+      Str result_id = text(get(q, "tool_use_id"));
+      bool error = yyjson_is_true(get(q, "is_error"));
+      size_t owner = error ? (size_t)(uintptr_t)omap_get(&p->shell_ids, result_id) : 0;
       if (owner) {
         r->tools[owner - 1].shell_failed++;
-        Str failed_id = text(get(q, "tool_use_id"));
         for (size_t k = 0; k < r->tool_count; k++)
-          if (r->tool_facts[k].identified && str_equal(r->tool_facts[k].id, failed_id))
+          if (r->tool_facts[k].identified && str_equal(r->tool_facts[k].id, result_id))
             r->tool_facts[k].failed = true;
-        TRY(omap_put(&p->shell_ids, text(get(q, "tool_use_id")), NULL));
+        TRY(omap_put(&p->shell_ids, result_id, NULL));
+      }
+      if (r->parent_session.p && str_equal(type, STR_LIT("user")) &&
+          omap_get(&p->handback_ids, result_id)) {
+        if (!error)
+          p->completed = true;
+        TRY(omap_put(&p->handback_ids, result_id, NULL));
       }
     }
   }
@@ -371,6 +388,7 @@ Err claude_parse(const DiscoveredLog *key, Str root, Str config,
   if (!e.code)
     finish(&p);
   omap_destroy(&p.shell_ids);
+  omap_destroy(&p.handback_ids);
   return e;
 }
 void claude_record_destroy(ClaudeRecord *r) {
