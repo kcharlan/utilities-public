@@ -46,26 +46,29 @@ Err turn_models(Arena *arena, TurnFact *const *facts, size_t count,
                       ? F_START_COMPLETION
                       : F_UNKNOWN;
     }
-    if (str_equal(fact->end_kind, STR_LIT("open"))) {
-      t->status = quiet ? STR_LIT("abandoned") : STR_LIT("running");
-      if (!quiet) {
-        t->flags |= F_LIVE;
-        t->end_ms = (MaybeNum){true, {.i = snapshot}};
-        if (t->start_ms.present &&
-            corpus_number_compare(t->end_ms.value, t->start_ms.value) >= 0)
-          t->duration_ms.present =
-              pynum_sub(t->end_ms.value, t->start_ms.value, "turn.duration",
-                        &t->duration_ms.value);
-        else
-          t->flags |= F_UNKNOWN;
-      }
-    }
   }
   e = stable_sort(*out, count, sizeof **out, ordering, NULL);
   if (e.code)
     return e;
-  for (size_t i = 0; i < count; i++)
-    (*out)[i].n = i + 1;
+  for (size_t i = 0; i < count; i++) {
+    TurnModel *t = &(*out)[i];
+    t->n = i + 1;
+    if (!str_equal(t->status, STR_LIT("open")))
+      continue;
+    if (i + 1 != count)
+      t->end_ms.present = false;
+    t->status = quiet || i + 1 != count ? STR_LIT("abandoned") : STR_LIT("running");
+    if (str_equal(t->status, STR_LIT("running"))) {
+      t->flags |= F_LIVE;
+      t->end_ms = (MaybeNum){true, {.i = snapshot}};
+      if (t->start_ms.present &&
+          corpus_number_compare(t->end_ms.value, t->start_ms.value) >= 0)
+        t->duration_ms.present = pynum_sub(t->end_ms.value, t->start_ms.value,
+                                           "turn.duration", &t->duration_ms.value);
+      else
+        t->flags |= F_UNKNOWN;
+    }
+  }
   return ERR_SUCCESS;
 }
 typedef struct {

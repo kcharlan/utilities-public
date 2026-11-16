@@ -123,7 +123,7 @@ TEST(claude_codec_rejects_mcp_traversal_ending_after_valid_key){malformed_map("m
 TEST(claude_codec_rejects_other_traversal_ending_after_valid_key){malformed_map("other",true,false);}
 TEST(claude_codec_v3_revision_and_immutable_v2){
   ClaudeRecord r={0}; parsed(&r); unsigned char *bytes=NULL; size_t n=0;
-  ASSERT_EQ(1,r.parse_revision); ASSERT_EQ(ERR_OK,claude_codec_encode(&r,&bytes,&n).code);
+  ASSERT_EQ(CLAUDE_PARSE_REVISION,r.parse_revision); ASSERT_EQ(ERR_OK,claude_codec_encode(&r,&bytes,&n).code);
   ASSERT_TRUE(!memcmp(bytes,"CLCD3\n",6)); free(bytes); claude_record_destroy(&r);
   char *old=NULL; ASSERT_EQ(ERR_OK,file_read_all("tests/fixtures/claude_codec/synthetic-v2.rec",&old,&n).code);
   char path[1024]; snprintf(path,sizeof path,"%s/synthetic-v2-XXXXXX.rec",getenv("TMPDIR")); int fd=mkstemps(path,4); ASSERT_TRUE(fd>=0);
@@ -135,7 +135,7 @@ TEST(claude_codec_v3_revision_and_immutable_v2){
   claude_record_destroy(&r); free(old); ASSERT_EQ(0,unlink(path));
 }
 TEST(claude_codec_rejects_revision_in_wrong_version_with_valid_checksum){
-  ClaudeRecord r={0}; parsed(&r); unsigned char *bytes=NULL; size_t n=0; ASSERT_EQ(ERR_OK,claude_codec_encode(&r,&bytes,&n).code);
+  ClaudeRecord r={0}; parsed(&r); r.parse_revision=1; unsigned char *bytes=NULL; size_t n=0; ASSERT_EQ(ERR_OK,claude_codec_encode(&r,&bytes,&n).code);
   ASSERT_TRUE(n>3 && bytes[n-2]=='1' && bytes[n-3]==',');
   bytes[n-3]=']'; size_t short_n=n-2; sha256_hex(bytes+71,short_n-71,(char *)bytes+6); bytes[70]='\n';
   ClaudeRecord decoded={0}; ASSERT_EQ(ERR_INVALID,claude_codec_decode(bytes,short_n,&decoded).code); claude_record_destroy(&decoded);

@@ -73,6 +73,9 @@ Version 0.7.2 learns Antigravity model numbers from observed response names and 
 Version 0.7.3 resolves catalog model names and canonical identities before
 falling back to built-in aliases, while retaining existing Codex price history keys.
 
+Version 0.9.0 recognizes steered Claude turns and corrected turn clocks, adds a
+steered filter, and prevents superseded open turns from appearing live.
+
 Version 0.8.4 recognizes successful Claude subagent handbacks and reparses live
 Claude caches with the revised parser.
 

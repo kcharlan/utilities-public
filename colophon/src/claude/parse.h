@@ -3,7 +3,7 @@
 #include "corpus/assemble.h"
 #include "price/compose.h"
 /* Bump when persisted Claude parse facts change; see docs/development.md. */
-#define CLAUDE_PARSE_REVISION 1
+#define CLAUDE_PARSE_REVISION 2
 typedef struct {
   UsageUnit unit;
   Str message_id, request_id, session_id;

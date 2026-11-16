@@ -340,7 +340,7 @@ TEST(claude_store_index_matches_linear_reconciliation){
   for(size_t i=0;i<s.count;i++){
     DiscoveredLog key=s.records[i].key;bool reference=false;
     for(size_t j=0;j<count;j++){ClaudeRecord *r=&entries[j].record;
-      if(!entries[j].retained&&r->reader_facts&&r->parse_revision>=CLAUDE_PARSE_REVISION&&str_equal(r->key.path,key.path)&&r->key.size==key.size&&r->key.mtime_ns==key.mtime_ns){reference=true;break;}
+      if(!entries[j].retained&&r->reader_facts&&r->parse_revision==CLAUDE_PARSE_REVISION&&str_equal(r->key.path,key.path)&&r->key.size==key.size&&r->key.mtime_ns==key.mtime_ns){reference=true;break;}
     }
     ClaudeRecord output={0};bool hit=false;ASSERT_EQ(ERR_OK,claude_store_get(&store,&key,&output,&hit).code);
     ASSERT_EQ(reference,hit);if(hit)ASSERT_TRUE(str_equal(key.path,output.key.path));claude_record_destroy(&output);
@@ -369,7 +369,7 @@ TEST(claude_store_stale_revision_reparses_then_hits){
   ASSERT_EQ(ERR_OK,claude_codec_encode(&r,&old,&old_n).code); FILE *file=fopen(path,"wb"); ASSERT_TRUE(file); ASSERT_EQ(old_n,fwrite(old,1,old_n,file)); ASSERT_EQ(0,fclose(file)); free(old); claude_record_destroy(&r);
   ClaudeScan s={0}; ClaudeStore store={0}; snapshot(&f,false,&s,&store); ASSERT_EQ(1,s.parsed); ASSERT_EQ(1,s.cached);
   ASSERT_EQ(ERR_OK,claude_store_commit(&store,&s,NULL).code); close_snapshot(&s,&store);
-  bytes=read_bytes(path,&n); ASSERT_EQ(ERR_OK,claude_codec_decode(bytes,n,&r).code); free(bytes); ASSERT_EQ(1,r.parse_revision); claude_record_destroy(&r);
+  bytes=read_bytes(path,&n); ASSERT_EQ(ERR_OK,claude_codec_decode(bytes,n,&r).code); free(bytes); ASSERT_EQ(CLAUDE_PARSE_REVISION,r.parse_revision); claude_record_destroy(&r);
   snapshot(&f,false,&s,&store); ASSERT_EQ(0,s.parsed); ASSERT_EQ(2,s.cached); close_snapshot(&s,&store);
 }
 TEST(claude_store_stale_retained_revision_preserves_status){
@@ -379,4 +379,13 @@ TEST(claude_store_stale_retained_revision_preserves_status){
   ASSERT_EQ(0,unlink(f.one)); ClaudeScan s={0}; ClaudeStore store={0}; snapshot(&f,false,&s,&store);
   bool found=false; for(size_t i=0;i<s.count;i++) if(str_equal(s.records[i].key.path,str(f.one))){found=true; ASSERT_EQ(0,s.records[i].parse_revision); ASSERT_TRUE(str_equal(s.records[i].turns[0]->end_kind,STR_LIT("completed")));}
   ASSERT_TRUE(found); ASSERT_EQ(ERR_OK,claude_store_commit(&store,&s,NULL).code); close_snapshot(&s,&store);
+}
+TEST(claude_store_newer_revision_reparses_then_hits){
+  Fixture f; fixture(&f); seed(&f); char path[1600]; installed(&f,f.one,path);
+  size_t n; char *bytes=read_bytes(path,&n); ClaudeRecord r={0}; ASSERT_EQ(ERR_OK,claude_codec_decode(bytes,n,&r).code); free(bytes);
+  ASSERT_TRUE(r.reader_facts); r.parse_revision=CLAUDE_PARSE_REVISION+1; ref_write(path,&r); claude_record_destroy(&r);
+  ClaudeScan s={0}; ClaudeStore store={0}; snapshot(&f,false,&s,&store); ASSERT_EQ(1,s.parsed); ASSERT_EQ(1,s.cached);
+  ASSERT_EQ(ERR_OK,claude_store_commit(&store,&s,NULL).code); close_snapshot(&s,&store);
+  bytes=read_bytes(path,&n); ASSERT_EQ(ERR_OK,claude_codec_decode(bytes,n,&r).code); free(bytes); ASSERT_EQ(CLAUDE_PARSE_REVISION,r.parse_revision); claude_record_destroy(&r);
+  snapshot(&f,false,&s,&store); ASSERT_EQ(0,s.parsed); ASSERT_EQ(2,s.cached); close_snapshot(&s,&store);
 }
