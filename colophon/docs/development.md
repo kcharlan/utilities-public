@@ -127,7 +127,9 @@ native cache format bump in `src/cache/cache.c`; compose-only accounting rows
 are rebuilt and are not cached. Keep Claude codec versions independent and
 preserve their old decoders and immutable synthetic inputs. Parsing changes that
 alter stored Claude facts must bump `CLAUDE_PARSE_REVISION` in
-`src/claude/parse.h`; stored-layout changes also add a codec version.
+`src/claude/parse.h`; stored-layout changes also add a codec version. Live cache
+records miss on any revision mismatch, including a newer revision after rollback;
+retained records preserve their stored facts.
 
 Pricing lesson: an incorrectly seeded long-context threshold must be corrected
 in every existing curated-history row, not only in the resolver or a new dated

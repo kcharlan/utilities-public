@@ -334,7 +334,7 @@ TEST(claude_subagent_handback_unmatched_answer) {
   }
 }
 TEST(claude_subagent_handback_unknown_last_clock) {
-  handback_check(HB_SUCCESS "{\"type\":\"synthetic-unknown\",\"timestamp\":\"2020-01-01T00:00:05Z\"}\n", 0, "completed", 1577836805000LL);
+  handback_check(HB_SUCCESS "{\"type\":\"synthetic-unknown\",\"timestamp\":\"2020-01-01T00:00:05Z\"}\n", 0, "completed", 1577836802000LL);
 }
 TEST(claude_subagent_handback_later_text_completion) { handback_check(HB_SUCCESS HB_TEXT, 0, "completed", 1577836803000LL); }
 TEST(claude_subagent_handback_later_text_answer) {
@@ -460,3 +460,53 @@ TEST(claude_scan_locator_child_stat_failure_is_diagnostic_and_incomplete) {
   ASSERT_TRUE(incomplete);
   ASSERT_TRUE(diagnostic);
 }
+
+#define CLOCK_PROMPT HB_PROMPT
+#define CLOCK_ASSIST HB_UNRESOLVED
+#define CLOCK_NEXT HB_NEW
+#define CLOCK_DEQUEUE "{\"type\":\"queue-operation\",\"operation\":\"dequeue\",\"timestamp\":\"2020-01-01T00:00:04Z\"}\n"
+#define CLOCK_STOP "{\"type\":\"system\",\"subtype\":\"stop_hook_summary\",\"timestamp\":\"2020-01-01T00:00:04Z\"}\n"
+#define CLOCK_ERROR "{\"type\":\"system\",\"subtype\":\"api_error\",\"timestamp\":\"2020-01-01T00:00:04Z\"}\n"
+#define CLOCK_NULL_TEXT "{\"type\":\"assistant\",\"timestamp\":\"2020-01-01T00:00:03Z\",\"message\":{\"stop_reason\":null,\"content\":[{\"type\":\"text\",\"text\":\"Synthetic answer\"}]}}\n"
+static void clock_kind(const char *rows, const char *kind) {
+  ClaudeRecord r = {0}; parse_text(rows, &r);
+  ASSERT_TRUE(str_equal(r.turns[0]->end_kind, (Str){kind, (uint32_t)strlen(kind)}));
+  claude_record_destroy(&r);
+}
+TEST(claude_turn_clock_ignores_bookkeeping_records) {
+  ClaudeRecord r = {0}; parse_text(HB_PROMPT HB_TEXT
+    "{\"type\":\"queue-operation\",\"operation\":\"enqueue\",\"timestamp\":\"2020-01-01T00:00:04Z\"}\n"
+    "{\"type\":\"pr-link\",\"timestamp\":\"2020-01-01T00:00:05Z\"}\n"
+    "{\"type\":\"user\",\"isMeta\":true,\"timestamp\":\"2020-01-01T00:00:06Z\",\"message\":{\"content\":\"synthetic\"}}\n"
+    "{\"type\":\"attachment\",\"timestamp\":\"2020-01-01T00:00:07Z\"}\n"
+    "{\"type\":\"system\",\"subtype\":\"stop_hook_summary\",\"timestamp\":\"2020-01-01T00:00:08Z\"}\n"
+    "{\"type\":\"synthetic-unknown\",\"timestamp\":\"2020-01-01T00:00:09Z\"}\n", &r);
+  ASSERT_EQ(1577836803000LL, r.turns[0]->last_ms.value);
+  ASSERT_EQ(1577836809000LL, r.last_ms.value); claude_record_destroy(&r);
+}
+TEST(claude_turn_clock_follows_conversation_records) {
+  ClaudeRecord r = {0}; parse_text(HB_PROMPT HB_CALL_TEXT HB_RESULT("synthetic-hb", "false"), &r);
+  ASSERT_EQ(1577836802000LL, r.turns[0]->last_ms.value); claude_record_destroy(&r);
+  parse_text(HB_PROMPT "{\"type\":\"user\",\"timestamp\":\"2020-01-01T00:00:04Z\",\"message\":{\"content\":\"[Request interrupted by user]\"}}\n", &r);
+  ASSERT_EQ(1577836804000LL, r.turns[0]->last_ms.value); claude_record_destroy(&r);
+  parse_text(HB_PROMPT CLOCK_ERROR, &r); ASSERT_EQ(1577836804000LL, r.turns[0]->last_ms.value); claude_record_destroy(&r);
+}
+TEST(claude_queued_prompt_steers_open_turn) {
+  ClaudeRecord r = {0}; parse_text(HB_PROMPT HB_CALL_TEXT HB_RESULT("synthetic-hb", "false") CLOCK_DEQUEUE CLOCK_NEXT, &r);
+  ASSERT_TRUE(str_equal(r.turns[0]->end_kind, STR_LIT("steered")));
+  ASSERT_EQ(1577836802000LL, r.turns[0]->end_ms.value);
+  ASSERT_EQ(1, *(__int128 *)omap_get(&r.tools[0].other, STR_LIT("SubagentHandback"))); claude_record_destroy(&r);
+}
+TEST(claude_queued_completed_not_steered) { clock_kind(HB_PROMPT HB_TEXT CLOCK_DEQUEUE CLOCK_NEXT, "completed"); }
+TEST(claude_queued_without_dequeue_not_steered) { clock_kind(HB_PROMPT CLOCK_ASSIST CLOCK_NEXT, "open"); }
+TEST(claude_queued_assistant_clears_dequeue) { clock_kind(HB_PROMPT CLOCK_ASSIST CLOCK_DEQUEUE CLOCK_ASSIST CLOCK_NEXT, "open"); }
+TEST(claude_queued_command_without_assistant) { clock_kind("{\"type\":\"user\",\"message\":{\"content\":\"<command-name>/synthetic\"}}\n" CLOCK_DEQUEUE CLOCK_NEXT, "open"); }
+TEST(claude_queued_stop_hook_not_steered) { clock_kind(HB_PROMPT CLOCK_ASSIST CLOCK_DEQUEUE CLOCK_STOP CLOCK_NEXT, "open"); }
+TEST(claude_queued_interrupted_precedence) { clock_kind(HB_PROMPT CLOCK_ASSIST CLOCK_DEQUEUE "{\"type\":\"user\",\"message\":{\"content\":\"[Request interrupted by user]\"}}\n" CLOCK_NEXT, "interrupted"); }
+TEST(claude_queued_api_error_precedence) { clock_kind(HB_PROMPT CLOCK_ASSIST CLOCK_DEQUEUE CLOCK_ERROR CLOCK_NEXT, "aborted"); }
+TEST(claude_subagent_null_text_ending_completes) { ClaudeRecord r={0}; parse_subagent_text(HB_PROMPT CLOCK_NULL_TEXT,&r); ASSERT_TRUE(str_equal(r.turns[0]->end_kind,STR_LIT("completed"))); claude_record_destroy(&r); }
+TEST(claude_subagent_null_text_later_tool_open) { ClaudeRecord r={0}; parse_subagent_text(HB_PROMPT CLOCK_NULL_TEXT HB_UNRESOLVED,&r); ASSERT_TRUE(str_equal(r.turns[0]->end_kind,STR_LIT("open"))); claude_record_destroy(&r); }
+TEST(claude_subagent_absent_stop_open) { ClaudeRecord r={0}; parse_subagent_text(HB_PROMPT "{\"type\":\"assistant\",\"message\":{\"content\":[{\"type\":\"text\",\"text\":\"synthetic\"}]}}\n",&r); ASSERT_TRUE(str_equal(r.turns[0]->end_kind,STR_LIT("open"))); claude_record_destroy(&r); }
+TEST(claude_subagent_null_thinking_open) { ClaudeRecord r={0}; parse_subagent_text(HB_PROMPT "{\"type\":\"assistant\",\"message\":{\"stop_reason\":null,\"content\":[{\"type\":\"thinking\"}]}}\n",&r); ASSERT_TRUE(str_equal(r.turns[0]->end_kind,STR_LIT("open"))); claude_record_destroy(&r); }
+TEST(claude_main_null_text_open) { clock_kind(HB_PROMPT CLOCK_NULL_TEXT,"open"); }
+TEST(claude_subagent_null_text_and_tool_open) { ClaudeRecord r={0}; parse_subagent_text(HB_PROMPT "{\"type\":\"assistant\",\"message\":{\"stop_reason\":null,\"content\":[{\"type\":\"text\",\"text\":\"synthetic\"},{\"type\":\"tool_use\",\"name\":\"Read\"}]}}\n",&r); ASSERT_TRUE(str_equal(r.turns[0]->end_kind,STR_LIT("open"))); claude_record_destroy(&r); }

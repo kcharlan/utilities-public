@@ -645,7 +645,7 @@ def test_claude_handback_stale_v2_live_cache_reparses(tmp_path):
     body[index] = 'open'
     assert body[index + 1:index + 5] == [True, 1577836800000, True, 1577836802000]
     body[index + 3:index + 5] = [False]
-    assert body.pop() == 1
+    assert body.pop() == 2
     data = json.dumps(body, separators=(',', ':')).encode()
     path.write_bytes(b'CLCD2\n' + hashlib.sha256(data).hexdigest().encode() + b'\n' + data)
     assert run.build().returncode == 0
@@ -657,3 +657,32 @@ def test_claude_handback_stale_v2_live_cache_reparses(tmp_path):
     assert run.build().returncode == 0
     source = run.payload()['meta']['sources']['claude']
     assert (source['parsed'], source['cached']) == (0, 2)
+
+
+def test_claude_steered_clocks_and_idle(tmp_path):
+    from helpers import claude_steered_rows
+    import os
+    run = NativeRun(tmp_path)
+    path = run.claude_session(rows=claude_steered_rows())
+    os.utime(path, (1577836800, 1577836800))
+    assert run.build().returncode == 0
+    session = run.payload()["sessions"][0]
+    assert [turn["status"] for turn in session["turns"]] == ["completed", "steered", "completed"]
+    assert [turn["duration_ms"] for turn in session["turns"]] == [10000, 10000, 10000]
+    assert session["idle_ms"] == 130000
+    assert not set(session["flags"]) & {"aborted", "interrupted", "abandoned"}
+
+
+def test_claude_subagent_null_text_not_abandoned(tmp_path):
+    import os
+    run = NativeRun(tmp_path)
+    parent = run.claude_session(name="synthetic-parent")
+    directory = parent.parent / "synthetic-parent/subagents"
+    path = run.claude_session(name='agent-child', directory=directory, rows=[
+        {"type": "user", "timestamp": "2020-01-01T00:00:00Z", "message": {"content": "Synthetic task"}},
+        {"type": "assistant", "timestamp": "2020-01-01T00:00:01Z", "message": {"stop_reason": None, "content": [{"type": "text", "text": "Synthetic answer"}]}}])
+    os.utime(path, (1577836800, 1577836800))
+    assert run.build().returncode == 0
+    child = run.payload()["subagents"]["synthetic-parent/agent-child"]
+    assert child["turns"][0]["status"] == "completed"
+    assert "abandoned" not in child["flags"]

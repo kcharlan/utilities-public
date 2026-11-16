@@ -123,7 +123,7 @@
     for (const key of ["from", "to", "day"]) if (parseDay(raw[key]) !== null) next[key] = raw[key];
     if (periodOffset({p: next.p, o: raw.o})) next.o = raw.o;
     if (/^[0-6]-(?:[0-9]|1[0-9]|2[0-3])$/.test(raw.how || "")) next.how = raw.how;
-    if (["aborted", "interrupted", "abandoned"].includes(raw.st)) next.st = raw.st;
+    if (["aborted", "interrupted", "abandoned", "steered"].includes(raw.st)) next.st = raw.st;
     for (const key of ["q", "ws", "sub", "model", "s"]) {
       if (typeof raw[key] === "string" && raw[key] && !/[\x00-\x1f\x7f]/.test(raw[key])) {
         try { encodeURIComponent(raw[key]); next[key] = raw[key]; } catch (_) { /* unusable Unicode */ }
@@ -223,7 +223,7 @@
   }
   function turnIntervals(row, window) {
     if (!window) return [];
-    return row.turns.filter(turn => ["completed", "aborted", "interrupted", "running"].includes(turn.status) &&
+    return row.turns.filter(turn => ["completed", "aborted", "interrupted", "running", "steered"].includes(turn.status) &&
       validMs(turn.start_ms) && validMs(turn.end_ms) && typeof turn.duration_ms === "number" && Number.isFinite(turn.duration_ms) && turn.duration_ms >= 0)
       .map(turn => [Math.max(window.from, turn.start_ms), Math.min(window.to, turn.end_ms)])
       .filter(([start, end]) => end > start);
@@ -319,6 +319,7 @@
       cost: bucketCosts(usage),
       unpriced: usage.some(b => b[8] === null), aborted: turns.filter(t => t.status === "aborted").length,
       interrupted: turns.filter(t => t.status === "interrupted").length, abandoned: turns.filter(t => t.status === "abandoned").length,
+      steered: turns.filter(t => t.status === "steered").length,
       live: {sessions: ownRunning, active_ms: running(rows, contributesTime), agent_ms: running(agents, contributesTime),
         turns: turns.filter(t => t.status === "running").length, tokens: usageRunning.reduce((sum, value) => sum + value.tokens, 0),
         cost: usageRunning.filter(value => providerCosts(value.provider).available).reduce((sum, value) => sum + value.costs, 0), aborted: 0}};
@@ -733,7 +734,9 @@
       const shareTotal = maximum ? providers.reduce((sum, provider) => sum + (shares[provider][key] || 0) / maximum, 0) : 0;
       tile.append(el("div", {class: "provider-shares", "aria-label": "Provider share"}, ...providers.map(provider =>
         el("span", {"data-provider": provider, "data-share": shares[provider][key], title: PROVIDER_NAMES[provider] + ": " + metricText(key, shares[provider][key]), style: "width:" + (shareTotal ? (shares[provider][key] || 0) / maximum / shareTotal * 100 : 0) + "%"}))));
-      if (key === "turns") tile.append(el("p", {class: "kpi-sub", text: "avg " + durationText(totals.average_ms)}));
+      if (key === "turns") tile.append(el("p", {class: "kpi-sub"},
+        el("span", {text: "avg " + durationText(totals.average_ms) + " · "}),
+        el("button", {type: "button", class: "status-link neutral", "data-status": "steered", text: totals.steered + " steered", onclick: () => drill({st: "steered", sort: "newest"})})));
       if (key === "tokens") tile.append(el("p", {class: "kpi-sub", text: totals.cached_share === null ? "cached input: unknown" : (totals.cached_share * 100).toFixed(1) + "% cached input"}));
       if (key === "cost") tile.append(el("p", {class: "kpi-sub", text: "API-equivalent estimate (not billed)"}));
       if (key === "aborted") tile.append(el("div", {class: "kpi-sub"},
@@ -1009,7 +1012,7 @@
   const shellArgument = value => "'" + value.replace(/'/g, "'\\''") + "'";
   function ownActive(row) {
     if (row.flags.includes("history_unresolved")) return null;
-    const eligible = row.turns.filter(turn => ["completed", "aborted", "interrupted", "running"].includes(turn.status));
+    const eligible = row.turns.filter(turn => ["completed", "aborted", "interrupted", "running", "steered"].includes(turn.status));
     if (eligible.some(turn => !validMs(turn.start_ms) || !validMs(turn.end_ms) || turn.end_ms < turn.start_ms || !quantity(turn.duration_ms))) return null;
     return activeMs(turnIntervals(row, wholeWindow));
   }
@@ -1118,7 +1121,7 @@
         el("span", {text: "first token " + durationText(quantity(turn.ttft_ms) ? turn.ttft_ms : null)}),
         el("span", {text: tokenText(turn.usage) + " tokens"}),
         el("span", {"data-turn-cost": "", text: usageCostText(turn.usage), title: usageRateTooltip([turn.usage])}),
-        el("span", {class: turn.status === "running" ? "live" : turn.status === "completed" ? "" : "warning", text: turn.status}),
+        el("span", {class: turn.status === "running" ? "live" : ["completed", "steered"].includes(turn.status) ? "" : "warning", text: turn.status}),
         ...turn.flags.map(flag => el("span", {class: flag === "live" ? "live" : "warning", text: flag.replace(/_/g, " ")}))), asked,
       el("section", {class: "turn-section"}, el("h3", {class: "section-label", text: "IT USED"}), renderTools(turn.tools)));
     const spawned = [...new Set(turn.spawned)].filter(id => visibleChildren.has(id)), used = [...new Set(turn.used)].filter(id => visibleChildren.has(id) && !spawned.includes(id));

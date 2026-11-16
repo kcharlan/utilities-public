@@ -412,7 +412,15 @@ so a later numbered request cannot teach an unrelated name.
 
 Protocol handbacks need synthetic transcript coverage.
 
+Keep conversation turn clocks separate from transcript bookkeeping clocks.
+Delivery heuristics need negative cases for terminal states and later signals,
+not only a positive queued-prompt example.
+
 Completion signals and answers can move from assistant text into tool calls
 and results. Cover those protocol transitions with synthetic transcripts,
 including delayed, duplicate, error and later-event cases. Bump the parser
 revision when stored facts change; see [development](development.md).
+
+Live cache compatibility must reject newer parser revisions as well as older
+ones: a rollback otherwise silently reuses facts produced by different parsing
+rules. Retained facts still need preservation when their source is unavailable.

@@ -332,3 +332,30 @@ TEST(corpus_workspace_reads_origin_from_repository_config) {
   intern_destroy(&intern);
   ASSERT_EQ(0, nftw(base, workspace_remove, 16, FTW_DEPTH | FTW_PHYS));
 }
+TEST(turn_models_superseded_open_turn_is_not_running) {
+  Arena arena = {0}; TurnModel *models = NULL; MaybeNum active;
+  TurnFact early = {.key=STR_LIT("early"), .start_ms={true,10}, .end_kind=STR_LIT("open")};
+  TurnFact late = {.key=STR_LIT("late"), .start_ms={true,20}, .end_kind=STR_LIT("open")};
+  TurnFact *facts[] = {&late, &early};
+  ASSERT_EQ(ERR_OK, turn_models(&arena, facts, 2, false, 100, 100, &models).code);
+  ASSERT_TRUE(str_equal(models[0].id, STR_LIT("early")));
+  ASSERT_TRUE(str_equal(models[0].status, STR_LIT("abandoned")));
+  ASSERT_FALSE(models[0].end_ms.present); ASSERT_FALSE(models[0].duration_ms.present); ASSERT_FALSE(models[0].flags & F_LIVE);
+  ASSERT_TRUE(str_equal(models[1].status, STR_LIT("running")));
+  ASSERT_EQ(ERR_OK, active_interval_union(&arena, models, 2, &active).code); ASSERT_TRUE(active.present); ASSERT_EQ(80, active.value.i);
+  ASSERT_EQ(ERR_OK, turn_models(&arena, facts, 2, false, 0, 7200001, &models).code);
+  ASSERT_TRUE(str_equal(models[0].status, STR_LIT("abandoned"))); ASSERT_TRUE(str_equal(models[1].status, STR_LIT("abandoned")));
+  early.start_ms.value=20;
+  ASSERT_EQ(ERR_OK, turn_models(&arena, facts, 2, false, 100, 100, &models).code);
+  ASSERT_TRUE(str_equal(models[0].id, STR_LIT("late"))); ASSERT_TRUE(str_equal(models[0].status, STR_LIT("abandoned")));
+  ASSERT_TRUE(str_equal(models[1].id, STR_LIT("early"))); ASSERT_TRUE(str_equal(models[1].status, STR_LIT("running")));
+  early.start_ms.present=false;
+  ASSERT_EQ(ERR_OK, turn_models(&arena, facts, 2, false, 100, 100, &models).code);
+  ASSERT_TRUE(str_equal(models[1].id, STR_LIT("early"))); ASSERT_TRUE(str_equal(models[1].status, STR_LIT("running")));
+  early.start_ms.present=true; early.start_ms.value=30; early.end_ms.present=true; early.end_ms.value=40; early.end_kind=STR_LIT("completed");
+  ASSERT_EQ(ERR_OK, turn_models(&arena, facts, 2, false, 100, 100, &models).code);
+  ASSERT_TRUE(str_equal(models[0].status, STR_LIT("abandoned"))); ASSERT_FALSE(models[0].end_ms.present);
+  ASSERT_TRUE(str_equal(models[1].status, STR_LIT("completed")));
+  ASSERT_EQ(ERR_OK, active_interval_union(&arena, models, 2, &active).code); ASSERT_EQ(10, active.value.i);
+  arena_destroy(&arena);
+}

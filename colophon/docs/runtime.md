@@ -174,7 +174,7 @@ reader. Missing legacy provider fields mean Codex. Source filtering applies
 to overview totals, session lists, descendants and direct subagent links.
 The snapshot log count always includes Codex and Claude logs, regardless of the
 switch; accepted OpenCode and Antigravity database counts are shown separately. The footer
-displays the embedded payload's release version (`colophon 0.8.4`). Catalog
+displays the embedded payload's release version (`colophon 0.9.0`). Catalog
 names take precedence over fallback aliases; valid canonical IDs select one
 target, while existing Codex history keys remain unchanged.
 
@@ -187,6 +187,9 @@ with a no-data label and explain the checked paths or disabling flag.
 The All footer includes absent-source details, Claude unknown-record diagnostics
 and the start of Claude token data when later than the calendar's start.
 The Claude boundary note appears only in Claude and All views.
+The turns KPI's neutral steered link filters sessions containing a steered turn;
+the status filter persists in the URL. Steered durations count toward active
+and average turn time, and are not counted as aborted.
 
 A session's workspace is, in order: a matching `workspaces.json` alias; its
 repository's normalized remote origin; its git root path; or its working
@@ -266,7 +269,7 @@ An empty value selects the default `~/.claude` config root. Its
 `COLOPHON_HOME` selects the private runtime home (default `~/.colophon`);
 tilde expansion is supported. `COLOPHON_PRICING_URL` defaults to
 `https://models.dev/api.json`. Help and version exit without initializing
-runtime state. Version is currently `colophon 0.8.4`.
+runtime state. Version is currently `colophon 0.9.0`.
 
 | Flag | Behavior |
 | --- | --- |
@@ -393,8 +396,24 @@ consumes the call without completing it; results from earlier turns and
 duplicates do not complete a later turn. A nonempty string handback message
 becomes the answer at the call's timestamp, and later assistant text can
 replace it. Later assistant stop reasons and other events still determine the
-final state and end clock. Main sessions do not use these handback rules.
-Open turns follow the existing `corpus_quiet` quiet-time handling.
+final state and, subject to the conversation clock rule below, the end clock.
+An assistant message with an explicit null stop reason, at least one text block
+and no tool-use block also completes a subagent turn. Main sessions do not use
+these subagent rules.
+
+Turn clocks advance on prompts, assistant records, non-meta user tool results
+and interruption markers, and system API errors. Other transcript bookkeeping
+can advance the session clock without extending a turn. A new prompt marks an
+otherwise open turn steered when an assistant was seen, a dequeue followed the
+last assistant, and no Stop hook summary followed it. Completed, interrupted
+and API-error states retain precedence. This heuristic can also match a queued
+resumption after a crash.
+
+For all providers, turns are stably ordered by their available start or end
+clock, with missing clocks last. Only the final ordered open turn can be
+running, and only in a non-quiet log. Earlier open turns are abandoned without
+an end, duration or live flag, even when the final turn is terminal. Quiet logs
+retain their abandoned status.
 
 Desktop metadata is read from
 `<desktop-dir>/claude-code-sessions/<account>/<org>/local_*.json` and matched
@@ -569,7 +588,7 @@ CLCD1 retained records remain readable. Their aggregate tool counts use a
 per-category maximum across copies because older facts cannot distinguish
 mirrored calls from complementary calls; their answer ordering uses the turn's
 last known clock. Live CLCD1 cache records reparse to obtain richer identities.
-Live records with an older parse revision reparse on every build until the
+Live records with any mismatched parse revision reparse on every build until the
 revised record is successfully installed; retained records preserve their stored
 facts. A reparse can recapture extraction-time price snapshots, so costs can
 change; see [Claude pricing](token_rules.md#claude-pricing-and-public-seed-provenance)
@@ -578,6 +597,8 @@ and `src/price/claude_cost.c`.
 Earlier decoders cannot read CLCD3. On rollback, available transcripts can be
 reparsed, but undecodable records cannot supply retained facts; unreadable
 retained files are reported and left in place, not deleted.
+When rolling back to 0.8.4, run with `--rebuild` to discard this release's live
+parse facts. A future rollback into this release uses the revision mismatch rule.
 
 Runtime turn mappings never replace the original stored turn keys or usage rows.
 
