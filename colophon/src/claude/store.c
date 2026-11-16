@@ -98,7 +98,7 @@ Err claude_store_get(ClaudeStore *store,const DiscoveredLog *key,ClaudeRecord *o
   ClaudeStored **head=omap_get(&store->path_index,key->path);
   for(ClaudeStored *entry=head?*head:NULL;entry;entry=entry->next_same_path){
     ClaudeRecord *r=&entry->record;
-    if(entry->retained||!r->reader_facts||r->key.size!=key->size||r->key.mtime_ns!=key->mtime_ns)continue;
+    if(entry->retained||!r->reader_facts||r->parse_revision<CLAUDE_PARSE_REVISION||r->key.size!=key->size||r->key.mtime_ns!=key->mtime_ns)continue;
     int fd=open(key->path.p,O_RDONLY|O_NONBLOCK);if(fd<0)return io("fingerprint open");
     char tail[65];Err e=reader_fingerprint(fd,key->size,tail);close(fd);if(e.code)return e;
     if(memcmp(tail,r->reader.tail_sha256,65))continue;

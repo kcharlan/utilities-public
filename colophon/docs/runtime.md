@@ -174,7 +174,7 @@ reader. Missing legacy provider fields mean Codex. Source filtering applies
 to overview totals, session lists, descendants and direct subagent links.
 The snapshot log count always includes Codex and Claude logs, regardless of the
 switch; accepted OpenCode and Antigravity database counts are shown separately. The footer
-displays the embedded payload's release version (`colophon 0.8.3`). Catalog
+displays the embedded payload's release version (`colophon 0.8.4`). Catalog
 names take precedence over fallback aliases; valid canonical IDs select one
 target, while existing Codex history keys remain unchanged.
 
@@ -266,7 +266,7 @@ An empty value selects the default `~/.claude` config root. Its
 `COLOPHON_HOME` selects the private runtime home (default `~/.colophon`);
 tilde expansion is supported. `COLOPHON_PRICING_URL` defaults to
 `https://models.dev/api.json`. Help and version exit without initializing
-runtime state. Version is currently `colophon 0.8.3`.
+runtime state. Version is currently `colophon 0.8.4`.
 
 | Flag | Behavior |
 | --- | --- |
@@ -386,6 +386,15 @@ Claude orphan diagnostics are separate from legacy Codex diagnostics/counts.
 Orphans remain standalone session rows with their usable label, nickname,
 depth and attempted parent identity; their spawn turn requires a resolved
 parent transcript.
+
+For Claude subagents, a successful user tool result matching a
+`SubagentHandback` call in the current turn completes that turn. An error
+consumes the call without completing it; results from earlier turns and
+duplicates do not complete a later turn. A nonempty string handback message
+becomes the answer at the call's timestamp, and later assistant text can
+replace it. Later assistant stop reasons and other events still determine the
+final state and end clock. Main sessions do not use these handback rules.
+Open turns follow the existing `corpus_quiet` quiet-time handling.
 
 Desktop metadata is read from
 `<desktop-dir>/claude-code-sessions/<account>/<org>/local_*.json` and matched
@@ -536,7 +545,7 @@ memory acceptance is claimed.
 `claude-retained/<root-key>/` contains records whose source transcripts were
 positively proved deleted. Keys are SHA-256 names from the resolved search-root
 and original transcript paths. Files are private (0600), directories 0700.
-The Claude CLCD2 codec is independent of the Codex native cache. It preserves
+The Claude CLCD3 codec is independent of the Codex native cache. It preserves
 exact aliases, original paths, config/resume origin, prompts, turns, tools,
 sidecar facts and every raw usage row, including extraction-time cost snapshots
 for duplicate losers. Earlier codec versions keep their decoders and immutable
@@ -560,6 +569,16 @@ CLCD1 retained records remain readable. Their aggregate tool counts use a
 per-category maximum across copies because older facts cannot distinguish
 mirrored calls from complementary calls; their answer ordering uses the turn's
 last known clock. Live CLCD1 cache records reparse to obtain richer identities.
+Live records with an older parse revision reparse on every build until the
+revised record is successfully installed; retained records preserve their stored
+facts. A reparse can recapture extraction-time price snapshots, so costs can
+change; see [Claude pricing](token_rules.md#claude-pricing-and-public-seed-provenance)
+and `src/price/claude_cost.c`.
+
+Earlier decoders cannot read CLCD3. On rollback, available transcripts can be
+reparsed, but undecodable records cannot supply retained facts; unreadable
+retained files are reported and left in place, not deleted.
+
 Runtime turn mappings never replace the original stored turn keys or usage rows.
 
 Existing stores and history are inspected read-only before runtime creation.

@@ -8,3 +8,8 @@ Keep this file unchanged when adding codec versions. Tests copy it to private
 scratch before decoding and keep every old decoder. Generated runtime records
 remain outside the checkout. Version 1 is the first Claude codec; the unrelated
 Codex native codec keeps its own existing format.
+
+`synthetic-v2.rec` was exported once by the unchanged CLCD2 encoder from the
+synthetic successful-handback unit transcript. Its file identity, timestamps,
+paths and IDs are invented; its config provenance is empty. The turn was reset
+to open with no end or answer clock before encoding. Keep these bytes immutable.

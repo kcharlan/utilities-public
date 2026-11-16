@@ -140,7 +140,7 @@ units cover cold/warm/rebuild accounting, strict deletion proof, removed search
 roots and descendants, partial traversal, root-wide commit rechecks, failed page
 output, interrupted partial commits, empty/malformed live files, restoration,
 retained/live response deduplication, last-known sidecars, extraction price
-snapshots and source byte/mode preservation. Immutable synthetic CLCD1 decoder
+snapshots and source byte/mode preservation. Immutable synthetic CLCD1 and CLCD2 decoder
 inputs in `fixtures/claude_codec/` are copied to scratch before decoding. They
 are the narrow exception to the runtime-fixtures-in-scratch rule.
 
