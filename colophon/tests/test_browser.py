@@ -1555,3 +1555,30 @@ def test_page_sets_content_security_policy(page, native):
     assert directives["default-src"] == ["'none'"]
     assert directives["base-uri"] == ["'none'"]
     assert directives["form-action"] == ["'none'"]
+
+
+def test_claude_steered_kpi_filter_and_reader(page, native):
+    from helpers import claude_steered_rows
+    path = native.claude_session(rows=claude_steered_rows())
+    os.utime(path, (1577836800, 1577836800))
+    native.claude_session(name="synthetic-distractor")
+    assert native.build().returncode == 0
+    with guard_browser_errors(page):
+        open_native(page, native.page)
+        page.goto(native.page.as_uri() + '#v=overview&p=all')
+        link = page.locator('[data-kpi="turns"] [data-status="steered"]')
+        expect(link).to_have_text('1 steered')
+        assert link.evaluate('e => getComputedStyle(e).color') != page.locator('[data-status="interrupted"]').evaluate('e => getComputedStyle(e).color')
+        expect(page.locator('[data-kpi="active_ms"] .kpi-value')).to_have_attribute('data-value', '33000')
+        expect(page.locator('[data-kpi="turns"] .kpi-sub')).to_contain_text('avg 8.3s')
+        expect(page.locator('[data-kpi="aborted"] .kpi-value')).to_have_attribute('data-value', '0')
+        link.click()
+        expect(page.locator('[data-list-row]')).to_have_count(1)
+        assert 'st=steered' in page.url
+        page.reload()
+        expect(page.locator('[data-list-row]')).to_have_count(1)
+        page.goto(native.page.as_uri() + '#v=session&p=all&s=synthetic-claude')
+        expect(page.locator('[data-reader-stat="active"] .reader-stat-value')).to_have_attribute('data-value', '30000')
+        status = page.locator('[data-turn-header]', has_text='steered').locator('span', has_text='steered')
+        expect(status).to_have_count(1)
+        assert 'warning' not in (status.get_attribute('class') or '')

@@ -147,3 +147,17 @@ class NativeRun:
             ]
         path.write_text("".join(json.dumps(value) + "\n" for value in rows))
         return path
+
+
+def claude_steered_rows():
+    """Invented completed, steered, and final turns separated by idle records."""
+    def event(kind, second, **fields):
+        return {"type": kind, "timestamp": f"2020-01-01T00:{second // 60:02d}:{second % 60:02d}Z", **fields}
+    def prompt(second, value):
+        return event("user", second, message={"content": value})
+    def answer(second, stop):
+        return event("assistant", second, message={"stop_reason": stop, "content": [{"type": "text", "text": "Synthetic reply"}]})
+    return [prompt(0, "Synthetic completed"), answer(10, "end_turn"),
+            event("pr-link", 60), prompt(120, "Synthetic steered"), answer(130, None),
+            event("queue-operation", 140, operation="dequeue"),
+            prompt(150, "Synthetic final"), answer(160, "end_turn")]

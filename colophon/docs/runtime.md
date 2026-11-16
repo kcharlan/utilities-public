@@ -187,6 +187,9 @@ with a no-data label and explain the checked paths or disabling flag.
 The All footer includes absent-source details, Claude unknown-record diagnostics
 and the start of Claude token data when later than the calendar's start.
 The Claude boundary note appears only in Claude and All views.
+The turns KPI's neutral steered link filters sessions containing a steered turn;
+the status filter persists in the URL. Steered durations count toward active
+and average turn time, and are not counted as aborted.
 
 A session's workspace is, in order: a matching `workspaces.json` alias; its
 repository's normalized remote origin; its git root path; or its working
@@ -393,7 +396,18 @@ consumes the call without completing it; results from earlier turns and
 duplicates do not complete a later turn. A nonempty string handback message
 becomes the answer at the call's timestamp, and later assistant text can
 replace it. Later assistant stop reasons and other events still determine the
-final state and end clock. Main sessions do not use these handback rules.
+final state and, subject to the conversation clock rule below, the end clock.
+An assistant message with an explicit null stop reason, at least one text block
+and no tool-use block also completes a subagent turn. Main sessions do not use
+these subagent rules.
+
+Turn clocks advance on prompts, assistant records, non-meta user tool results
+and interruption markers, and system API errors. Other transcript bookkeeping
+can advance the session clock without extending a turn. A new prompt marks an
+otherwise open turn steered when an assistant was seen, a dequeue followed the
+last assistant, and no Stop hook summary followed it. Completed, interrupted
+and API-error states retain precedence. This heuristic can also match a queued
+resumption after a crash.
 Open turns follow the existing `corpus_quiet` quiet-time handling.
 
 Desktop metadata is read from

@@ -147,6 +147,8 @@ is cache creation, and `cache_write_1h` is the bounded one-hour component.
 Output and optional thinking tokens remain separate. Claude tiers are
 `fast|standard`; buckets retain the nine original entries and append the
 provider. The Codex accounting composer and pricing engine skip Claude.
+Output token values come from usage records under the selection rules above;
+visible response text does not supply replacement usage.
 Claude's independent pricing stage does not consume the Codex ledger;
 unpriced Claude units do not affect Codex totals or availability.
 

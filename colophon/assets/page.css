@@ -99,6 +99,7 @@ input[type="date"] { width: 150px; }
 .live { color: var(--g); }
 .warning, .warning .kpi-value { color: var(--amb); }
 .status-link { font-size: 9px; border: 0; padding: 0; color: var(--amb); background: transparent; }
+.status-link.neutral { color: var(--txt); }
 .overview-grid { display: grid; grid-template-columns: minmax(0, 1.75fr) minmax(0, 1fr); gap: 16px; }
 .panel-head { display: flex; justify-content: space-between; flex-wrap: wrap; align-items: center; gap: 8px; margin-bottom: 12px; }
 .panel-head .section-label { margin: 0; }

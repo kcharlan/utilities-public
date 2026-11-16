@@ -65,7 +65,8 @@ typedef struct {
   ClaudeRecord *r;
   Omap shell_ids;
   Omap handback_ids;
-  bool interrupted, api_error, completed;
+  bool interrupted, api_error, completed, steered;
+  bool assistant_seen, dequeued, stop_marked;
   size_t capacity;
 } Parse;
 static void finish(Parse *p) {
@@ -75,6 +76,7 @@ static void finish(Parse *p) {
   t->end_kind = p->interrupted ? STR_LIT("interrupted")
                 : p->api_error ? STR_LIT("aborted")
                 : p->completed ? STR_LIT("completed")
+                : p->steered ? STR_LIT("steered")
                                : STR_LIT("open");
   if (!str_equal(t->end_kind, STR_LIT("open")))
     t->end_ms = t->last_ms;
@@ -189,7 +191,7 @@ static Err on_record(void *context, const ReaderRecord *row) {
   }
   Str request = {0}, kind = STR_LIT("text");
   uint64_t images = 0;
-  bool prompt = false;
+  bool prompt = false, interruption = false;
   if (str_equal(type, STR_LIT("user")) && !yyjson_is_true(get(v, "isMeta")) &&
       !yyjson_is_true(get(v, "isCompactSummary"))) {
     yyjson_val *first = yyjson_arr_get_first(body);
@@ -198,9 +200,10 @@ static Err on_record(void *context, const ReaderRecord *row) {
         str_equal(first_type, STR_LIT("image"))) {
       TRY(content(&r->arena, body, &request, &images));
       Str leading = str_trim(request, true);
-      if (prefix(leading, "[Request interrupted by user"))
+      if (prefix(leading, "[Request interrupted by user")) {
         p->interrupted = true;
-      else if (!prefix(leading, "<task-notification>") &&
+        interruption = true;
+      } else if (!prefix(leading, "<task-notification>") &&
                !prefix(leading, "<local-command-stdout>") &&
                !prefix(leading, "<system-reminder>")) {
         prompt = true;
@@ -212,9 +215,11 @@ static Err on_record(void *context, const ReaderRecord *row) {
     }
   }
   if (prompt) {
+    p->steered = p->assistant_seen && p->dequeued && !p->stop_marked;
     finish(p);
     omap_destroy(&p->handback_ids);
-    p->interrupted = p->api_error = p->completed = false;
+    p->interrupted = p->api_error = p->completed = p->steered = false;
+    p->assistant_seen = p->dequeued = p->stop_marked = false;
     if (r->turn_count == p->capacity) {
       size_t n = p->capacity ? p->capacity * 2 : 8;
       void *next;
@@ -254,14 +259,37 @@ static Err on_record(void *context, const ReaderRecord *row) {
     return ERR_SUCCESS;
   size_t turn = r->turn_count - 1;
   TurnFact *t = r->turns[turn];
-  if (at.present)
+  bool user_result = false, has_text = false, has_tool = false;
+  size_t bi, bn;
+  yyjson_val *block_value;
+  yyjson_arr_foreach(body, bi, bn, block_value) {
+    Str block_type = text(get(block_value, "type"));
+    user_result |= str_equal(block_type, STR_LIT("tool_result"));
+    has_text |= str_equal(block_type, STR_LIT("text"));
+    has_tool |= str_equal(block_type, STR_LIT("tool_use"));
+  }
+  bool assistant = str_equal(type, STR_LIT("assistant"));
+  bool api_error = str_equal(type, STR_LIT("system")) &&
+                   str_equal(text(get(v, "subtype")), STR_LIT("api_error"));
+  if (at.present && (prompt || assistant || api_error ||
+      (str_equal(type, STR_LIT("user")) && !yyjson_is_true(get(v, "isMeta")) &&
+       (user_result || interruption))))
     t->last_ms = at;
-  p->api_error = str_equal(type, STR_LIT("system")) &&
-                 str_equal(text(get(v, "subtype")), STR_LIT("api_error"));
-  if (str_equal(type, STR_LIT("assistant"))) {
+  p->api_error = api_error;
+  if (str_equal(type, STR_LIT("queue-operation")) &&
+      str_equal(text(get(v, "operation")), STR_LIT("dequeue")))
+    p->dequeued = true;
+  if (str_equal(type, STR_LIT("system")) &&
+      str_equal(text(get(v, "subtype")), STR_LIT("stop_hook_summary")))
+    p->stop_marked = true;
+  if (assistant) {
+    p->assistant_seen = true;
+    p->dequeued = p->stop_marked = false;
     yyjson_val *stop = get(message, "stop_reason");
     p->completed = stop && !yyjson_is_null(stop) &&
                    !str_equal(text(stop), STR_LIT("tool_use"));
+    if (r->parent_session.p && stop && yyjson_is_null(stop) && has_text && !has_tool)
+      p->completed = true;
     uint64_t ignored;
     Str answer;
     TRY(content(&r->arena, body, &answer, &ignored));
