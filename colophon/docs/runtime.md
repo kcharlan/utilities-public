@@ -174,7 +174,7 @@ reader. Missing legacy provider fields mean Codex. Source filtering applies
 to overview totals, session lists, descendants and direct subagent links.
 The snapshot log count always includes Codex and Claude logs, regardless of the
 switch; accepted OpenCode and Antigravity database counts are shown separately. The footer
-displays the embedded payload's release version (`colophon 0.8.3`). Catalog
+displays the embedded payload's release version (`colophon 0.8.4`). Catalog
 names take precedence over fallback aliases; valid canonical IDs select one
 target, while existing Codex history keys remain unchanged.
 
@@ -266,7 +266,7 @@ An empty value selects the default `~/.claude` config root. Its
 `COLOPHON_HOME` selects the private runtime home (default `~/.colophon`);
 tilde expansion is supported. `COLOPHON_PRICING_URL` defaults to
 `https://models.dev/api.json`. Help and version exit without initializing
-runtime state. Version is currently `colophon 0.8.3`.
+runtime state. Version is currently `colophon 0.8.4`.
 
 | Flag | Behavior |
 | --- | --- |
@@ -545,7 +545,7 @@ memory acceptance is claimed.
 `claude-retained/<root-key>/` contains records whose source transcripts were
 positively proved deleted. Keys are SHA-256 names from the resolved search-root
 and original transcript paths. Files are private (0600), directories 0700.
-The Claude CLCD2 codec is independent of the Codex native cache. It preserves
+The Claude CLCD3 codec is independent of the Codex native cache. It preserves
 exact aliases, original paths, config/resume origin, prompts, turns, tools,
 sidecar facts and every raw usage row, including extraction-time cost snapshots
 for duplicate losers. Earlier codec versions keep their decoders and immutable
@@ -569,6 +569,16 @@ CLCD1 retained records remain readable. Their aggregate tool counts use a
 per-category maximum across copies because older facts cannot distinguish
 mirrored calls from complementary calls; their answer ordering uses the turn's
 last known clock. Live CLCD1 cache records reparse to obtain richer identities.
+Live records with an older parse revision reparse on every build until the
+revised record is successfully installed; retained records preserve their stored
+facts. A reparse can recapture extraction-time price snapshots, so costs can
+change; see [Claude pricing](token_rules.md#claude-pricing-and-public-seed-provenance)
+and `src/price/claude_cost.c`.
+
+Earlier decoders cannot read CLCD3. On rollback, available transcripts can be
+reparsed, but undecodable records cannot supply retained facts; unreadable
+retained files are reported and left in place, not deleted.
+
 Runtime turn mappings never replace the original stored turn keys or usage rows.
 
 Existing stores and history are inspected read-only before runtime creation.

@@ -2,6 +2,8 @@
 #define CP_CLAUDE_PARSE_H
 #include "corpus/assemble.h"
 #include "price/compose.h"
+/* Bump when persisted Claude parse facts change; see docs/development.md. */
+#define CLAUDE_PARSE_REVISION 1
 typedef struct {
   UsageUnit unit;
   Str message_id, request_id, session_id;
@@ -33,6 +35,7 @@ typedef struct {
   CorpusTools *tools;
   size_t turn_count;
   bool reader_facts; /* CLCD2 tool identities and answer clocks are available. */
+  uint64_t parse_revision;
   size_t reader_copies; /* Temporary reader view only; never persisted. */
   ClaudeToolFact *tool_facts;
   size_t tool_count, tool_capacity;

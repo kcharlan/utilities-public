@@ -354,7 +354,7 @@ static Err on_raw(void *context, const ReaderRawLine *line) {
 }
 Err claude_parse(const DiscoveredLog *key, Str root, Str config,
                  ClaudeRecord *out) {
-  *out = (ClaudeRecord){.key = *key, .reader_facts = true};
+  *out = (ClaudeRecord){.key = *key, .reader_facts = true, .parse_revision = CLAUDE_PARSE_REVISION};
   TRY(copy(&out->arena, key->path, &out->key.path));
   TRY(copy(&out->arena, root, &out->search_root));
   TRY(copy(&out->arena, config, &out->config_dir));

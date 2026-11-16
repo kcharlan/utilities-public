@@ -40,7 +40,8 @@ cache commit. Cleanup joins catalog work before freeing shared resources.
 
 The CLI resolves runtime and provider paths and inspects Claude history
 before runtime initialization. Absent Codex supplies empty scan, metadata
-and priority owners without opening its cache. Claude records have their
+and priority owners without opening its cache. Claude parser revisions follow
+the stored-facts rule in [development](development.md). Claude records have their
 own arenas and never occupy Codex `LogRecord` fields. Claude discovery is
 serial; cache lookup and parsing use the shared worker pool, with records and
 diagnostics collected in discovery order. After Codex subagent

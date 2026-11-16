@@ -414,4 +414,5 @@ Protocol handbacks need synthetic transcript coverage.
 
 Completion signals and answers can move from assistant text into tool calls
 and results. Cover those protocol transitions with synthetic transcripts,
-including delayed, duplicate, error and later-event cases.
+including delayed, duplicate, error and later-event cases. Bump the parser
+revision when stored facts change; see [development](development.md).

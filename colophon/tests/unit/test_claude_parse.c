@@ -299,6 +299,7 @@ static void parse_subagent_text(const char *bytes, ClaudeRecord *out) {
 #define HB_RESULT(id, err) "{\"type\":\"user\",\"timestamp\":\"2020-01-01T00:00:02Z\",\"message\":{\"content\":[{\"type\":\"tool_result\",\"tool_use_id\":\"" id "\",\"is_error\":" err "}]}}\n"
 #define HB_TEXT "{\"type\":\"assistant\",\"timestamp\":\"2020-01-01T00:00:03Z\",\"message\":{\"stop_reason\":\"end_turn\",\"content\":[{\"type\":\"text\",\"text\":\"Synthetic later answer\"}]}}\n"
 #define HB_UNRESOLVED "{\"type\":\"assistant\",\"timestamp\":\"2020-01-01T00:00:03Z\",\"message\":{\"stop_reason\":\"tool_use\",\"content\":[{\"type\":\"tool_use\",\"id\":\"synthetic-other\",\"name\":\"Read\"}]}}\n"
+#define HB_TEXT_AFTER_NEW "{\"type\":\"assistant\",\"timestamp\":\"2020-01-01T00:00:05Z\",\"message\":{\"stop_reason\":\"end_turn\",\"content\":[{\"type\":\"text\",\"text\":\"Synthetic later answer\"}]}}\n"
 #define HB_NEW "{\"type\":\"user\",\"timestamp\":\"2020-01-01T00:00:04Z\",\"message\":{\"content\":\"Synthetic next request\"}}\n"
 #define HB_CALL_TEXT HB_CALL("\"tool_use\"", "\"message\":\"Synthetic handback report\"")
 #define HB_SUCCESS HB_PROMPT HB_CALL_TEXT HB_RESULT("synthetic-hb", "false")
@@ -343,8 +344,8 @@ TEST(claude_subagent_handback_later_text_answer) {
 }
 TEST(claude_subagent_handback_later_tool_open) { handback_check(HB_SUCCESS HB_UNRESOLVED, 0, "open", 0); }
 TEST(claude_subagent_handback_new_prompt_independent) {
-  handback_check(HB_SUCCESS HB_NEW HB_TEXT, 0, "completed", 1577836802000LL);
-  handback_check(HB_SUCCESS HB_NEW HB_TEXT, 1, "completed", 1577836803000LL);
+  handback_check(HB_SUCCESS HB_NEW HB_TEXT_AFTER_NEW, 0, "completed", 1577836802000LL);
+  handback_check(HB_SUCCESS HB_NEW HB_TEXT_AFTER_NEW, 1, "completed", 1577836805000LL);
 }
 TEST(claude_subagent_handback_delayed_result_open) { handback_check(HB_PROMPT HB_CALL_TEXT HB_NEW HB_RESULT("synthetic-hb", "false"), 1, "open", 0); }
 TEST(claude_subagent_handback_duplicate_result_open) { handback_check(HB_SUCCESS HB_UNRESOLVED HB_RESULT("synthetic-hb", "false"), 0, "open", 0); }

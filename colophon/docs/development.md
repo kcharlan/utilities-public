@@ -125,7 +125,9 @@ and the asset manifest when deliberately updating embedded inputs.
 Changes to serialized Codex `LogRecord` or `TokenStream` content require a
 native cache format bump in `src/cache/cache.c`; compose-only accounting rows
 are rebuilt and are not cached. Keep Claude codec versions independent and
-preserve their old decoders and immutable synthetic inputs.
+preserve their old decoders and immutable synthetic inputs. Parsing changes that
+alter stored Claude facts must bump `CLAUDE_PARSE_REVISION` in
+`src/claude/parse.h`; stored-layout changes also add a codec version.
 
 Pricing lesson: an incorrectly seeded long-context threshold must be corrected
 in every existing curated-history row, not only in the resolver or a new dated

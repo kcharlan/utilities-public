@@ -620,3 +620,40 @@ def test_claude_subagent_handback_completed_after_quiet(tmp_path):
     assert turn['duration_ms'] == 2000
     assert turn['final_answer']['text'] == 'Synthetic handback report'
     assert 'abandoned' not in agent['flags']
+
+
+def test_claude_handback_stale_v2_live_cache_reparses(tmp_path):
+    import hashlib
+    run = NativeRun(tmp_path)
+    parent = run.claude_session('synthetic-parent')
+    rows = [
+        {'type': 'user', 'timestamp': '2020-01-01T00:00:00Z', 'message': {'content': 'Synthetic request'}},
+        {'type': 'assistant', 'timestamp': '2020-01-01T00:00:01Z', 'message': {'stop_reason': 'tool_use', 'content': [
+            {'type': 'tool_use', 'id': 'synthetic-hb', 'name': 'SubagentHandback', 'input': {'message': 'Synthetic report'}}]}},
+        {'type': 'user', 'timestamp': '2020-01-01T00:00:02Z', 'message': {'content': [
+            {'type': 'tool_result', 'tool_use_id': 'synthetic-hb', 'is_error': False}]}},
+    ]
+    child = run.claude_session('agent-synthetic-child', directory=parent.parent / 'synthetic-parent/subagents', rows=rows)
+    assert run.build().returncode == 0
+    original, mtime = child.read_bytes(), child.stat().st_mtime_ns
+    records = store_records(run, 'cache-claude')
+    matches = [(p, json.loads(p.read_bytes()[71:])) for p in records]
+    matches = [(p, body) for p, body in matches if body[7] == 'synthetic-parent/agent-synthetic-child']
+    (path, body), = matches
+    assert path.read_bytes().startswith(b'CLCD3\n')
+    index, = [i for i, value in enumerate(body) if value == 'completed']
+    body[index] = 'open'
+    assert body[index + 1:index + 5] == [True, 1577836800000, True, 1577836802000]
+    body[index + 3:index + 5] = [False]
+    assert body.pop() == 1
+    data = json.dumps(body, separators=(',', ':')).encode()
+    path.write_bytes(b'CLCD2\n' + hashlib.sha256(data).hexdigest().encode() + b'\n' + data)
+    assert run.build().returncode == 0
+    payload = run.payload(); source = payload['meta']['sources']['claude']
+    assert (source['parsed'], source['cached']) == (1, 1)
+    turn, = payload['subagents']['synthetic-parent/agent-synthetic-child']['turns']
+    assert (turn['status'], turn['duration_ms']) == ('completed', 2000)
+    assert (child.read_bytes(), child.stat().st_mtime_ns) == (original, mtime)
+    assert run.build().returncode == 0
+    source = run.payload()['meta']['sources']['claude']
+    assert (source['parsed'], source['cached']) == (0, 2)
