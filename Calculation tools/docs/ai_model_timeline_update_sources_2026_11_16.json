@@ -1,0 +1,173 @@
+{
+  "checked": "2026-11-16",
+  "latestRelease": "2026-11-16",
+  "baselineManifest": "ai_model_timeline_update_sources_2026_11_13.json",
+  "preservedHistoricalRows": 626,
+  "additions": [
+    {
+      "model": "Qwen4-Max",
+      "lab": "Alibaba (Qwen)",
+      "date": "2026-11-16",
+      "tier": "flagship",
+      "note": "Hosted flagship with native vision, 1M context and a 2.4T-parameter mixture-of-experts backbone with 71B active per token. Available through QwenCloud API and Token Plan, QwenWork and QwenStudio, following the November 11 preview; smaller open-weight Qwen4 models are planned separately.",
+      "source": "https://www.alibabacloud.com/en/press-room/alibaba-unveils-qwen4-max"
+    },
+    {
+      "model": "Hy4 flash",
+      "lab": "Tencent",
+      "date": "2026-11-16",
+      "tier": "mid",
+      "note": "Hosted multimodal model for everyday agent workflows, with 224B total parameters (including 64B Engram parameters), 12B active and up to 1M context. Available through Tencent Cloud TokenHub and Tencent apps; OpenRouter integration and public weights are planned.",
+      "source": "https://www.tencent.com/tencent-launches-hy4-flash-to-power-high-speed-cost-efficient-ai-deployment-for-everyday-workflows/"
+    },
+    {
+      "model": "CSAM Image Classifier",
+      "lab": "OpenAI",
+      "date": "2026-11-16",
+      "tier": "specialty",
+      "note": "Restricted API classifier for approved organizations, providing separate scores for potential CSAM and AI-generated CSAM to prioritize human review. Available at no cost through the moderations endpoint as omni-moderation-csam-latest.",
+      "source": "https://developers.openai.com/api/docs/changelog"
+    },
+    {
+      "model": "LongCat-Video-Avatar 1.6",
+      "lab": "Meituan",
+      "date": "2026-11-15",
+      "tier": "specialty",
+      "note": "Open-weight audio-driven avatar update with more natural lip, face and body motion and improved long-video consistency. Builds on Avatar 1.5 with distilled LoRA checkpoints; publisher reports generation exceeding ten minutes.",
+      "source": "https://github.com/meituan-longcat/LongCat-Video"
+    },
+    {
+      "model": "Agnes 2.5 Pro Theta",
+      "lab": "Agnes AI",
+      "date": "2026-11-15",
+      "tier": "open-weights",
+      "note": "Apache-2.0 multimodal mixture-of-experts checkpoint with approximately 187.8B total parameters and 262,144-token configured context. Public BF16 weights, tokenizer, custom Transformers implementation and image/video processors support local text generation and visual understanding. Published benchmark scores are vendor supplied.",
+      "source": "https://huggingface.co/Agnes-AI/Agnes-2.5-Pro-Theta"
+    },
+    {
+      "model": "Haru-4B",
+      "lab": "higurashi",
+      "date": "2026-11-13",
+      "tier": "specialty",
+      "note": "Apache-2.0 pretrained speech-to-speech base model for research, built on Qwen3.5-4B. Listens and speaks simultaneously in nine primary languages, with text character prompts and reference-audio voice control. Public weights and inference implementations support PyTorch, MLX and vLLM-Omni; this is a base model rather than a finished assistant.",
+      "source": "https://blog.higurashi.ai/melte/haru4b/"
+    },
+    {
+      "model": "Ling-3.2-flash",
+      "lab": "Ant Group (inclusionAI)",
+      "date": "2026-11-05",
+      "tier": "mid",
+      "note": "Hosted native multimodal reasoning model with 560B total and 25B active parameters, 1M context and text, image and video input. Available through Ant Ling chat and OpenAI- or Anthropic-compatible APIs; targets visual understanding and long-horizon agent tasks. OpenRouter listed a free text/image endpoint on November 13; public downloadable weights were not established.",
+      "source": "https://developer.ant-ling.com/en/docs/getting-started/changelog/"
+    }
+  ],
+  "corrections": [],
+  "dateEvidence": [
+    {
+      "models": [
+        "Qwen4-Max"
+      ],
+      "sourceURLs": [
+        "https://www.alibabacloud.com/en/press-room/alibaba-unveils-qwen4-max"
+      ],
+      "result": "Official November 16 announcement says the model is available through QwenCloud API and Token Plan, QwenWork and QwenStudio. Smaller open-weight models are planned, separate from Max and the November 11 preview."
+    },
+    {
+      "models": [
+        "Hy4 flash"
+      ],
+      "sourceURLs": [
+        "https://www.tencent.com/tencent-launches-hy4-flash-to-power-high-speed-cost-efficient-ai-deployment-for-everyday-workflows/"
+      ],
+      "result": "Official November 16 announcement says released today through Tencent Cloud TokenHub and Tencent apps. OpenRouter integration and public weights are planned."
+    },
+    {
+      "models": [
+        "CSAM Image Classifier"
+      ],
+      "sourceURLs": [
+        "https://developers.openai.com/api/docs/changelog",
+        "https://help.openai.com/en/articles/9624314-model-release-notes"
+      ],
+      "result": "November 16 API changelog records availability through the moderations endpoint to approved organizations, with separate scores to prioritize human review."
+    },
+    {
+      "models": [
+        "LongCat-Video-Avatar 1.6"
+      ],
+      "sourceURLs": [
+        "https://github.com/meituan-longcat/LongCat-Video",
+        "https://huggingface.co/meituan-longcat/LongCat-Video-Avatar-1.6"
+      ],
+      "result": "Publisher's latest news dates the release November 15 and links public weights and code; model repository offers downloadable weights."
+    },
+    {
+      "models": [
+        "Agnes 2.5 Pro Theta"
+      ],
+      "sourceURLs": [
+        "https://huggingface.co/Agnes-AI/Agnes-2.5-Pro-Theta",
+        "https://huggingface.co/api/models/Agnes-AI/Agnes-2.5-Pro-Theta/commits/main",
+        "https://huggingface.co/api/models/Agnes-AI/Agnes-2.5-Pro-Theta/tree/1f5791a53ea72d06c4badb8a0f5a2a267c88343c?recursive=true&limit=1000"
+      ],
+      "result": "Full release commit 1f5791a53ea72d06c4badb8a0f5a2a267c88343c dated November 15 UTC contains 105 weight shards and index; an initial empty commit is not evidence of weight availability."
+    },
+    {
+      "models": [
+        "Haru-4B"
+      ],
+      "sourceURLs": [
+        "https://blog.higurashi.ai/melte/haru4b/",
+        "https://huggingface.co/higurashi-ai/Haru-4B",
+        "https://huggingface.co/api/models/higurashi-ai/Haru-4B/commits/main"
+      ],
+      "result": "Publisher's November 13 technical post announces the base model and weights. Public weight commit 8d6e83bcd3701a76fc27a764965665da1df7da78 is dated November 13 UTC; November 16 was secondary coverage."
+    },
+    {
+      "models": [
+        "Ling-3.2-flash"
+      ],
+      "sourceURLs": [
+        "https://developer.ant-ling.com/en/docs/getting-started/changelog/",
+        "https://developer.ant-ling.com/en/docs/models/ling/",
+        "https://openrouter.ai/inclusionai/ling-3.2-flash:free"
+      ],
+      "result": "Publisher changelog v2.0.6 dates chat and API launch November 5. OpenRouter's November 13 date is its own listing; public downloadable weights were not established."
+    }
+  ],
+  "exclusions": [
+    {
+      "candidate": "LongCat-2.5; Atlas public access",
+      "reason": "Repeat coverage of existing November 9 and November 12 milestones.",
+      "sources": [
+        "https://x.com/Meituan_LongCat/status/2119793531393040462",
+        "https://worldlabs.ai/atlas"
+      ]
+    },
+    {
+      "candidate": "Gemini 4 Carbon MathArena result",
+      "reason": "Benchmark result, not a new model release.",
+      "sources": [
+        "https://blog.google/innovation-and-ai/models-and-research/gemini-models/gemini-4-carbon-now-available/"
+      ]
+    },
+    {
+      "candidate": "Fx-Bio-1031",
+      "reason": "Full weights were already public October 31 UTC; November 14 was secondary coverage, outside this update window.",
+      "sources": [
+        "https://huggingface.co/endless-frontier/Fx-Bio-1031",
+        "https://huggingface.co/api/models/endless-frontier/Fx-Bio-1031/commits/main"
+      ]
+    }
+  ],
+  "sourceSweep": [
+    {
+      "lab": "November releases and earlier gaps",
+      "sourceURLs": [
+        "https://developer.ant-ling.com/en/docs/getting-started/changelog/",
+        "https://blog.higurashi.ai/melte/haru4b/"
+      ],
+      "result": "Compared coverage with existing records and publisher announcements, model cards and public hosting metadata."
+    }
+  ]
+}
