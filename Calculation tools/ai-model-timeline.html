@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>AI Model Release Timeline — Jan 2024 to Nov 13, 2026</title>
+<title>AI Model Release Timeline — Jan 2024 to Nov 16, 2026</title>
 <!-- frontend-vendor:begin d3 -->
 <!--
 Copyright 2010-2023 Mike Bostock
@@ -156,7 +156,7 @@ THIS SOFTWARE.
 <body>
 <header>
   <h1>AI Model Release Timeline</h1>
-  <div class="sub"><span data-release-count>626</span> notable model releases from <span data-lab-count>133</span> labs · <span data-earliest-month>January 2024</span> – <span data-latest-date>November 13, 2026</span> · checked November 13, 2026 · press ? for controls and shortcuts</div>
+  <div class="sub"><span data-release-count>633</span> notable model releases from <span data-lab-count>134</span> labs · <span data-earliest-month>January 2024</span> – <span data-latest-date>November 16, 2026</span> · checked November 16, 2026 · press ? for controls and shortcuts</div>
 </header>
 <div class="chrome">
   <div class="toolbar">
@@ -226,19 +226,19 @@ THIS SOFTWARE.
 <p class="scope-note" hidden>The findings below describe the full dataset (<span data-earliest-month></span> – <span data-latest-date></span>), not the current range or filters.</p>
 <section class="findings">
   <h2>What the data says: release-timing patterns</h2>
-  <p>Descriptive analysis of all <span data-release-count>626</span> dated release events through November 13, 2026. “Major” means flagship + mid tiers. Grouped family releases count as one event; previews, hosted snapshots, and general releases can be separate events.</p>
+  <p>Descriptive analysis of all <span data-release-count>633</span> dated release events through November 16, 2026. “Major” means flagship + mid tiers. Grouped family releases count as one event; previews, hosted snapshots, and general releases can be separate events.</p>
   <h3>1. Does Moonshot follow Anthropic by 6–8 weeks?</h3>
   <div class="verdict"><b>No consistent 6–8 week pattern.</b> For Moonshot's 11 major releases with a prior Anthropic major, the lags are 14, 90, 50, 31, 38, 64, 4, 16, 10, 25, 25 days. Only 1 of 11 falls in the 42–56 day window. The median is 25 days. These dates alone do not establish whether either lab responds to the other.</div>
   <h3>2. Google's timing relative to OpenAI</h3>
   <p>Across 18 Google major releases with a prior OpenAI major, the median lag is <b>11 days</b> (mean 21.7). Gemini 1.5 Pro and Sora were announced on the same day, February 15, 2024; Gemini 2.5 Pro and GPT-4o image generation were also same-day events, March 25, 2025. Astra arrived after Gemini 3.8 Flash, so it does not change that earlier release's follower lag.</p>
   <h3>3. Cross-lab release clusters</h3>
-  <p>There are <b>814 same-day cross-lab release pairs</b> and 3374 pairs within 2 days (including same-day pairs). Multiple models on one date contribute multiple pairs, so these are event-pair counts, not distinct days.</p>
-  <p>Recent releases include HeyGen Decision 1 (November 13), Atlas (public access) (November 12), Bielik-One family (November 12), Edge0-145B / Edge0-120B (November 12), Gemini 4 Hydrogen (November 12), Granite 4.1 3B / 8B LLMON Preview (November 12), Hark Handoff² (November 12), MetaEncoder v1 (November 12), Perplexity Decider v1.3 / Decider Flash v1.3 (November 12), SOV-Transcribe-1 (November 12), AlphaGenome 2 (November 11), Bielik-11B-v3.1 DFlash (November 11), BotPsy-0.8B (November 11), ERNIE-Wizshot-ME (documented API availability) (November 11), Gemini Decision 1 (November 11), PAN 2 (November 11), Praxis-1 (open weights) (November 11), Qwen4-Max-Preview (November 11), Scribe v3 Medical (announcement) (November 11).</p>
+  <p>There are <b>828 same-day cross-lab release pairs</b> and 3432 pairs within 2 days (including same-day pairs). Multiple models on one date contribute multiple pairs, so these are event-pair counts, not distinct days.</p>
+  <p>Recent releases include CSAM Image Classifier (November 16), Hy4 flash (November 16), Qwen4-Max (November 16), Agnes 2.5 Pro Theta (November 15), LongCat-Video-Avatar 1.6 (November 15).</p>
   <h3>4. Release cadence</h3>
   <table><tr><th>Lab</th><th>All releases (median gap)</th><th>Major releases (median gap)</th></tr>
     <tr><td>Google</td><td>7 days</td><td>29 days</td></tr>
-    <tr><td>OpenAI</td><td>11.5 days</td><td>52 days</td></tr>
-    <tr><td>Alibaba (Qwen)</td><td>11.5 days</td><td>49 days</td></tr>
+    <tr><td>OpenAI</td><td>11 days</td><td>52 days</td></tr>
+    <tr><td>Alibaba (Qwen)</td><td>11 days</td><td>43.5 days</td></tr>
     <tr><td>DeepSeek</td><td>39.5 days</td><td>64 days</td></tr>
     <tr><td>Z.ai (Zhipu)</td><td>49 days</td><td>66 days</td></tr>
     <tr><td>Anthropic</td><td>39 days</td><td>48.5 days</td></tr>
@@ -249,13 +249,13 @@ THIS SOFTWARE.
   </table>
   <p>Gaps include same-day events. Open-weight releases are a separate tier and are excluded from “major” even when they are a lab's flagship; compare these cadence figures with that classification in mind.</p>
   <h3>5. Weekday distribution</h3>
-  <p>Sunday: 17 · Monday: 103 · Tuesday: 126 · Wednesday: 127 · Thursday: 162 · Friday: 78 · Saturday: 13. These describe the selected release events, not all industry launches.</p>
+  <p>Sunday: 19 · Monday: 106 · Tuesday: 126 · Wednesday: 127 · Thursday: 163 · Friday: 79 · Saturday: 13. These describe the selected release events, not all industry launches.</p>
   <h3>6. Release volume</h3>
-  <p>Releases per year: 88 (2024) → 134 (2025) → 404 (2026). The final year is partial, through November 13, 2026.</p>
-  <p>Largest monthly totals: 2026-10: 130 · 2026-09: 93 · 2026-11: 67 · 2026-07: 24 · 2026-08: 20 · 2026-04: 17 · 2025-08: 16 · 2026-06: 15.</p>
+  <p>Releases per year: 88 (2024) → 134 (2025) → 411 (2026). The final year is partial, through November 16, 2026.</p>
+  <p>Largest monthly totals: 2026-10: 130 · 2026-09: 93 · 2026-11: 74 · 2026-07: 24 · 2026-08: 20 · 2026-04: 17 · 2025-08: 16 · 2026-06: 15.</p>
   <h3>7. Interpretation and limits</h3>
   <p>Release timing alone does not demonstrate competitive response or causation. These descriptive counts do not test statistical significance. Shared launch calendars, selection of notable releases, and multiple related models announced together can all produce apparent timing patterns.</p>
-  <p class="caveat">Dates generally represent public announcements; explicitly noted hosted availability dates are used for some API models. Approximate dates are flagged in tooltips. A follower lag uses the most recent same-day or earlier major release; events with no prior leader release are excluded. This is a curated timeline, not an exhaustive model registry. Access can be staged or restricted even after announcement. Verification checked November 13, 2026.</p>
+  <p class="caveat">Dates generally represent public announcements; explicitly noted hosted availability dates are used for some API models. Approximate dates are flagged in tooltips. A follower lag uses the most recent same-day or earlier major release; events with no prior leader release are excluded. This is a curated timeline, not an exhaustive model registry. Access can be staged or restricted even after announcement. Verification checked November 16, 2026.</p>
 </section>
 
 <script id="timeline-core">
@@ -499,6 +499,13 @@ THIS SOFTWARE.
 </script>
 <script>
 const DATA = [
+{"model":"Qwen4-Max","lab":"Alibaba (Qwen)","date":"2026-11-16","tier":"flagship","note":"Hosted flagship with native vision, 1M context and a 2.4T-parameter mixture-of-experts backbone with 71B active per token. Available through QwenCloud API and Token Plan, QwenWork and QwenStudio, following the November 11 preview; smaller open-weight Qwen4 models are planned separately.","source":"https://www.alibabacloud.com/en/press-room/alibaba-unveils-qwen4-max"},
+{"model":"Hy4 flash","lab":"Tencent","date":"2026-11-16","tier":"mid","note":"Hosted multimodal model for everyday agent workflows, with 224B total parameters (including 64B Engram parameters), 12B active and up to 1M context. Available through Tencent Cloud TokenHub and Tencent apps; OpenRouter integration and public weights are planned.","source":"https://www.tencent.com/tencent-launches-hy4-flash-to-power-high-speed-cost-efficient-ai-deployment-for-everyday-workflows/"},
+{"model":"CSAM Image Classifier","lab":"OpenAI","date":"2026-11-16","tier":"specialty","note":"Restricted API classifier for approved organizations, providing separate scores for potential CSAM and AI-generated CSAM to prioritize human review. Available at no cost through the moderations endpoint as omni-moderation-csam-latest.","source":"https://developers.openai.com/api/docs/changelog"},
+{"model":"LongCat-Video-Avatar 1.6","lab":"Meituan","date":"2026-11-15","tier":"specialty","note":"Open-weight audio-driven avatar update with more natural lip, face and body motion and improved long-video consistency. Builds on Avatar 1.5 with distilled LoRA checkpoints; publisher reports generation exceeding ten minutes.","source":"https://github.com/meituan-longcat/LongCat-Video"},
+{"model":"Agnes 2.5 Pro Theta","lab":"Agnes AI","date":"2026-11-15","tier":"open-weights","note":"Apache-2.0 multimodal mixture-of-experts checkpoint with approximately 187.8B total parameters and 262,144-token configured context. Public BF16 weights, tokenizer, custom Transformers implementation and image/video processors support local text generation and visual understanding. Published benchmark scores are vendor supplied.","source":"https://huggingface.co/Agnes-AI/Agnes-2.5-Pro-Theta"},
+{"model":"Haru-4B","lab":"higurashi","date":"2026-11-13","tier":"specialty","note":"Apache-2.0 pretrained speech-to-speech base model for research, built on Qwen3.5-4B. Listens and speaks simultaneously in nine primary languages, with text character prompts and reference-audio voice control. Public weights and inference implementations support PyTorch, MLX and vLLM-Omni; this is a base model rather than a finished assistant.","source":"https://blog.higurashi.ai/melte/haru4b/"},
+{"model":"Ling-3.2-flash","lab":"Ant Group (inclusionAI)","date":"2026-11-05","tier":"mid","note":"Hosted native multimodal reasoning model with 560B total and 25B active parameters, 1M context and text, image and video input. Available through Ant Ling chat and OpenAI- or Anthropic-compatible APIs; targets visual understanding and long-horizon agent tasks. OpenRouter listed a free text/image endpoint on November 13; public downloadable weights were not established.","source":"https://developer.ant-ling.com/en/docs/getting-started/changelog/"},
 {"model":"HeyGen Decision 1","lab":"HeyGen","date":"2026-11-13","tier":"specialty","note":"Multimodal decision model for classification, yes/no evaluation and scoring over text, images and sampled video frames. Quality model is available through HeyGen's API; its Turbo companion remains a preview in the publisher's documentation.","source":"https://developers.heygen.com/docs/models/heygen-decision"},
 {"model":"Atlas (public access)","lab":"World Labs","date":"2026-11-12","tier":"specialty","note":"Public access to the existing spatial world model through Viewfinder, Chisel and developer APIs, for generating or reconstructing worlds and exporting images, video or 3D Gaussian splats. An availability milestone rather than a new model version or an open-weight release.","source":"https://worldlabs.ai/atlas"},
 {"model":"Bielik-One family","lab":"SpeakLeash / Cyfronet AGH","date":"2026-11-12","tier":"specialty","note":"Four Apache-2.0 decision models classify or score inputs against supplied criteria and return probabilities instead of free-form answers. Public merged weights cover 4B, 7B-v3.0, 11B-v3.0 and 11B-v3.1 variants, with adapter releases alongside them.","source":"https://www.bielik.ai/en/blog/launching-bielik-11b-v31-dflash-and-the-bielik-one-family"},

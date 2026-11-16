@@ -37,6 +37,37 @@ function loadCore() {
 
 const data = extractData();
 
+test('November 16 update distinguishes hosted launches from public weights', () => {
+  const row = model => data.find(item => item.model === model);
+  const qwen = row('Qwen4-Max');
+  assert.equal(qwen?.date, '2026-11-16');
+  assert.equal(qwen?.tier, 'flagship');
+  assert.match(qwen.note, /QwenCloud API.*smaller open-weight Qwen4 models are planned/);
+  assert.equal(row('Qwen4-Max-Preview')?.date, '2026-11-11');
+  const hy = row('Hy4 flash');
+  assert.equal(hy?.date, '2026-11-16');
+  assert.equal(hy?.tier, 'mid');
+  assert.match(hy.note, /TokenHub.*public weights are planned/);
+  const avatar = row('LongCat-Video-Avatar 1.6');
+  assert.equal(avatar?.date, '2026-11-15');
+  assert.equal(avatar?.tier, 'specialty');
+  assert.match(avatar.note, /Open-weight audio-driven avatar/);
+  const agnes = row('Agnes 2.5 Pro Theta');
+  assert.equal(agnes?.date, '2026-11-15');
+  assert.equal(agnes?.tier, 'open-weights');
+  assert.match(agnes.note, /Public BF16 weights/);
+  const haru = row('Haru-4B');
+  assert.equal(haru?.date, '2026-11-13');
+  assert.match(haru.note, /base model rather than a finished assistant/);
+  const ling = row('Ling-3.2-flash');
+  assert.equal(ling?.date, '2026-11-05');
+  assert.match(ling.note, /November 13.*weights were not established/);
+  const classifier = row('CSAM Image Classifier');
+  assert.equal(classifier?.date, '2026-11-16');
+  assert.equal(classifier?.tier, 'specialty');
+  assert.match(classifier.note, /approved organizations.*human review/);
+});
+
 test('November 13 update records release milestones and access distinctions', () => {
   const row = model => data.find(item => item.model === model);
   assert.equal(row('HeyGen Decision 1')?.date, '2026-11-13');
@@ -320,8 +351,8 @@ test('static header metadata and initial chart domain cover the dataset', () => 
   const titleDate = new Date(`${latest}T00:00:00Z`).toLocaleDateString('en-US', {timeZone:'UTC', month:'short', day:'numeric', year:'numeric'});
   assert.ok(html.includes(`<title>AI Model Release Timeline — Jan 2024 to ${titleDate}</title>`), 'static title reflects the latest release before scripts run');
   assert.ok(html.includes(`<span data-latest-date>${latestLabel}</span>`));
-  assert.equal((html.match(/· checked November 13, 2026 ·/g) || []).length, 1);
-  assert.equal((html.match(/Verification checked November 13, 2026/g) || []).length, 1);
+  assert.equal((html.match(/· checked November 16, 2026 ·/g) || []).length, 1);
+  assert.equal((html.match(/Verification checked November 16, 2026/g) || []).length, 1);
   // Proportional range padding replaces the former fixed ±15-day x0 domain,
   // so assert the core-driven domain instead of its retired literal expression.
   const script = extractInlineScript();
@@ -470,14 +501,14 @@ const {analyze, render} = require('../scripts/timeline-analysis.cjs');
 
 test('narrative statistics match the expanded dataset', () => {
   const stats = analyze(data);
-  assert.equal(stats.total, 626);
-  assert.equal(new Set(data.map(row => row.lab)).size, 133);
-  assert.equal(stats.sameDay, 814);
-  assert.equal(stats.withinTwo, 3374);
-  assert.deepEqual(stats.years, {'2024': 88, '2025': 134, '2026': 404});
-  assert.deepEqual(stats.weekdays, {'0':17, '1':103, '2':126, '3':127, '4':162, '5':78, '6':13});
+  assert.equal(stats.total, 633);
+  assert.equal(new Set(data.map(row => row.lab)).size, 134);
+  assert.equal(stats.sameDay, 828);
+  assert.equal(stats.withinTwo, 3432);
+  assert.deepEqual(stats.years, {'2024': 88, '2025': 134, '2026': 411});
+  assert.deepEqual(stats.weekdays, {'0':19, '1':106, '2':126, '3':127, '4':163, '5':79, '6':13});
   assert.equal(stats.months['2026-10'], 130);
-  assert.equal(stats.months['2026-11'], 67);
+  assert.equal(stats.months['2026-11'], 74);
   assert.equal(stats.cadence.OpenAI.major, 52);
   assert.equal(stats.cadence.Google.major, 29);
   assert.deepEqual(stats.moonshotLags, [14,90,50,31,38,64,4,16,10,25,25]);
@@ -503,10 +534,10 @@ test('analysis handles same-day pairs, medians, and missing prior releases', () 
 
 test('recent-release summary follows the latest dated rows', () => {
   const summary = render(analyze(data));
-  assert.match(summary, /HeyGen Decision 1 \(November 13\)/);
-  assert.match(summary, /Gemini 4 Hydrogen \(November 12\)/);
-  assert.match(summary, /Qwen4-Max-Preview \(November 11\)/);
-  assert.match(summary, /Gemini Decision 1 \(November 11\)/);
+  assert.match(summary, /Qwen4-Max \(November 16\)/);
+  assert.match(summary, /Hy4 flash \(November 16\)/);
+  assert.match(summary, /LongCat-Video-Avatar 1\.6 \(November 15\)/);
+  assert.doesNotMatch(summary, /HeyGen Decision 1 \(November 13\)/);
   assert.doesNotMatch(summary, /Shizuku-Duplex \(research announcement\) \(November 8\)/);
   assert.doesNotMatch(summary, /Arete-27B \(November 6\)/);
   assert.doesNotMatch(summary, /Gemini Omni 1\.2 Flash \(November 5\)/);
