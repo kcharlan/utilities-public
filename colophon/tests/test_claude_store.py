@@ -664,12 +664,19 @@ def test_claude_steered_clocks_and_idle(tmp_path):
     import os
     run = NativeRun(tmp_path)
     path = run.claude_session(rows=claude_steered_rows())
+    # Claude usage admission's raw-line filter expects compact JSON.
+    path.write_text(''.join(json.dumps(row, separators=(',', ':')) + '\n' for row in claude_steered_rows()))
     os.utime(path, (1577836800, 1577836800))
     assert run.build().returncode == 0
     session = run.payload()["sessions"][0]
-    assert [turn["status"] for turn in session["turns"]] == ["completed", "steered", "completed"]
-    assert [turn["duration_ms"] for turn in session["turns"]] == [10000, 10000, 10000]
-    assert session["idle_ms"] == 130000
+    assert [turn["status"] for turn in session["turns"]] == ["completed", "steered", "completed", "completed", "completed"]
+    assert [turn["duration_ms"] for turn in session["turns"]] == [10000] * 5
+    assert [turn["requests"][0]["kind"] for turn in session["turns"]] == ["text", "text", "text", "peer", "text"]
+    assert session["turns"][-1]["requests"][0]["text"] == "Synthetic SDK prompt"
+    assert session["idle_ms"] == 260000
+    assert session["own_usage"]["input"] == 50
+    for component in ("input", "output"):
+        assert session["own_usage"][component] == session["outside_usage"][component] + sum(turn["usage"][component] for turn in session["turns"])
     assert not set(session["flags"]) & {"aborted", "interrupted", "abandoned"}
 
 
@@ -686,3 +693,15 @@ def test_claude_subagent_null_text_not_abandoned(tmp_path):
     child = run.payload()["subagents"]["synthetic-parent/agent-child"]
     assert child["turns"][0]["status"] == "completed"
     assert "abandoned" not in child["flags"]
+
+
+def test_claude_title_skips_agent_requests(tmp_path):
+    run = NativeRun(tmp_path)
+    rows = [{"type": "user", "turnOrigin": "peer", "isMeta": True, "message": {"content": "Synthetic agent request"}},
+            {"type": "user", "message": {"content": "Synthetic eligible title"}}]
+    run.claude_session(name="synthetic-title", rows=rows)
+    run.claude_session(name="synthetic-only-agent", rows=rows[:1])
+    assert run.build().returncode == 0
+    sessions = {row["id"]: row for row in run.payload()["sessions"]}
+    assert sessions["synthetic-title"]["title"] == "Synthetic eligible title"
+    assert sessions["synthetic-only-agent"]["title"] == "synthetic-only-agent"

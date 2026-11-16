@@ -409,6 +409,19 @@ last assistant, and no Stop hook summary followed it. Completed, interrupted
 and API-error states retain precedence. This heuristic can also match a queued
 resumption after a crash.
 
+A non-compact user record with a string `turnOrigin` starts a turn even when
+marked meta or led by a tag. `task_notification` and `peer` origins produce
+notification and peer requests; other origins use the normal tag classification.
+Leading system-reminder elements are removed from their request text. A
+non-meta task-notification without an origin starts a notification turn only
+when no turn exists or the preceding turn is terminal. A coordinator-origin
+user record starts a resume turn in a subagent. Notification, peer and resume
+requests cannot supply the fallback session title; the first text or command
+request does, otherwise the filename is used. Assistant API-error messages
+abort a turn unless a later assistant message clears the error. A command with
+no assistant reply completes at its last conversation clock; reply-less text
+remains open. A wakeup starts its own clock, leaving the preceding wait idle.
+
 For all providers, turns are stably ordered by their available start or end
 clock, with missing clocks last. Only the final ordered open turn can be
 running, and only in a non-quiet log. Earlier open turns are abandoned without

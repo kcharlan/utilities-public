@@ -1,5 +1,10 @@
 # Lessons learned
 
+Agent-origin Claude prompts can be meta records or begin with system reminders.
+Recognize their turn boundary independently of ordinary prompt filtering, and
+keep the preceding idle interval outside both turns. Terminal notification and
+reply-less command cases need distinct status and title regressions.
+
 Unknown OpenCode session tables and migration keys do not prove that required
 read sources changed. Report their names without opening extra tables, while
 continuing to reject missing required columns and incomplete legacy migrations.

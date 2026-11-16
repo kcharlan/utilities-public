@@ -156,8 +156,15 @@ def claude_steered_rows():
     def prompt(second, value):
         return event("user", second, message={"content": value})
     def answer(second, stop):
-        return event("assistant", second, message={"stop_reason": stop, "content": [{"type": "text", "text": "Synthetic reply"}]})
+        return event("assistant", second, requestId=f"synthetic-request-{second}",
+                     message={"id": f"synthetic-message-{second}", "model": "claude-sonnet-4-5",
+                              "usage": {"input_tokens": 10, "output_tokens": 2},
+                              "stop_reason": stop, "content": [{"type": "text", "text": "Synthetic reply"}]})
     return [prompt(0, "Synthetic completed"), answer(10, "end_turn"),
             event("pr-link", 60), prompt(120, "Synthetic steered"), answer(130, None),
             event("queue-operation", 140, operation="dequeue"),
-            prompt(150, "Synthetic final"), answer(160, "end_turn")]
+            prompt(150, "Synthetic final"), answer(160, "end_turn"),
+            event("user", 240, turnOrigin="peer", isMeta=True, message={"content": "Synthetic wakeup"}),
+            answer(250, "end_turn"),
+            event("user", 300, turnOrigin="sdk", message={"content": "<system-reminder>Synthetic context</system-reminder> Synthetic SDK prompt"}),
+            answer(310, "end_turn")]
