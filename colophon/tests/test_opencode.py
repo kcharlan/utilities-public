@@ -545,7 +545,7 @@ def test_opencode_missing_explicit_file_is_absent_and_never_created(native):
     assert source(payload)["status"] == "absent"
     assert source(payload)["databases"][0]["status"] == "absent"
     assert not missing.exists()
-    assert payload["meta"]["version"] == "0.9.0"
+    assert payload["meta"]["version"] == "0.10.0"
 
 
 def test_opencode_status_prefers_structural_rejection_over_unreadable(native):
@@ -565,7 +565,7 @@ def test_opencode_status_prefers_structural_rejection_over_unreadable(native):
     ({}, CLOCK + 1000, CLOCK + 2000),
     ({"created": -1}, CLOCK + 1000, CLOCK + 2000),
     ({"created": CLOCK + 60000}, CLOCK + 60000, CLOCK + 60000),
-    ({"completed": CLOCK + 900000}, CLOCK + 1000, CLOCK + 900000),
+    ({"completed": CLOCK + 900000}, CLOCK + 1000, CLOCK + 2000),
 ])
 def test_opencode_effective_row_clock_fallback_reaches_turns_and_buckets(native, payload_time, expected_creation, expected_usage):
     path = database(native)

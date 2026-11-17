@@ -131,6 +131,20 @@ alter stored Claude facts must bump `CLAUDE_PARSE_REVISION` in
 records miss on any revision mismatch, including a newer revision after rollback;
 retained records preserve their stored facts.
 
+Claude turn starts use a string `turnOrigin` before meta and tag filtering,
+except compact summaries; subagent `origin.kind=coordinator` starts a resume.
+Without `turnOrigin`, existing classification applies, with terminal or initial
+task notifications starting their own turns. For main-session forks, an own
+`sessionId` after another session's records marks the transition; its last
+nonempty predecessor is the recorded parent. Explicit usage `session_id`
+determines inheritance before boundary position, while attachment is cleared
+at the transition. Records without an ID use the boundary for ownership.
+
+OpenCode dates usage by message creation. A completion clock repeated across
+different sessions in one database is treated as a bulk-update timestamp and
+ignored for duration, but still indicates completion status. This heuristic
+can also discard legitimate simultaneous completions.
+
 Pricing lesson: an incorrectly seeded long-context threshold must be corrected
 in every existing curated-history row, not only in the resolver or a new dated
 row; dated lookup otherwise keeps earlier usage incorrectly priced. Validate
@@ -159,3 +173,8 @@ when the same turn resumes under different settings. Keep file-local start
 history indexed by turn and line, and pass it to both compose passes. Settings
 changes take effect at the next start; turnless starts and rows share the empty
 id. Preserve trace/sticky evidence independently from the thread setting.
+
+Antigravity status lesson: terminal error and cancellation classification follows
+the last status-bearing step, while active-state accumulation remains independent.
+Trajectory metadata's cascade ID identifies the filename conversation; a distinct
+trajectory ID alone does not indicate an identity mismatch.

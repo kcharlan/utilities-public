@@ -261,11 +261,14 @@ The schema diagnostic identifies the unread table, not its contents.
 Raw fresh input, cache read and cache write sum into unit input. Cache read and
 write also retain their separate fields; one-hour write is zero. Raw output
 plus reasoning becomes output, with reasoning also retained separately. Models
-retain `provider/model` identities or `opencode/unattributed`. Valid payload
-completion time wins for usage dating; otherwise valid payload creation falls
-back to SQLite row creation. Request starts and message-end fallback share
-that effective creation clock without changing raw clocks or row-only fork
-ownership. Leading usage and residuals have no display turn.
+retain `provider/model` identities or `opencode/unattributed`. Usage units are
+dated by valid payload creation, falling back to SQLite row creation. Request
+starts and message-end fallback share that effective creation clock without
+changing raw clocks or row-only fork ownership. A completion timestamp repeated
+across messages in different sessions of the same database is ignored for turn
+and session ends, but its presence still determines status. This bulk-update
+heuristic can also discard legitimate simultaneous completions. Leading usage
+and residuals have no display turn.
 Priority, fast and rate-period fields remain unset.
 
 Messages sum in sequence order in checked wide raw-component space. Invalid
@@ -308,7 +311,13 @@ objects by key and replaces arrays. Validation rejects the entire user document
 on an invalid field and emits `pricing_rules_errors`; defaults stay in force.
 The rules are loaded for each run before composition, so edits apply to retained
 raw observations on the next warm run. Catalog-first identity and existing dated
-price-history priority policies continue to take precedence.
+price-history priority policies continue to take precedence. Codex fast multipliers
+and long-context allowances follow CodexBar `CostUsagePricing.swift` at commit
+`1f6da9bec` (`codexAPIFastMultiplier` and `codexAPIFastAllowsLongContext`).
+For timed usage, a history row without a priority field, or no history row,
+uses the current Codex fast policy; an explicitly stored policy, including null,
+continues to take precedence. Effective fallback policies appear in pricing
+provenance. `codex-auto-review` remains unpriced.
 
 Numbered Antigravity usage resolves response name, runtime number rule, learned
 name, step model info, same-number previous name, then an explicit marker.

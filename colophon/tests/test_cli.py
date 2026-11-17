@@ -14,6 +14,42 @@ from browser_errors import guard_browser_errors
 
 UUID = "00000000-0000-4000-8000-00000000c0de"
 
+def test_codex_abort_reasons_settings_clocks_and_subagent_idle(native):
+    parent_id, agent_id = "synthetic-clock-parent", "synthetic-clock-agent"
+    rows = [row("session_meta", {"id": parent_id, "cwd": "/synthetic/kite", "source": "cli"}, 0)]
+    for i, reason in enumerate(("interrupted", "other", None)):
+        turn_id = f"synthetic-abort-{i}"
+        payload = {"type": "turn_aborted", "turn_id": turn_id}
+        if reason is not None:
+            payload["reason"] = reason
+        rows += [row("event_msg", {"type": "task_started", "turn_id": turn_id}, 1 + i * 3),
+                 row("event_msg", payload, 2 + i * 3)]
+    rows += [row("event_msg", {"type": "thread_settings_applied"}, 20)]
+    native.write_session(rows, name="rollout-synthetic-clock-parent.jsonl")
+    native.write_session([row("session_meta", {"id": "synthetic-open-clock", "cwd": "/synthetic/kite", "source": "cli"}, 0),
+                          row("event_msg", {"type": "task_started", "turn_id": "synthetic-open"}, 1),
+                          row("event_msg", {"type": "thread_settings_applied"}, 30)],
+                         name="rollout-synthetic-open-clock.jsonl")
+    meta = {"id": agent_id, "cwd": "/synthetic/kite", "parent_thread_id": parent_id,
+            "source": {"subagent": {"thread_spawn": {"parent_thread_id": parent_id,
+                        "depth": 1, "agent_path": "/root/synthetic_clock"}}}}
+    native.write_session([row("session_meta", meta, 10),
+                          row("event_msg", {"type": "task_complete", "turn_id": "synthetic-agent-turn",
+                                            "started_at": 1767355190}, 12)],
+                         name="rollout-synthetic-clock-agent.jsonl")
+    result = native.build()
+    assert result.returncode == 0, result.stderr
+    payload = native.payload()
+    parent, = [s for s in payload["sessions"] if s["id"] == parent_id]
+    assert [turn["status"] for turn in parent["turns"]] == ["interrupted", "aborted", "aborted"]
+    assert parent["end_ms"] == 1767355208000
+    open_session, = [s for s in payload["sessions"] if s["id"] == "synthetic-open-clock"]
+    assert open_session["end_ms"] == 1767355201000
+    agent = payload["subagents"][agent_id]
+    assert agent["idle_ms"] == 0
+    assert agent["turns"][0]["start_ms"] == 1767355190000
+    assert agent["turns"][0]["end_ms"] == 1767355212000
+
 def test_codex_realistic_rollout_tools_statuses_and_dual_messages(native):
     t1, t2, t3, t4 = (f"synthetic-t{i}" for i in range(1, 5))
     native.write_session([
@@ -773,7 +809,7 @@ def test_help_and_version_create_no_runtime(native):
         assert text in help_result.stdout
     version = native.invoke("--version")
     assert version.returncode == 0
-    assert version.stdout == "colophon 0.9.0\n"
+    assert version.stdout == "colophon 0.10.0\n"
     assert not native.runtime.exists()
 
 def test_sandbox_allows_active_reads_and_scratch_only_writes(tmp_path):

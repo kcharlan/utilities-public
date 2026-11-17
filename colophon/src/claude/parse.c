@@ -55,7 +55,12 @@ bool claude_known_type(Str kind) {
                          "file-history-snapshot",
                          "queue-operation",
                          "last-prompt",
-                         "pr-link"};
+                         "pr-link", "attachment", "atis-latch", "api-request",
+                         "api-request-shape", "api-request-blob", "agent-name",
+                         "cost-state", "tools-used", "mode", "file-history-delta",
+                         "artifact-comment-monitor", "artifact-autoreact-ledger",
+                         "bridge-session", "frame-link", "permission-mode",
+                         "session-owner", "relocated", "worktree-state"};
   for (size_t i = 0; i < sizeof names / sizeof *names; i++)
     if (str_equal(kind, (Str){names[i], (uint32_t)strlen(names[i])}))
       return true;
@@ -66,7 +71,10 @@ typedef struct {
   Omap shell_ids;
   Omap handback_ids;
   bool interrupted, api_error, completed, steered;
-  bool assistant_seen, dequeued, stop_marked;
+  bool assistant_seen, assistant_failed, dequeued, stop_marked;
+  Str predecessor;
+  bool forked;
+  size_t raw_start;
   size_t capacity;
 } Parse;
 static void finish(Parse *p) {
@@ -74,8 +82,10 @@ static void finish(Parse *p) {
     return;
   TurnFact *t = p->r->turns[p->r->turn_count - 1];
   t->end_kind = p->interrupted ? STR_LIT("interrupted")
-                : p->api_error ? STR_LIT("aborted")
-                : p->completed ? STR_LIT("completed")
+                : (p->api_error || p->assistant_failed) ? STR_LIT("aborted")
+                : (p->completed || (!p->assistant_seen &&
+                   str_equal(p->r->requests[p->r->turn_count - 1].kind,
+                             STR_LIT("command")))) ? STR_LIT("completed")
                 : p->steered ? STR_LIT("steered")
                                : STR_LIT("open");
   if (!str_equal(t->end_kind, STR_LIT("open")))
@@ -153,6 +163,40 @@ static Err on_record(void *context, const ReaderRecord *row) {
   yyjson_val *v = row->record, *message = get(v, "message"),
              *body = get(message, "content");
   Str type = text(get(v, "type"));
+  Str session = text(get(v, "sessionId"));
+  if (!r->parent_session.p && !p->forked && session.n) {
+    if (!str_equal(session, r->id)) {
+      TRY(copy(&r->arena, session, &p->predecessor));
+    } else if (p->predecessor.n) {
+      p->forked = true;
+      r->meta.forked_from_id = p->predecessor;
+      for (size_t i = 0; i < r->turn_count; i++) {
+        omap_destroy(&r->tools[i].mcp); omap_destroy(&r->tools[i].other);
+      }
+      r->turn_count = r->tool_count = 0;
+      p->capacity = 0;
+      r->first_ms = r->last_ms = r->turn_clock_ms = (MaybeMs){0};
+      r->custom_title = r->ai_title = (Str){0};
+      r->meta.cwd = r->meta.branch = (JScalar){0};
+      omap_destroy(&r->tool_turns); omap_destroy(&p->shell_ids); omap_destroy(&p->handback_ids);
+      p->interrupted = p->api_error = p->completed = p->steered = false;
+      p->assistant_seen = p->assistant_failed = p->dequeued = p->stop_marked = false;
+      for (size_t i = 0; i < r->usage_count; i++) {
+        Str owner = r->usage_rows[i].session_id;
+        r->usage_rows[i].inherited = owner.n ? !str_equal(owner, r->id) : i < p->raw_start;
+        r->usage_rows[i].detached = true;
+        r->usage_rows[i].unit.turn_id = r->usage_rows[i].unit.display_turn = (Str){0};
+      }
+    }
+  }
+  if (p->forked) for (size_t i = p->raw_start; i < r->usage_count; i++) {
+    ClaudeUsageRow *u = &r->usage_rows[i];
+    if (u->session_id.n && !str_equal(u->session_id, r->id)) {
+      u->inherited = true;
+      u->detached = true;
+      u->unit.turn_id = u->unit.display_turn = (Str){0};
+    }
+  }
   if (str_equal(type, STR_LIT("custom-title"))) {
     Str title = text(get(v, "customTitle"));
     TRY(copy(&r->arena, title, &r->custom_title));
@@ -192,18 +236,44 @@ static Err on_record(void *context, const ReaderRecord *row) {
   Str request = {0}, kind = STR_LIT("text");
   uint64_t images = 0;
   bool prompt = false, interruption = false;
-  if (str_equal(type, STR_LIT("user")) && !yyjson_is_true(get(v, "isMeta")) &&
+  bool user = str_equal(type, STR_LIT("user"));
+  bool origin = yyjson_is_str(get(v, "turnOrigin"));
+  bool resume = r->parent_session.p &&
+      str_equal(text(get(get(v, "origin"), "kind")), STR_LIT("coordinator"));
+  if (user && (origin || resume || !yyjson_is_true(get(v, "isMeta"))) &&
       !yyjson_is_true(get(v, "isCompactSummary"))) {
     yyjson_val *first = yyjson_arr_get_first(body);
     Str first_type = text(get(first, "type"));
-    if (yyjson_is_str(body) || str_equal(first_type, STR_LIT("text")) ||
+    if (origin || resume || yyjson_is_str(body) || str_equal(first_type, STR_LIT("text")) ||
         str_equal(first_type, STR_LIT("image"))) {
       TRY(content(&r->arena, body, &request, &images));
       Str leading = str_trim(request, true);
-      if (prefix(leading, "[Request interrupted by user")) {
+      if (origin) {
+        while (prefix(leading, "<system-reminder>")) {
+          const char *end = memmem(leading.p, leading.n, "</system-reminder>", 18);
+          if (!end) break;
+          size_t skip = (size_t)(end - leading.p) + 18;
+          leading = str_trim((Str){leading.p + skip, leading.n - (uint32_t)skip}, true);
+        }
+        request = leading;
+      }
+      if (origin || resume) {
+        prompt = true;
+        Str source = text(get(v, "turnOrigin"));
+        if (resume) kind = STR_LIT("resume");
+        else if (str_equal(source, STR_LIT("task_notification"))) kind = STR_LIT("notification");
+        else if (str_equal(source, STR_LIT("peer"))) kind = STR_LIT("peer");
+        else if (prefix(leading, "<command-name>") || prefix(leading, "<command-message>") || prefix(leading, "<bash-input>")) kind = STR_LIT("command");
+      } else if (prefix(leading, "[Request interrupted by user")) {
         p->interrupted = true;
         interruption = true;
-      } else if (!prefix(leading, "<task-notification>") &&
+      } else if (prefix(leading, "<task-notification>")) {
+        if (!r->turn_count || p->completed || p->interrupted || p->api_error || p->assistant_failed ||
+            (!p->assistant_seen && str_equal(r->requests[r->turn_count - 1].kind, STR_LIT("command")))) {
+          prompt = true;
+          kind = STR_LIT("notification");
+        }
+      } else if (
                !prefix(leading, "<local-command-stdout>") &&
                !prefix(leading, "<system-reminder>")) {
         prompt = true;
@@ -219,7 +289,7 @@ static Err on_record(void *context, const ReaderRecord *row) {
     finish(p);
     omap_destroy(&p->handback_ids);
     p->interrupted = p->api_error = p->completed = p->steered = false;
-    p->assistant_seen = p->dequeued = p->stop_marked = false;
+    p->assistant_seen = p->assistant_failed = p->dequeued = p->stop_marked = false;
     if (r->turn_count == p->capacity) {
       size_t n = p->capacity ? p->capacity * 2 : 8;
       void *next;
@@ -273,8 +343,11 @@ static Err on_record(void *context, const ReaderRecord *row) {
                    str_equal(text(get(v, "subtype")), STR_LIT("api_error"));
   if (at.present && (prompt || assistant || api_error ||
       (str_equal(type, STR_LIT("user")) && !yyjson_is_true(get(v, "isMeta")) &&
-       (user_result || interruption))))
+       (user_result || interruption)))) {
     t->last_ms = at;
+    if (!r->turn_clock_ms.present || at.value > r->turn_clock_ms.value)
+      r->turn_clock_ms = at;
+  }
   p->api_error = api_error;
   if (str_equal(type, STR_LIT("queue-operation")) &&
       str_equal(text(get(v, "operation")), STR_LIT("dequeue")))
@@ -284,6 +357,7 @@ static Err on_record(void *context, const ReaderRecord *row) {
     p->stop_marked = true;
   if (assistant) {
     p->assistant_seen = true;
+    p->assistant_failed = yyjson_is_true(get(v, "isApiErrorMessage"));
     p->dequeued = p->stop_marked = false;
     yyjson_val *stop = get(message, "stop_reason");
     p->completed = stop && !yyjson_is_null(stop) &&
@@ -377,6 +451,7 @@ static Err on_record(void *context, const ReaderRecord *row) {
 }
 static Err on_raw(void *context, const ReaderRawLine *line) {
   Parse *p=context;
+  p->raw_start = p->r->usage_count;
   Str turn=p->r->turn_count?p->r->turns[p->r->turn_count-1]->key:(Str){0};
   return claude_usage_line(p->r,line,turn);
 }
@@ -431,6 +506,22 @@ void claude_record_destroy(ClaudeRecord *r) {
   arena_destroy(&r->arena);
   *r = (ClaudeRecord){0};
 }
+bool claude_subagent_copy(const ClaudeRecord *records, size_t count, size_t index) {
+  const ClaudeRecord *r = &records[index];
+  if (!r->parent_session.n || !r->usage_count) return false;
+  Str source = r->usage_rows[0].session_id;
+  if (!source.n || str_equal(source, r->parent_session)) return false;
+  for (size_t i = 1; i < r->usage_count; i++)
+    if (!str_equal(source, r->usage_rows[i].session_id)) return false;
+  if (r->id.n <= r->parent_session.n + 1) return false;
+  Str suffix = {r->id.p + r->parent_session.n, r->id.n - r->parent_session.n};
+  for (size_t i = 0; i < count; i++) {
+    const ClaudeRecord *other = &records[i];
+    if (str_equal(other->parent_session, source) && other->id.n == source.n + suffix.n &&
+        !memcmp(other->id.p + source.n, suffix.p, suffix.n)) return true;
+  }
+  return false;
+}
 static Err add_records(ClaudeRecord *records, size_t count, int64_t snapshot,
                        Corpus *c,
                        const Omap *codex_ids) {
@@ -456,12 +547,21 @@ static Err add_records(ClaudeRecord *records, size_t count, int64_t snapshot,
                         .identity = r->id,
                         .log_path = r->key.path,
                         .meta = r->meta,
+                        .forked_from = r->meta.forked_from_id,
                         .kind = STR_LIT("session"),
                         .is_subagent = r->parent_session.p != NULL,
                         .has_link = r->parent_session.p != NULL,
                         .resume_config_dir = r->config_dir,
                         .start_ms = r->first_ms,
                         .end_ms = r->last_ms};
+    if (r->turn_count) {
+      s->end_ms = (MaybeMs){0};
+      for (size_t j = 0; j < r->turn_count; j++)
+        if (r->turns[j]->last_ms.present && (!s->end_ms.present || r->turns[j]->last_ms.value > s->end_ms.value))
+          s->end_ms = r->turns[j]->last_ms;
+      if (r->turn_clock_ms.present && (!s->end_ms.present || r->turn_clock_ms.value > s->end_ms.value))
+        s->end_ms = r->turn_clock_ms;
+    }
     if(r->retained)s->flags|=F_RETAINED;
     int64_t mtime = r->key.mtime_ns / 1000000;
     TRY(turn_models(&c->arena, r->turns, r->turn_count, false, mtime, snapshot,
@@ -487,9 +587,16 @@ static Err add_records(ClaudeRecord *records, size_t count, int64_t snapshot,
       TRY(corpus_turn_tools_adopt(&c->arena, s, t, &r->tools[k]));
       corpus_status_flags(s, t->status);
     }
-    s->title_full = r->turn_count ? r->requests[0].text : r->id;
-    s->title_source =
-        r->turn_count ? STR_LIT("first_request") : STR_LIT("filename");
+    s->title_full = r->id;
+    s->title_source = STR_LIT("filename");
+    for (size_t j = 0; j < r->turn_count; j++) {
+      if (str_equal(r->requests[j].kind, STR_LIT("text")) ||
+          str_equal(r->requests[j].kind, STR_LIT("command"))) {
+        s->title_full = r->requests[j].text;
+        s->title_source = STR_LIT("first_request");
+        break;
+      }
+    }
     if (metadata_text(r->ai_title)) {
       s->title_full = r->ai_title;
       s->title_source = STR_LIT("ai_title");

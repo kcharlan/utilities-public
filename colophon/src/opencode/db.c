@@ -9,6 +9,7 @@
 #include "util/json_number.h"
 #include "util/json_read.h"
 #include "util/time.h"
+#include "util/sort.h"
 #include <errno.h>
 #include <math.h>
 #include <stdio.h>
@@ -32,7 +33,7 @@ static Err execute(sqlite3 *db,const char *sql) {
     return sqlite3_exec(db,sql,NULL,NULL,NULL)==SQLITE_OK?ERR_SUCCESS:sql_error(db);
 }
 static bool allowed_table(const char *name) {
-    static const char *const names[]={"project","session_v2","session_message","migration","kv","sqlite_master","sqlite_schema"};
+    static const char *const names[]={"project","session_v2","session_message","session_part","migration","kv","sqlite_master","sqlite_schema"};
     for(size_t i=0;i<sizeof names/sizeof *names;i++)if(name&&!strcmp(name,names[i]))return true;
     return false;
 }
@@ -256,7 +257,12 @@ static Err schema_guard(sqlite3 *db,OpencodeDatabase *info,Arena *arena,Table *t
         if(equal(name,"session"))legacy=true;
         if(name.n>=7&&!memcmp(name.p,"session",7)){
             bool allowed=false;for(size_t i=0;i<sizeof generations/sizeof *generations;i++)if(equal(name,generations[i]))allowed=true;
-            if(!allowed){Str copy={0};e=str_copy(arena,name,&copy);if(!e.code)e=corpus_strings_add(arena,&info->unrecognized_tables,copy);}
+            if(equal(name,"session_part")&&equal(kind,"table")){
+                sqlite3_stmt *part=NULL;e=prepare(db,"SELECT 1 FROM session_part LIMIT 1",&part);
+                if(!e.code){int part_rc=sqlite3_step(part);if(part_rc==SQLITE_DONE)allowed=true;else if(part_rc!=SQLITE_ROW)e=sql_error(db);}
+                sqlite3_finalize(part);
+            }
+            if(!e.code&&!allowed){Str copy={0};e=str_copy(arena,name,&copy);if(!e.code)e=corpus_strings_add(arena,&info->unrecognized_tables,copy);}
         }
         for(size_t i=0;!e.code&&i<n;i++)if(equal(name,tables[i].name)){
             if(!equal(kind,"table"))e=err_make(ERR_INVALID,"OpenCode query source is not a table");
@@ -464,6 +470,34 @@ static Err read_messages(sqlite3 *db,Table *table,OpencodeStore *stage,volatile 
     }
     if(!e.code&&rc!=SQLITE_DONE)e=sql_error(db);sqlite3_finalize(st);return e;
 }
+typedef struct { OpencodeMessage *message; OpencodeSession *session; } CompletionRef;
+static int compare_completion(const void *a,const void *b,void *context) {
+    (void)context;
+    int64_t x=((const CompletionRef*)a)->message->completed_ms.value;
+    int64_t y=((const CompletionRef*)b)->message->completed_ms.value;
+    return (x>y)-(x<y);
+}
+static Err mark_unreliable_completions(OpencodeStore *stage) {
+    CompletionRef *refs=NULL;size_t count=0,capacity=0;
+    for(size_t i=0;i<stage->session_count;i++) {
+        OpencodeSession *s=stage->sessions[i];
+        for(size_t j=0;j<s->message_count;j++) {
+            OpencodeMessage *m=&s->messages[j];
+            if(m->completed_ms.present) { CompletionRef ref={m,s}; TRY(APPEND(&stage->arena,refs,count,capacity,ref)); }
+        }
+    }
+    TRY(stable_sort(refs,count,sizeof *refs,compare_completion,NULL));
+    for(size_t i=0;i<count;) {
+        size_t end=i+1;bool shared=false;
+        while(end<count && refs[end].message->completed_ms.value==refs[i].message->completed_ms.value) {
+            if(refs[end].session!=refs[i].session)shared=true;
+            end++;
+        }
+        if(shared)for(size_t j=i;j<end;j++)refs[j].message->completed_unreliable=true;
+        i=end;
+    }
+    return ERR_SUCCESS;
+}
 static int progress(void *data) {
     volatile sig_atomic_t *stop=data;
     if(stop&&cp_fault("opencode.cancel.progress"))*stop=1;
@@ -482,6 +516,7 @@ static Err read_database(OpencodeStore *stage,OpencodeDatabase *info,size_t inde
     if(!e.code)e=schema_guard(db,info,&stage->arena,tables,sizeof tables/sizeof *tables);
     if(!e.code)e=read_sessions(db,tables,stage,info,index,stop);
     if(!e.code)e=read_messages(db,&tables[1],stage,stop);
+    if(!e.code)e=mark_unreliable_completions(stage);
     if(!e.code&&stop&&cp_fault("opencode.cancel.commit"))*stop=1;
     if(!e.code&&stop&&*stop)e=err_make(ERR_IO,"interrupted");
     if(!e.code)e=execute(db,"COMMIT");

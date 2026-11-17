@@ -265,10 +265,10 @@ def test_opencode_source_hash_descendants_actions_and_version(page, native):
         row["children"] = [child["id"], foreign["id"]]
         payload["subagents"].update({child["id"]: child, foreign["id"]: foreign})
     payload = opencode_page(native, mutate)
-    assert payload["meta"]["version"] == "0.9.0"
+    assert payload["meta"]["version"] == "0.10.0"
     with guard_browser_errors(page):
         requests = open_native(page, native.page)
-        expect(page.locator('[data-version]')).to_have_text("colophon 0.9.0")
+        expect(page.locator('[data-version]')).to_have_text("colophon 0.10.0")
         page.goto(native.page.as_uri() + "#v=session&p=all&a=1&h=0&sort=cost&src=opencode&s=" + OPENCODE_SESSION)
         reader = page.locator("[data-reader]")
         expect(reader).to_have_attribute("data-provider", "opencode")
@@ -1569,8 +1569,9 @@ def test_claude_steered_kpi_filter_and_reader(page, native):
         link = page.locator('[data-kpi="turns"] [data-status="steered"]')
         expect(link).to_have_text('1 steered')
         assert link.evaluate('e => getComputedStyle(e).color') != page.locator('[data-status="interrupted"]').evaluate('e => getComputedStyle(e).color')
-        expect(page.locator('[data-kpi="active_ms"] .kpi-value')).to_have_attribute('data-value', '33000')
-        expect(page.locator('[data-kpi="turns"] .kpi-sub')).to_contain_text('avg 8.3s')
+        # The shared fixture adds two ten-second agent/SDK turns.
+        expect(page.locator('[data-kpi="active_ms"] .kpi-value')).to_have_attribute('data-value', '53000')
+        expect(page.locator('[data-kpi="turns"] .kpi-sub')).to_contain_text('avg 8.8s')
         expect(page.locator('[data-kpi="aborted"] .kpi-value')).to_have_attribute('data-value', '0')
         link.click()
         expect(page.locator('[data-list-row]')).to_have_count(1)
@@ -1578,7 +1579,18 @@ def test_claude_steered_kpi_filter_and_reader(page, native):
         page.reload()
         expect(page.locator('[data-list-row]')).to_have_count(1)
         page.goto(native.page.as_uri() + '#v=session&p=all&s=synthetic-claude')
-        expect(page.locator('[data-reader-stat="active"] .reader-stat-value')).to_have_attribute('data-value', '30000')
+        expect(page.locator('[data-reader-stat="active"] .reader-stat-value')).to_have_attribute('data-value', '50000')
         status = page.locator('[data-turn-header]', has_text='steered').locator('span', has_text='steered')
         expect(status).to_have_count(1)
         assert 'warning' not in (status.get_attribute('class') or '')
+
+@pytest.mark.parametrize("kind", ["notification", "peer", "resume"])
+def test_claude_agent_request_tag(page, native, kind):
+    def mutate(payload):
+        row = next(row for row in payload["sessions"] if row["provider"] == "claude")
+        row["turns"][0]["requests"][0]["kind"] = kind
+    source_page(native, mutate)
+    with guard_browser_errors(page):
+        open_native(page, native.page)
+        page.locator('[data-list-row][data-provider="claude"]').click()
+        expect(page.locator("[data-reader] .request-meta")).to_contain_text(kind)

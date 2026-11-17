@@ -343,7 +343,7 @@ TEST(opencode_db_effective_clocks_reach_corpus_and_usage_without_changing_raw_fa
             if(effective[k]) {
                 ASSERT_EQ(effective[k],p->requests[0].at_ms.value);
                 ASSERT_EQ(effective[k],p->turns[0].start_ms.value.i);
-                ASSERT_EQ(k==5||k==9?4000:effective[k],p->units[0].at_ms.value);
+                ASSERT_EQ(effective[k],p->units[0].at_ms.value);
                 ASSERT_EQ(k==5||k==9?4000:effective[k],p->end_ms.value);
                 ASSERT_EQ(k==5||k==9?4000:effective[k],p->turns[0].end_ms.value.i);
             }
@@ -360,4 +360,47 @@ TEST(opencode_db_rejects_nonregular_sqlite_sidecars) {
     bool rejected=db==NULL;if(db)sqlite3_close(db);
     ASSERT_EQ(0,unlink(path));opencode_fixture_close(&f);
     ASSERT_EQ(ERR_IO,e.code);ASSERT_TRUE(rejected);
+}
+
+TEST(opencode_db_cross_session_completion_clocks_are_scoped_per_database) {
+    OpencodeFixture a,b;opencode_fixture_open(&a);opencode_fixture_open(&b);
+    const char *sessions[]={"synthetic-a","synthetic-b","synthetic-single","synthetic-distinct"};
+    for(size_t i=0;i<4;i++)opencode_fixture_session(&a,sessions[i]);
+    opencode_fixture_session(&b,"synthetic-other-db");
+    for(size_t i=0;i<5;i++) {
+        OpencodeFixture *f=i==4?&b:&a;const char *sid=i==4?"synthetic-other-db":sessions[i];
+        char id[64],json[512];snprintf(id,sizeof id,"synthetic-user-%zu",i);
+        snprintf(json,sizeof json,"{\"time\":{\"created\":1000},\"text\":\"Synthetic request\"}");
+        opencode_fixture_message(f,id,sid,"user",1,json);
+        for(int j=0;j<2;j++) {
+            snprintf(id,sizeof id,"synthetic-answer-%zu-%d",i,j);
+            long long completed=i<2?900000000:i==2?8000:i==3?10000+j*1000:900000000;
+            snprintf(json,sizeof json,"{\"time\":{\"created\":%d,\"completed\":%lld},\"content\":[],\"finish\":\"stop\",\"tokens\":{\"input\":1,\"output\":0},\"cost\":0}",2000+j*1000,completed);
+            opencode_fixture_message(f,id,sid,"assistant",j+2,json);
+        }
+    }
+    OpencodeStore s={0};Corpus c={0};add(&s,&a);add(&s,&b);read_store(&s);
+    ASSERT_EQ(ERR_OK,opencode_corpus_add(&s,1000000000,&c).code);
+    ASSERT_EQ(ERR_OK,opencode_compose(&s,&c).code);
+    const int64_t ends[]={3000,3000,8000,11000,900000000};
+    for(size_t i=0;i<5;i++) {
+        Str id=i==4?STR_LIT("synthetic-other-db"):(Str){sessions[i],(uint32_t)strlen(sessions[i])};
+        SessionModel *p=omap_get(&c.sessions,id);ASSERT_TRUE(p);ASSERT_EQ(1,p->turn_count);
+        ASSERT_TRUE(str_equal(p->turns[0].status,STR_LIT("completed")));
+        ASSERT_EQ(ends[i],p->end_ms.value);ASSERT_EQ(ends[i],p->turns[0].end_ms.value.i);
+        ASSERT_EQ(2,p->unit_count);ASSERT_EQ(2000,p->units[0].at_ms.value);ASSERT_EQ(3000,p->units[1].at_ms.value);
+    }
+    corpus_destroy(&c);opencode_store_destroy(&s);opencode_fixture_close(&a);opencode_fixture_close(&b);
+}
+TEST(opencode_db_session_part_reports_only_nonempty) {
+    OpencodeFixture f;opencode_fixture_open(&f);opencode_fixture_session(&f,"synthetic-session");
+    opencode_fixture_sql(&f,"CREATE TABLE session_part(value)");
+    OpencodeStore s={0};add(&s,&f);read_store(&s);
+    ASSERT_EQ(OC_DB_OK,s.databases[0].status);ASSERT_EQ(0,s.databases[0].unrecognized_tables.count);
+    opencode_store_destroy(&s);
+    opencode_fixture_sql(&f,"INSERT INTO session_part VALUES ('synthetic')");
+    s=(OpencodeStore){0};add(&s,&f);read_store(&s);
+    ASSERT_EQ(OC_DB_OK,s.databases[0].status);ASSERT_EQ(1,s.databases[0].unrecognized_tables.count);
+    ASSERT_TRUE(str_equal(s.databases[0].unrecognized_tables.items[0],STR_LIT("session_part")));
+    opencode_store_destroy(&s);opencode_fixture_close(&f);
 }

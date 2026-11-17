@@ -640,12 +640,14 @@ def test_claude_handback_stale_v2_live_cache_reparses(tmp_path):
     matches = [(p, json.loads(p.read_bytes()[71:])) for p in records]
     matches = [(p, body) for p, body in matches if body[7] == 'synthetic-parent/agent-synthetic-child']
     (path, body), = matches
-    assert path.read_bytes().startswith(b'CLCD3\n')
+    assert path.read_bytes().startswith(b'CLCD5\n')
     index, = [i for i, value in enumerate(body) if value == 'completed']
     body[index] = 'open'
     assert body[index + 1:index + 5] == [True, 1577836800000, True, 1577836802000]
     body[index + 3:index + 5] = [False]
-    assert body.pop() == 2
+    assert body.pop() == 1577836802000
+    assert body.pop() is True
+    assert body.pop() == 3
     data = json.dumps(body, separators=(',', ':')).encode()
     path.write_bytes(b'CLCD2\n' + hashlib.sha256(data).hexdigest().encode() + b'\n' + data)
     assert run.build().returncode == 0
@@ -664,12 +666,19 @@ def test_claude_steered_clocks_and_idle(tmp_path):
     import os
     run = NativeRun(tmp_path)
     path = run.claude_session(rows=claude_steered_rows())
+    # Claude usage admission's raw-line filter expects compact JSON.
+    path.write_text(''.join(json.dumps(row, separators=(',', ':')) + '\n' for row in claude_steered_rows()))
     os.utime(path, (1577836800, 1577836800))
     assert run.build().returncode == 0
     session = run.payload()["sessions"][0]
-    assert [turn["status"] for turn in session["turns"]] == ["completed", "steered", "completed"]
-    assert [turn["duration_ms"] for turn in session["turns"]] == [10000, 10000, 10000]
-    assert session["idle_ms"] == 130000
+    assert [turn["status"] for turn in session["turns"]] == ["completed", "steered", "completed", "completed", "completed"]
+    assert [turn["duration_ms"] for turn in session["turns"]] == [10000] * 5
+    assert [turn["requests"][0]["kind"] for turn in session["turns"]] == ["text", "text", "text", "peer", "text"]
+    assert session["turns"][-1]["requests"][0]["text"] == "Synthetic SDK prompt"
+    assert session["idle_ms"] == 260000
+    assert session["own_usage"]["input"] == 50
+    for component in ("input", "output"):
+        assert session["own_usage"][component] == session["outside_usage"][component] + sum(turn["usage"][component] for turn in session["turns"])
     assert not set(session["flags"]) & {"aborted", "interrupted", "abandoned"}
 
 
@@ -686,3 +695,70 @@ def test_claude_subagent_null_text_not_abandoned(tmp_path):
     child = run.payload()["subagents"]["synthetic-parent/agent-child"]
     assert child["turns"][0]["status"] == "completed"
     assert "abandoned" not in child["flags"]
+
+
+def test_claude_title_skips_agent_requests(tmp_path):
+    run = NativeRun(tmp_path)
+    rows = [{"type": "user", "turnOrigin": "peer", "isMeta": True, "message": {"content": "Synthetic agent request"}},
+            {"type": "user", "message": {"content": "Synthetic eligible title"}}]
+    run.claude_session(name="synthetic-title", rows=rows)
+    run.claude_session(name="synthetic-only-agent", rows=rows[:1])
+    assert run.build().returncode == 0
+    sessions = {row["id"]: row for row in run.payload()["sessions"]}
+    assert sessions["synthetic-title"]["title"] == "Synthetic eligible title"
+    assert sessions["synthetic-only-agent"]["title"] == "synthetic-only-agent"
+
+@pytest.mark.parametrize('source_child', [True, False])
+def test_claude_fork_subagent_copy_and_cache(tmp_path, source_child):
+    run = NativeRun(tmp_path)
+    source_rows = [
+        {'type': 'user', 'sessionId': 'synthetic-source', 'message': {'content': 'Synthetic source prompt'}},
+        {'type': 'assistant', 'sessionId': 'synthetic-source', 'timestamp': '2020-01-01T00:00:01Z', 'requestId': 'synthetic-main-request', 'message': {'id': 'synthetic-main-response', 'model': 'claude-sonnet-4-5', 'stop_reason': 'end_turn', 'usage': {'input_tokens': 7}}},
+    ]
+    source = run.claude_session('synthetic-source', rows=source_rows)
+    fork = run.claude_session('synthetic-fork', rows=source_rows + [{'type': 'user', 'sessionId': 'synthetic-fork', 'message': {'content': 'Synthetic fork prompt'}}])
+    rows = [{'type': 'user', 'sessionId': 'synthetic-source', 'message': {'content': 'Synthetic agent prompt'}},
+            {'type': 'assistant', 'sessionId': 'synthetic-source', 'timestamp': '2020-01-01T00:00:02Z', 'requestId': 'synthetic-agent-request', 'message': {'id': 'synthetic-agent-response', 'model': 'claude-sonnet-4-5', 'stop_reason': 'end_turn', 'usage': {'input_tokens': 11}}}]
+    child = run.claude_session('agent-synthetic-child', directory=source.parent / 'synthetic-source/subagents', rows=rows)
+    copy = run.claude_session('agent-synthetic-child', directory=fork.parent / 'synthetic-fork/subagents', rows=rows)
+    for path in [source, fork, child, copy]:
+        path.write_text(''.join(json.dumps(row, separators=(',', ':')) + '\n' for row in (source_rows if path == source else source_rows + [{'type': 'user', 'sessionId': 'synthetic-fork', 'message': {'content': 'Synthetic fork prompt'}}] if path == fork else rows)))
+    if not source_child: child.unlink()
+    for step in range(4):
+        if step == 2:
+            copy.unlink()
+        if step == 3:
+            source.unlink()
+            if source_child:
+                child.unlink()
+        assert run.build().returncode == 0
+        payload = run.payload()
+        assert len(payload['subagents']) == 1
+        expected = 'synthetic-source' if source_child else 'synthetic-fork'
+        assert f'{expected}/agent-synthetic-child' in payload['subagents']
+        sessions = {s['id']: s for s in payload['sessions']}
+        assert sessions['synthetic-fork']['forked_from'] == 'synthetic-source'
+        assert 'forked' not in sessions['synthetic-fork']['flags']
+        assert len(sessions['synthetic-source']['turns']) == len(sessions['synthetic-fork']['turns']) == 1
+        assert sum(s['own_usage']['input'] for s in sessions.values()) == 7
+        assert payload['subagents'][f'{expected}/agent-synthetic-child']['own_usage']['input'] == 11
+
+
+def test_claude_session_clock_maximum_survives_cache_and_retention(tmp_path):
+    run = NativeRun(tmp_path)
+    rows = [
+        {'type': 'user', 'timestamp': '2020-01-01T00:00:00Z', 'message': {'content': 'Synthetic clock prompt'}},
+        {'type': 'assistant', 'timestamp': '2020-01-01T00:00:20Z', 'message': {'stop_reason': 'end_turn', 'content': 'Synthetic earlier answer'}},
+        {'type': 'assistant', 'timestamp': '2020-01-01T00:00:10Z', 'message': {'stop_reason': 'end_turn', 'content': 'Synthetic final answer'}},
+        {'type': 'pr-link', 'timestamp': '2020-01-01T00:00:30Z'},
+    ]
+    path = run.claude_session('synthetic-clock', rows=rows)
+    for step in range(3):
+        if step == 2:
+            path.unlink()
+        assert run.build().returncode == 0
+        session, = run.payload()['sessions']
+        assert session['end_ms'] == 1577836820000
+        assert session['turns'][0]['end_ms'] == 1577836810000
+        assert session['turns'][0]['final_answer']['text'] == 'Synthetic final answer'
+        assert session['turns'][0]['status'] == 'completed'

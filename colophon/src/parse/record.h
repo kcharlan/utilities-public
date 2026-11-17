@@ -31,7 +31,7 @@ typedef struct {
     Str kind, ts_src, turn_id, thread_id, meta_id, turn_key;
     MaybeMs at_ms, wrapper_ms;
     MaybeNum started_at, reported_ms, ttft_ms;
-    bool item_message, has_message, has_voice, inherited;
+    bool item_message, has_message, has_voice, inherited, interrupted;
     MessageCandidate message;
     VoiceSegment voice;
     ToolCandidate tool;

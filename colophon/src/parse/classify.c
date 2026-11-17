@@ -63,7 +63,9 @@ bool record_type_known(Str key) {
         "response_item/custom_tool_call", "response_item/local_shell_call", "response_item/web_search_call",
         "response_item/tool_search_call", "response_item/function_call_output",
         "response_item/custom_tool_call_output", "response_item/local_shell_call_output",
-        "response_item/reasoning", "response_item/tool_search_output", "response_item/agent_message"
+        "response_item/reasoning", "response_item/tool_search_output", "response_item/agent_message",
+        "response_item/additional_tools", "response_item/configuration_update",
+        "event_msg/item_completed/HookPrompt", "event_msg/item_completed/FunctionCallOutput"
     };
     for (size_t i = 0; i < sizeof known / sizeof *known; i++)
         if (str_equal(key, (Str){known[i], (uint32_t)strlen(known[i])})) return true;

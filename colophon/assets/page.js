@@ -1063,6 +1063,7 @@
   function renderRequest(request) {
     const tags = [];
     if (request.kind === "command") tags.push("command");
+    if (["notification", "peer", "resume"].includes(request.kind)) tags.push(request.kind);
     if (request.kind === "voice") tags.push("voice request");
     if (request.kind === "answer") tags.push("answer");
     if (request.images) tags.push("+ " + request.images + " images");

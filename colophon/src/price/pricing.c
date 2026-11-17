@@ -69,6 +69,18 @@ static Err override_key(PricingReport *report,ModelsDevIndex *index,Str raw,Str 
 static bool priority_equal(PricePriority a,PricePriority b) {
     return a.present==b.present&&(!a.present||(a.capped==b.capped&&(!a.capped||a.cap==b.cap)&&pynum_equal(a.multiplier,b.multiplier)));
 }
+static PricePriority fast_policy(const PricingRules *rules,Str raw,Str normalized) {
+    double multiplier=codex_api_fast_multiplier(rules,raw);
+    if(!multiplier)return (PricePriority){0};
+    return (PricePriority){.present=true,.capped=!rules_codex_uncapped(rules,normalized),.cap=rules_codex_cap(rules),.multiplier={.is_float=true,.f=multiplier}};
+}
+static Err fallback_history_period(PricingReport *report,Str key,HistoryPick pick,PricePriority policy,PricePeriod *out) {
+    PricingPeriods *group;Err e=periods_for(report,key,&group);if(e.code)return e;
+    size_t i=0;for(;i<group->count;i++){PricingPeriod *p=group->items[i];if(p->history==pick.entry&&priority_equal(p->priority,policy))break;}
+    if(i==group->count){PricingPeriod *p;e=allocate(report,sizeof *p,_Alignof(PricingPeriod),(void **)&p);if(e.code)return e;
+        p->history=pick.entry;p->rates=pick.entry->rates;p->priority=policy;e=append_period(group,p);if(e.code)return e;}
+    *out=(PricePeriod){true,group->key,i};return ERR_SUCCESS;
+}
 Err pricing_claude_period(PricingReport *report,Str key,const PriceEntry *rates,double fast_multiplier,PricePeriod *out) {
     PricingPeriods *group;Err e=periods_for(report,key,&group);if(e.code)return e;
     size_t position=0;for(;position<group->count;position++){PricingPeriod *p=group->items[position];if(p->claude&&price_entry_equal(&p->rates,rates)&&p->fast_multiplier==fast_multiplier)break;}
@@ -118,8 +130,7 @@ Err price_usage_units(UsageUnit *units,size_t count,const PriceHistory *history,
         if(str_equal(normalized,STR_LIT("unknown"))){e=count_add(report,&report->unpriced,unit->model,unit->input+unit->output);if(e.code)return e;continue;}
         const PriceEntry *rates=NULL;PricePriority priority={0};
         if(!unit->at_ms.present) {
-            double multiplier=unit->priority_tier?codex_api_fast_multiplier(report->rules,raw):0;
-            if(multiplier)priority=(PricePriority){.present=true,.capped=!rules_codex_uncapped(report->rules,normalized),.cap=rules_codex_cap(report->rules),.multiplier={.is_float=true,.f=multiplier}};
+            if(unit->priority_tier)priority=fast_policy(report->rules,raw,normalized);
             Str key={0};if(override){e=override_key(report,index,raw,normalized,&key);if(e.code)return e;}
             e=rates_at(report,history,index,key.p?key:normalized,raw,0,true,priority,&rates,&unit->period);if(e.code)return e;
             if(!rates){e=count_add(report,&report->unpriced,unit->model,unit->input+unit->output);if(e.code)return e;continue;}
@@ -137,16 +148,18 @@ Err price_usage_units(UsageUnit *units,size_t count,const PriceHistory *history,
         if(cutoff_present&&!unit->timestamp_ms.present&&rates_clock<cutoff)rates_clock=cutoff;
         Str key={0};if(override&&!historical){e=override_key(report,index,raw,normalized,&key);if(e.code)return e;}
         if(key.p){HistoryPick pick=history_pick(history,key,rates_clock);if(pick.entry&&pick.before_first)key=(Str){0};}
-        e=rates_at(report,history,index,key.p?key:normalized,raw,rates_clock,false,(PricePriority){0},&rates,&unit->period);if(e.code)return e;
+        if(unit->priority_tier)priority=fast_policy(report->rules,raw,normalized);
+        e=rates_at(report,history,index,key.p?key:normalized,raw,rates_clock,false,priority,&rates,&unit->period);if(e.code)return e;
         if(!rates){e=count_add(report,&report->unpriced,unit->model,unit->input+unit->output);if(e.code)return e;continue;}
         unit->has_cost=true;unit->cost_usd=cost_usd(rates,unit->input,unit->cached,unit->output);
         if(unit->priority_tier) {
             HistoryPick pick;e=picked(report,history,normalized,at,&pick);if(e.code)return e;
-            if(pick.entry)priority=pick.entry->priority;
-            if(pick.entry&&priority.present) {
+            if(pick.entry&&pick.entry->has_priority)priority=pick.entry->priority;
+            if(pick.entry&&pick.entry->has_priority&&priority.present) {
                 PricingPeriods *group;e=periods_for(report,normalized,&group);if(e.code)return e;
                 unit->priority_period=(PricePeriod){true,group->key,pick.index};
-            }
+            } else if(priority.present&&pick.entry){e=fallback_history_period(report,normalized,pick,priority,&unit->priority_period);if(e.code)return e;}
+            else if(priority.present)unit->priority_period=unit->period;
             double fast;if(priority_cost_usd(rates,&priority,unit->input,unit->cached,unit->output,&fast)&&fast>unit->cost_usd)unit->cost_usd=fast;
             else if(!priority.present){e=count_add(report,&report->priority_without_multiplier,normalized,unit->input);if(e.code)return e;}
         }

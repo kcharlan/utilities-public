@@ -25,7 +25,7 @@ TEST(opencode_usage_component_mapping) {
     SETUP(1);SessionModel *p=run(&store,&c,&s);ASSERT_EQ(1,p->unit_count);
     UsageUnit *u=p->units;ASSERT_EQ(18,u->input);ASSERT_EQ(10,u->output);ASSERT_EQ(5,u->cached);
     ASSERT_EQ(2,u->cache_write);ASSERT_EQ(3,u->reasoning.value);ASSERT_TRUE(u->has_cost);
-    ASSERT_EQ(3000,u->at_ms.value);ASSERT_EQ(1,store.usage->requests);
+    ASSERT_EQ(2000,u->at_ms.value);ASSERT_EQ(1,store.usage->requests);
     ASSERT_TRUE(str_equal(u->model,STR_LIT("synthetic-provider/synthetic-model")));DONE();
 }
 TEST(opencode_usage_compaction) {
@@ -145,7 +145,8 @@ TEST(opencode_usage_shared_overflow_isolates_turns_buckets_and_sessions) {
     SETUP(4);
     m[0]=(OpencodeMessage){.kind=OC_MSG_USER,.id=STR_LIT("synthetic-first"),.created_ms={true,1000}};
     m[2]=(OpencodeMessage){.kind=OC_MSG_USER,.id=STR_LIT("synthetic-second"),.created_ms={true,2000000}};
-    m[1].cost=m[3].cost=DBL_MAX;m[3].completed_ms=(MaybeMs){true,2001000};
+    /* Distinct creation buckets keep aggregation isolation under creation dating. */
+    m[1].cost=m[3].cost=DBL_MAX;m[3].created_ms=(MaybeMs){true,2001000};
     SessionModel *p=run(&store,&c,&s);ASSERT_EQ(2,p->turn_count);
     /* Restore valid recorded costs, testing shared aggregation independently
      * from the provider's required whole-session overflow policy. */

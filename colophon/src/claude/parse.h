@@ -3,11 +3,11 @@
 #include "corpus/assemble.h"
 #include "price/compose.h"
 /* Bump when persisted Claude parse facts change; see docs/development.md. */
-#define CLAUDE_PARSE_REVISION 2
+#define CLAUDE_PARSE_REVISION 3
 typedef struct {
   UsageUnit unit;
   Str message_id, request_id, session_id;
-  bool incomplete, sidechain, subagent;
+  bool incomplete, sidechain, subagent, inherited, detached;
 } ClaudeUsageRow;
 typedef struct {
   Str turn, id, name;
@@ -39,7 +39,7 @@ typedef struct {
   size_t reader_copies; /* Temporary reader view only; never persisted. */
   ClaudeToolFact *tool_facts;
   size_t tool_count, tool_capacity;
-  MaybeMs first_ms, last_ms;
+  MaybeMs first_ms, last_ms, turn_clock_ms;
   ClaudeUsageRow *usage_rows;
   size_t usage_count, usage_capacity;
   Omap rows_dropped; /* record-arena uint64_t values */
@@ -51,4 +51,5 @@ Err claude_parse(const DiscoveredLog *key, Str root, Str config,
 void claude_record_destroy(ClaudeRecord *record);
 Err claude_corpus_add(ClaudeRecord *records, size_t count, int64_t snapshot,
                       Corpus *corpus, CorpusStrings *collisions);
+bool claude_subagent_copy(const ClaudeRecord *records, size_t count, size_t index);
 #endif

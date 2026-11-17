@@ -224,3 +224,14 @@ TEST(opencode_corpus_parent_resolution_excludes_other_providers) {
     SessionModel *p=project(&store,&c,rows,1);ASSERT_TRUE(p);ASSERT_TRUE(p->flags&F_ORPHAN);
     ASSERT_EQ(0,parent.children.count);ASSERT_EQ(1,store.orphaned_subagents.count);cleanup(&store,&c);
 }
+
+TEST(opencode_corpus_unreliable_completion_preserves_status_and_stream_end) {
+    OpencodeMessage m[]={user(STR_LIT("synthetic-request"),2000),assistant(3000)};
+    m[1].completed_ms=(MaybeMs){true,900000000};m[1].streamed_ms=(MaybeMs){true,3500};
+    m[1].completed_unreliable=true;
+    OpencodeSession s=session(STR_LIT("synthetic-clock"),m,2),*rows[]={&s};
+    Corpus c={0};OpencodeStore store={0};SessionModel *p=project(&store,&c,rows,1);
+    ASSERT_TRUE(str_equal(p->turns[0].status,STR_LIT("completed")));
+    ASSERT_EQ(3500,p->turns[0].end_ms.value.i);ASSERT_EQ(3500,p->end_ms.value);
+    cleanup(&store,&c);
+}

@@ -1,4 +1,6 @@
 #define _DARWIN_C_SOURCE
+#include "parse/classify.h"
+
 #include "claude/parse.h"
 #include "claude/scan.h"
 #include "runner.h"
@@ -500,7 +502,8 @@ TEST(claude_queued_prompt_steers_open_turn) {
 TEST(claude_queued_completed_not_steered) { clock_kind(HB_PROMPT HB_TEXT CLOCK_DEQUEUE CLOCK_NEXT, "completed"); }
 TEST(claude_queued_without_dequeue_not_steered) { clock_kind(HB_PROMPT CLOCK_ASSIST CLOCK_NEXT, "open"); }
 TEST(claude_queued_assistant_clears_dequeue) { clock_kind(HB_PROMPT CLOCK_ASSIST CLOCK_DEQUEUE CLOCK_ASSIST CLOCK_NEXT, "open"); }
-TEST(claude_queued_command_without_assistant) { clock_kind("{\"type\":\"user\",\"message\":{\"content\":\"<command-name>/synthetic\"}}\n" CLOCK_DEQUEUE CLOCK_NEXT, "open"); }
+/* Reply-less commands now complete even when a queued prompt follows. */
+TEST(claude_queued_command_without_assistant) { clock_kind("{\"type\":\"user\",\"message\":{\"content\":\"<command-name>/synthetic\"}}\n" CLOCK_DEQUEUE CLOCK_NEXT, "completed"); }
 TEST(claude_queued_stop_hook_not_steered) { clock_kind(HB_PROMPT CLOCK_ASSIST CLOCK_DEQUEUE CLOCK_STOP CLOCK_NEXT, "open"); }
 TEST(claude_queued_interrupted_precedence) { clock_kind(HB_PROMPT CLOCK_ASSIST CLOCK_DEQUEUE "{\"type\":\"user\",\"message\":{\"content\":\"[Request interrupted by user]\"}}\n" CLOCK_NEXT, "interrupted"); }
 TEST(claude_queued_api_error_precedence) { clock_kind(HB_PROMPT CLOCK_ASSIST CLOCK_DEQUEUE CLOCK_ERROR CLOCK_NEXT, "aborted"); }
@@ -510,3 +513,85 @@ TEST(claude_subagent_absent_stop_open) { ClaudeRecord r={0}; parse_subagent_text
 TEST(claude_subagent_null_thinking_open) { ClaudeRecord r={0}; parse_subagent_text(HB_PROMPT "{\"type\":\"assistant\",\"message\":{\"stop_reason\":null,\"content\":[{\"type\":\"thinking\"}]}}\n",&r); ASSERT_TRUE(str_equal(r.turns[0]->end_kind,STR_LIT("open"))); claude_record_destroy(&r); }
 TEST(claude_main_null_text_open) { clock_kind(HB_PROMPT CLOCK_NULL_TEXT,"open"); }
 TEST(claude_subagent_null_text_and_tool_open) { ClaudeRecord r={0}; parse_subagent_text(HB_PROMPT "{\"type\":\"assistant\",\"message\":{\"stop_reason\":null,\"content\":[{\"type\":\"text\",\"text\":\"synthetic\"},{\"type\":\"tool_use\",\"name\":\"Read\"}]}}\n",&r); ASSERT_TRUE(str_equal(r.turns[0]->end_kind,STR_LIT("open"))); claude_record_destroy(&r); }
+
+#define ORIGIN(kind, extra, body) "{\"type\":\"user\",\"timestamp\":\"2020-01-01T00:00:10Z\",\"turnOrigin\":\"" kind "\"," extra "\"message\":{\"content\":\"" body "\"}}\n"
+#define TOOL "{\"type\":\"assistant\",\"timestamp\":\"2020-01-01T00:00:11Z\",\"message\":{\"stop_reason\":\"end_turn\",\"content\":[{\"type\":\"tool_use\",\"name\":\"Read\"}]}}\n"
+TEST(claude_turn_origin_starts_turns) {
+  ClaudeRecord r={0}; parse_text(ORIGIN("task_notification", "", "Synthetic notification") TOOL ORIGIN("peer", "\"isMeta\":true,", "Synthetic peer") TOOL ORIGIN("sdk", "", "<system-reminder>synthetic context</system-reminder> Synthetic prompt") TOOL ORIGIN("other", "", "<command-name>/synthetic</command-name>") TOOL, &r);
+  ASSERT_EQ(4, r.turn_count);
+  const char *kinds[]={"notification","peer","text","command"};
+  for(size_t i=0;i<4;i++) { ASSERT_TRUE(str_equal(r.requests[i].kind,(Str){kinds[i],(uint32_t)strlen(kinds[i])})); ASSERT_EQ(1,*(__int128 *)omap_get(&r.tools[i].other,STR_LIT("Read"))); }
+  ASSERT_TRUE(str_equal(r.requests[2].text,STR_LIT("Synthetic prompt"))); claude_record_destroy(&r);
+}
+TEST(claude_turn_origin_compact_summary_continues) { ClaudeRecord r={0}; parse_text(HB_PROMPT ORIGIN("peer", "\"isCompactSummary\":true,", "Synthetic summary"),&r); ASSERT_EQ(1,r.turn_count); claude_record_destroy(&r); }
+#define NOTICE "{\"type\":\"user\",\"timestamp\":\"2020-01-01T00:00:10Z\",\"message\":{\"content\":\"<task-notification>synthetic</task-notification>\"}}\n"
+TEST(claude_task_notification_tag_after_completion) { ClaudeRecord r={0}; parse_text(HB_PROMPT HB_TEXT NOTICE,&r); ASSERT_EQ(2,r.turn_count); ASSERT_TRUE(str_equal(r.requests[1].kind,STR_LIT("notification"))); claude_record_destroy(&r); }
+TEST(claude_task_notification_tag_first_record) { ClaudeRecord r={0}; parse_text(NOTICE,&r); ASSERT_EQ(1,r.turn_count); ASSERT_TRUE(str_equal(r.requests[0].kind,STR_LIT("notification"))); claude_record_destroy(&r); }
+TEST(claude_task_notification_tag_mid_turn) { ClaudeRecord r={0}; parse_text(HB_PROMPT HB_UNRESOLVED NOTICE,&r); ASSERT_EQ(1,r.turn_count); claude_record_destroy(&r); }
+#define RESUME "{\"type\":\"user\",\"isMeta\":true,\"timestamp\":\"2020-01-01T00:00:10Z\",\"origin\":{\"kind\":\"coordinator\"},\"message\":{\"content\":\"Synthetic resume\"}}\n"
+TEST(claude_subagent_coordinator_resume_starts_turn) { ClaudeRecord r={0}; parse_subagent_text(HB_PROMPT RESUME,&r); ASSERT_EQ(2,r.turn_count); ASSERT_TRUE(str_equal(r.requests[1].kind,STR_LIT("resume"))); claude_record_destroy(&r); parse_text(HB_PROMPT RESUME,&r); ASSERT_EQ(1,r.turn_count); claude_record_destroy(&r); }
+#define API_FAILURE "{\"type\":\"assistant\",\"isApiErrorMessage\":true,\"timestamp\":\"2020-01-01T00:00:01Z\",\"message\":{\"stop_reason\":\"end_turn\",\"content\":\"Synthetic error\"}}\n"
+TEST(claude_api_error_message_aborts_turn) { clock_kind(HB_PROMPT API_FAILURE,"aborted"); }
+TEST(claude_api_error_message_then_reply_completes) { clock_kind(HB_PROMPT API_FAILURE HB_TEXT,"completed"); }
+TEST(claude_command_without_reply_completes) { clock_kind("{\"type\":\"user\",\"timestamp\":\"2020-01-01T00:00:00Z\",\"message\":{\"content\":\"<command-name>/synthetic</command-name>\"}}\n","completed"); }
+TEST(claude_text_without_reply_stays_open) { clock_kind(HB_PROMPT,"open"); }
+TEST(claude_wakeup_turn_clock_excludes_wait) { ClaudeRecord r={0}; parse_text(HB_PROMPT HB_TEXT ORIGIN("peer", "\"isMeta\":true,", "Synthetic wakeup") TOOL,&r); ASSERT_EQ(2,r.turn_count); ASSERT_EQ(1577836803000LL,r.turns[0]->end_ms.value); ASSERT_EQ(1577836810000LL,r.turns[1]->start_ms.value); ASSERT_EQ(1577836811000LL,r.turns[1]->end_ms.value); claude_record_destroy(&r); }
+TEST(claude_title_skips_agent_requests) {
+  ClaudeRecord records[2]={0};
+  parse_text(ORIGIN("peer", "\"isMeta\":true,", "Synthetic agent") HB_PROMPT, &records[0]);
+  parse_text(ORIGIN("task_notification", "", "Synthetic notification"), &records[1]);
+  records[0].id=STR_LIT("synthetic-title"); records[1].id=STR_LIT("synthetic-filename");
+  Corpus c={0}; CorpusStrings collisions={0};
+  ASSERT_EQ(ERR_OK,claude_corpus_add(records,2,0,&c,&collisions).code);
+  SessionModel *first=omap_get(&c.sessions,records[0].id), *second=omap_get(&c.sessions,records[1].id);
+  ASSERT_TRUE(str_equal(first->title_full,STR_LIT("Synthetic request")));
+  ASSERT_TRUE(str_equal(second->title_full,STR_LIT("synthetic-filename")));
+  ASSERT_TRUE(str_equal(second->title_source,STR_LIT("filename")));
+  corpus_destroy(&c); claude_record_destroy(&records[0]); claude_record_destroy(&records[1]);
+}
+
+static void parse_fork_text(const char *rows, ClaudeRecord *r) {
+  char path[1024]; snprintf(path, sizeof path, "%s/synthetic-fork.jsonl", getenv("COLOPHON_HOME"));
+  FILE *f=fopen(path,"w"); ASSERT_TRUE(f); ASSERT_TRUE(fputs(rows,f)>=0); ASSERT_EQ(0,fclose(f));
+  DiscoveredLog key={.path={path,(uint32_t)strlen(path)},.size=(int64_t)strlen(rows)};
+  ASSERT_EQ(ERR_OK,claude_parse(&key,STR_LIT("/synthetic/projects"),(Str){0},r).code); ASSERT_EQ(0,unlink(path));
+}
+TEST(claude_fork_transition_discards_inherited) {
+  ClaudeRecord r={0}; parse_fork_text(
+    "{\"type\":\"custom-title\",\"sessionId\":\"synthetic-source\",\"customTitle\":\"Synthetic inherited title\",\"timestamp\":\"2020-01-01T00:00:00Z\"}\n"
+    "{\"type\":\"user\",\"message\":{\"content\":\"Synthetic inherited request\"}}\n"
+    "{\"type\":\"assistant\",\"message\":{\"stop_reason\":\"end_turn\",\"content\":[{\"type\":\"tool_use\",\"name\":\"Bash\",\"id\":\"synthetic-old\"}]}}\n"
+    "{\"type\":\"user\",\"sessionId\":\"synthetic-fork\",\"timestamp\":\"2020-01-01T00:00:10Z\",\"message\":{\"content\":\"Synthetic own request\"}}\n"
+    "{\"type\":\"assistant\",\"timestamp\":\"2020-01-01T00:00:11Z\",\"message\":{\"stop_reason\":\"end_turn\",\"content\":\"Synthetic own answer\"}}\n",&r);
+  ASSERT_EQ(1,r.turn_count); ASSERT_TRUE(str_equal(r.meta.forked_from_id,STR_LIT("synthetic-source")));
+  ASSERT_TRUE(str_equal(r.requests[0].text,STR_LIT("Synthetic own request"))); ASSERT_EQ(0,r.tools[0].shell);
+  ASSERT_EQ(0,r.tool_turns.size); ASSERT_EQ(0,r.custom_title.n); ASSERT_EQ(1577836810000LL,r.first_ms.value);
+  Corpus c={0}; CorpusStrings collisions={0}; ASSERT_EQ(ERR_OK,claude_corpus_add(&r,1,0,&c,&collisions).code);
+  SessionModel *s=omap_get(&c.sessions,r.id); ASSERT_TRUE(str_equal(s->forked_from,STR_LIT("synthetic-source")));
+  ASSERT_FALSE(s->flags & F_FORKED); ASSERT_TRUE(str_equal(s->title_full,STR_LIT("Synthetic own request")));
+  corpus_destroy(&c); claude_record_destroy(&r);
+}
+TEST(claude_fork_of_fork_parent) {
+  ClaudeRecord r={0}; parse_fork_text("{\"type\":\"progress\",\"sessionId\":\"synthetic-grandparent\"}\n{\"type\":\"progress\",\"sessionId\":\"synthetic-parent\"}\n{\"type\":\"progress\",\"sessionId\":\"synthetic-fork\"}\n",&r);
+  ASSERT_TRUE(str_equal(r.meta.forked_from_id,STR_LIT("synthetic-parent"))); claude_record_destroy(&r);
+}
+TEST(claude_foreign_only_transcript_is_not_fork) {
+  ClaudeRecord r={0}; parse_fork_text("{\"type\":\"user\",\"sessionId\":\"synthetic-source\",\"message\":{\"content\":\"Synthetic alias\"}}\n",&r);
+  ASSERT_EQ(1,r.turn_count); ASSERT_EQ(0,r.meta.forked_from_id.n); ASSERT_EQ(1,r.aliases.count); claude_record_destroy(&r);
+}
+TEST(claude_session_end_uses_turn_clock) {
+  ClaudeRecord r={0}; parse_text(HB_PROMPT HB_TEXT CLOCK_DEQUEUE "{\"type\":\"pr-link\",\"timestamp\":\"2020-01-01T00:00:05Z\"}\n",&r);
+  Corpus c={0}; CorpusStrings collisions={0}; ASSERT_EQ(ERR_OK,claude_corpus_add(&r,1,0,&c,&collisions).code);
+  SessionModel *s=omap_get(&c.sessions,r.id); ASSERT_EQ(1577836803000LL,s->end_ms.value);
+  corpus_destroy(&c); claude_record_destroy(&r);
+}
+TEST(claude_diagnostic_known_types) {
+  const char *names[]={"attachment","atis-latch","api-request","api-request-shape","api-request-blob","agent-name","cost-state","tools-used","mode","file-history-delta","artifact-comment-monitor","artifact-autoreact-ledger","bridge-session","frame-link","permission-mode","session-owner","relocated","worktree-state"};
+  for(size_t i=0;i<sizeof names/sizeof *names;i++) ASSERT_TRUE(claude_known_type((Str){names[i],(uint32_t)strlen(names[i])}));
+  ASSERT_FALSE(claude_known_type(STR_LIT("retained_context")));
+}
+TEST(codex_diagnostic_known_types) {
+  const char *names[]={"response_item/additional_tools","response_item/configuration_update","event_msg/item_completed/HookPrompt","event_msg/item_completed/FunctionCallOutput"};
+  for(size_t i=0;i<sizeof names/sizeof *names;i++) ASSERT_TRUE(record_type_known((Str){names[i],(uint32_t)strlen(names[i])}));
+  ASSERT_FALSE(record_type_known(STR_LIT("retained_context")));
+}

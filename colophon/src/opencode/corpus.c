@@ -22,7 +22,7 @@ static void latest(MaybeMs *out, MaybeMs value) {
 }
 static MaybeMs message_end(const OpencodeMessage *m) {
     MaybeMs end=opencode_message_created(m);
-    latest(&end,m->streamed_ms);latest(&end,m->completed_ms);
+    latest(&end,m->streamed_ms);if(!m->completed_unreliable)latest(&end,m->completed_ms);
     return end;
 }
 static bool prefix(Str s, Str p) { return s.n>=p.n && !memcmp(s.p,p.p,p.n); }

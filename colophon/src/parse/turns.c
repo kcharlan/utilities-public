@@ -49,10 +49,11 @@ Err turns_build(LogRecord *record, RecordFact *facts, size_t count, TurnBuilder 
         RecordFact *fact = &facts[i];
         if (fact->inherited)
             continue;
+        bool settings = str_equal(fact->kind, STR_LIT("event_msg/thread_settings_applied"));
         if (fact->at_ms.present) {
             if (!record->first_ms.present || fact->at_ms.value < record->first_ms.value)
                 record->first_ms = fact->at_ms;
-            if (!record->last_ms.present || fact->at_ms.value > record->last_ms.value)
+            if (!settings && (!record->last_ms.present || fact->at_ms.value > record->last_ms.value))
                 record->last_ms = fact->at_ms;
         }
         if (unresolved)
@@ -112,7 +113,7 @@ Err turns_build(LogRecord *record, RecordFact *facts, size_t count, TurnBuilder 
             turn->end_src = fact->ts_src;
             turn->end_kind = str_equal(fact->kind, STR_LIT("event_msg/task_complete"))
                                  ? STR_LIT("completed")
-                                 : STR_LIT("aborted");
+                                 : fact->interrupted ? STR_LIT("interrupted") : STR_LIT("aborted");
             turn->reported_ms = fact->reported_ms;
             turn->ttft_ms = fact->ttft_ms;
             state->has_completion = true;
@@ -124,7 +125,7 @@ Err turns_build(LogRecord *record, RecordFact *facts, size_t count, TurnBuilder 
             if (turn == current)
                 current = NULL;
         }
-        if (turn && fact->at_ms.present &&
+        if (turn && !settings && fact->at_ms.present &&
             (!turn->last_ms.present || fact->at_ms.value >= turn->last_ms.value)) {
             turn->last_ms = fact->at_ms;
             TurnKeyState *state = omap_get(&builder->keyed, turn->key);

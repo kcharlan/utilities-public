@@ -127,6 +127,7 @@ static Err merge_tools(Arena *a, ClaudeRecord *views, size_t n, ClaudeRecord *re
   Err e = ERR_SUCCESS;
   for (size_t i = 0; i < count && !e.code; i++) {
       ClaudeRecord *r = &records[i];
+      if (claude_subagent_copy(records, count, i)) continue;
       if (!r->reader_facts) continue;
       ClaudeRecord *v = omap_get(groups, r->id);
       if (v->reader_copies == 1) continue;
@@ -161,6 +162,7 @@ static Err merge_tools(Arena *a, ClaudeRecord *views, size_t n, ClaudeRecord *re
      * conservatively, without adding mirrored aggregate snapshots twice. */
   for (size_t i = 0; i < count; i++) {
       ClaudeRecord *r = &records[i];
+      if (claude_subagent_copy(records, count, i)) continue;
       if (r->reader_facts) continue;
       ClaudeRecord *v = omap_get(groups, r->id);
       if (v->reader_copies == 1) continue;
@@ -182,6 +184,7 @@ Err claude_reader_reconcile(ClaudeRecord *records, size_t count, Corpus *c,
   TRY(zero(&c->arena, count, sizeof *occurrences, alignof(size_t *), (void **)&occurrences));
   Omap groups = {0}; Err e = ERR_SUCCESS;
   for (size_t i = 0; i < count && !e.code; i++) {
+    if (claude_subagent_copy(records, count, i)) continue;
     ClaudeRecord *r = &records[i], *v = omap_get(&groups, r->id);
     if (!v) {
       v = &(*out)[(*out_count)++];
@@ -199,6 +202,7 @@ Err claude_reader_reconcile(ClaudeRecord *records, size_t count, Corpus *c,
       }
       if (r->first_ms.present && (!v->first_ms.present || r->first_ms.value < v->first_ms.value)) v->first_ms = r->first_ms;
       if (newest) v->last_ms = r->last_ms;
+      if (later(r->turn_clock_ms, v->turn_clock_ms)) v->turn_clock_ms = r->turn_clock_ms;
       if (r->key.mtime_ns > v->key.mtime_ns) v->key.mtime_ns = r->key.mtime_ns;
       if (v->retained && !r->retained) { v->key.path = r->key.path; v->config_dir = r->config_dir; }
       else if (r->retained == v->retained && r->config_dir.p &&
@@ -213,6 +217,7 @@ Err claude_reader_reconcile(ClaudeRecord *records, size_t count, Corpus *c,
     v->turn_count = 0; v->tool_turns = (Omap){0}; v->canonical_turns = (Omap){0};
   }
   for (size_t i = 0; i < count && !e.code; i++) {
+    if (claude_subagent_copy(records, count, i)) continue;
     ClaudeRecord *r = &records[i], *v = omap_get(&groups, r->id);
     omap_destroy(&r->canonical_turns);
     if (v->reader_copies == 1) continue;

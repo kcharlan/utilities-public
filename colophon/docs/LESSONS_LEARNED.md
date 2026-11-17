@@ -1,9 +1,33 @@
 # Lessons learned
 
+Codex thread settings are bookkeeping, not conversation activity: keep them
+out of session-end and turn-last clocks. Turns may extend outside a session's
+recorded span, so compute idle with checked arithmetic and clamp it at zero for
+every provider.
+
+Agent-origin Claude prompts can be meta records or begin with system reminders.
+Recognize their turn boundary independently of ordinary prompt filtering, and
+keep the preceding idle interval outside both turns. Terminal notification and
+reply-less command cases need distinct status and title regressions.
+
 Unknown OpenCode session tables and migration keys do not prove that required
-read sources changed. Report their names without opening extra tables, while
+read sources changed. Report their names, while
 continuing to reject missing required columns and incomplete legacy migrations.
 Keep the diagnostics in the same staged arena as the accepted database facts.
+The optional `session_part` table is inspected only for row existence; an empty
+table is not reported.
+
+For Claude, a string `turnOrigin` takes precedence over meta and tag filtering
+unless the record is a compact summary; a subagent coordinator origin starts a
+resume. A main-session fork starts at the first own session ID following other
+session IDs, with the last nonempty predecessor as its recorded parent. Explicit
+usage session IDs determine ownership before position; position supplies the
+fallback for missing IDs, and transition rows remain detached from turns.
+
+OpenCode usage follows message creation time. Repeated completion milliseconds
+across sessions in the same database are assumed to be bulk updates and do not
+set duration, though they still indicate completed status. The heuristic can
+discard genuine simultaneous completions.
 
 Retain Antigravity usage before deduplication, including raw request identity
 bytes, so deleted databases can still participate in global alias merging. Live
@@ -306,9 +330,11 @@ against both projection and composition before changing a regression expectation
 
 Keep payload creation and SQLite row creation as independent raw facts. Derive
 one effective creation clock (valid payload first, otherwise row) for request
-starts, message-end fallback and usage dating; valid payload completion still
-wins for usage. Fork inheritance uses only row creation, even when a copied
-payload clock suggests different ownership. Test the DB-to-corpus/usage boundary
+starts, message-end fallback and usage dating. Completion values shared across
+sessions in one database can reflect bulk updates: exclude them from end clocks
+but preserve their status signal, and test distinct and same-session values as
+well as database isolation. Fork inheritance uses only row creation, even when a
+copied payload clock suggests different ownership. Test the DB-to-corpus/usage boundary
 and emitted buckets as well as the raw parser facts and numeric diagnostics.
 
 Arena allocations live until the complete store is destroyed. Joining fragments
@@ -424,3 +450,19 @@ revision when stored facts change; see [development](development.md).
 Live cache compatibility must reject newer parser revisions as well as older
 ones: a rollback otherwise silently reuses facts produced by different parsing
 rules. Retained facts still need preservation when their source is unavailable.
+
+Forked transcripts can contain inherited rows without session IDs. Record the
+transition boundary's ownership and detachment facts at parse time: raw usage
+callbacks precede record callbacks, and cached or retained facts must not
+reuse discarded turn keys. Exercise source precedence in both path orders and
+subagent-copy suppression when the original is missing.
+
+Explicit usage ownership takes precedence over boundary position, while turn
+detachment still follows the boundary. Preserve the maximum qualifying session
+clock separately from the final physical turn clock, whose order controls turn
+status and answer selection.
+
+A catalog-sourced pricing history row can omit a priority field. Resolve the
+current fast policy for that case and for missing history, while preserving an
+explicit null or stored policy and exposing the effective policy in provenance.
+Test timed and untimed rows separately, including long-context input.

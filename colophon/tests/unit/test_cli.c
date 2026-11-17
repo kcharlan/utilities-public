@@ -103,3 +103,9 @@ TEST(cli_prune_barrier_two_processes_complete_and_cannot_reuse_markers){
     }
     ASSERT_EQ(0,rmdir(root));unsetenv("COLOPHON_TEST_PRUNE_BARRIER");
 }
+TEST(cli_page_size_limit_boundary) {
+    const size_t limit=128u*1024u*1024u;
+    ASSERT_FALSE(cli_page_over_limit(limit-1));
+    ASSERT_FALSE(cli_page_over_limit(limit));
+    ASSERT_TRUE(cli_page_over_limit(limit+1));
+}
