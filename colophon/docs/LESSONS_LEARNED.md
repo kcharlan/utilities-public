@@ -466,3 +466,8 @@ A catalog-sourced pricing history row can omit a priority field. Resolve the
 current fast policy for that case and for missing history, while preserving an
 explicit null or stored policy and exposing the effective policy in provenance.
 Test timed and untimed rows separately, including long-context input.
+
+Diagnostics stored with retained Claude facts outlive parser changes, because
+retained records are never reparsed. Filter stored unknown-type counts through
+the current known-type list when reporting them, so that adding a known type
+quiets the warning for deleted transcripts too.

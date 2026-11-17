@@ -9,6 +9,7 @@
 #include "opencode/scan.h"
 #include "antigravity/scan.h"
 #include "opencode/compose.h"
+#include "claude/parse.h"
 #include <string.h>
 static void decimal(FILE *stream,__int128 value,bool grouped) {
     unsigned __int128 magnitude=value<0?(unsigned __int128)(-(value+1))+1:(unsigned __int128)value;
@@ -84,7 +85,7 @@ Err summary_run(const char *output,size_t size,const PayloadInputs *in) {
     for(LedgerDiagnostic *e=in->ledger->diagnostics;e;e=e->next)ledger++;
     for(CatalogMessage *e=in->catalog->messages;e;e=e->next)catalog++;
     __int128 malformed=corpus->malformed.total,truncated=corpus->truncated.total,recovered=corpus->recovered.total,claude_unknown=0;
-    if(in->claude&&!in->claude->disabled){malformed+=in->claude->history_malformed;for(size_t i=0;i<in->claude->count;i++){const ReaderResult *r=&in->claude->records[i].reader;malformed+=r->malformed;truncated+=r->partial_final_line;recovered+=r->recovered;for(OmapEntry *q=r->unknown_types.first;q;q=q->next)claude_unknown+=*(uint64_t *)q->value;}}
+    if(in->claude&&!in->claude->disabled){malformed+=in->claude->history_malformed;for(size_t i=0;i<in->claude->count;i++){const ReaderResult *r=&in->claude->records[i].reader;malformed+=r->malformed;truncated+=r->partial_final_line;recovered+=r->recovered;for(OmapEntry *q=r->unknown_types.first;q;q=q->next)if(!claude_known_type(q->key))claude_unknown+=*(uint64_t *)q->value;}}
     diagnostic("skipped_files",corpus->skipped_file_count+in->scan->unreadable_count+(in->claude?in->claude->skipped_count:0),&first);
     diagnostic("malformed_lines",malformed,&first);diagnostic("truncated_lines",truncated,&first);diagnostic("recovered_lines",recovered,&first);
     diagnostic("claude_unknown_record_types",claude_unknown,&first);diagnostic("claude_session_id_collisions",in->claude?in->claude->collisions.count:0,&first);

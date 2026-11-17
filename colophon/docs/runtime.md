@@ -183,7 +183,7 @@ reader. Missing legacy provider fields mean Codex. Source filtering applies
 to overview totals, session lists, descendants and direct subagent links.
 The snapshot log count always includes Codex and Claude logs, regardless of the
 switch; accepted OpenCode and Antigravity database counts are shown separately. The footer
-displays the embedded payload's release version (`colophon 0.10.0`). Catalog
+displays the embedded payload's release version (`colophon 0.10.1`). Catalog
 names take precedence over fallback aliases; valid canonical IDs select one
 target, while existing Codex history keys remain unchanged.
 
@@ -278,7 +278,7 @@ An empty value selects the default `~/.claude` config root. Its
 `COLOPHON_HOME` selects the private runtime home (default `~/.colophon`);
 tilde expansion is supported. `COLOPHON_PRICING_URL` defaults to
 `https://models.dev/api.json`. Help and version exit without initializing
-runtime state. Version is currently `colophon 0.10.0`.
+runtime state. Version is currently `colophon 0.10.1`.
 
 | Flag | Behavior |
 | --- | --- |
@@ -388,7 +388,9 @@ and deduplicated; nested symlink directories are not traversed.
 Claude transcripts are read-only. Filename stems define session identities;
 same-stem copies share a session. Codex wins an identity collision, reported
 in `claude_session_id_collisions`. Unhandled Claude record types have their
-own `claude_unknown_record_types` diagnostic. Claude reader rows offer no
+own `claude_unknown_record_types` diagnostic. Types known to the running
+release are left out, including counts stored in retained or cached records
+by an older parser. Claude reader rows offer no
 Codex continuation or desktop links.
 
 A main Claude transcript is a fork when its own session ID follows a foreign
