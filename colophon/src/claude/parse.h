@@ -39,7 +39,7 @@ typedef struct {
   size_t reader_copies; /* Temporary reader view only; never persisted. */
   ClaudeToolFact *tool_facts;
   size_t tool_count, tool_capacity;
-  MaybeMs first_ms, last_ms;
+  MaybeMs first_ms, last_ms, turn_clock_ms;
   ClaudeUsageRow *usage_rows;
   size_t usage_count, usage_capacity;
   Omap rows_dropped; /* record-arena uint64_t values */

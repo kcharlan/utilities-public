@@ -170,14 +170,15 @@ static Err on_record(void *context, const ReaderRecord *row) {
       }
       r->turn_count = r->tool_count = 0;
       p->capacity = 0;
-      r->first_ms = r->last_ms = (MaybeMs){0};
+      r->first_ms = r->last_ms = r->turn_clock_ms = (MaybeMs){0};
       r->custom_title = r->ai_title = (Str){0};
       r->meta.cwd = r->meta.branch = (JScalar){0};
       omap_destroy(&r->tool_turns); omap_destroy(&p->shell_ids); omap_destroy(&p->handback_ids);
       p->interrupted = p->api_error = p->completed = p->steered = false;
       p->assistant_seen = p->assistant_failed = p->dequeued = p->stop_marked = false;
       for (size_t i = 0; i < r->usage_count; i++) {
-        r->usage_rows[i].inherited = i < p->raw_start;
+        Str owner = r->usage_rows[i].session_id;
+        r->usage_rows[i].inherited = owner.n ? !str_equal(owner, r->id) : i < p->raw_start;
         r->usage_rows[i].detached = true;
         r->usage_rows[i].unit.turn_id = r->usage_rows[i].unit.display_turn = (Str){0};
       }
@@ -337,8 +338,11 @@ static Err on_record(void *context, const ReaderRecord *row) {
                    str_equal(text(get(v, "subtype")), STR_LIT("api_error"));
   if (at.present && (prompt || assistant || api_error ||
       (str_equal(type, STR_LIT("user")) && !yyjson_is_true(get(v, "isMeta")) &&
-       (user_result || interruption))))
+       (user_result || interruption)))) {
     t->last_ms = at;
+    if (!r->turn_clock_ms.present || at.value > r->turn_clock_ms.value)
+      r->turn_clock_ms = at;
+  }
   p->api_error = api_error;
   if (str_equal(type, STR_LIT("queue-operation")) &&
       str_equal(text(get(v, "operation")), STR_LIT("dequeue")))
@@ -550,6 +554,8 @@ static Err add_records(ClaudeRecord *records, size_t count, int64_t snapshot,
       for (size_t j = 0; j < r->turn_count; j++)
         if (r->turns[j]->last_ms.present && (!s->end_ms.present || r->turns[j]->last_ms.value > s->end_ms.value))
           s->end_ms = r->turns[j]->last_ms;
+      if (r->turn_clock_ms.present && (!s->end_ms.present || r->turn_clock_ms.value > s->end_ms.value))
+        s->end_ms = r->turn_clock_ms;
     }
     if(r->retained)s->flags|=F_RETAINED;
     int64_t mtime = r->key.mtime_ns / 1000000;

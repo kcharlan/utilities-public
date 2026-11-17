@@ -1,5 +1,6 @@
 #include "claude/compose.h"
 #include "claude/codec.h"
+#include "util/sha256.h"
 #include "runner.h"
 #include <stdio.h>
 #include <stdlib.h>
@@ -569,4 +570,28 @@ TEST(claude_fork_blank_ownership_and_transition_detachment_survive_codec) {
   Corpus c={0}; ClaudeScan scan; composed(&decoded,1,&scan,&c);
   SessionModel *s=omap_get(&c.sessions,decoded.id); ASSERT_EQ(3,s->unit_count); ASSERT_EQ(3,s->turns[0].usage->input);
   corpus_destroy(&c); claude_record_destroy(&decoded); claude_record_destroy(&r); ASSERT_EQ(0,remove(path));
+}
+
+TEST(claude_fork_explicit_own_usage_before_transition_survives_replay) {
+  const char *home=getenv("COLOPHON_HOME"); char path[1024];
+  snprintf(path,sizeof path,"%s/synthetic-fork.jsonl",home);
+  const char *rows="{\"type\":\"assistant\",\"session_id\":\"synthetic-fork\",\"timestamp\":\"2001-01-01T00:00:00Z\",\"requestId\":\"synthetic-shared\",\"message\":{\"id\":\"synthetic-response\",\"model\":\"synthetic-model\",\"usage\":{\"input_tokens\":7}}}\n"
+    "{\"type\":\"progress\",\"sessionId\":\"synthetic-source\"}\n"
+    "{\"type\":\"progress\",\"sessionId\":\"synthetic-fork\"}\n";
+  FILE *f=fopen(path,"w"); ASSERT_TRUE(f); ASSERT_TRUE(fputs(rows,f)>=0); ASSERT_EQ(0,fclose(f));
+  ClaudeRecord r[2]={0}, decoded={0}; DiscoveredLog key={.path={path,(uint32_t)strlen(path)},.size=(int64_t)strlen(rows)};
+  ASSERT_EQ(ERR_OK,claude_parse(&key,STR_LIT("/synthetic"),(Str){0},&r[0]).code);
+  ASSERT_EQ(1,r[0].usage_count); ASSERT_FALSE(r[0].usage_rows[0].inherited); ASSERT_TRUE(r[0].usage_rows[0].detached);
+  unsigned char *bytes=NULL; size_t n=0; ASSERT_EQ(ERR_OK,claude_codec_encode(&r[0],&bytes,&n).code);
+  ASSERT_EQ(ERR_OK,claude_codec_decode(bytes,n,&decoded).code); claude_record_destroy(&decoded);
+  ASSERT_TRUE(n>7 && !memcmp(bytes+n-7,",false]",7));
+  bytes[n-7]=']'; n-=6; memcpy(bytes,"CLCD4\n",6); sha256_hex(bytes+71,n-71,(char *)bytes+6); bytes[70]='\n';
+  ASSERT_EQ(ERR_OK,claude_codec_decode(bytes,n,&decoded).code); free(bytes); claude_record_destroy(&r[0]); r[0]=decoded;
+  ASSERT_FALSE(r[0].usage_rows[0].inherited); ASSERT_TRUE(r[0].usage_rows[0].detached);
+  r[0].key.path=STR_LIT("/synthetic/a.jsonl"); r[1].id=STR_LIT("synthetic-competitor"); r[1].key.path=STR_LIT("/synthetic/z.jsonl");
+  line(&r[1],"{\"type\":\"assistant\",\"timestamp\":\"2001-01-01T00:00:00Z\",\"requestId\":\"synthetic-shared\",\"message\":{\"id\":\"synthetic-response\",\"model\":\"synthetic-model\",\"usage\":{\"input_tokens\":7}}}");
+  Corpus c={0}; ClaudeScan scan; composed(r,2,&scan,&c);
+  SessionModel *owner=omap_get(&c.sessions,STR_LIT("synthetic-fork")), *other=omap_get(&c.sessions,STR_LIT("synthetic-competitor"));
+  ASSERT_EQ(1,owner->unit_count); ASSERT_EQ(0,other->unit_count); ASSERT_EQ(7,owner->own_usage->input);
+  corpus_destroy(&c); claude_record_destroy(&r[0]); claude_record_destroy(&r[1]); ASSERT_EQ(0,remove(path));
 }

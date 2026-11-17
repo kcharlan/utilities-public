@@ -435,3 +435,8 @@ transition boundary's ownership and detachment facts at parse time: raw usage
 callbacks precede record callbacks, and cached or retained facts must not
 reuse discarded turn keys. Exercise source precedence in both path orders and
 subagent-copy suppression when the original is missing.
+
+Explicit usage ownership takes precedence over boundary position, while turn
+detachment still follows the boundary. Preserve the maximum qualifying session
+clock separately from the final physical turn clock, whose order controls turn
+status and answer selection.

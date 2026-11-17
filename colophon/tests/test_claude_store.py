@@ -640,11 +640,13 @@ def test_claude_handback_stale_v2_live_cache_reparses(tmp_path):
     matches = [(p, json.loads(p.read_bytes()[71:])) for p in records]
     matches = [(p, body) for p, body in matches if body[7] == 'synthetic-parent/agent-synthetic-child']
     (path, body), = matches
-    assert path.read_bytes().startswith(b'CLCD4\n')
+    assert path.read_bytes().startswith(b'CLCD5\n')
     index, = [i for i, value in enumerate(body) if value == 'completed']
     body[index] = 'open'
     assert body[index + 1:index + 5] == [True, 1577836800000, True, 1577836802000]
     body[index + 3:index + 5] = [False]
+    assert body.pop() == 1577836802000
+    assert body.pop() is True
     assert body.pop() == 2
     data = json.dumps(body, separators=(',', ':')).encode()
     path.write_bytes(b'CLCD2\n' + hashlib.sha256(data).hexdigest().encode() + b'\n' + data)
@@ -740,3 +742,23 @@ def test_claude_fork_subagent_copy_and_cache(tmp_path, source_child):
         assert len(sessions['synthetic-source']['turns']) == len(sessions['synthetic-fork']['turns']) == 1
         assert sum(s['own_usage']['input'] for s in sessions.values()) == 7
         assert payload['subagents'][f'{expected}/agent-synthetic-child']['own_usage']['input'] == 11
+
+
+def test_claude_session_clock_maximum_survives_cache_and_retention(tmp_path):
+    run = NativeRun(tmp_path)
+    rows = [
+        {'type': 'user', 'timestamp': '2020-01-01T00:00:00Z', 'message': {'content': 'Synthetic clock prompt'}},
+        {'type': 'assistant', 'timestamp': '2020-01-01T00:00:20Z', 'message': {'stop_reason': 'end_turn', 'content': 'Synthetic earlier answer'}},
+        {'type': 'assistant', 'timestamp': '2020-01-01T00:00:10Z', 'message': {'stop_reason': 'end_turn', 'content': 'Synthetic final answer'}},
+        {'type': 'pr-link', 'timestamp': '2020-01-01T00:00:30Z'},
+    ]
+    path = run.claude_session('synthetic-clock', rows=rows)
+    for step in range(3):
+        if step == 2:
+            path.unlink()
+        assert run.build().returncode == 0
+        session, = run.payload()['sessions']
+        assert session['end_ms'] == 1577836820000
+        assert session['turns'][0]['end_ms'] == 1577836810000
+        assert session['turns'][0]['final_answer']['text'] == 'Synthetic final answer'
+        assert session['turns'][0]['status'] == 'completed'

@@ -590,12 +590,14 @@ memory acceptance is claimed.
 `claude-retained/<root-key>/` contains records whose source transcripts were
 positively proved deleted. Keys are SHA-256 names from the resolved search-root
 and original transcript paths. Files are private (0600), directories 0700.
-The Claude CLCD4 codec is independent of the Codex native cache. It preserves
+The Claude CLCD5 codec is independent of the Codex native cache. It preserves
 exact aliases, original paths, config/resume origin, prompts, turns, tools,
 sidecar facts and every raw usage row, including extraction-time cost snapshots
 for duplicate losers. Earlier codec versions keep their decoders and immutable
 synthetic test inputs.
 CLCD4 also preserves inherited usage ownership and explicit turn detachment.
+CLCD5 preserves the maximum qualifying turn clock independently of the final
+turn record's clock. Older records retain their available per-turn clocks.
 
 Same-stem copies share a reader assembled from their available turns. Prompt
 UUIDs identify turns; conflicting UUIDs stay distinct. When UUIDs are unavailable,
@@ -621,7 +623,7 @@ facts. A reparse can recapture extraction-time price snapshots, so costs can
 change; see [Claude pricing](token_rules.md#claude-pricing-and-public-seed-provenance)
 and `src/price/claude_cost.c`.
 
-Earlier decoders cannot read CLCD4. On rollback, available transcripts can be
+Earlier decoders cannot read CLCD5. On rollback, available transcripts can be
 reparsed, but undecodable records cannot supply retained facts; unreadable
 retained files are reported and left in place, not deleted.
 When rolling back to 0.8.4, run with `--rebuild` to discard this release's live

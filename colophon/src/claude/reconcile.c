@@ -202,6 +202,7 @@ Err claude_reader_reconcile(ClaudeRecord *records, size_t count, Corpus *c,
       }
       if (r->first_ms.present && (!v->first_ms.present || r->first_ms.value < v->first_ms.value)) v->first_ms = r->first_ms;
       if (newest) v->last_ms = r->last_ms;
+      if (later(r->turn_clock_ms, v->turn_clock_ms)) v->turn_clock_ms = r->turn_clock_ms;
       if (r->key.mtime_ns > v->key.mtime_ns) v->key.mtime_ns = r->key.mtime_ns;
       if (v->retained && !r->retained) { v->key.path = r->key.path; v->config_dir = r->config_dir; }
       else if (r->retained == v->retained && r->config_dir.p &&
