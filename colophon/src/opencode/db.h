@@ -37,7 +37,7 @@ typedef struct {
     OpencodeTool *tools;
     size_t tool_count, tool_capacity;
     Str turn; /* Corpus-populated, never the copied payload id. */
-    bool inherited;
+    bool inherited, completed_unreliable;
 } OpencodeMessage;
 /* Derive display/usage time without changing raw facts or fork ownership. */
 static inline MaybeMs opencode_message_created(const OpencodeMessage *m) {

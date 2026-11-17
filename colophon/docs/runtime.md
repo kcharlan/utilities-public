@@ -316,6 +316,11 @@ the unread table. The latest migration
 is reported without a date-based compatibility warning. A message's id and type come
 from its `session_message` columns; OpenCode 2.1 payloads omit them, and older
 payloads that embed them must carry a non-empty id and the column's type.
+For turn and session ends, a completion clock repeated in more than one session
+of the same database is treated as a bulk-update clock and ignored; the clock
+remains available for status. Legitimate simultaneous completions can also match
+this heuristic. Usage units use payload creation time, falling back to SQLite
+row creation; residuals retain the session-start date.
 Database status and reasons
 remain in `meta.sources.opencode.databases`; aggregate status prefers any
 successful database, then unsupported, then unreadable, then absent. Disabled

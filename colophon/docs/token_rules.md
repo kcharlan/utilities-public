@@ -261,11 +261,14 @@ The schema diagnostic identifies the unread table, not its contents.
 Raw fresh input, cache read and cache write sum into unit input. Cache read and
 write also retain their separate fields; one-hour write is zero. Raw output
 plus reasoning becomes output, with reasoning also retained separately. Models
-retain `provider/model` identities or `opencode/unattributed`. Valid payload
-completion time wins for usage dating; otherwise valid payload creation falls
-back to SQLite row creation. Request starts and message-end fallback share
-that effective creation clock without changing raw clocks or row-only fork
-ownership. Leading usage and residuals have no display turn.
+retain `provider/model` identities or `opencode/unattributed`. Usage units are
+dated by valid payload creation, falling back to SQLite row creation. Request
+starts and message-end fallback share that effective creation clock without
+changing raw clocks or row-only fork ownership. A completion timestamp repeated
+across messages in different sessions of the same database is ignored for turn
+and session ends, but its presence still determines status. This bulk-update
+heuristic can also discard legitimate simultaneous completions. Leading usage
+and residuals have no display turn.
 Priority, fast and rate-period fields remain unset.
 
 Messages sum in sequence order in checked wide raw-component space. Invalid

@@ -9,6 +9,7 @@
 #include "util/json_number.h"
 #include "util/json_read.h"
 #include "util/time.h"
+#include "util/sort.h"
 #include <errno.h>
 #include <math.h>
 #include <stdio.h>
@@ -464,6 +465,34 @@ static Err read_messages(sqlite3 *db,Table *table,OpencodeStore *stage,volatile 
     }
     if(!e.code&&rc!=SQLITE_DONE)e=sql_error(db);sqlite3_finalize(st);return e;
 }
+typedef struct { OpencodeMessage *message; OpencodeSession *session; } CompletionRef;
+static int compare_completion(const void *a,const void *b,void *context) {
+    (void)context;
+    int64_t x=((const CompletionRef*)a)->message->completed_ms.value;
+    int64_t y=((const CompletionRef*)b)->message->completed_ms.value;
+    return (x>y)-(x<y);
+}
+static Err mark_unreliable_completions(OpencodeStore *stage) {
+    CompletionRef *refs=NULL;size_t count=0,capacity=0;
+    for(size_t i=0;i<stage->session_count;i++) {
+        OpencodeSession *s=stage->sessions[i];
+        for(size_t j=0;j<s->message_count;j++) {
+            OpencodeMessage *m=&s->messages[j];
+            if(m->completed_ms.present) { CompletionRef ref={m,s}; TRY(APPEND(&stage->arena,refs,count,capacity,ref)); }
+        }
+    }
+    TRY(stable_sort(refs,count,sizeof *refs,compare_completion,NULL));
+    for(size_t i=0;i<count;) {
+        size_t end=i+1;bool shared=false;
+        while(end<count && refs[end].message->completed_ms.value==refs[i].message->completed_ms.value) {
+            if(refs[end].session!=refs[i].session)shared=true;
+            end++;
+        }
+        if(shared)for(size_t j=i;j<end;j++)refs[j].message->completed_unreliable=true;
+        i=end;
+    }
+    return ERR_SUCCESS;
+}
 static int progress(void *data) {
     volatile sig_atomic_t *stop=data;
     if(stop&&cp_fault("opencode.cancel.progress"))*stop=1;
@@ -482,6 +511,7 @@ static Err read_database(OpencodeStore *stage,OpencodeDatabase *info,size_t inde
     if(!e.code)e=schema_guard(db,info,&stage->arena,tables,sizeof tables/sizeof *tables);
     if(!e.code)e=read_sessions(db,tables,stage,info,index,stop);
     if(!e.code)e=read_messages(db,&tables[1],stage,stop);
+    if(!e.code)e=mark_unreliable_completions(stage);
     if(!e.code&&stop&&cp_fault("opencode.cancel.commit"))*stop=1;
     if(!e.code&&stop&&*stop)e=err_make(ERR_IO,"interrupted");
     if(!e.code)e=execute(db,"COMMIT");

@@ -316,9 +316,11 @@ against both projection and composition before changing a regression expectation
 
 Keep payload creation and SQLite row creation as independent raw facts. Derive
 one effective creation clock (valid payload first, otherwise row) for request
-starts, message-end fallback and usage dating; valid payload completion still
-wins for usage. Fork inheritance uses only row creation, even when a copied
-payload clock suggests different ownership. Test the DB-to-corpus/usage boundary
+starts, message-end fallback and usage dating. Completion values shared across
+sessions in one database can reflect bulk updates: exclude them from end clocks
+but preserve their status signal, and test distinct and same-session values as
+well as database isolation. Fork inheritance uses only row creation, even when a
+copied payload clock suggests different ownership. Test the DB-to-corpus/usage boundary
 and emitted buckets as well as the raw parser facts and numeric diagnostics.
 
 Arena allocations live until the complete store is destroyed. Joining fragments
