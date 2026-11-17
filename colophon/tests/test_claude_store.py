@@ -367,6 +367,35 @@ def test_claude_valid_checksum_bad_map_cache_reparses_and_retained_diagnoses(tmp
     assert run.build().returncode == 0
     assert str(retained) in run.payload()["diagnostics"]["claude_retained_unreadable"]
     assert retained.read_bytes() == damaged
+
+
+def test_claude_retained_stale_unknown_type_is_not_reported(tmp_path):
+    # A retained record keeps the unknown-type counts of the parser that wrote
+    # it. A type added to the known list later must not be reported from it.
+    import hashlib
+    run = NativeRun(tmp_path)
+    rows = [{"type": "user", "message": {"content": "Synthetic retained request"}},
+            {"type": "synthetic-future-kind"},
+            {"type": "synthetic-later-known"},
+            {"type": "synthetic-later-known"}]
+    source = run.claude_session(rows=rows)
+    assert run.build().returncode == 0
+    assert run.payload()["diagnostics"]["claude_unknown_record_types"] == {
+        "synthetic-future-kind": 1, "synthetic-later-known": 2}
+    source.unlink()
+    assert run.build().returncode == 0
+    retained, = store_records(run, "claude-retained")
+    header, _, body = retained.read_bytes().split(b"\n", 2)
+    value = json.loads(body)
+    value[value.index("synthetic-later-known")] = "attachment"
+    changed = json.dumps(value, separators=(",", ":")).encode()
+    retained.write_bytes(header + b"\n" + hashlib.sha256(changed).hexdigest().encode() + b"\n" + changed)
+    result = run.build()
+    assert result.returncode == 0, result.stderr
+    payload = run.payload()
+    assert payload["meta"]["sources"]["claude"]["retained"] == 1
+    assert payload["diagnostics"]["claude_unknown_record_types"] == {"synthetic-future-kind": 1}
+    assert "claude_unknown_record_types=1" in result.stderr
 def synthetic_rows():
     return [
         {'type': 'user', 'timestamp': '2026-01-02T12:00:00Z', 'cwd': '/synthetic/review-kite', 'sessionId': 'synthetic-review-session', 'message': {'content': 'First synthetic prompt'}},

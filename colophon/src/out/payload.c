@@ -4,6 +4,7 @@
 #include "opencode/scan.h"
 #include "antigravity/scan.h"
 #include "opencode/compose.h"
+#include "claude/parse.h"
 #include <stdlib.h>
 #include <stdio.h>
 #include <string.h>
@@ -150,7 +151,7 @@ static void line_diagnostic(JsonWriter *w,const FileDiagnostic *d,const ClaudeSc
 static const Omap *claude_map(const ClaudeRecord *r,bool dropped){return dropped?&r->rows_dropped:&r->reader.unknown_types;}
 static void claude_map_json(JsonWriter *w,const ClaudeScan *c,bool dropped){
     jsonw_raw(w,"{");Omap seen={0};bool first=true;
-    if(c)for(size_t i=0;i<c->count;i++)for(OmapEntry *p=claude_map(&c->records[i],dropped)->first;p;p=p->next){if(omap_get(&seen,p->key))continue;Err e=omap_put(&seen,p->key,(void *)1);if(e.code){w->error=e;break;}__int128 n=0;for(size_t j=0;j<c->count;j++){uint64_t *v=omap_get(claude_map(&c->records[j],dropped),p->key);if(v)n+=*v;}if(!first)jsonw_raw(w,",");first=false;jsonw_string(w,p->key);jsonw_raw(w,":");jsonw_i128(w,n);}omap_destroy(&seen);jsonw_raw(w,"}");
+    if(c)for(size_t i=0;i<c->count;i++)for(OmapEntry *p=claude_map(&c->records[i],dropped)->first;p;p=p->next){if(!dropped&&claude_known_type(p->key))continue;if(omap_get(&seen,p->key))continue;Err e=omap_put(&seen,p->key,(void *)1);if(e.code){w->error=e;break;}__int128 n=0;for(size_t j=0;j<c->count;j++){uint64_t *v=omap_get(claude_map(&c->records[j],dropped),p->key);if(v)n+=*v;}if(!first)jsonw_raw(w,",");first=false;jsonw_string(w,p->key);jsonw_raw(w,":");jsonw_i128(w,n);}omap_destroy(&seen);jsonw_raw(w,"}");
 }
 static void claude_diagnostics(JsonWriter *w,const ClaudeScan *c){
     jsonw_raw(w,",\"claude_history_alias_conflicts\":{");
@@ -164,7 +165,7 @@ static void claude_diagnostics(JsonWriter *w,const ClaudeScan *c){
 void payload_empty(JsonWriter *w,const PayloadInputs *in){
     PayloadIds ids={0};Err identity_error=payload_ids_init(in->corpus,in->source_codex_home,&ids);
     if(identity_error.code){w->error=identity_error;payload_ids_destroy(&ids);return;}
-    jsonw_raw(w,"{\"schema\":1,\"meta\":{\"version\":\"0.10.0\",\"generated_at_ms\":");jsonw_i64(w,in->snapshot_ms);
+    jsonw_raw(w,"{\"schema\":1,\"meta\":{\"version\":\"0.10.1\",\"generated_at_ms\":");jsonw_i64(w,in->snapshot_ms);
     jsonw_raw(w,",\"generated_tz\":");text(w,in->timezone);jsonw_raw(w,",\"codex_home\":");text(w,in->codex_home);
     jsonw_raw(w,",\"counts\":{\"logs\":");jsonw_i64(w,(int64_t)in->logs);
     jsonw_raw(w,",\"parsed\":");jsonw_i64(w,(int64_t)in->parsed);
