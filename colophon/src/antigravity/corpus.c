@@ -201,7 +201,7 @@ static Err project_session(AntigravityStore *store,AntigravitySession *r,int64_t
         step->turn=current->key;MaybeMs created={0},completed={0};
         TRY(antigravity_clock_typed(&store->field_mismatches,AG_STEP_METADATA,&c->arena,step->metadata,1,&created));TRY(antigravity_clock_typed(&store->field_mismatches,AG_STEP_METADATA,&c->arena,step->metadata,8,&completed));
         latest(&current->last_ms,created);latest(&current->last_ms,completed);latest(&current->end_ms,completed);
-        int64_t status=0;if(antigravity_step_enum(&store->field_mismatches,step,true,&status)){error|=status==7;canceled|=status==6||status==12;running|=active(status);}
+        int64_t status=0;if(antigravity_step_enum(&store->field_mismatches,step,true,&status)){error=status==7;canceled=status==6||status==12;running|=active(status);}
         Str planner={0};TRY(antigravity_message_merge_typed(&store->field_mismatches,AG_STEP,&c->arena,step->payload,20,&planner));Str answer=scalar(&store->field_mismatches,AG_PLANNER,planner,1);if(!answer.n)answer=scalar(&store->field_mismatches,AG_PLANNER,planner,8);
         if(answer.n)answers[turn-1]=answer;
     }

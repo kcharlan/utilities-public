@@ -9,6 +9,12 @@ TEST(antigravity_db_empty_schema_and_independent_identity){
     ASSERT_EQ(1,s.session_count);ASSERT_TRUE(str_equal(s.sessions[0]->id,STR_LIT(AG_SYNTHETIC_ID)));ASSERT_EQ(1,s.diagnostic_count);
     ASSERT_TRUE(str_equal(s.sessions[0]->meta[0].cascade_id,STR_LIT("synthetic-independent-cascade")));antigravity_store_destroy(&s);antigravity_fixture_close(&f);
 }
+TEST(antigravity_db_trajectory_identity_does_not_diagnose){
+    AntigravityFixture f;antigravity_fixture_open(&f);
+    antigravity_fixture_sql(&f,"INSERT INTO trajectory_meta VALUES ('synthetic-independent-trajectory','" AG_SYNTHETIC_ID "',1,2)");
+    AntigravityStore s={0};antigravity_fixture_read(&f,&s);ASSERT_EQ(0,s.diagnostic_count);
+    antigravity_store_destroy(&s);antigravity_fixture_close(&f);
+}
 TEST(antigravity_db_opaque_text_metadata_keys_preserve_blobs_and_numeric_indexes){
     AntigravityFixture f;antigravity_fixture_open(&f);
     antigravity_fixture_sql(&f,

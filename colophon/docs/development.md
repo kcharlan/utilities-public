@@ -159,3 +159,8 @@ when the same turn resumes under different settings. Keep file-local start
 history indexed by turn and line, and pass it to both compose passes. Settings
 changes take effect at the next start; turnless starts and rows share the empty
 id. Preserve trace/sticky evidence independently from the thread setting.
+
+Antigravity status lesson: terminal error and cancellation classification follows
+the last status-bearing step, while active-state accumulation remains independent.
+Trajectory metadata's cascade ID identifies the filename conversation; a distinct
+trajectory ID alone does not indicate an identity mismatch.

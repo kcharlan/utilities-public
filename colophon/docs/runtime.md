@@ -108,7 +108,8 @@ Session creation uses trajectory creation or first step creation; session end
 uses latest completion or latest creation. Explicit user-input steps start turns;
 pre-prompt steps have no display turn. A turn's end is its latest member completion,
 remaining unknown when no completion exists, even when the next prompt closes it.
-Errors take precedence over cancellation/interruption. Active statuses keep only
+The last step with a status determines whether the turn is aborted or interrupted;
+earlier errors and cancellations do not override a later status. Active statuses keep only
 the final turn open; earlier active turns are completed. Open turns use the shared
 two-hour quiet rule with the latest step creation/completion timestamp. Cleared,
 invalid, unspecified and unknown statuses default to completed.

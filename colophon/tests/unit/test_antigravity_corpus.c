@@ -124,7 +124,7 @@ TEST(antigravity_corpus_explicit_payload_enum_fallback_and_sql_conflict) {
         cleanup(&s,&c);
     }
 }
-/* Losing error/cancel precedence, treating cleared as active, or letting an
+/* Treating cleared as active, or letting an
  * earlier active turn remain open must fail these literal reducer cases. */
 TEST(antigravity_turn_status_reducer) {
     const int64_t statuses[]={0,1,2,3,4,5,6,7,8,9,11,12,999,INT64_MAX};
@@ -142,9 +142,9 @@ TEST(antigravity_turn_status_reducer) {
         if(strcmp(want,"running"))ASSERT_FALSE(p->turns[0].end_ms.present);
         cleanup(&s,&c);
     }
-    const int64_t mixed[][2]={{6,7},{7,12},{1,6},{12,1},{5,3}};
-    const char *mixed_want[]={"aborted","aborted","interrupted","interrupted","completed"};
-    for(size_t i=0;i<5;i++) {
+    const int64_t mixed[][2]={{6,7},{7,12},{1,6},{12,1},{5,3},{7,3},{3,7},{6,3}};
+    const char *mixed_want[]={"aborted","interrupted","interrupted","running","completed","completed","aborted","completed"};
+    for(size_t i=0;i<sizeof mixed/sizeof *mixed;i++) {
         AntigravityStep steps[]={user(),{.idx=1,.status_state=AG_SQL_INTEGER,.status=mixed[i][0]},
             {.idx=2,.status_state=AG_SQL_INTEGER,.status=mixed[i][1]}};
         AntigravitySession raw={.id=STR_LIT("synthetic-mixed"),.steps=steps,.step_count=3},*rows[]={&raw};

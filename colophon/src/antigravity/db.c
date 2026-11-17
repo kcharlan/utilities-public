@@ -115,7 +115,7 @@ static Err read_rows(AntigravityStore *s,AntigravityDatabase *d,sqlite3 *db,Anti
         if(e.code)break;
         e=cell(&d->arena,st,0,false,&m.trajectory_id);if(!e.code)e=cell(&d->arena,st,1,false,&m.cascade_id);
         if(!e.code)e=APPEND(&d->arena,r->meta,r->meta_count,r->meta_capacity,m);
-        if(!e.code&&((m.trajectory_id.n&&!str_equal(m.trajectory_id,r->id))||(m.cascade_id.n&&!str_equal(m.cascade_id,r->id))))e=antigravity_diagnostic(s,d,"trajectory_meta",0,"metadata identity differs from filename conversation id");
+        if(!e.code&&(m.cascade_id.n&&!str_equal(m.cascade_id,r->id)))e=antigravity_diagnostic(s,d,"trajectory_meta",0,"metadata identity differs from filename conversation id");
     }
     if(!e.code&&rc!=SQLITE_DONE)e=sql_error(db);sqlite3_finalize(st);st=NULL;
     const char *queries[]={"SELECT id,data FROM trajectory_metadata_blob ORDER BY id","SELECT idx,data FROM gen_metadata ORDER BY idx","SELECT idx,step_type,status,metadata,step_payload,step_format FROM steps ORDER BY idx"};
