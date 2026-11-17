@@ -33,7 +33,7 @@ static Err execute(sqlite3 *db,const char *sql) {
     return sqlite3_exec(db,sql,NULL,NULL,NULL)==SQLITE_OK?ERR_SUCCESS:sql_error(db);
 }
 static bool allowed_table(const char *name) {
-    static const char *const names[]={"project","session_v2","session_message","migration","kv","sqlite_master","sqlite_schema"};
+    static const char *const names[]={"project","session_v2","session_message","session_part","migration","kv","sqlite_master","sqlite_schema"};
     for(size_t i=0;i<sizeof names/sizeof *names;i++)if(name&&!strcmp(name,names[i]))return true;
     return false;
 }
@@ -257,7 +257,12 @@ static Err schema_guard(sqlite3 *db,OpencodeDatabase *info,Arena *arena,Table *t
         if(equal(name,"session"))legacy=true;
         if(name.n>=7&&!memcmp(name.p,"session",7)){
             bool allowed=false;for(size_t i=0;i<sizeof generations/sizeof *generations;i++)if(equal(name,generations[i]))allowed=true;
-            if(!allowed){Str copy={0};e=str_copy(arena,name,&copy);if(!e.code)e=corpus_strings_add(arena,&info->unrecognized_tables,copy);}
+            if(equal(name,"session_part")&&equal(kind,"table")){
+                sqlite3_stmt *part=NULL;e=prepare(db,"SELECT 1 FROM session_part LIMIT 1",&part);
+                if(!e.code){int part_rc=sqlite3_step(part);if(part_rc==SQLITE_DONE)allowed=true;else if(part_rc!=SQLITE_ROW)e=sql_error(db);}
+                sqlite3_finalize(part);
+            }
+            if(!e.code&&!allowed){Str copy={0};e=str_copy(arena,name,&copy);if(!e.code)e=corpus_strings_add(arena,&info->unrecognized_tables,copy);}
         }
         for(size_t i=0;!e.code&&i<n;i++)if(equal(name,tables[i].name)){
             if(!equal(kind,"table"))e=err_make(ERR_INVALID,"OpenCode query source is not a table");

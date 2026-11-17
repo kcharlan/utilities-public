@@ -392,3 +392,15 @@ TEST(opencode_db_cross_session_completion_clocks_are_scoped_per_database) {
     }
     corpus_destroy(&c);opencode_store_destroy(&s);opencode_fixture_close(&a);opencode_fixture_close(&b);
 }
+TEST(opencode_db_session_part_reports_only_nonempty) {
+    OpencodeFixture f;opencode_fixture_open(&f);opencode_fixture_session(&f,"synthetic-session");
+    opencode_fixture_sql(&f,"CREATE TABLE session_part(value)");
+    OpencodeStore s={0};add(&s,&f);read_store(&s);
+    ASSERT_EQ(OC_DB_OK,s.databases[0].status);ASSERT_EQ(0,s.databases[0].unrecognized_tables.count);
+    opencode_store_destroy(&s);
+    opencode_fixture_sql(&f,"INSERT INTO session_part VALUES ('synthetic')");
+    s=(OpencodeStore){0};add(&s,&f);read_store(&s);
+    ASSERT_EQ(OC_DB_OK,s.databases[0].status);ASSERT_EQ(1,s.databases[0].unrecognized_tables.count);
+    ASSERT_TRUE(str_equal(s.databases[0].unrecognized_tables.items[0],STR_LIT("session_part")));
+    opencode_store_destroy(&s);opencode_fixture_close(&f);
+}

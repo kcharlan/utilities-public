@@ -55,7 +55,12 @@ bool claude_known_type(Str kind) {
                          "file-history-snapshot",
                          "queue-operation",
                          "last-prompt",
-                         "pr-link"};
+                         "pr-link", "attachment", "atis-latch", "api-request",
+                         "api-request-shape", "api-request-blob", "agent-name",
+                         "cost-state", "tools-used", "mode", "file-history-delta",
+                         "artifact-comment-monitor", "artifact-autoreact-ledger",
+                         "bridge-session", "frame-link", "permission-mode",
+                         "session-owner", "relocated", "worktree-state"};
   for (size_t i = 0; i < sizeof names / sizeof *names; i++)
     if (str_equal(kind, (Str){names[i], (uint32_t)strlen(names[i])}))
       return true;

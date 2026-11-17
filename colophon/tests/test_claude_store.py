@@ -647,7 +647,7 @@ def test_claude_handback_stale_v2_live_cache_reparses(tmp_path):
     body[index + 3:index + 5] = [False]
     assert body.pop() == 1577836802000
     assert body.pop() is True
-    assert body.pop() == 2
+    assert body.pop() == 3
     data = json.dumps(body, separators=(',', ':')).encode()
     path.write_bytes(b'CLCD2\n' + hashlib.sha256(data).hexdigest().encode() + b'\n' + data)
     assert run.build().returncode == 0

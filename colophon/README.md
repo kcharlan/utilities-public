@@ -73,6 +73,10 @@ Version 0.7.2 learns Antigravity model numbers from observed response names and 
 Version 0.7.3 resolves catalog model names and canonical identities before
 falling back to built-in aliases, while retaining existing Codex price history keys.
 
+Version 0.10.0 corrects turn boundaries, fork copies, session clocks and
+statuses across providers, dates OpenCode usage by message creation, updates
+Codex priority pricing, and raises the page-size diagnostic threshold.
+
 Version 0.9.0 recognizes steered Claude turns and corrected turn clocks, adds a
 steered filter, and prevents superseded open turns from appearing live.
 

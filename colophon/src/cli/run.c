@@ -32,6 +32,7 @@
 #include <time.h>
 #include <unistd.h>
 static volatile sig_atomic_t interrupted;
+bool cli_page_over_limit(size_t size){return size>COLOPHON_PAGE_SIZE_LIMIT;}
 static void error_line(const char *message){
     for(const unsigned char *p=(const unsigned char *)message;*p;p++)
         fputc(*p=='\r'||*p=='\n'?' ':*p,stderr);
@@ -156,10 +157,10 @@ int cli_run(const Args *args){
         .logs=scan.count+scan.unreadable_count,.parsed=scan.parsed,.cached=scan.cached,.scan=&scan,.corpus=&corpus,.metadata=&metadata,.source_codex_home=codex,.workspace_errors=&aliases.errors,.pricing=&pricing,.catalog=&catalog,.ledger=&ledger,.codex_present=codex_present,.claude=&claude,.opencode=&opencode,.antigravity=&antigravity};
     CP_PHASE_MARK(4);
     progress_phase(&scan_display,"building the page…");
-    size_t max=0,limit=20u*1024u*1024u;bool converged=false;
+    size_t max=0;bool converged=false;
     for(int i=0;i<3;i++){jsonw_free(&payload);jsonw_free(&page);payload_empty(&payload,&in);failure=page_render(&payload,&page);if(failure.code!=ERR_OK){if(failure.code==ERR_INVALID)failure_type="ValueError";goto fail;}
-        size_t size=page.length;if(size>max)max=size;bool over=size>limit;if(in.page_size==size&&in.over_limit==over){converged=true;break;}in.page_size=size;in.over_limit=over;}
-    if(!converged){in.page_size=max;in.over_limit=max>limit;jsonw_free(&payload);jsonw_free(&page);payload_empty(&payload,&in);failure=page_render(&payload,&page);if(failure.code!=ERR_OK){if(failure.code==ERR_INVALID)failure_type="ValueError";goto fail;}}
+        size_t size=page.length;if(size>max)max=size;bool over=cli_page_over_limit(size);if(in.page_size==size&&in.over_limit==over){converged=true;break;}in.page_size=size;in.over_limit=over;}
+    if(!converged){in.page_size=max;in.over_limit=cli_page_over_limit(max);jsonw_free(&payload);jsonw_free(&page);payload_empty(&payload,&in);failure=page_render(&payload,&page);if(failure.code!=ERR_OK){if(failure.code==ERR_INVALID)failure_type="ValueError";goto fail;}}
     if(args->output)failure=file_expand_path(args->output,&output);else{output=join(home,"colophon.html");if(!output)failure=err_make(ERR_NOMEM,"path allocation failed");}if(failure.code!=ERR_OK)goto fail;
     CP_PHASE_MARK(5);
     if(interrupted)goto fail;

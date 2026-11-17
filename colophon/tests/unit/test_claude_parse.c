@@ -1,4 +1,6 @@
 #define _DARWIN_C_SOURCE
+#include "parse/classify.h"
+
 #include "claude/parse.h"
 #include "claude/scan.h"
 #include "runner.h"
@@ -582,4 +584,14 @@ TEST(claude_session_end_uses_turn_clock) {
   Corpus c={0}; CorpusStrings collisions={0}; ASSERT_EQ(ERR_OK,claude_corpus_add(&r,1,0,&c,&collisions).code);
   SessionModel *s=omap_get(&c.sessions,r.id); ASSERT_EQ(1577836803000LL,s->end_ms.value);
   corpus_destroy(&c); claude_record_destroy(&r);
+}
+TEST(claude_diagnostic_known_types) {
+  const char *names[]={"attachment","atis-latch","api-request","api-request-shape","api-request-blob","agent-name","cost-state","tools-used","mode","file-history-delta","artifact-comment-monitor","artifact-autoreact-ledger","bridge-session","frame-link","permission-mode","session-owner","relocated","worktree-state"};
+  for(size_t i=0;i<sizeof names/sizeof *names;i++) ASSERT_TRUE(claude_known_type((Str){names[i],(uint32_t)strlen(names[i])}));
+  ASSERT_FALSE(claude_known_type(STR_LIT("retained_context")));
+}
+TEST(codex_diagnostic_known_types) {
+  const char *names[]={"response_item/additional_tools","response_item/configuration_update","event_msg/item_completed/HookPrompt","event_msg/item_completed/FunctionCallOutput"};
+  for(size_t i=0;i<sizeof names/sizeof *names;i++) ASSERT_TRUE(record_type_known((Str){names[i],(uint32_t)strlen(names[i])}));
+  ASSERT_FALSE(record_type_known(STR_LIT("retained_context")));
 }

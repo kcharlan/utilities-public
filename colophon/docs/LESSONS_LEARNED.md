@@ -11,9 +11,23 @@ keep the preceding idle interval outside both turns. Terminal notification and
 reply-less command cases need distinct status and title regressions.
 
 Unknown OpenCode session tables and migration keys do not prove that required
-read sources changed. Report their names without opening extra tables, while
+read sources changed. Report their names, while
 continuing to reject missing required columns and incomplete legacy migrations.
 Keep the diagnostics in the same staged arena as the accepted database facts.
+The optional `session_part` table is inspected only for row existence; an empty
+table is not reported.
+
+For Claude, a string `turnOrigin` takes precedence over meta and tag filtering
+unless the record is a compact summary; a subagent coordinator origin starts a
+resume. A main-session fork starts at the first own session ID following other
+session IDs, with the last nonempty predecessor as its recorded parent. Explicit
+usage session IDs determine ownership before position; position supplies the
+fallback for missing IDs, and transition rows remain detached from turns.
+
+OpenCode usage follows message creation time. Repeated completion milliseconds
+across sessions in the same database are assumed to be bulk updates and do not
+set duration, though they still indicate completed status. The heuristic can
+discard genuine simultaneous completions.
 
 Retain Antigravity usage before deduplication, including raw request identity
 bytes, so deleted databases can still participate in global alias merging. Live
