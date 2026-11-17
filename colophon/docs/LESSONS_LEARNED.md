@@ -447,3 +447,8 @@ Explicit usage ownership takes precedence over boundary position, while turn
 detachment still follows the boundary. Preserve the maximum qualifying session
 clock separately from the final physical turn clock, whose order controls turn
 status and answer selection.
+
+A catalog-sourced pricing history row can omit a priority field. Resolve the
+current fast policy for that case and for missing history, while preserving an
+explicit null or stored policy and exposing the effective policy in provenance.
+Test timed and untimed rows separately, including long-context input.

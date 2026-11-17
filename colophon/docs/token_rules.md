@@ -311,7 +311,13 @@ objects by key and replaces arrays. Validation rejects the entire user document
 on an invalid field and emits `pricing_rules_errors`; defaults stay in force.
 The rules are loaded for each run before composition, so edits apply to retained
 raw observations on the next warm run. Catalog-first identity and existing dated
-price-history priority policies continue to take precedence.
+price-history priority policies continue to take precedence. Codex fast multipliers
+and long-context allowances follow CodexBar `CostUsagePricing.swift` at commit
+`1f6da9bec` (`codexAPIFastMultiplier` and `codexAPIFastAllowsLongContext`).
+For timed usage, a history row without a priority field, or no history row,
+uses the current Codex fast policy; an explicitly stored policy, including null,
+continues to take precedence. Effective fallback policies appear in pricing
+provenance. `codex-auto-review` remains unpriced.
 
 Numbered Antigravity usage resolves response name, runtime number rule, learned
 name, step model info, same-number previous name, then an explicit marker.

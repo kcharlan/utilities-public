@@ -305,3 +305,64 @@ TEST(catalog_recording_invalid_key_does_not_block_valid_entry) {
     ASSERT_EQ(1,skipped.size);ASSERT_STREQ("gpt-5.6",skipped.first->key.p);
     omap_destroy(&skipped);yyjson_doc_free(recorded);json_read_free(&ids);models_dev_destroy(&index);yyjson_doc_free(doc);
 }
+
+/* Synthetic rates isolate policy selection from the public rate catalog. */
+TEST(codex_fast_policy_applies_to_timed_and_untimed_units) {
+    const char *catalog="{\"openai\":{\"models\":{\"gpt-6.1-sol\":{\"id\":\"gpt-6.1-sol\",\"cost\":{\"input\":1,\"output\":1}},\"gpt-6.1-terra\":{\"id\":\"gpt-6.1-terra\",\"cost\":{\"input\":1,\"output\":1}},\"gpt-6-luna\":{\"id\":\"gpt-6-luna\",\"cost\":{\"input\":1,\"output\":1}}}}}";
+    const char *rows="[{\"model\":\"gpt-6.1-terra\",\"effective_from\":null,\"source\":\"catalog\",\"per_million\":{\"input\":1,\"cached_input\":1,\"cache_write\":1,\"output\":1}}]";
+    JsonRead c=json_read((Str){catalog,(uint32_t)strlen(catalog)},BYTES,JSON_CONSTANTS_REJECT,"test.fast.catalog");
+    JsonRead h=json_read((Str){rows,(uint32_t)strlen(rows)},BYTES,JSON_CONSTANTS_REJECT,"test.fast.history");
+    ModelsDevIndex index={.rules=&test_rules};ASSERT_EQ(ERR_OK,models_dev_index(yyjson_doc_get_root(c.doc),&index).code);
+    JsonRead empty=json_read(STR_LIT("[]"),BYTES,JSON_CONSTANTS_REJECT,"test.fast.empty");
+    PriceHistory history={0};ASSERT_EQ(ERR_OK,price_history(yyjson_doc_get_root(empty.doc),yyjson_doc_get_root(h.doc),&history).code);json_read_free(&empty);
+    PricingReport report={.rules=&test_rules};ASSERT_EQ(ERR_OK,pricing_report_init(&history,&report).code);
+    const char *models[]={"gpt-6.1-sol","gpt-6.1-terra","gpt-6-luna"};
+    for(size_t i=0;i<3;i++)for(int timed=0;timed<2;timed++) {
+        Str model={models[i],(uint32_t)strlen(models[i])};
+        UsageUnit unit={.model=model,.model_raw=model,.input=300000,.priority_tier=true};
+        if(timed){unit.at_ms.present=true;unit.at_ms.value=1800000000000LL;}
+        ASSERT_EQ(ERR_OK,price_usage_units(&unit,1,&history,&index,true,&report).code);
+        ASSERT_TRUE(unit.has_cost);double expected=i==1&&timed?0.6:0;
+        if(!expected){PriceEntry rates;bool found=false;ASSERT_EQ(ERR_OK,resolve_rates(&test_rules,model,&index,&rates,&found).code);ASSERT_TRUE(found);expected=2*cost_usd(&rates,300000,0,0);}
+        ASSERT_TRUE(fabs(unit.cost_usd-expected)<1e-12);
+        ASSERT_TRUE(unit.priority_period.present);
+        PricingPeriods *group=omap_get(&report.periods,unit.priority_period.model);
+        PricingPeriod *p=group->items[unit.priority_period.index];
+        ASSERT_TRUE(p->priority.present);ASSERT_FALSE(p->priority.capped);
+        ASSERT_EQ(2.0,p->priority.multiplier.is_float?p->priority.multiplier.f:(double)p->priority.multiplier.i);
+    }
+    ASSERT_EQ(0,report.priority_without_multiplier.size);
+    JsonWriter writer={0};pricing_report_json(&writer,&report);ASSERT_EQ(ERR_OK,writer.error.code);
+    ASSERT_TRUE(strstr(writer.data,"\"priority\":{\"multiplier\":2.0,\"max_input_tokens\":null}")!=NULL);
+    ASSERT_TRUE(strstr(writer.data,"\"source\":\"catalog\"")!=NULL);jsonw_free(&writer);
+    pricing_report_destroy(&report);history_destroy(&history);models_dev_destroy(&index);json_read_free(&c);json_read_free(&h);
+}
+TEST(codex_fast_curated_history_and_auto_review_policy) {
+    JsonRead read=json_read((Str){(const char *)cp_asset_curated_price_history,(uint32_t)cp_asset_curated_price_history_len},STR,JSON_CONSTANTS_REJECT,"test.fast.seed");
+    yyjson_val *entries=yyjson_obj_get(yyjson_doc_get_root(read.doc),"entries"),*row;size_t idx,max;int found=0;
+    yyjson_arr_foreach(entries,idx,max,row) {
+        const char *model=yyjson_get_str(yyjson_obj_get(row,"model"));
+        if(model&&(!strcmp(model,"gpt-6.1-sol")||!strcmp(model,"gpt-6-luna"))) {
+            PricePriority policy;ASSERT_TRUE(price_priority_decode(yyjson_obj_get(row,"priority"),&policy));
+            ASSERT_TRUE(policy.present);ASSERT_FALSE(policy.capped);found++;
+        }
+    }
+    ASSERT_EQ(2,found);json_read_free(&read);
+    ASSERT_EQ(0.0,codex_api_fast_multiplier(&test_rules,STR_LIT("codex-auto-review")));
+    PriceEntry rates;bool available=true;ASSERT_EQ(ERR_OK,resolve_rates(&test_rules,STR_LIT("codex-auto-review"),NULL,&rates,&available).code);ASSERT_FALSE(available);
+}
+TEST(codex_history_explicit_null_and_stored_policy_override_fallback) {
+    const char *rows="[{\"model\":\"gpt-6.1-sol\",\"effective_from\":null,\"source\":\"manual\",\"per_million\":{\"input\":1,\"cached_input\":1,\"cache_write\":1,\"output\":1},\"priority\":null},{\"model\":\"gpt-6-luna\",\"effective_from\":null,\"source\":\"manual\",\"per_million\":{\"input\":1,\"cached_input\":1,\"cache_write\":1,\"output\":1},\"priority\":{\"multiplier\":3,\"max_input_tokens\":null}}]";
+    JsonRead h=json_read((Str){rows,(uint32_t)strlen(rows)},BYTES,JSON_CONSTANTS_REJECT,"test.fast.explicit");
+    JsonRead empty=json_read(STR_LIT("[]"),BYTES,JSON_CONSTANTS_REJECT,"test.fast.empty");
+    PriceHistory history={0};ASSERT_EQ(ERR_OK,price_history(yyjson_doc_get_root(empty.doc),yyjson_doc_get_root(h.doc),&history).code);json_read_free(&empty);
+    PricingReport report={.rules=&test_rules};ASSERT_EQ(ERR_OK,pricing_report_init(&history,&report).code);
+    UsageUnit units[]={ {.model=STR_LIT("gpt-6.1-sol"),.model_raw=STR_LIT("gpt-6.1-sol"),.input=1000000,.priority_tier=true,.at_ms={.present=true,.value=1800000000000LL}}, {.model=STR_LIT("gpt-6-luna"),.model_raw=STR_LIT("gpt-6-luna"),.input=1000000,.priority_tier=true,.at_ms={.present=true,.value=1800000000000LL}} };
+    ASSERT_EQ(ERR_OK,price_usage_units(units,2,&history,NULL,true,&report).code);
+    ASSERT_EQ(1.0,units[0].cost_usd);ASSERT_FALSE(units[0].priority_period.present);
+    ASSERT_EQ(3.0,units[1].cost_usd);ASSERT_TRUE(units[1].priority_period.present);
+    PricingPeriods *group=omap_get(&report.periods,units[1].priority_period.model);
+    ASSERT_TRUE(group->items[units[1].priority_period.index]->history->has_priority);
+    ASSERT_EQ(1,report.priority_without_multiplier.size);
+    pricing_report_destroy(&report);history_destroy(&history);json_read_free(&h);
+}
