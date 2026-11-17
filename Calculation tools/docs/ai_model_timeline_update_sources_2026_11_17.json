@@ -1,0 +1,187 @@
+{
+  "checked": "2026-11-17",
+  "latestRelease": "2026-11-17",
+  "baselineManifest": "ai_model_timeline_update_sources_2026_11_16.json",
+  "preservedHistoricalRows": 633,
+  "additions": [
+    {
+      "model": "GPT-6.2 Astra",
+      "lab": "OpenAI",
+      "date": "2026-11-17",
+      "tier": "flagship",
+      "note": "Hosted flagship for complex professional work, research, and agentic coding. Available at launch in ChatGPT Work and Codex for eligible paid users, and in the OpenAI API as gpt-6.2-astra with optional Ultrafast. Standard API rates are $8 input, $0.40 cached input, and $40 output per million tokens.",
+      "source": "https://openai.com/index/introducing-gpt-6-2-astra-sol/"
+    },
+    {
+      "model": "GPT-6.2 Sol",
+      "lab": "OpenAI",
+      "date": "2026-11-17",
+      "tier": "mid",
+      "note": "Hosted successor to GPT-6.1 Sol for coding and professional work. Available at launch in ChatGPT Work and Codex for eligible paid users, and in the OpenAI API as gpt-6.2-sol with optional Ultrafast. Standard API rates remain $2 input, $0.10 cached input, and $10 output per million tokens.",
+      "source": "https://openai.com/index/introducing-gpt-6-2-astra-sol/"
+    },
+    {
+      "model": "Avatar 6",
+      "lab": "HeyGen",
+      "date": "2026-11-17",
+      "tier": "specialty",
+      "note": "Hosted audio-driven avatar model that uses reference footage and speech context to generate lip sync and gestures. Available through HeyGen's platform and API at launch.",
+      "source": "https://www.prnewswire.com/news-releases/heygen-introduces-avatar-6-an-audio-driven-context-aware-ai-model-that-alleviates-repetitive-or-unnatural-motion-in-ai-generated-video-302942527.html"
+    },
+    {
+      "model": "SenseNova-Loop-9B",
+      "lab": "SenseNova",
+      "date": "2026-11-17",
+      "tier": "open-weights",
+      "note": "Full release of the 9B multimodal reasoning model with recurrent layer reuse and up to 512K context. SenseTime published Apache-2.0 checkpoints, including a 4-bit AWQ variant. The Hugging Face model repository requires accepting its access terms.",
+      "source": "https://huggingface.co/sensenova/SenseNova-Loop-9B"
+    },
+    {
+      "model": "d1.2 / d1.2-ultra",
+      "lab": "Liquid AI",
+      "date": "2026-11-16",
+      "tier": "specialty",
+      "note": "Hosted multimodal decision models that return structured answers and confidence scores. Both add audio input and five decision tasks and were available through the Liquid API at launch.",
+      "source": "https://www.liquid.ai/blog/d1-2"
+    },
+    {
+      "model": "CloudRobo-WM1.2 (announcement)",
+      "lab": "Huawei Cloud",
+      "date": "2026-11-16",
+      "tier": "specialty",
+      "note": "Embodied world model for robot control on Huawei Ascend hardware. Huawei introduced the model and announced plans to open-source it at the launch event. Downloadable weights were not verified at the event.",
+      "source": "https://www.huaweicloud.com/about/live/261116.html"
+    },
+    {
+      "model": "Seedance 2.5 Flash (API release)",
+      "lab": "ByteDance",
+      "date": "2026-11-15",
+      "tier": "specialty",
+      "note": "Faster, lower-cost hosted variant of Seedance 2.5. The BytePlus ModelArk endpoint generates clips with audio at 480p or 720p for up to 30 seconds.",
+      "source": "https://docs.byteplus.com/en/docs/ModelArk/seedance-2-5"
+    },
+    {
+      "model": "Sage S2.1 Flash",
+      "lab": "Shanghai AI Lab",
+      "date": "2026-11-15",
+      "tier": "open-weights",
+      "note": "Scientific multimodal model for research tasks that combine data interpretation, tool use, and multi-step verification. Shanghai AI Lab published the model weights under the MIT license.",
+      "source": "https://huggingface.co/internlm/Sage-S2.1-Flash"
+    },
+    {
+      "model": "Duo 1.2 Causal Base",
+      "lab": "Ant Group (inclusionAI)",
+      "date": "2026-11-13",
+      "tier": "specialty",
+      "note": "Downloadable full-duplex world model for real-time audio-visual interaction, initialized from MiniMax H3. The Causal Base bundle includes video and audio components and is distributed under the repository's MiniMax H3-derived terms.",
+      "source": "https://huggingface.co/inclusionAI/Duo-1.2-causal-base"
+    },
+    {
+      "model": "HY-World 2.1 Panorama (hosted release)",
+      "lab": "Tencent",
+      "date": "2026-11-13",
+      "tier": "specialty",
+      "note": "Hosted text-to-image variant that generates 360-degree panoramas. The date is the OpenRouter API listing.",
+      "source": "https://openrouter.ai/tencent/hy-world-2.1-panorama/"
+    },
+    {
+      "model": "Recraft V4.1 Flash V2",
+      "lab": "Recraft",
+      "date": "2026-11-13",
+      "tier": "specialty",
+      "note": "Hosted image-generation update with faster generation and improvements to rendered text and fine detail. It replaced the earlier Flash in Recraft Studio and uses recraftv4_1_flash_v2 in the API.",
+      "source": "https://feedback.recraft.ai/changelog"
+    },
+    {
+      "model": "Inkling 2 Small (open weights)",
+      "lab": "Thinking Machines",
+      "date": "2026-11-12",
+      "tier": "open-weights",
+      "note": "Apache-2.0 downloadable checkpoint for the 594B mixture-of-experts model with 17B active parameters and image input, following the November 5 Tinker release.",
+      "source": "https://huggingface.co/thinkingmachines/Inkling-2-Small"
+    },
+    {
+      "model": "MiniMax-H3-Image-PE",
+      "lab": "MiniMax",
+      "date": "2026-11-10",
+      "tier": "specialty",
+      "note": "Downloadable FP4 prompt expander for text-to-image generation, fine-tuned from Qwen3.8-27B. MiniMax supplied a task prompt for image editing and released model weights for the text-to-image expander.",
+      "source": "https://huggingface.co/MiniMaxAI/MiniMax-H3-Image-PE"
+    }
+  ],
+  "corrections": [],
+  "dateEvidence": [
+    {
+      "models": ["GPT-6.2 Astra", "GPT-6.2 Sol"],
+      "sourceURLs": ["https://openai.com/index/introducing-gpt-6-2-astra-sol/"],
+      "result": "OpenAI's November 17 announcement confirms both model IDs, launch availability, and standard API pricing."
+    },
+    {
+      "models": ["Avatar 6"],
+      "sourceURLs": ["https://www.heygen.com/models/heygen-avatar-6", "https://www.prnewswire.com/news-releases/heygen-introduces-avatar-6-an-audio-driven-context-aware-ai-model-that-alleviates-repetitive-or-unnatural-motion-in-ai-generated-video-302942527.html"],
+      "result": "HeyGen's own November 17 release confirms same-day platform and API access."
+    },
+    {
+      "models": ["SenseNova-Loop-9B"],
+      "sourceURLs": ["https://huggingface.co/sensenova/SenseNova-Loop-9B", "https://huggingface.co/api/models/sensenova/SenseNova-Loop-9B"],
+      "result": "The publisher's card dates the full release November 17 and identifies the earlier preview separately. Repository metadata confirms Apache-2.0, listed weight shards, and automatic gating."
+    },
+    {
+      "models": ["d1.2 / d1.2-ultra"],
+      "sourceURLs": ["https://www.liquid.ai/blog/d1-2", "https://docs.liquid.ai/lfm/models/d1"],
+      "result": "Liquid AI's November 16 post announces both models and same-day API access."
+    },
+    {
+      "models": ["CloudRobo-WM1.2 (announcement)"],
+      "sourceURLs": ["https://www.huaweicloud.com/about/live/261116.html", "https://www.huaweicloud.com/partners/support/news/latestnews/20261112.html"],
+      "result": "The replay and launch notice establish the November 16 unveiling. The event did not establish a public weight download."
+    },
+    {
+      "models": ["Seedance 2.5 Flash (API release)"],
+      "sourceURLs": ["https://docs.byteplus.com/en/docs/ModelArk/seedance-2-5", "https://docs.byteplus.com/docs/en/modelark/model-release-announcement.md", "https://www.ithome.com/1/026/069.htm"],
+      "result": "BytePlus lists the dated Flash ID as a new ModelArk release, corroborating the reported November 15 API rollout after the November 12 introduction."
+    },
+    {
+      "models": ["Sage S2.1 Flash"],
+      "sourceURLs": ["https://huggingface.co/internlm/Sage-S2.1-Flash", "https://huggingface.co/api/models/internlm/Sage-S2.1-Flash/tree/6ba152f81a40897daaa85abf9ad1a2139d66f566?recursive=true&limit=1000"],
+      "result": "Publisher revision 6ba152f dated November 15 UTC contains all 120 shards referenced by its weight index. The technical report followed on November 16."
+    },
+    {
+      "models": ["Duo 1.2 Causal Base"],
+      "sourceURLs": ["https://huggingface.co/inclusionAI/Duo-1.2-causal-base", "https://huggingface.co/api/models/inclusionAI/Duo-1.2-causal-base/tree/f89e226a89a34b3c31abc454cd75fa660e8e7084?recursive=true&limit=1000"],
+      "result": "The November 13 UTC model revision contains 33 weight files. The repository's November 12 creation commit predates the weight upload."
+    },
+    {
+      "models": ["HY-World 2.1 Panorama (hosted release)"],
+      "sourceURLs": ["https://openrouter.ai/tencent/hy-world-2.1-panorama/"],
+      "result": "OpenRouter's model page dates its image API listing November 13. The date embedded in the snapshot ID is November 12."
+    },
+    {
+      "models": ["Recraft V4.1 Flash V2"],
+      "sourceURLs": ["https://feedback.recraft.ai/changelog", "https://www.recraft.ai/blog/meet-recraft-v4-1-flash"],
+      "result": "The November 13 changelog and dated update to the launch post confirm the new Studio model and API ID."
+    },
+    {
+      "models": ["Inkling 2 Small (open weights)"],
+      "sourceURLs": ["https://huggingface.co/thinkingmachines/Inkling-2-Small", "https://huggingface.co/thinkingmachines/Inkling-2-Small/tree/78cb6c0ef68e1f089b77e78cfd94783d05b5c41b"],
+      "result": "Publisher upload-model commit 78cb6c0 dated November 12 UTC establishes the downloadable checkpoint's date."
+    },
+    {
+      "models": ["MiniMax-H3-Image-PE"],
+      "sourceURLs": ["https://huggingface.co/MiniMaxAI/MiniMax-H3-Image-PE", "https://huggingface.co/api/models/MiniMaxAI/MiniMax-H3-Image-PE/tree/5cb2132bb847b97ae85c27c951cf0034d1a5b5fe?recursive=true&limit=1000"],
+      "result": "The first November 10 UTC revision contains four Safetensors files. Later coverage discussed that same checkpoint."
+    }
+  ],
+  "exclusions": [
+    {
+      "candidate": "K2 Horizon family; HeyGen Decision 1; Perplexity Decider v1.3",
+      "reason": "The timeline already records the model releases. Recent articles and the K2 Horizon paper cover those existing entries.",
+      "sources": ["https://arxiv.org/abs/2611.21003", "https://openrouter.ai/heygen/heygen-decision-1-20261112", "https://www.perplexity.ai/en-GB/hub/blog/perplexity-decider"]
+    },
+    {
+      "candidate": "Microsoft Aion Instruct November 13 post; DeepSeek app APIs",
+      "reason": "Microsoft dates the standalone Aion Instruct package to October and schedules the Windows Insider rollout for December. DeepSeek documents newly exposed app APIs without identifying a new model checkpoint.",
+      "sources": ["https://devblogs.microsoft.com/foundry-on-windows/aion-instruct-local-ai-windows-gpu/", "https://api-docs.deepseek.com/updates/"]
+    }
+  ]
+}

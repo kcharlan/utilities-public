@@ -37,6 +37,17 @@ function loadCore() {
 
 const data = extractData();
 
+test('November 17 update records Astra and Sol as separate OpenAI releases', () => {
+  const releases = data.filter(row => row.lab === 'OpenAI' && row.date === '2026-11-17');
+  assert.deepEqual(releases.map(({model, tier}) => [model, tier]).sort(), [
+    ['GPT-6.2 Astra', 'flagship'],
+    ['GPT-6.2 Sol', 'mid'],
+  ]);
+  for (const release of releases) {
+    assert.match(release.note, /ChatGPT Work and Codex for eligible paid users.*OpenAI API.*Ultrafast/);
+  }
+});
+
 test('November 16 update distinguishes hosted launches from public weights', () => {
   const row = model => data.find(item => item.model === model);
   const qwen = row('Qwen4-Max');
@@ -351,8 +362,8 @@ test('static header metadata and initial chart domain cover the dataset', () => 
   const titleDate = new Date(`${latest}T00:00:00Z`).toLocaleDateString('en-US', {timeZone:'UTC', month:'short', day:'numeric', year:'numeric'});
   assert.ok(html.includes(`<title>AI Model Release Timeline — Jan 2024 to ${titleDate}</title>`), 'static title reflects the latest release before scripts run');
   assert.ok(html.includes(`<span data-latest-date>${latestLabel}</span>`));
-  assert.equal((html.match(/· checked November 16, 2026 ·/g) || []).length, 1);
-  assert.equal((html.match(/Verification checked November 16, 2026/g) || []).length, 1);
+  assert.equal((html.match(/· checked November 17, 2026 ·/g) || []).length, 1);
+  assert.equal((html.match(/Verification checked November 17, 2026/g) || []).length, 1);
   // Proportional range padding replaces the former fixed ±15-day x0 domain,
   // so assert the core-driven domain instead of its retired literal expression.
   const script = extractInlineScript();
@@ -501,15 +512,15 @@ const {analyze, render} = require('../scripts/timeline-analysis.cjs');
 
 test('narrative statistics match the expanded dataset', () => {
   const stats = analyze(data);
-  assert.equal(stats.total, 633);
-  assert.equal(new Set(data.map(row => row.lab)).size, 134);
-  assert.equal(stats.sameDay, 828);
-  assert.equal(stats.withinTwo, 3432);
-  assert.deepEqual(stats.years, {'2024': 88, '2025': 134, '2026': 411});
-  assert.deepEqual(stats.weekdays, {'0':19, '1':106, '2':126, '3':127, '4':163, '5':79, '6':13});
+  assert.equal(stats.total, 646);
+  assert.equal(new Set(data.map(row => row.lab)).size, 136);
+  assert.equal(stats.sameDay, 870);
+  assert.equal(stats.withinTwo, 3640);
+  assert.deepEqual(stats.years, {'2024': 88, '2025': 134, '2026': 424});
+  assert.deepEqual(stats.weekdays, {'0':21, '1':108, '2':131, '3':127, '4':164, '5':82, '6':13});
   assert.equal(stats.months['2026-10'], 130);
-  assert.equal(stats.months['2026-11'], 74);
-  assert.equal(stats.cadence.OpenAI.major, 52);
+  assert.equal(stats.months['2026-11'], 87);
+  assert.equal(stats.cadence.OpenAI.major, 47.5);
   assert.equal(stats.cadence.Google.major, 29);
   assert.deepEqual(stats.moonshotLags, [14,90,50,31,38,64,4,16,10,25,25]);
   assert.ok(html.includes(render(stats)), 'published findings equal reproducible current analysis');
@@ -534,6 +545,9 @@ test('analysis handles same-day pairs, medians, and missing prior releases', () 
 
 test('recent-release summary follows the latest dated rows', () => {
   const summary = render(analyze(data));
+  assert.match(summary, /GPT-6\.2 Astra \(November 17\)/);
+  assert.match(summary, /GPT-6\.2 Sol \(November 17\)/);
+  assert.match(summary, /d1\.2 \/ d1\.2-ultra \(November 16\)/);
   assert.match(summary, /Qwen4-Max \(November 16\)/);
   assert.match(summary, /Hy4 flash \(November 16\)/);
   assert.match(summary, /LongCat-Video-Avatar 1\.6 \(November 15\)/);
