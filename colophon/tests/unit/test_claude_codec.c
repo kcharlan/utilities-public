@@ -26,7 +26,7 @@ TEST(claude_codec_round_trips_all_record_facts_and_raw_price_snapshots){
   r.usage_rows[0].unit.claude_price_snapshot=true;r.usage_rows[0].unit.claude_cost_priced=true;r.usage_rows[0].unit.claude_cost_nanos=0;
   r.usage_rows[0].unit.cache_write_1h=((__int128)1<<70)+7;r.tools[0].shell=((__int128)1<<80)+3;
   size_t aliases_capacity=r.aliases.capacity,usage_capacity=r.usage_capacity;
-  unsigned char *bytes=NULL;size_t n;ASSERT_EQ(ERR_OK,claude_codec_encode(&r,&bytes,&n).code);ASSERT_EQ(aliases_capacity,r.aliases.capacity);ASSERT_EQ(usage_capacity,r.usage_capacity);ASSERT_TRUE(!memcmp(bytes,"CLCD3\n",6)); ASSERT_EQ(ERR_OK,claude_codec_decode(bytes,n,&decoded).code); ASSERT_EQ(CLAUDE_PARSE_REVISION,decoded.parse_revision);
+  unsigned char *bytes=NULL;size_t n;ASSERT_EQ(ERR_OK,claude_codec_encode(&r,&bytes,&n).code);ASSERT_EQ(aliases_capacity,r.aliases.capacity);ASSERT_EQ(usage_capacity,r.usage_capacity);ASSERT_TRUE(!memcmp(bytes,"CLCD4\n",6)); ASSERT_EQ(ERR_OK,claude_codec_decode(bytes,n,&decoded).code); ASSERT_EQ(CLAUDE_PARSE_REVISION,decoded.parse_revision);
   ASSERT_EQ(0,(uintptr_t)decoded.tools % _Alignof(CorpusTools));
   ASSERT_EQ(0,(uintptr_t)decoded.usage_rows % _Alignof(ClaudeUsageRow));
   ASSERT_TRUE(str_equal(r.key.path,decoded.key.path));ASSERT_EQ(r.key.size,decoded.key.size);ASSERT_EQ(r.key.mtime_ns,decoded.key.mtime_ns);ASSERT_EQ(r.key.inode,decoded.key.inode);ASSERT_EQ(r.key.device,decoded.key.device);
@@ -124,7 +124,7 @@ TEST(claude_codec_rejects_other_traversal_ending_after_valid_key){malformed_map(
 TEST(claude_codec_v3_revision_and_immutable_v2){
   ClaudeRecord r={0}; parsed(&r); unsigned char *bytes=NULL; size_t n=0;
   ASSERT_EQ(CLAUDE_PARSE_REVISION,r.parse_revision); ASSERT_EQ(ERR_OK,claude_codec_encode(&r,&bytes,&n).code);
-  ASSERT_TRUE(!memcmp(bytes,"CLCD3\n",6)); free(bytes); claude_record_destroy(&r);
+  ASSERT_TRUE(!memcmp(bytes,"CLCD4\n",6)); free(bytes); claude_record_destroy(&r);
   char *old=NULL; ASSERT_EQ(ERR_OK,file_read_all("tests/fixtures/claude_codec/synthetic-v2.rec",&old,&n).code);
   char path[1024]; snprintf(path,sizeof path,"%s/synthetic-v2-XXXXXX.rec",getenv("TMPDIR")); int fd=mkstemps(path,4); ASSERT_TRUE(fd>=0);
   ASSERT_EQ(n,(size_t)write(fd,old,n)); ASSERT_EQ(0,close(fd)); free(old); old=NULL;
@@ -135,10 +135,19 @@ TEST(claude_codec_v3_revision_and_immutable_v2){
   claude_record_destroy(&r); free(old); ASSERT_EQ(0,unlink(path));
 }
 TEST(claude_codec_rejects_revision_in_wrong_version_with_valid_checksum){
-  ClaudeRecord r={0}; parsed(&r); r.parse_revision=1; unsigned char *bytes=NULL; size_t n=0; ASSERT_EQ(ERR_OK,claude_codec_encode(&r,&bytes,&n).code);
-  ASSERT_TRUE(n>3 && bytes[n-2]=='1' && bytes[n-3]==',');
-  bytes[n-3]=']'; size_t short_n=n-2; sha256_hex(bytes+71,short_n-71,(char *)bytes+6); bytes[70]='\n';
-  ClaudeRecord decoded={0}; ASSERT_EQ(ERR_INVALID,claude_codec_decode(bytes,short_n,&decoded).code); claude_record_destroy(&decoded);
-  bytes[n-3]=','; bytes[n-2]='1'; bytes[n-1]=']'; memcpy(bytes,"CLCD2\n",6); sha256_hex(bytes+71,n-71,(char *)bytes+6); bytes[70]='\n';
-  ASSERT_EQ(ERR_INVALID,claude_codec_decode(bytes,n,&decoded).code); claude_record_destroy(&decoded); free(bytes); claude_record_destroy(&r);
+  char *old=NULL; size_t n=0; ASSERT_EQ(ERR_OK,file_read_all("tests/fixtures/claude_codec/synthetic-v2.rec",&old,&n).code);
+  memcpy(old,"CLCD3\n",6); ClaudeRecord decoded={0};
+  ASSERT_EQ(ERR_INVALID,claude_codec_decode(old,n,&decoded).code); claude_record_destroy(&decoded);
+  memcpy(old,"CLCD2\n",6);
+  unsigned char *bytes=malloc(n+2); ASSERT_TRUE(bytes); memcpy(bytes,old,n-1); memcpy(bytes+n-1,",1]",3); free(old); n+=2;
+  sha256_hex(bytes+71,n-71,(char *)bytes+6); bytes[70]='\n';
+  ASSERT_EQ(ERR_INVALID,claude_codec_decode(bytes,n,&decoded).code); claude_record_destroy(&decoded); free(bytes);
+}
+TEST(claude_codec_reads_immutable_v3_fixture) {
+  char *bytes=NULL; size_t n=0; ClaudeRecord r={0};
+  ASSERT_EQ(ERR_OK,file_read_all("tests/fixtures/claude_codec/synthetic-v3.rec",&bytes,&n).code);
+  ASSERT_EQ(ERR_OK,claude_codec_decode(bytes,n,&r).code); ASSERT_EQ(2,r.parse_revision);
+  ASSERT_TRUE(r.reader_facts); ASSERT_TRUE(str_equal(r.id,STR_LIT("synthetic-parent/agent-synthetic-child")));
+  for(size_t i=0;i<r.usage_count;i++) { ASSERT_FALSE(r.usage_rows[i].inherited); ASSERT_FALSE(r.usage_rows[i].detached); }
+  claude_record_destroy(&r); free(bytes);
 }

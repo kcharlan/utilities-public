@@ -127,6 +127,7 @@ static Err merge_tools(Arena *a, ClaudeRecord *views, size_t n, ClaudeRecord *re
   Err e = ERR_SUCCESS;
   for (size_t i = 0; i < count && !e.code; i++) {
       ClaudeRecord *r = &records[i];
+      if (claude_subagent_copy(records, count, i)) continue;
       if (!r->reader_facts) continue;
       ClaudeRecord *v = omap_get(groups, r->id);
       if (v->reader_copies == 1) continue;
@@ -161,6 +162,7 @@ static Err merge_tools(Arena *a, ClaudeRecord *views, size_t n, ClaudeRecord *re
      * conservatively, without adding mirrored aggregate snapshots twice. */
   for (size_t i = 0; i < count; i++) {
       ClaudeRecord *r = &records[i];
+      if (claude_subagent_copy(records, count, i)) continue;
       if (r->reader_facts) continue;
       ClaudeRecord *v = omap_get(groups, r->id);
       if (v->reader_copies == 1) continue;
@@ -182,6 +184,7 @@ Err claude_reader_reconcile(ClaudeRecord *records, size_t count, Corpus *c,
   TRY(zero(&c->arena, count, sizeof *occurrences, alignof(size_t *), (void **)&occurrences));
   Omap groups = {0}; Err e = ERR_SUCCESS;
   for (size_t i = 0; i < count && !e.code; i++) {
+    if (claude_subagent_copy(records, count, i)) continue;
     ClaudeRecord *r = &records[i], *v = omap_get(&groups, r->id);
     if (!v) {
       v = &(*out)[(*out_count)++];
@@ -213,6 +216,7 @@ Err claude_reader_reconcile(ClaudeRecord *records, size_t count, Corpus *c,
     v->turn_count = 0; v->tool_turns = (Omap){0}; v->canonical_turns = (Omap){0};
   }
   for (size_t i = 0; i < count && !e.code; i++) {
+    if (claude_subagent_copy(records, count, i)) continue;
     ClaudeRecord *r = &records[i], *v = omap_get(&groups, r->id);
     omap_destroy(&r->canonical_turns);
     if (v->reader_copies == 1) continue;

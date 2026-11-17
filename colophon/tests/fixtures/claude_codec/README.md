@@ -13,3 +13,7 @@ Codex native codec keeps its own existing format.
 synthetic successful-handback unit transcript. Its file identity, timestamps,
 paths and IDs are invented; its config provenance is empty. The turn was reset
 to open with no end or answer clock before encoding. Keep these bytes immutable.
+
+`synthetic-v3.rec` retains the same invented CLCD2 facts with a synthetic parser
+revision appended in CLCD3 format. Keep these bytes immutable to exercise the
+CLCD3 decoder after the encoder moves to CLCD4.

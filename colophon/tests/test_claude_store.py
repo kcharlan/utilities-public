@@ -640,7 +640,7 @@ def test_claude_handback_stale_v2_live_cache_reparses(tmp_path):
     matches = [(p, json.loads(p.read_bytes()[71:])) for p in records]
     matches = [(p, body) for p, body in matches if body[7] == 'synthetic-parent/agent-synthetic-child']
     (path, body), = matches
-    assert path.read_bytes().startswith(b'CLCD3\n')
+    assert path.read_bytes().startswith(b'CLCD4\n')
     index, = [i for i, value in enumerate(body) if value == 'completed']
     body[index] = 'open'
     assert body[index + 1:index + 5] == [True, 1577836800000, True, 1577836802000]
@@ -705,3 +705,38 @@ def test_claude_title_skips_agent_requests(tmp_path):
     sessions = {row["id"]: row for row in run.payload()["sessions"]}
     assert sessions["synthetic-title"]["title"] == "Synthetic eligible title"
     assert sessions["synthetic-only-agent"]["title"] == "synthetic-only-agent"
+
+@pytest.mark.parametrize('source_child', [True, False])
+def test_claude_fork_subagent_copy_and_cache(tmp_path, source_child):
+    run = NativeRun(tmp_path)
+    source_rows = [
+        {'type': 'user', 'sessionId': 'synthetic-source', 'message': {'content': 'Synthetic source prompt'}},
+        {'type': 'assistant', 'sessionId': 'synthetic-source', 'timestamp': '2020-01-01T00:00:01Z', 'requestId': 'synthetic-main-request', 'message': {'id': 'synthetic-main-response', 'model': 'claude-sonnet-4-5', 'stop_reason': 'end_turn', 'usage': {'input_tokens': 7}}},
+    ]
+    source = run.claude_session('synthetic-source', rows=source_rows)
+    fork = run.claude_session('synthetic-fork', rows=source_rows + [{'type': 'user', 'sessionId': 'synthetic-fork', 'message': {'content': 'Synthetic fork prompt'}}])
+    rows = [{'type': 'user', 'sessionId': 'synthetic-source', 'message': {'content': 'Synthetic agent prompt'}},
+            {'type': 'assistant', 'sessionId': 'synthetic-source', 'timestamp': '2020-01-01T00:00:02Z', 'requestId': 'synthetic-agent-request', 'message': {'id': 'synthetic-agent-response', 'model': 'claude-sonnet-4-5', 'stop_reason': 'end_turn', 'usage': {'input_tokens': 11}}}]
+    child = run.claude_session('agent-synthetic-child', directory=source.parent / 'synthetic-source/subagents', rows=rows)
+    copy = run.claude_session('agent-synthetic-child', directory=fork.parent / 'synthetic-fork/subagents', rows=rows)
+    for path in [source, fork, child, copy]:
+        path.write_text(''.join(json.dumps(row, separators=(',', ':')) + '\n' for row in (source_rows if path == source else source_rows + [{'type': 'user', 'sessionId': 'synthetic-fork', 'message': {'content': 'Synthetic fork prompt'}}] if path == fork else rows)))
+    if not source_child: child.unlink()
+    for step in range(4):
+        if step == 2:
+            copy.unlink()
+        if step == 3:
+            source.unlink()
+            if source_child:
+                child.unlink()
+        assert run.build().returncode == 0
+        payload = run.payload()
+        assert len(payload['subagents']) == 1
+        expected = 'synthetic-source' if source_child else 'synthetic-fork'
+        assert f'{expected}/agent-synthetic-child' in payload['subagents']
+        sessions = {s['id']: s for s in payload['sessions']}
+        assert sessions['synthetic-fork']['forked_from'] == 'synthetic-source'
+        assert 'forked' not in sessions['synthetic-fork']['flags']
+        assert len(sessions['synthetic-source']['turns']) == len(sessions['synthetic-fork']['turns']) == 1
+        assert sum(s['own_usage']['input'] for s in sessions.values()) == 7
+        assert payload['subagents'][f'{expected}/agent-synthetic-child']['own_usage']['input'] == 11

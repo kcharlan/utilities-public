@@ -7,7 +7,7 @@
 typedef struct {
   UsageUnit unit;
   Str message_id, request_id, session_id;
-  bool incomplete, sidechain, subagent;
+  bool incomplete, sidechain, subagent, inherited, detached;
 } ClaudeUsageRow;
 typedef struct {
   Str turn, id, name;
@@ -51,4 +51,5 @@ Err claude_parse(const DiscoveredLog *key, Str root, Str config,
 void claude_record_destroy(ClaudeRecord *record);
 Err claude_corpus_add(ClaudeRecord *records, size_t count, int64_t snapshot,
                       Corpus *corpus, CorpusStrings *collisions);
+bool claude_subagent_copy(const ClaudeRecord *records, size_t count, size_t index);
 #endif

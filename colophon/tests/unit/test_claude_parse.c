@@ -547,3 +547,39 @@ TEST(claude_title_skips_agent_requests) {
   ASSERT_TRUE(str_equal(second->title_source,STR_LIT("filename")));
   corpus_destroy(&c); claude_record_destroy(&records[0]); claude_record_destroy(&records[1]);
 }
+
+static void parse_fork_text(const char *rows, ClaudeRecord *r) {
+  char path[1024]; snprintf(path, sizeof path, "%s/synthetic-fork.jsonl", getenv("COLOPHON_HOME"));
+  FILE *f=fopen(path,"w"); ASSERT_TRUE(f); ASSERT_TRUE(fputs(rows,f)>=0); ASSERT_EQ(0,fclose(f));
+  DiscoveredLog key={.path={path,(uint32_t)strlen(path)},.size=(int64_t)strlen(rows)};
+  ASSERT_EQ(ERR_OK,claude_parse(&key,STR_LIT("/synthetic/projects"),(Str){0},r).code); ASSERT_EQ(0,unlink(path));
+}
+TEST(claude_fork_transition_discards_inherited) {
+  ClaudeRecord r={0}; parse_fork_text(
+    "{\"type\":\"custom-title\",\"sessionId\":\"synthetic-source\",\"customTitle\":\"Synthetic inherited title\",\"timestamp\":\"2020-01-01T00:00:00Z\"}\n"
+    "{\"type\":\"user\",\"message\":{\"content\":\"Synthetic inherited request\"}}\n"
+    "{\"type\":\"assistant\",\"message\":{\"stop_reason\":\"end_turn\",\"content\":[{\"type\":\"tool_use\",\"name\":\"Bash\",\"id\":\"synthetic-old\"}]}}\n"
+    "{\"type\":\"user\",\"sessionId\":\"synthetic-fork\",\"timestamp\":\"2020-01-01T00:00:10Z\",\"message\":{\"content\":\"Synthetic own request\"}}\n"
+    "{\"type\":\"assistant\",\"timestamp\":\"2020-01-01T00:00:11Z\",\"message\":{\"stop_reason\":\"end_turn\",\"content\":\"Synthetic own answer\"}}\n",&r);
+  ASSERT_EQ(1,r.turn_count); ASSERT_TRUE(str_equal(r.meta.forked_from_id,STR_LIT("synthetic-source")));
+  ASSERT_TRUE(str_equal(r.requests[0].text,STR_LIT("Synthetic own request"))); ASSERT_EQ(0,r.tools[0].shell);
+  ASSERT_EQ(0,r.tool_turns.size); ASSERT_EQ(0,r.custom_title.n); ASSERT_EQ(1577836810000LL,r.first_ms.value);
+  Corpus c={0}; CorpusStrings collisions={0}; ASSERT_EQ(ERR_OK,claude_corpus_add(&r,1,0,&c,&collisions).code);
+  SessionModel *s=omap_get(&c.sessions,r.id); ASSERT_TRUE(str_equal(s->forked_from,STR_LIT("synthetic-source")));
+  ASSERT_FALSE(s->flags & F_FORKED); ASSERT_TRUE(str_equal(s->title_full,STR_LIT("Synthetic own request")));
+  corpus_destroy(&c); claude_record_destroy(&r);
+}
+TEST(claude_fork_of_fork_parent) {
+  ClaudeRecord r={0}; parse_fork_text("{\"type\":\"progress\",\"sessionId\":\"synthetic-grandparent\"}\n{\"type\":\"progress\",\"sessionId\":\"synthetic-parent\"}\n{\"type\":\"progress\",\"sessionId\":\"synthetic-fork\"}\n",&r);
+  ASSERT_TRUE(str_equal(r.meta.forked_from_id,STR_LIT("synthetic-parent"))); claude_record_destroy(&r);
+}
+TEST(claude_foreign_only_transcript_is_not_fork) {
+  ClaudeRecord r={0}; parse_fork_text("{\"type\":\"user\",\"sessionId\":\"synthetic-source\",\"message\":{\"content\":\"Synthetic alias\"}}\n",&r);
+  ASSERT_EQ(1,r.turn_count); ASSERT_EQ(0,r.meta.forked_from_id.n); ASSERT_EQ(1,r.aliases.count); claude_record_destroy(&r);
+}
+TEST(claude_session_end_uses_turn_clock) {
+  ClaudeRecord r={0}; parse_text(HB_PROMPT HB_TEXT CLOCK_DEQUEUE "{\"type\":\"pr-link\",\"timestamp\":\"2020-01-01T00:00:05Z\"}\n",&r);
+  Corpus c={0}; CorpusStrings collisions={0}; ASSERT_EQ(ERR_OK,claude_corpus_add(&r,1,0,&c,&collisions).code);
+  SessionModel *s=omap_get(&c.sessions,r.id); ASSERT_EQ(1577836803000LL,s->end_ms.value);
+  corpus_destroy(&c); claude_record_destroy(&r);
+}

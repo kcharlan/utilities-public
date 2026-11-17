@@ -377,6 +377,19 @@ in `claude_session_id_collisions`. Unhandled Claude record types have their
 own `claude_unknown_record_types` diagnostic. Claude reader rows offer no
 Codex continuation or desktop links.
 
+A main Claude transcript is a fork when its own session ID follows a foreign
+session ID. The last foreign ID is its recorded predecessor. Earlier reader
+facts are discarded, while usage and aliases remain available; blank session
+IDs after the transition belong to the fork. Inherited usage cannot attach
+to fork turns, and a source response wins over its inherited copy. A copied
+subagent transcript is suppressed when all usage rows name another session
+and that session has a transcript with the same agent filename. Without the
+source subagent, the copy remains available.
+
+Claude session end is the latest turn-clock record, or the latest transcript
+timestamp when there are no turns. Queue and link bookkeeping therefore does
+not extend a session that has turns.
+
 Claude subagents are read from
 `<projects>/<slug>/<session>/subagents/agent-<id>.jsonl`; their identity is
 `<session>/agent-<id>`. An optional neighboring `agent-<id>.meta.json`
@@ -403,7 +416,7 @@ these subagent rules.
 
 Turn clocks advance on prompts, assistant records, non-meta user tool results
 and interruption markers, and system API errors. Other transcript bookkeeping
-can advance the session clock without extending a turn. A new prompt marks an
+can advance the fallback session clock when no turns exist. A new prompt marks an
 otherwise open turn steered when an assistant was seen, a dequeue followed the
 last assistant, and no Stop hook summary followed it. Completed, interrupted
 and API-error states retain precedence. This heuristic can also match a queued
@@ -577,11 +590,12 @@ memory acceptance is claimed.
 `claude-retained/<root-key>/` contains records whose source transcripts were
 positively proved deleted. Keys are SHA-256 names from the resolved search-root
 and original transcript paths. Files are private (0600), directories 0700.
-The Claude CLCD3 codec is independent of the Codex native cache. It preserves
+The Claude CLCD4 codec is independent of the Codex native cache. It preserves
 exact aliases, original paths, config/resume origin, prompts, turns, tools,
 sidecar facts and every raw usage row, including extraction-time cost snapshots
 for duplicate losers. Earlier codec versions keep their decoders and immutable
 synthetic test inputs.
+CLCD4 also preserves inherited usage ownership and explicit turn detachment.
 
 Same-stem copies share a reader assembled from their available turns. Prompt
 UUIDs identify turns; conflicting UUIDs stay distinct. When UUIDs are unavailable,
@@ -607,7 +621,7 @@ facts. A reparse can recapture extraction-time price snapshots, so costs can
 change; see [Claude pricing](token_rules.md#claude-pricing-and-public-seed-provenance)
 and `src/price/claude_cost.c`.
 
-Earlier decoders cannot read CLCD3. On rollback, available transcripts can be
+Earlier decoders cannot read CLCD4. On rollback, available transcripts can be
 reparsed, but undecodable records cannot supply retained facts; unreadable
 retained files are reported and left in place, not deleted.
 When rolling back to 0.8.4, run with `--rebuild` to discard this release's live

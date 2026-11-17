@@ -429,3 +429,9 @@ revision when stored facts change; see [development](development.md).
 Live cache compatibility must reject newer parser revisions as well as older
 ones: a rollback otherwise silently reuses facts produced by different parsing
 rules. Retained facts still need preservation when their source is unavailable.
+
+Forked transcripts can contain inherited rows without session IDs. Record the
+transition boundary's ownership and detachment facts at parse time: raw usage
+callbacks precede record callbacks, and cached or retained facts must not
+reuse discarded turn keys. Exercise source precedence in both path orders and
+subagent-copy suppression when the original is missing.

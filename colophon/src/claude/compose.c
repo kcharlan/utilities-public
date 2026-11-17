@@ -542,6 +542,8 @@ static bool wins(const Winner *candidate, const Winner *old) {
     return !candidate->row->sidechain;
   if (candidate->row->subagent != old->row->subagent)
     return !candidate->row->subagent;
+  if (candidate->row->inherited != old->row->inherited)
+    return !candidate->row->inherited;
   return str_compare(candidate->path_order, old->path_order) < 0;
 }
 static Err authored(Corpus *c, ClaudeScan *scan, const Winner *w) {
@@ -581,6 +583,7 @@ Err claude_compose(ClaudeScan *scan, Corpus *c) {
   scan->token_data_from_ms = (MaybeMs){0};
   for (size_t f = 0; f < scan->count; f++) {
     ClaudeRecord *r = &scan->records[f];
+    if (claude_subagent_copy(scan->records, scan->count, f)) continue;
     SessionModel *s = omap_get(&c->sessions, r->id);
     if (!s || s->provider != PROVIDER_CLAUDE)
       continue;
@@ -609,8 +612,9 @@ Err claude_compose(ClaudeScan *scan, Corpus *c) {
         old->copies++;
         if (!row->incomplete || old->row->incomplete) {
           old->row = row;
-          if (candidate.display_turn.p) old->display_turn = candidate.display_turn;
-        } else if (!old->display_turn.p) old->display_turn = candidate.display_turn;
+          if (row->detached) old->display_turn = (Str){0};
+          else if (candidate.display_turn.p) old->display_turn = candidate.display_turn;
+        } else if (!old->row->detached && !old->display_turn.p) old->display_turn = candidate.display_turn;
       } else {
         e = arena_alloc(&arena, sizeof *old, _Alignof(Winner), (void **)&old);
         if (e.code)
@@ -630,8 +634,8 @@ Err claude_compose(ClaudeScan *scan, Corpus *c) {
           Str previous = old->display_turn;
           if (wins(candidate, old)) {
             *old = *candidate;
-            if (same_owner && !old->display_turn.p) old->display_turn = previous;
-          } else if (same_owner && !old->display_turn.p)
+            if (same_owner && !old->row->detached && !old->display_turn.p) old->display_turn = previous;
+          } else if (same_owner && !old->row->detached && !old->display_turn.p)
             old->display_turn = candidate->display_turn;
           old->copies = copies;
         } else {

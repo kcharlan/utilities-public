@@ -67,6 +67,9 @@ typedef struct {
   Omap handback_ids;
   bool interrupted, api_error, completed, steered;
   bool assistant_seen, assistant_failed, dequeued, stop_marked;
+  Str predecessor;
+  bool forked;
+  size_t raw_start;
   size_t capacity;
 } Parse;
 static void finish(Parse *p) {
@@ -155,6 +158,39 @@ static Err on_record(void *context, const ReaderRecord *row) {
   yyjson_val *v = row->record, *message = get(v, "message"),
              *body = get(message, "content");
   Str type = text(get(v, "type"));
+  Str session = text(get(v, "sessionId"));
+  if (!r->parent_session.p && !p->forked && session.n) {
+    if (!str_equal(session, r->id)) {
+      TRY(copy(&r->arena, session, &p->predecessor));
+    } else if (p->predecessor.n) {
+      p->forked = true;
+      r->meta.forked_from_id = p->predecessor;
+      for (size_t i = 0; i < r->turn_count; i++) {
+        omap_destroy(&r->tools[i].mcp); omap_destroy(&r->tools[i].other);
+      }
+      r->turn_count = r->tool_count = 0;
+      p->capacity = 0;
+      r->first_ms = r->last_ms = (MaybeMs){0};
+      r->custom_title = r->ai_title = (Str){0};
+      r->meta.cwd = r->meta.branch = (JScalar){0};
+      omap_destroy(&r->tool_turns); omap_destroy(&p->shell_ids); omap_destroy(&p->handback_ids);
+      p->interrupted = p->api_error = p->completed = p->steered = false;
+      p->assistant_seen = p->assistant_failed = p->dequeued = p->stop_marked = false;
+      for (size_t i = 0; i < r->usage_count; i++) {
+        r->usage_rows[i].inherited = i < p->raw_start;
+        r->usage_rows[i].detached = true;
+        r->usage_rows[i].unit.turn_id = r->usage_rows[i].unit.display_turn = (Str){0};
+      }
+    }
+  }
+  if (p->forked) for (size_t i = p->raw_start; i < r->usage_count; i++) {
+    ClaudeUsageRow *u = &r->usage_rows[i];
+    if (u->session_id.n && !str_equal(u->session_id, r->id)) {
+      u->inherited = true;
+      u->detached = true;
+      u->unit.turn_id = u->unit.display_turn = (Str){0};
+    }
+  }
   if (str_equal(type, STR_LIT("custom-title"))) {
     Str title = text(get(v, "customTitle"));
     TRY(copy(&r->arena, title, &r->custom_title));
@@ -406,6 +442,7 @@ static Err on_record(void *context, const ReaderRecord *row) {
 }
 static Err on_raw(void *context, const ReaderRawLine *line) {
   Parse *p=context;
+  p->raw_start = p->r->usage_count;
   Str turn=p->r->turn_count?p->r->turns[p->r->turn_count-1]->key:(Str){0};
   return claude_usage_line(p->r,line,turn);
 }
@@ -460,6 +497,22 @@ void claude_record_destroy(ClaudeRecord *r) {
   arena_destroy(&r->arena);
   *r = (ClaudeRecord){0};
 }
+bool claude_subagent_copy(const ClaudeRecord *records, size_t count, size_t index) {
+  const ClaudeRecord *r = &records[index];
+  if (!r->parent_session.n || !r->usage_count) return false;
+  Str source = r->usage_rows[0].session_id;
+  if (!source.n || str_equal(source, r->parent_session)) return false;
+  for (size_t i = 1; i < r->usage_count; i++)
+    if (!str_equal(source, r->usage_rows[i].session_id)) return false;
+  if (r->id.n <= r->parent_session.n + 1) return false;
+  Str suffix = {r->id.p + r->parent_session.n, r->id.n - r->parent_session.n};
+  for (size_t i = 0; i < count; i++) {
+    const ClaudeRecord *other = &records[i];
+    if (str_equal(other->parent_session, source) && other->id.n == source.n + suffix.n &&
+        !memcmp(other->id.p + source.n, suffix.p, suffix.n)) return true;
+  }
+  return false;
+}
 static Err add_records(ClaudeRecord *records, size_t count, int64_t snapshot,
                        Corpus *c,
                        const Omap *codex_ids) {
@@ -485,12 +538,19 @@ static Err add_records(ClaudeRecord *records, size_t count, int64_t snapshot,
                         .identity = r->id,
                         .log_path = r->key.path,
                         .meta = r->meta,
+                        .forked_from = r->meta.forked_from_id,
                         .kind = STR_LIT("session"),
                         .is_subagent = r->parent_session.p != NULL,
                         .has_link = r->parent_session.p != NULL,
                         .resume_config_dir = r->config_dir,
                         .start_ms = r->first_ms,
                         .end_ms = r->last_ms};
+    if (r->turn_count) {
+      s->end_ms = (MaybeMs){0};
+      for (size_t j = 0; j < r->turn_count; j++)
+        if (r->turns[j]->last_ms.present && (!s->end_ms.present || r->turns[j]->last_ms.value > s->end_ms.value))
+          s->end_ms = r->turns[j]->last_ms;
+    }
     if(r->retained)s->flags|=F_RETAINED;
     int64_t mtime = r->key.mtime_ns / 1000000;
     TRY(turn_models(&c->arena, r->turns, r->turn_count, false, mtime, snapshot,
