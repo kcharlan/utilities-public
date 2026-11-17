@@ -397,8 +397,12 @@ Follow the private-data constraints under **Scope and source anchors**:
 5. Run `ccusage daily --json --offline --by-agent --timezone <local zone>`
    and take its per-agent model breakdowns for the same dates.
 6. Check **Usage parity** between the two builds. Compare the total Codex cost
-   per affected model per day with ccusage within one cent, preserving the
-   source's standard/priority mix. OpenCode per-day tokens must match ccusage's OpenCode breakdown;
+   per affected model per day with ccusage, preserving the source's
+   standard/priority mix. The owner selected **Usage parity** as the governing
+   rule when unchanged Colophon counting differs from ccusage: report the
+   aggregate oracle gap and ship without changing token ownership or dating
+   merely to force the cost comparison within one cent.
+   OpenCode per-day tokens must match ccusage's OpenCode breakdown;
    report any remaining day-level difference with its cause, such as
    compaction or rollup residual units, instead of adjusting either side.
 
