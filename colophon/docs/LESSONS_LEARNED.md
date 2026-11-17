@@ -1,5 +1,10 @@
 # Lessons learned
 
+Codex thread settings are bookkeeping, not conversation activity: keep them
+out of session-end and turn-last clocks. Turns may extend outside a session's
+recorded span, so compute idle with checked arithmetic and clamp it at zero for
+every provider.
+
 Agent-origin Claude prompts can be meta records or begin with system reminders.
 Recognize their turn boundary independently of ordinary prompt filtering, and
 keep the preceding idle interval outside both turns. Terminal notification and

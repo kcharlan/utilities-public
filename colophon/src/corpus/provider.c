@@ -28,9 +28,15 @@ Err corpus_session_idle(Arena *arena, SessionModel *session) {
     Err e = active_interval_union(arena, session->turns, session->turn_count, &active);
     if (e.code)
       return e;
-    if (active.present)
-      session->idle_ms = (MaybeNum){
-          true, {.i = session->end_ms.value - session->start_ms.value - active.value.i}};
+    PyNum span, idle;
+    if (active.present &&
+        pynum_sub((PyNum){.i = session->end_ms.value},
+                  (PyNum){.i = session->start_ms.value}, "session.idle", &span) &&
+        pynum_sub(span, active.value, "session.idle", &idle)) {
+      if (pynum_compare(idle, (PyNum){.i = 0}) < 0)
+        idle = (PyNum){.i = 0};
+      session->idle_ms = (MaybeNum){true, idle};
+    }
   }
   return ERR_SUCCESS;
 }

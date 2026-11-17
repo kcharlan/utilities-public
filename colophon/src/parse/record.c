@@ -307,6 +307,8 @@ static Err decoded_callback(void *context, const ReaderRecord *record) {
     started.valid = json_number(record_get(record->payload, "started_at"), "record.started_at",
                                 &started.number);
     fact.at_ms = event_time(record->payload, fact.wrapper_ms, &started, &fact.ts_src);
+    fact.interrupted = str_equal(record_string(record_get(record->payload, "reason")),
+                                 STR_LIT("interrupted"));
     Str wrapper = record_string(record_get(record->record, "timestamp"));
     if (wrapper.p) {
         out->wrapper_count++;

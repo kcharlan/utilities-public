@@ -319,18 +319,9 @@ static Err assemble(Corpus *c, SessionModel *s, const CodexMetadata *metadata,
       goto done;
     s->start_ms = r->first_ms;
     s->end_ms = r->last_ms;
-    if (s->start_ms.present && s->end_ms.present) {
-      MaybeNum active;
-      PyNum span;
-      e = active_interval_union(&c->arena, s->turns, s->turn_count, &active);
-      if (e.code)
-        goto done;
-      if (active.present &&
-          pynum_sub((PyNum){.i = s->end_ms.value},
-                    (PyNum){.i = s->start_ms.value}, "session.idle", &span))
-        s->idle_ms.present =
-            pynum_sub(span, active.value, "session.idle", &s->idle_ms.value);
-    }
+    e = corpus_session_idle(&c->arena, s);
+    if (e.code)
+      goto done;
     bool reliable = s->request_count >= 2;
     for (size_t i = 0; i < s->request_count; i++)
       if (s->requests[i].time_unreliable || !s->requests[i].at_ms.present)

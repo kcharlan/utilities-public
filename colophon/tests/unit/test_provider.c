@@ -1,9 +1,35 @@
 #include "corpus/provider.h"
 #include "out/session_payload.h"
 #include "price/compose.h"
+#include "parse/turns.h"
 #include "runner.h"
 #include "yyjson.h"
 #include <stdalign.h>
+
+TEST(idle_is_clamped_when_active_turn_exceeds_session_span) {
+  Arena arena = {0};
+  TurnModel turn = {.start_ms = {true, {.i = 0}}, .end_ms = {true, {.i = 100}},
+                    .duration_ms = {true, {.i = 100}}, .status = STR_LIT("completed")};
+  SessionModel session = {.turns = &turn, .turn_count = 1,
+                          .start_ms = {true, 20}, .end_ms = {true, 30}};
+  ASSERT_EQ(ERR_OK, corpus_session_idle(&arena, &session).code);
+  ASSERT_TRUE(session.idle_ms.present);
+  ASSERT_EQ(0, session.idle_ms.value.i);
+  arena_destroy(&arena);
+}
+
+TEST(codex_settings_do_not_advance_session_or_open_turn_clocks) {
+  LogRecord record = {0}; TurnBuilder builder = {0};
+  RecordFact facts[] = {
+      {.rec = 1, .kind = STR_LIT("event_msg/task_started"), .turn_id = STR_LIT("synthetic-turn"), .at_ms = {true, 10}},
+      {.rec = 2, .kind = STR_LIT("event_msg/thread_settings_applied"), .at_ms = {true, 30}},
+  };
+  ASSERT_EQ(ERR_OK, turns_build(&record, facts, 2, &builder).code);
+  ASSERT_EQ(10, record.last_ms.value);
+  ASSERT_EQ(10, record.turns[0]->last_ms.value);
+  omap_destroy(&builder.keyed);
+  arena_destroy(&record.arena);
+}
 
 TEST(provider_ids_cover_every_provider) {
   ASSERT_TRUE(str_equal(provider_id(PROVIDER_CODEX), STR_LIT("codex")));

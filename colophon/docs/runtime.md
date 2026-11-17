@@ -1,5 +1,13 @@
 # Runtime behavior
 
+Codex `turn_aborted` events report an interrupted turn only when their reason
+is `interrupted`; other or missing reasons report an aborted turn. Codex
+`thread_settings_applied` records do not advance the session end clock or an
+open turn's last clock. Across providers, idle time is the session span less
+the union of active turn intervals, clamped to zero when turns extend beyond
+the session span. If checked timing arithmetic cannot represent the result,
+idle remains unavailable.
+
 ## Launch progress
 
 When stderr is a terminal, Colophon writes these launch lines to stderr:
