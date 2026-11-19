@@ -5,7 +5,7 @@
 #     "xmltodict",
 #     "pyyaml",
 #     "tomli_w",
-#     "toon-format==1.1.0",
+#     "toon-format==1.2.0",
 # ]
 # ///
 import argparse
