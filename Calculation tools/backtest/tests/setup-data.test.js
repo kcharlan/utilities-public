@@ -28,10 +28,12 @@ async function fixture(t) {
  }, async historical() { calls.push({historical:true}); }};
  return {base,dataHome,manual,calls,compiledInputs,hooks,options:{sourceRoot,repoRoot:path.resolve(sourceRoot,'../..'),dataHome,hooks}};
 }
-test('compiler venv below Python 3.11 is refused because pandas 3 requires it',async t=>{
+test('compiler venv below Python 3.12 is refused because the locked NumPy requires it',async t=>{
  const f=await fixture(t),{setupData}=await api;await setupData(f.options);
- const hooks={...f.hooks,run:async(command,args,options)=>args[0]==='-c'?JSON.stringify({version:'3.10.14',platform:'darwin',machine:'arm64',ready:true,isolated:true}):f.hooks.run(command,args,options)};
- await assert.rejects(setupData({...f.options,refresh:true,hooks}),/Python 3\.11 or newer/);
+ for(const version of ['3.10.14','3.11.9']) {
+  const hooks={...f.hooks,run:async(command,args,options)=>args[0]==='-c'?JSON.stringify({version,platform:'darwin',machine:'arm64',ready:true,isolated:true}):f.hooks.run(command,args,options)};
+  await assert.rejects(setupData({...f.options,refresh:true,hooks}),/Python 3\.12 or newer/);
+ }
 });
 test('cold setup prepares venv, compiler and immutable selected generation',async t=>{
  const f=await fixture(t),{setupData}=await api,{verifySelected}=await contract;
