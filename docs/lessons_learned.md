@@ -1,5 +1,12 @@
 # Lessons learned
 
+## 2026-11-19: Retain finding identity at the evaluated version
+
+An audit stream can report several versions of the same dependency and several
+advisories for each version. A name-keyed map loses evidence or assigns it to a
+different declaration. Retain ordered findings by package and evaluated version,
+then join advisory metadata independently of stream order.
+
 ## 2026-11-13: Choose a default source that has data
 
 Select the first available source for a fresh page while preserving explicit

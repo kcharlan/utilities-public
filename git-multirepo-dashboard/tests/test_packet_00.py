@@ -331,6 +331,7 @@ def test_schema_dependencies_columns():
             "wanted_version", "latest_version", "severity",
             "advisory_id", "checked_at", "source_path",
             "declared_spec", "outdated_state", "vuln_state", "check_note",
+            "advisories", "advisories_complete", "update_level",
         }
         assert expected_cols == col_names, f"Column mismatch: {col_names}"
     finally:

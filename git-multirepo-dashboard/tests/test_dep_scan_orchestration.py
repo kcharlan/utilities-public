@@ -879,6 +879,24 @@ def test_scan_persists_metadata_without_rows(tmp_path, monkeypatch, with_rows):
     assert json.loads(row[2]) == manifests
 
 
+def test_scan_round_trips_advisory_evidence(tmp_path, monkeypatch):
+    db_path = tmp_path / 'synthetic.db'
+    run(_make_db_with_repo(db_path))
+    evidence = [{'id': 'SYNTHETIC-A', 'aliases': ['SYNTHETIC-ALIAS']}]
+    row = dict(_make_dep('synthetic'), advisories=evidence, advisories_complete=False,
+               advisory_id='SYNTHETIC-A', update_level='major')
+    monkeypatch.setattr(git_dashboard, 'analyze_repo_deps', lambda path:
+                        git_dashboard.DepAnalysis([row], True, [], []))
+    async def scan_and_fetch():
+        async with aiosqlite.connect(db_path) as db:
+            await git_dashboard.run_dep_scan_for_repo(db, 'testrepo00000000', str(tmp_path))
+            return await git_dashboard._fetch_repo_deps('testrepo00000000', db)
+    result = run(scan_and_fetch())[0]['packages'][0]
+    assert result['advisories'] == evidence
+    assert result['advisories_complete'] is False
+    assert result['update_level'] == 'major'
+
+
 def test_dep_scan_allows_event_loop_progress(tmp_path, monkeypatch):
     import threading
     started, release = threading.Event(), threading.Event()

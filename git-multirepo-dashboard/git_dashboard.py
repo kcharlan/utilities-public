@@ -48,7 +48,7 @@ except ImportError:  # pragma: no cover - Windows
 
 # ── Constants ─────────────────────────────────────────────────────────────────
 DEFAULT_PORT = 8300
-VERSION = "0.3.10"
+VERSION = "0.4.0"
 
 # Populated by build_tools_dict() during preflight; global so /api/status can
 # return it without re-running which() on every request.
@@ -240,6 +240,9 @@ CREATE TABLE IF NOT EXISTS dependencies (
   latest_version TEXT,
   severity TEXT DEFAULT 'unchecked',
   advisory_id TEXT,
+  advisories TEXT DEFAULT '[]',
+  advisories_complete INTEGER DEFAULT 1,
+  update_level TEXT,
   outdated_state TEXT DEFAULT 'unchecked',
   vuln_state TEXT DEFAULT 'unchecked',
   check_note TEXT,
@@ -343,6 +346,9 @@ _MIGRATION_SQL = [
     "ALTER TABLE working_state ADD COLUMN missing_dep_tools TEXT DEFAULT '[]'",
     "ALTER TABLE working_state ADD COLUMN dep_manifests TEXT DEFAULT '[]'",
     "ALTER TABLE dependencies ADD COLUMN source_path TEXT DEFAULT ''",
+    "ALTER TABLE dependencies ADD COLUMN advisories TEXT DEFAULT '[]'",
+    "ALTER TABLE dependencies ADD COLUMN advisories_complete INTEGER DEFAULT 1",
+    "ALTER TABLE dependencies ADD COLUMN update_level TEXT",
 ]
 
 
@@ -1047,8 +1053,9 @@ async def run_dep_scan_for_repo(db, repo_id: str, repo_path: str) -> None:
                 """INSERT OR REPLACE INTO dependencies
                    (repo_id, manager, name, current_version, wanted_version,
                     latest_version, severity, advisory_id, checked_at, source_path,
-                    declared_spec, outdated_state, vuln_state, check_note)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                    declared_spec, outdated_state, vuln_state, check_note,
+                    advisories, advisories_complete, update_level)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                 (
                     repo_id,
                     dep.get("manager", ""),
@@ -1064,6 +1071,9 @@ async def run_dep_scan_for_repo(db, repo_id: str, repo_path: str) -> None:
                     dep.get("outdated_state", "unchecked"),
                     dep.get("vuln_state", "unchecked"),
                     dep.get("check_note"),
+                    json.dumps(dep.get("advisories", [])),
+                    dep.get("advisories_complete", True),
+                    dep.get("update_level"),
                 ),
             )
 
@@ -1906,11 +1916,12 @@ def tool_failure_note(tool: str, error) -> str:
 
 
 def derive_severity(dep: dict) -> str:
-    if dep.get("advisory_id"):
+    if dep.get("advisory_id") or dep.get('advisories_complete') is False:
         return "vulnerable"
+    level = dep.get('update_level') if 'update_level' in dep else dep.get('severity')
     if (dep.get("outdated_state") in ("checked", "floating")
-            and dep.get("severity") in ("major", "outdated")):
-        return dep["severity"]
+            and level in ("major", "outdated")):
+        return level
     if "unchecked" in (
         dep.get("outdated_state", "unchecked"),
         dep.get("vuln_state", "unchecked"),
@@ -1943,6 +1954,8 @@ def finalize_dep_health(deps: list[dict]) -> list[dict]:
             d['wanted_version'] = d.get('current_version')
         d.setdefault('latest_version', None)
         d.setdefault('advisory_id', None)
+        d.setdefault('advisories', [])
+        d.setdefault('advisories_complete', True)
         d.setdefault('checked_at', now)
         for field, valid in (('outdated_state', ('checked', 'floating', 'unchecked')),
                              ('vuln_state', ('checked', 'unchecked'))):
@@ -2067,7 +2080,7 @@ def check_python_outdated(deps: list[dict]) -> list[dict]:
                 raise ValueError('no usable release satisfies the declaration')
             d['wanted_version'] = evaluated
             d['latest_version'] = payload['info']['version']
-            d['severity'] = classify_severity(evaluated, d['latest_version'])
+            d['severity'] = d['update_level'] = classify_severity(evaluated, d['latest_version'])
             d['outdated_state'] = 'checked' if current else 'floating'
         except Exception as exc:
             mark_unchecked(d, tool_failure_note('PyPI lookup', exc), 'outdated_state')
@@ -2090,6 +2103,16 @@ def _pip_audit_batches(pins: list[tuple[str, str]]) -> list[list[tuple[str, str]
         else:
             batches.append([pin])
     return batches
+
+
+def _add_advisory(advisories: list[dict], advisory_id: str, aliases: list[str]) -> None:
+    existing = next((a for a in advisories if a['id'] == advisory_id), None)
+    if existing is None:
+        existing = {'id': advisory_id, 'aliases': []}
+        advisories.append(existing)
+    for alias in aliases:
+        if alias not in existing['aliases']:
+            existing['aliases'].append(alias)
 
 
 def _audit_python_pins(pip_audit: str, batch: list[tuple[str, str]]) -> dict:
@@ -2142,8 +2165,14 @@ def _audit_python_pins(pip_audit: str, batch: list[tuple[str, str]]) -> dict:
                 raise ValueError("audit version differs from requested pin")
             if proc.returncode == 0 and vulns:
                 raise ValueError("audit exit status contradicts advisories")
-            results[pin] = {"vuln_state": "checked",
-                            "advisory_id": vulns[0]["id"] if vulns else None}
+            advisories = []
+            for vuln in vulns:
+                aliases = vuln.get('aliases', [])
+                if not isinstance(aliases, list) or any(not isinstance(a, str) or not a.strip() for a in aliases):
+                    raise ValueError('invalid advisory aliases')
+                _add_advisory(advisories, vuln['id'], aliases)
+            results[pin] = {"vuln_state": "checked", "advisories": advisories,
+                            "advisory_id": advisories[0]['id'] if advisories else None}
         if proc.returncode == 1 and not any(
             result.get("advisory_id") for result in results.values()
         ):
@@ -2185,6 +2214,7 @@ def check_python_vulns(repo_path: Path, deps: list[dict]) -> list[dict]:
                     mark_unchecked(row, audit['note'], 'vuln_state')
                 else:
                     row['advisory_id'] = audit['advisory_id']
+                    row['advisories'] = audit['advisories']
                     row['severity'] = derive_severity(row)
     return result
 
@@ -2299,12 +2329,12 @@ def _version_finding(dep: dict, current: str, latest: str, tool: str) -> None:
         mark_unchecked(dep, tool_failure_note(tool, exc), 'outdated_state')
         return
     dep.update(current_version=current, wanted_version=current, latest_version=latest,
-               outdated_state='checked', severity=severity)
+               outdated_state='checked', severity=severity, update_level=severity)
 
 
-def _merge_vulnerability_report(deps: list[dict], findings: dict[str, str], tool: str,
+def _merge_vulnerability_report(deps: list[dict], findings: dict[str, list], tool: str,
                                 evaluated: set[str] | None = None,
-                                finding_versions: dict[str, dict[str, str]] | None = None) -> list[dict]:
+                                finding_versions: dict[str, dict[str, list]] | None = None) -> list[dict]:
     """A findings-only report does not by itself prove an absent declaration was audited."""
     result = []
     for dep in deps:
@@ -2319,8 +2349,9 @@ def _merge_vulnerability_report(deps: list[dict], findings: dict[str, str], tool
             else:
                 if versions is not None and not current:
                     current = d['current_version'] = next(iter(versions))
-                advisory = versions[current] if versions is not None else findings[name]
-                d.update(severity='vulnerable', advisory_id=advisory, vuln_state='checked')
+                advisories = versions[current] if versions is not None else findings[name]
+                d.update(severity='vulnerable', advisory_id=advisories[0]['id'],
+                         advisories=advisories, vuln_state='checked')
         elif evaluated is not None and name in evaluated:
             d['vuln_state'] = 'checked'
         else:
@@ -2391,12 +2422,57 @@ def check_node_outdated(repo_path: Path, deps: list[dict]) -> list[dict]:
                 if not latest:
                     raise ValueError('missing latest version comparison')
                 d['outdated_state'] = 'checked'
-                d['severity'] = classify_severity(current, latest)
+                d['severity'] = d['update_level'] = classify_severity(current, latest)
             except Exception as exc:
                 mark_unchecked(d, tool_failure_note('npm outdated comparison', exc), 'outdated_state')
         result.append(d)
 
     return result
+
+
+def _npm_advisories(vulnerabilities: dict, name: str) -> tuple[list[dict], bool]:
+    if name not in vulnerabilities:
+        return [], False
+    active, completed = {name}, {}
+    advisories, seen_aliases = {}, {}
+    # Each frame contains its node, next cause index and completeness.
+    stack = [[name, 0, True]]
+    while stack:
+        frame = stack[-1]
+        node, index, complete = frame
+        causes = vulnerabilities[node]['via']
+        if index == len(causes):
+            active.remove(node)
+            completed[node] = complete
+            stack.pop()
+            continue
+        cause = causes[index]
+        if isinstance(cause, str):
+            if cause in active or cause not in vulnerabilities:
+                frame[2] = False
+            elif cause in completed:
+                frame[2] = complete and completed[cause]
+            else:
+                active.add(cause)
+                stack.append([cause, 0, True])
+                continue
+        else:
+            source = cause.get('source')
+            source_id = (f'npm:{source}' if (isinstance(source, int) and not isinstance(source, bool))
+                         or (isinstance(source, str) and source.strip()) else None)
+            url = cause.get('url')
+            match = re.fullmatch(r'https://github\.com/advisories/(GHSA-[0-9a-z-]+)', url) if isinstance(url, str) else None
+            advisory_id = match.group(1) if match else source_id
+            if advisory_id:
+                entry = advisories.setdefault(advisory_id, {'id': advisory_id, 'aliases': []})
+                aliases = seen_aliases.setdefault(advisory_id, set())
+                if match and source_id and source_id not in aliases:
+                    entry['aliases'].append(source_id)
+                    aliases.add(source_id)
+            else:
+                frame[2] = False
+        frame[1] += 1
+    return list(advisories.values()), completed[name] and bool(advisories)
 
 
 def check_node_vulns(repo_path: Path, deps: list[dict]) -> list[dict]:
@@ -2406,7 +2482,7 @@ def check_node_vulns(repo_path: Path, deps: list[dict]) -> list[dict]:
     Handles npm's non-zero exit code when vulnerabilities exist (normal behavior).
     A failed audit or missing declaration coverage remains unchecked.
     Vulnerability severity overrides any prior severity (vuln > major > outdated > ok).
-    Sets dep["severity"] = "vulnerable" and dep["advisory_id"] = "npm:<name>".
+    Retains attributable advisory identifiers and marks unresolved causes unchecked.
     """
     npm = TOOLS.get("npm")
     if not npm:
@@ -2466,7 +2542,12 @@ def check_node_vulns(repo_path: Path, deps: list[dict]) -> list[dict]:
             d['vuln_state'] = 'checked'
             finding = raw['vulnerabilities'].get(name)
             if finding and f'node_modules/{name}' in finding['nodes']:
-                d.update(severity='vulnerable', advisory_id=f'npm:{name}')
+                advisories, complete = _npm_advisories(raw['vulnerabilities'], name)
+                d.update(severity='vulnerable', advisories=advisories,
+                         advisories_complete=complete,
+                         advisory_id=advisories[0]['id'] if advisories else None)
+                if not complete:
+                    mark_unchecked(d, 'npm audit: incomplete advisory attribution', 'vuln_state')
         result.append(d)
 
     return result
@@ -2614,7 +2695,8 @@ def check_go_vulns(repo_path: Path, deps: list[dict]) -> list[dict]:
                 or messages[0].get('config', {}).get('protocol_version') != 'v1.0.0'):
             raise ValueError('missing supported govulncheck protocol config')
         evaluated_versions: set[tuple[str, str]] = set()
-        versioned_findings: dict[tuple[str, str], str] = {}
+        versioned_findings: dict[tuple[str, str], list] = {}
+        aliases_by_id = {}
         for message in messages:
             if not isinstance(message, dict) or len(message) != 1:
                 raise ValueError('invalid govulncheck message')
@@ -2638,16 +2720,32 @@ def check_go_vulns(repo_path: Path, deps: list[dict]) -> list[dict]:
                 name = _required_text(trace[0], 'module')
                 version = _required_text(trace[0], 'version')
                 evaluated_versions.add((name, version))
-                versioned_findings[name, version] = advisory
+                _add_advisory(versioned_findings.setdefault((name, version), []), advisory, [])
             elif kind == 'osv':
-                _required_text(entry, 'id')
+                advisory = _required_text(entry, 'id')
+                aliases = entry.get('aliases', [])
+                if not isinstance(aliases, list) or any(not isinstance(a, str) or not a.strip() for a in aliases):
+                    raise ValueError('invalid govulncheck OSV aliases')
+                existing = aliases_by_id.setdefault(advisory, {})
+                existing.update(dict.fromkeys(aliases))
     except Exception as exc:
         return _check_failed(deps, 'govulncheck', exc, 'vuln_state')
-    evaluated = {d['name'] for d in deps if (d['name'], d.get('current_version') or d.get('version'))
-                 in evaluated_versions}
-    findings = {d['name']: versioned_findings[d['name'], d.get('current_version') or d.get('version')]
-                for d in deps if (d['name'], d.get('current_version') or d.get('version')) in versioned_findings}
-    return _merge_vulnerability_report(deps, findings, 'govulncheck', evaluated)
+    result = []
+    for dep in deps:
+        d = dict(dep)
+        key = (d['name'], d.get('current_version') or d.get('version'))
+        if key in versioned_findings:
+            advisories = []
+            for advisory in versioned_findings[key]:
+                _add_advisory(advisories, advisory['id'], list(aliases_by_id.get(advisory['id'], {})))
+            d.update(severity='vulnerable', advisory_id=advisories[0]['id'],
+                     advisories=advisories, vuln_state='checked')
+        elif key in evaluated_versions:
+            d['vuln_state'] = 'checked'
+        else:
+            mark_unchecked(d, 'govulncheck: report does not establish declaration evaluation', 'vuln_state')
+        result.append(d)
+    return result
 
 
 def check_go_deps(repo_path: Path, deps: list[dict]) -> list[dict]:
@@ -2755,9 +2853,9 @@ def check_rust_vulns(repo_path: Path, deps: list[dict]) -> list[dict]:
     except Exception as exc:
         return _check_failed(deps, 'cargo audit', exc, 'vuln_state')
 
-    # Build lookup: {package_name: rustsec_id}
-    vuln_map: dict[str, str] = {}
-    finding_versions: dict[str, dict[str, str]] = {}
+    # Retain ordered advisories by package and audited version.
+    vuln_map: dict[str, list[dict]] = {}
+    finding_versions: dict[str, dict[str, list[dict]]] = {}
     try:
         for entry in raw.get("vulnerabilities", {}).get("list", []):
             advisory_id = _required_text(entry.get('advisory', {}), 'id')
@@ -2765,8 +2863,8 @@ def check_rust_vulns(repo_path: Path, deps: list[dict]) -> list[dict]:
             version = _required_text(entry.get('package', {}), 'version')
             if not _tool_version(version):
                 raise ValueError('invalid cargo audit package version')
-            vuln_map[pkg_name] = advisory_id
-            finding_versions.setdefault(pkg_name, {})[version] = advisory_id
+            _add_advisory(vuln_map.setdefault(pkg_name, []), advisory_id, [])
+            _add_advisory(finding_versions.setdefault(pkg_name, {}).setdefault(version, []), advisory_id, [])
         if proc.returncode == 1 and not vuln_map:
             raise ValueError('cargo audit failed without vulnerability findings')
     except Exception as exc:
@@ -2893,9 +2991,9 @@ def check_ruby_vulns(repo_path: Path, deps: list[dict]) -> list[dict]:
     except Exception as exc:
         return _check_failed(deps, 'bundler-audit', exc, 'vuln_state')
 
-    # Build lookup: {gem_name: advisory_id}, retaining audited-version attribution.
-    vuln_map: dict[str, str] = {}
-    finding_versions: dict[str, dict[str, str]] = {}
+    # Retain ordered advisories by gem and audited version.
+    vuln_map: dict[str, list[dict]] = {}
+    finding_versions: dict[str, dict[str, list[dict]]] = {}
     try:
         for entry in raw.get("results", []):
             if entry.get('type') != 'unpatched_gem':
@@ -2905,8 +3003,8 @@ def check_ruby_vulns(repo_path: Path, deps: list[dict]) -> list[dict]:
             if not _tool_version(version):
                 raise ValueError('invalid bundler-audit gem version')
             advisory_id = _required_text(entry.get('advisory', {}), 'id')
-            vuln_map[gem_name] = advisory_id
-            finding_versions.setdefault(gem_name, {})[version] = advisory_id
+            _add_advisory(vuln_map.setdefault(gem_name, []), advisory_id, [])
+            _add_advisory(finding_versions.setdefault(gem_name, {}).setdefault(version, []), advisory_id, [])
         if proc.returncode == 1 and not vuln_map:
             raise ValueError('bundler-audit failed without vulnerability findings')
     except Exception as exc:
@@ -3028,9 +3126,9 @@ def check_php_vulns(repo_path: Path, deps: list[dict]) -> list[dict]:
     except Exception as exc:
         return _check_failed(deps, 'composer audit', exc, 'vuln_state')
 
-    # Build lookup: {package_name: advisory_id}
+    # Retain ordered advisories by package.
     # composer audit JSON: {"advisories": {"pkg/name": [{"advisoryId": "...", ...}]}}
-    vuln_map: dict[str, str] = {}
+    vuln_map: dict[str, list[dict]] = {}
     try:
         for pkg_name, advisories in raw.get("advisories", {}).items():
             if not isinstance(advisories, list) or not advisories:
@@ -3039,7 +3137,7 @@ def check_php_vulns(repo_path: Path, deps: list[dict]) -> list[dict]:
                 if _required_text(advisory, 'packageName') != pkg_name:
                     raise ValueError('composer advisory package mismatch')
                 advisory_id = _required_text(advisory, 'advisoryId')
-                vuln_map[pkg_name] = advisory_id
+                _add_advisory(vuln_map.setdefault(pkg_name, []), advisory_id, [])
         if proc.returncode == 1 and not vuln_map:
             raise ValueError('composer audit failed without vulnerability findings')
     except Exception as exc:
@@ -4682,7 +4780,8 @@ const htmlTag = htm.bind(preact.h);
     }
 
     function statusText(pkg) {
-      const headline = ({ok: 'up to date', outdated: 'outdated', major: 'major update', vulnerable: pkg.advisory_id || 'vulnerable', unchecked: 'not checked'})[pkg.severity] || 'not checked';
+      const advisory = pkg.advisory_id && !(pkg.advisories || []).length ? `${pkg.advisory_id} (legacy; rescan)` : pkg.advisory_id;
+      const headline = ({ok: 'up to date', outdated: 'outdated', major: 'major update', vulnerable: advisory || 'vulnerable', unchecked: 'not checked'})[pkg.severity] || 'not checked';
       return headline + (pkg.severity !== 'unchecked' && !fullyChecked(pkg) ? ' — incomplete coverage' : '');
     }
 
@@ -6871,7 +6970,8 @@ async def _fetch_repo_deps(repo_id: str, db):
         """
         SELECT manager, name, current_version, wanted_version, latest_version,
                severity, advisory_id, checked_at, source_path,
-               declared_spec, outdated_state, vuln_state, check_note
+               declared_spec, outdated_state, vuln_state, check_note, advisories,
+               advisories_complete, update_level
         FROM dependencies
         WHERE repo_id = ?
         ORDER BY source_path, manager,
@@ -6891,7 +6991,8 @@ async def _fetch_repo_deps(repo_id: str, db):
     group_key_index = {}
     for row in rows:
         (mgr, name, cur_ver, wanted_ver, latest_ver, severity, advisory_id,
-         checked_at, source_path, declared_spec, outdated_state, vuln_state, check_note) = row
+         checked_at, source_path, declared_spec, outdated_state, vuln_state, check_note,
+         advisories, advisories_complete, update_level) = row
         # Group by (manager, source_path) so monorepo subdirs show separately
         gkey = (mgr, source_path)
         if gkey not in group_key_index:
@@ -6912,6 +7013,9 @@ async def _fetch_repo_deps(repo_id: str, db):
                 "latest_version": latest_ver,
                 "severity": severity,
                 "advisory_id": advisory_id,
+                "advisories": json.loads(advisories or '[]'),
+                "advisories_complete": bool(advisories_complete),
+                "update_level": update_level,
                 "source_path": source_path,
                 "declared_spec": declared_spec,
                 "outdated_state": outdated_state,

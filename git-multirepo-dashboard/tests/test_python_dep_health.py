@@ -611,6 +611,21 @@ def test_audit_files_are_outside_repository(monkeypatch):
     assert paths and not paths[0].exists()
 
 
+@pytest.mark.parametrize('aliases', [['SYNTHETIC-ALIAS'], None, 'invalid', ['']])
+def test_audit_retains_all_advisories_and_validates_aliases(monkeypatch, aliases):
+    vulns = [{'id': 'SYNTHETIC-A', 'aliases': aliases}, {'id': 'SYNTHETIC-B'},
+             {'id': 'SYNTHETIC-A', 'aliases': ['SYNTHETIC-OTHER']}]
+    monkeypatch.setattr(subprocess, 'run', lambda *a, **k: subprocess.CompletedProcess(
+        a[0], 1, stdout=json.dumps({'dependencies': [{'name': 'synthetic-alpha',
+        'version': '1.0', 'vulns': vulns}]}), stderr=''))
+    result = gd._audit_python_pins('synthetic-auditor', [('synthetic-alpha', '1.0')])[('synthetic-alpha', '1.0')]
+    if isinstance(aliases, list) and aliases == ['SYNTHETIC-ALIAS']:
+        assert result['advisories'] == [{'id': 'SYNTHETIC-A', 'aliases': ['SYNTHETIC-ALIAS', 'SYNTHETIC-OTHER']},
+                                         {'id': 'SYNTHETIC-B', 'aliases': []}]
+    else:
+        assert result['vuln_state'] == 'unchecked'
+
+
 def test_audit_results_map_to_requested_versions(tmp_path, monkeypatch):
     monkeypatch.setattr(gd, 'TOOLS', {'pip_audit': 'synthetic-auditor'})
     (tmp_path / 'requirements.txt').write_text('synthetic-alpha==1.0\n')

@@ -83,6 +83,8 @@ If a registered repository moves, its path can be repaired from the detail view.
 
 The Dependencies view reloads coverage metadata and the application version on mount and after **Check Now**. It shows declared specifications, evaluated versions (floating selections are not installed versions), both check states, and reasons. **Not Checked** includes partially checked findings. The clean banner requires every declaration to be fully checked and no missing tools or inventory errors. **Manifests Scanned** includes empty and failed files, independently of dependency groups; exports remain available with an empty declaration set.
 
+Dependency results retain each advisory identifier and its aliases, plus the independently computed update level. npm attribution follows `via` chains and retains known IDs even when a cause cannot be identified; that declaration remains vulnerable with its vulnerability check marked incomplete. Older stored single-ID findings are labeled legacy and require a rescan for complete evidence.
+
 Markdown reports contain repository identity, generation time, application version, newest declaration check timestamp (explicitly unavailable when no declaration timestamps exist), coverage, missing tools, scope, and the Attention Required, Not Checked, All Dependencies, and Manifests Scanned sections. JSON downloads use `git-fleet-dependency-report` format version 2 with `generated_at`, `git_fleet_version`, `repo`, `missing_tools`, `summary`, `scope`, `manifests`, and `groups`. Scope describes declaration resolution limits, reference exclusions, traversal limits and dependency-group boundaries. The ordinary dependency API remains a grouped list.
 
 ### Analytics

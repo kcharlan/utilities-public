@@ -514,6 +514,7 @@ def test_deps_tab_reports_partial_coverage(page, seeded_coverage):
     expect(page.get_by_text('No issues found — all dependencies are up to date.')).to_have_count(0)
     expect(page.get_by_test_id('dep-all')).to_contain_text('>=1,<2')
     attention = page.locator('section').filter(has=page.get_by_role('heading', name='Attention Required', exact=True))
+    expect(attention).to_contain_text('SYNTHETIC-ADVISORY (legacy; rescan)')
     expect(attention.locator('tbody tr').first.locator('td').first).to_have_text('synthetic-partial-vuln')
     # Metadata and version must be reloaded after Check Now, not stale parent props.
     detail_url = f"**/api/repos/{seeded['repo_id']}"
@@ -536,6 +537,7 @@ def test_deps_tab_reports_partial_coverage(page, seeded_coverage):
 def test_markdown_export_includes_coverage_and_inventory(page, seeded_coverage):
     _open_coverage(page, seeded_coverage)
     md = _download_text(page, 'Export MD')
+    assert 'SYNTHETIC-ADVISORY (legacy; rescan)' in md
     assert md.startswith('# Dependency Report')
     for section in ('Attention Required', 'Not Checked', 'All Dependencies', 'Manifests Scanned', 'Scope'):
         assert '## ' + section in md

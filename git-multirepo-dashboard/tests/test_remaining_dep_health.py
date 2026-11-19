@@ -946,6 +946,42 @@ def _govuln_stream(*, modules=(), findings=()):
     return '\n'.join(json.dumps(message) for message in messages)
 
 
+def test_go_findings_preserve_versions_and_late_osv_aliases(tmp_path, monkeypatch):
+    monkeypatch.setitem(gd.TOOLS, 'govulncheck', 'synthetic-govulncheck')
+    stream = _govuln_stream(modules=[('synthetic-widget', 'v1.0.0'), ('synthetic-widget', 'v2.0.0')],
+        findings=[('synthetic-widget', 'v1.0.0', 'GO-SYNTHETIC-A'),
+                  ('synthetic-widget', 'v1.0.0', 'GO-SYNTHETIC-B')])
+    stream += '\n' + json.dumps({'osv': {'id': 'GO-SYNTHETIC-A', 'aliases': ['SYNTHETIC-ALIAS']}})
+    deps = [dict(name='synthetic-widget', manager='gomod', version=version)
+            for version in ('v1.0.0', 'v2.0.0')]
+    with patch('subprocess.run', return_value=_mock_proc(stream)):
+        rows = gd.check_go_vulns(tmp_path, deps)
+    assert rows[0]['advisories'] == [{'id': 'GO-SYNTHETIC-A', 'aliases': ['SYNTHETIC-ALIAS']},
+                                      {'id': 'GO-SYNTHETIC-B', 'aliases': []}]
+    assert not rows[1].get('advisory_id')
+    assert rows[1]['vuln_state'] == 'checked'
+
+
+def test_go_repeated_osv_records_merge_aliases_in_stream_order(tmp_path, monkeypatch):
+    monkeypatch.setitem(gd.TOOLS, 'govulncheck', 'synthetic-govulncheck')
+    messages = [{'config': {'protocol_version': 'v1.0.0'}},
+                {'osv': {'id': 'GO-SYNTHETIC', 'aliases': ['SYNTHETIC-A', 'SYNTHETIC-B']}},
+                {'finding': {'osv': 'GO-SYNTHETIC', 'trace': [{'module': 'synthetic-widget', 'version': 'v1.0.0'}]}},
+                {'osv': {'id': 'GO-SYNTHETIC', 'aliases': ['SYNTHETIC-B', 'SYNTHETIC-C']}}]
+    with patch('subprocess.run', return_value=_mock_proc('\n'.join(map(json.dumps, messages)))):
+        row = gd.check_go_vulns(tmp_path, [dict(name='synthetic-widget', manager='gomod', version='v1.0.0')])[0]
+    assert row['advisories'] == [{'id': 'GO-SYNTHETIC', 'aliases': ['SYNTHETIC-A', 'SYNTHETIC-B', 'SYNTHETIC-C']}]
+
+
+def test_update_level_recovers_after_advisory_clears_and_legacy_fallback():
+    row = dict(severity='vulnerable', update_level='major', advisory_id=None,
+               outdated_state='checked', vuln_state='checked')
+    assert gd.derive_severity(row) == 'major'
+    del row['update_level']
+    row['severity'] = 'outdated'
+    assert gd.derive_severity(row) == 'outdated'
+
+
 def test_go_clean_sbom_establishes_independent_vulnerability_coverage(tmp_path, monkeypatch):
     monkeypatch.setitem(gd.TOOLS, 'govulncheck', 'synthetic-govulncheck')
     dep = dict(name='synthetic-widget', manager='gomod', version='v1.0.0', outdated_state='unchecked')
@@ -1047,3 +1083,24 @@ def test_cargo_multiple_versions_keep_matching_advisory(tmp_path, monkeypatch):
     with patch('subprocess.run', return_value=_mock_proc(json.dumps(output), 1)):
         row = gd.check_rust_vulns(tmp_path, [dep])[0]
     assert row['advisory_id'] == 'RUSTSEC-SYNTHETIC-CURRENT'
+
+
+@pytest.mark.parametrize('language,manager,tool,output', [
+    ('rust', 'cargo', 'cargo_audit', {'vulnerabilities': {'list': [
+        {'advisory': {'id': advisory}, 'package': {'name': 'synthetic-widget', 'version': '1.0.0'}}
+        for advisory in ('SYNTHETIC-A', 'SYNTHETIC-B')]}}),
+    ('ruby', 'bundler', 'bundler_audit', {'results': [
+        {'type': 'unpatched_gem', 'advisory': {'id': advisory},
+         'gem': {'name': 'synthetic-widget', 'version': '1.0.0'}}
+        for advisory in ('SYNTHETIC-A', 'SYNTHETIC-B')]}),
+    ('php', 'composer', 'composer', {'advisories': {'synthetic-widget': [
+        {'packageName': 'synthetic-widget', 'advisoryId': 'SYNTHETIC-A'},
+        {'packageName': 'synthetic-widget', 'advisoryId': 'SYNTHETIC-B'}]}}),
+])
+def test_shared_auditors_retain_all_findings(tmp_path, monkeypatch, language, manager, tool, output):
+    monkeypatch.setitem(gd.TOOLS, tool, 'synthetic-tool')
+    dep = dict(name='synthetic-widget', manager=manager, current_version='1.0.0')
+    with patch('subprocess.run', return_value=_mock_proc(json.dumps(output), 1)):
+        row = getattr(gd, f'check_{language}_vulns')(tmp_path, [dep])[0]
+    assert row['advisories'] == [{'id': 'SYNTHETIC-A', 'aliases': []},
+                                 {'id': 'SYNTHETIC-B', 'aliases': []}]
