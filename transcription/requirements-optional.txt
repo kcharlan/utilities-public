@@ -1,5 +1,5 @@
 # Installed by the launcher header; OpenAI fallback is used only by app.py.
-openai==3.31.0
+openai==3.55.1
 
 # Installed by the launcher header; duration reader is used only by transcribe.py.
-librosa==1.0.0
+librosa==1.0.1
