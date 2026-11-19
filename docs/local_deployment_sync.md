@@ -645,6 +645,42 @@ Office Picnic is a maintained static runtime under `web_games/office_picnic/dist
 
 `npm run deploy -- --dry-run` validates without writes; `--check` compares installed maintained files with staged source. Before activation it saves the complete prior managed inventory in private persistent `~/.utilities-deploy-backups/office-picnic/copy-*` backups. Successful forward deployments retain the newest two. `--rollback BACKUP` restores independently of the current source state, saves current files first, preserves recovery history, and preserves unrelated files. The fleet audit does not yet inspect this game; use its explicit `--check`. Its full `npm test` suite includes isolated deployment/update/rollback and rejection tests in removed OS temporary directories. See the [game README](../web_games/office_picnic/README.md#local-webserver-deployment).
 
+## My Bingo static game deployment
+
+My Bingo is maintained in the sibling `my_bingo` repository. The [installer](../tools/deploy_my_bingo.mjs)
+copies committed runtime files and the two Thanksgiving word lists from its updated
+`main` checkout to `~/webroot/games/my_bingo/`. It uses the existing server at
+[localhost:7711/games/my_bingo/bingo_app.html](http://localhost:7711/games/my_bingo/bingo_app.html).
+Theme discovery uses the server's directory listing and the browser keeps game state on this
+origin. The server needs no restart.
+
+From the Utilities Toolkit root, after validating My Bingo:
+
+```sh
+node tools/deploy_my_bingo.mjs --dry-run
+node tools/deploy_my_bingo.mjs
+node tools/deploy_my_bingo.mjs --check
+```
+
+The installer also accepts `--repo DIR`, `--webroot DIR` and `--backups DIR`.
+`UTILITIES_WEBROOT_DIR` overrides the default webroot. `--check` compares installed
+managed bytes and modes without changing any files. Routine updates preserve local files
+and neighboring games. Copy backups are private under
+`~/.utilities-deploy-backups/my-bingo/copy-*`. A successful update retains the newest two.
+Restore a copy with `node tools/deploy_my_bingo.mjs --rollback BACKUP`; rollback backs up
+the current managed files before replacing them.
+
+Use `--migrate-checkout --dry-run` to preview the one-time conversion of a legacy Git checkout
+in the webroot, then `--migrate-checkout` to perform it. This stages the new runtime, moves the
+entire old checkout into a private `legacy-*/checkout` archive, and restores the old checkout if
+activation fails. It carries over separate local theme packs, a local theme manifest, and
+untracked text files under `fixtures/` or `wordlists/`. The legacy archive survives copy backup
+pruning. To restore the original checkout after a completed migration, first move the installed
+runtime to a private location outside the webroot, then move the archived `checkout` back to
+`~/webroot/games/my_bingo/`. The installer's `--rollback` command handles the `copy-*` backups
+from routine updates. Check the play URL and theme discovery in Chrome after activation. For the isolated installer suite, run
+`node --test tools/tests/deploy_my_bingo.test.mjs`.
+
 ## `~/Library/Scripts`
 
 Direct script copies are listed in [`tools/deployment_copies.json`](../tools/deployment_copies.json). Deploy them with `node tools/deploy_copies.mjs` from the repository root. Use `--only NAME` (repeatable) to select an entry and `--dry-run` to inspect changes without writing. `--scripts-dir DIR` or `UTILITIES_SCRIPTS_DIR` overrides the scripts destination, `--local-root DIR` or `UTILITIES_LOCAL_ROOT` the home-project root, and `--repo DIR` selects another checkout. The deployer requires a clean committed `main` for its inputs. Each entry is its own transaction; a failure reports any earlier entries that completed. Successful forward updates retain the newest two eligible backups per entry, ordered by modification time and then name.
