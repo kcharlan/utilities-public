@@ -2683,3 +2683,11 @@ An import can be supplied by more than one distribution. The uv header guard
 previously accepted only a single provider for each alias, so it rejected the
 lite PDF distribution even though it provides both `fitz` and `pymupdf`.
 Check all accepted providers in both direct and transitive import validation.
+
+## 2026-11-19: Check Gunicorn startup logs in the container
+
+Gunicorn can serve requests even when its optional control socket fails to
+start. The collector smoke test found a permission error because the
+unprivileged container user could not create the default socket directory.
+Disable the unused socket in the container command and check startup logs
+alongside successful HTTP requests.

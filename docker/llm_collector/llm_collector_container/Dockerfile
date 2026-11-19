@@ -27,4 +27,4 @@ USER 1000:1000
 # Expose the app port (informational)
 EXPOSE 9000
 
-CMD ["gunicorn", "--workers", "1", "--bind", "0.0.0.0:9000", "--timeout", "120", "--access-logfile", "-", "--error-logfile", "-", "collector.collector:app"]
+CMD ["gunicorn", "--no-control-socket", "--workers", "1", "--bind", "0.0.0.0:9000", "--timeout", "120", "--access-logfile", "-", "--error-logfile", "-", "collector.collector:app"]
