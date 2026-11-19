@@ -28,6 +28,7 @@ from datetime import date, timedelta
 from pathlib import Path
 
 import pytest
+from markdown_it import MarkdownIt
 
 # ── Check playwright is installed ────────────────────────────────────────────
 try:
@@ -504,6 +505,32 @@ def _download_text(page, button):
     return Path(download.value.path()).read_text()
 
 
+def _markdown_tables(markdown):
+    from html.parser import HTMLParser
+    class Tables(HTMLParser):
+        def __init__(self):
+            super().__init__()
+            self.tables, self.heading, self.row, self.cell = {}, None, None, None
+            self.in_heading = False
+        def handle_starttag(self, tag, attrs):
+            if tag == 'h2': self.in_heading, self.heading = True, ''
+            elif tag == 'table': self.tables[self.heading] = []
+            elif tag == 'tr': self.row = []
+            elif tag in ('td', 'th'): self.cell = ''
+        def handle_data(self, data):
+            if self.in_heading: self.heading += data
+            if self.cell is not None: self.cell += data
+        def handle_endtag(self, tag):
+            if tag == 'h2': self.in_heading = False
+            elif tag in ('td', 'th') and self.cell is not None:
+                self.row.append(self.cell); self.cell = None
+            elif tag == 'tr' and self.row is not None:
+                self.tables[self.heading].append(self.row); self.row = None
+    parser = Tables()
+    parser.feed(MarkdownIt('commonmark').enable('table').render(markdown))
+    return parser.tables
+
+
 def test_deps_tab_reports_partial_coverage(page, seeded_coverage):
     seeded = seeded_coverage
     _open_coverage(page, seeded)
@@ -518,18 +545,20 @@ def test_deps_tab_reports_partial_coverage(page, seeded_coverage):
     expect(attention).to_contain_text('SYNTHETIC-ADVISORY (legacy; rescan)')
     expect(attention.locator('tbody tr').first.locator('td').first).to_have_text('synthetic-partial-vuln')
     # Metadata and version must be reloaded after Check Now, not stale parent props.
-    detail_url = f"**/api/repos/{seeded['repo_id']}"
+    snapshot_url = f"**/api/repos/{seeded['repo_id']}/deps/snapshot"
     detail = page.request.get(seeded['url'] + '/api/repos/' + seeded['repo_id']).json()
     detail['working_state']['missing_dep_tools'] = [dict(tool='synthetic-refreshed', description='Synthetic refresh')]
     detail['working_state']['dep_manifests'].append(dict(path='refreshed-empty.txt', kind='requirements', dependencies=0, error=None))
     status = page.request.get(seeded['url'] + '/api/status').json()
     status['version'] = 'synthetic-refreshed-version'
+    status['machine_config']['error'] = 'Synthetic refreshed configuration error'
     groups = page.request.get(seeded['url'] + '/api/repos/' + seeded['repo_id'] + '/deps').json()
-    page.route(detail_url, lambda route: route.fulfill(json=detail))
+    page.route(snapshot_url, lambda route: route.fulfill(json={'repo': detail, 'groups': groups}))
     page.route('**/api/status', lambda route: route.fulfill(json=status))
     page.route(f"**/api/repos/{seeded['repo_id']}/scan/deps", lambda route: route.fulfill(json=groups))
     page.get_by_role('button', name='Check Now', exact=True).click()
     expect(page.get_by_text('synthetic-refreshed — Synthetic refresh', exact=True)).to_be_visible()
+    expect(page.get_by_text('Current machine config', exact=False).first).to_contain_text('Synthetic refreshed configuration error')
     report = json.loads(_download_text(page, 'Export JSON'))
     assert report['git_fleet_version'] == status['version']
     assert report['manifests'] == detail['working_state']['dep_manifests']
@@ -547,8 +576,9 @@ def test_markdown_export_includes_coverage_and_inventory(page, seeded_coverage):
             assert row[field] in md
         if row['check_note']:
             assert row['check_note'] in md
+    rendered = MarkdownIt('commonmark').enable('table').render(md)
     for manifest in seeded_coverage['manifests']:
-        assert manifest['path'] in md
+        assert manifest['path'] in rendered
         if manifest['error']:
             assert manifest['error'] in md
     assert f"Not checked: {seeded_coverage['summary']['unchecked']}" in md
@@ -560,16 +590,179 @@ def test_json_export_obeys_report_contract(page, seeded_coverage):
     _open_coverage(page, seeded_coverage)
     report = json.loads(_download_text(page, 'Export JSON'))
     assert report['format'] == 'git-fleet-dependency-report'
-    assert report['format_version'] == 2
+    assert report['format_version'] == 3
     assert report['summary'] == seeded_coverage['summary']
     assert report['manifests'] == seeded_coverage['manifests']
     assert report['missing_tools'] == seeded_coverage['missing_tools']
     assert report['repo'] == dict(id=seeded_coverage['repo_id'], name='Synthetic coverage repository')
     status = page.request.get(seeded_coverage['url'] + '/api/status').json()
+    assert status['version'] == '0.4.0'
+    assert 'VERSION = "0.4.0"' in (PROJECT_ROOT / 'git_dashboard.py').read_text()
     assert report['git_fleet_version'] == status['version']
     assert report['scope'] == status['dependency_scope']
+    assert report['machine_config']['label'] == status['machine_config']['label']
     assert report['generated_at']
     assert len([r for g in report['groups'] for r in g['packages']]) == len(seeded_coverage['rows'])
+
+
+def test_accepted_evidence_and_path_exports(page, seeded_coverage):
+    import sqlite3
+    seed = seeded_coverage
+    file_path = '  synthetic_😀_[file]\\\\x80.toml'
+    source = '\\x80 synthetic_😀_[source].json'
+    reason = 'Synthetic *reason* \\ literal | <test>'
+    acceptance = dict(kind='unchecked', file=file_path, index=1, reason=reason, expires='2099-01-01', detail=dict(checks=['vulnerability']))
+    entries = [dict(kind='advisory', index=1, reason=reason, status='partial', detail=dict(unused=[dict(source_path=source, part='SYNTHETIC-OTHER', reason=reason)])), dict(kind='hold', index=1, reason='Synthetic hold', status='stale', detail=dict(unused=[]))]
+    exceptions = [dict(path=file_path, git='untracked', error=None, entries=entries)]
+    with sqlite3.connect(seed['db_path']) as db:
+        db.execute('DELETE FROM dependencies WHERE repo_id=?', (seed['repo_id'],))
+        for name in ('synthetic-mixed-unidentified', 'synthetic-mixed-cycle'):
+            db.execute('INSERT INTO dependencies (repo_id,name,manager,source_path,declared_spec,current_version,latest_version,severity,outdated_state,vuln_state,advisory_id,advisories,advisories_complete,acceptances) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)',
+                       (seed['repo_id'], name, 'npm', source, '^1', '1', '1', 'vulnerable', 'checked', 'accepted', None, json.dumps([dict(id='SYNTHETIC-ID', aliases=[])]), 0, json.dumps([acceptance])))
+        advisory = dict(kind='advisory', file=file_path, index=1, reason='Synthetic advisory reason', expires=None, detail=dict(ids=['SYNTHETIC-COVERED']))
+        db.execute('INSERT INTO dependencies (repo_id,name,manager,source_path,declared_spec,current_version,latest_version,severity,outdated_state,vuln_state,advisory_id,advisories,advisories_complete,acceptances) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)',
+                   (seed['repo_id'], 'synthetic-partial-advisory', 'npm', source, '^1', '1', '1', 'vulnerable', 'checked', 'checked', 'SYNTHETIC-UNCOVERED', json.dumps([dict(id='SYNTHETIC-COVERED', aliases=['SYNTHETIC-ALIAS']), dict(id='SYNTHETIC-UNCOVERED', aliases=[])]), 1, json.dumps([advisory])))
+        ignored = dict(kind='ignored-tool', file='machine config', index=None, reason='missing tool ignored in machine config', expires=None, detail=dict(tools=['synthetic-tool'], checks=['vulnerability']))
+        db.execute('INSERT INTO dependencies (repo_id,name,manager,source_path,severity,outdated_state,vuln_state,acceptances) VALUES (?,?,?,?,?,?,?,?)',
+                   (seed['repo_id'], 'synthetic-ignored-tool', 'npm', source, 'accepted', 'checked', 'accepted', json.dumps([ignored])))
+        db.execute('UPDATE working_state SET dep_check_error=1,missing_dep_tools=?,dep_manifests=?,dep_exceptions=?,ignored_dep_tools=? WHERE repo_id=?',
+                   ('[]', json.dumps([dict(path=source, kind='npm', dependencies=0, error=None, excluded_by=file_path)]), json.dumps(exceptions), json.dumps(['synthetic-tool']), seed['repo_id']))
+    _open_coverage(page, seed)
+    attention = page.locator('section').filter(has=page.get_by_role('heading', name='Attention Required', exact=True))
+    for name in ('synthetic-mixed-unidentified', 'synthetic-mixed-cycle'):
+        expect(attention).to_contain_text(name)
+        expect(page.get_by_test_id('dep-accepted')).to_contain_text(name)
+    expect(attention).to_contain_text('SYNTHETIC-ID')
+    expect(attention).to_contain_text('unknown advisory attribution')
+    expect(attention).to_contain_text('SYNTHETIC-COVERED [SYNTHETIC-ALIAS] (accepted)')
+    expect(attention).to_contain_text('SYNTHETIC-UNCOVERED')
+    expect(page.get_by_test_id('dep-accepted')).to_contain_text('machine config')
+    report = json.loads(_download_text(page, 'Export JSON'))
+    assert report['exceptions'] == exceptions
+    assert report['ignored_tools'] == ['synthetic-tool']
+    assert report['summary']['accepted'] == 4
+    exception_section = page.locator('section').filter(has=page.get_by_role('heading', name='Exception Files', exact=True))
+    expect(exception_section.get_by_text(f'{source} — SYNTHETIC-OTHER — {reason}', exact=True)).to_be_visible()
+    expect(exception_section.get_by_text('hold#1 — stale', exact=False)).to_be_visible()
+    expect(exception_section.get_by_text('advisory#1 — partial', exact=False)).to_be_visible()
+    tables = _markdown_tables(_download_text(page, 'Export MD'))
+    accepted_table = tables['Accepted Exceptions']
+    accepted_row = next(row for row in accepted_table[1:] if row[0] == 'synthetic-mixed-cycle')
+    assert accepted_row[4].find(reason) >= 0
+    assert accepted_row[5] == file_path + ':unchecked#1'
+    exception_rows = tables['Exception Files'][1:]
+    assert len(exception_rows) == 2
+    assert exception_rows[0] == [file_path, 'untracked', '—',
+                                 f'advisory#1 — partial —   — {reason} — no expiry {source}: SYNTHETIC-OTHER — {reason}']
+    assert exception_rows[1] == [file_path, 'untracked', '—', 'hold#1 — stale —   — Synthetic hold — no expiry']
+    manifest_row = tables['Manifests Scanned'][1]
+    assert manifest_row[0] == source and manifest_row[4] == file_path
+    all_row = next(row for row in tables['All Dependencies'][1:] if row[0] == 'synthetic-mixed-cycle')
+    assert all_row[7] == source
+
+
+@pytest.mark.parametrize('count', [0, 1, 2])
+def test_clean_banner_with_accepted_rows(page, seeded_coverage, count):
+    import sqlite3
+    seed = seeded_coverage
+    with sqlite3.connect(seed['db_path']) as db:
+        db.execute('DELETE FROM dependencies WHERE repo_id=?', (seed['repo_id'],))
+        for index in range(max(count, 1)):
+            acceptance = [dict(kind='hold', file='.gitfleet.toml', index=1, reason='Synthetic hold', expires=None, detail=dict(latest='2'))] if index < count else []
+            db.execute('INSERT INTO dependencies (repo_id,name,manager,source_path,severity,outdated_state,vuln_state,acceptances) VALUES (?,?,?,?,?,?,?,?)',
+                       (seed['repo_id'], f'synthetic-clean-{index}', 'pip', 'requirements.txt', 'accepted' if acceptance else 'ok', 'checked', 'checked', json.dumps(acceptance)))
+        db.execute("UPDATE working_state SET dep_check_error=0,missing_dep_tools='[]',dep_manifests='[]',dep_exceptions='[]' WHERE repo_id=?", (seed['repo_id'],))
+    _open_coverage(page, seed)
+    expected = 'No issues found — all dependencies are up to date.' if not count else f'No issues found — {count} accepted exception{"s" if count != 1 else ""}; all other dependencies are up to date.'
+    expect(page.get_by_text(expected, exact=True)).to_be_visible()
+
+
+@pytest.mark.parametrize('scenario', ['clean', 'partial', 'excluded', 'stale', 'untracked', 'ignored'])
+def test_shared_exception_scenarios(page, seeded_coverage, scenario):
+    seed = seeded_coverage
+    seed['seed'](seed['db_path'], seed['repo_id'], seed['db_path'].parent, scenario)
+    _open_coverage(page, seed)
+    if scenario == 'clean':
+        expect(page.get_by_text('No issues found — 1 accepted exception; all other dependencies are up to date.')).to_be_visible()
+    elif scenario == 'partial':
+        expect(page.get_by_test_id('dep-accepted')).to_contain_text('synthetic-partial')
+        expect(page.get_by_test_id('dep-not-checked')).to_contain_text('synthetic-partial')
+        expect(page.get_by_text('No issues found', exact=False)).to_have_count(0)
+    elif scenario == 'excluded':
+        expect(page.get_by_text('Excluded by synthetic/.gitfleet.toml', exact=False)).to_be_visible()
+    elif scenario in ('stale', 'untracked'):
+        expect(page.get_by_test_id('dep-coverage')).to_contain_text('1 exception warnings')
+    else:
+        expect(page.get_by_test_id('dep-coverage')).to_contain_text('synthetic-audit')
+
+
+def test_accepted_clean_banner_suppressed_by_analysis_error(page, seeded_coverage):
+    import sqlite3
+    seed = seeded_coverage
+    seed['seed'](seed['db_path'], seed['repo_id'], seed['db_path'].parent, 'clean')
+    with sqlite3.connect(seed['db_path']) as db:
+        db.execute('UPDATE working_state SET dep_check_error=1 WHERE repo_id=?', (seed['repo_id'],))
+    _open_coverage(page, seed)
+    expect(page.get_by_text('No issues found', exact=False)).to_have_count(0)
+
+
+def test_accepted_clean_banner_suppressed_by_independent_finding(page, seeded_coverage):
+    import sqlite3
+    seed = seeded_coverage
+    seed['seed'](seed['db_path'], seed['repo_id'], seed['db_path'].parent, 'clean')
+    with sqlite3.connect(seed['db_path']) as db:
+        db.execute("UPDATE dependencies SET severity='major' WHERE repo_id=?", (seed['repo_id'],))
+    _open_coverage(page, seed)
+    expect(page.get_by_test_id('dep-coverage')).not_to_contain_text('Incomplete coverage')
+    expect(page.get_by_test_id('dep-accepted')).to_contain_text('synthetic-clean')
+    expect(page.get_by_text('No issues found', exact=False)).to_have_count(0)
+
+
+def test_warning_only_repo_and_current_config_error(page, seeded_coverage):
+    import sqlite3
+    seed = seeded_coverage
+    inventory = [dict(path='synthetic.toml', git='untracked', error=None, entries=[])]
+    with sqlite3.connect(seed['db_path']) as db:
+        db.execute('DELETE FROM dependencies WHERE repo_id=?', (seed['repo_id'],))
+        db.execute("UPDATE working_state SET dep_check_error=0,missing_dep_tools='[]',dep_manifests='[]',dep_exceptions=? WHERE repo_id=?", (json.dumps(inventory), seed['repo_id']))
+    status = page.request.get(seed['url'] + '/api/status').json()
+    status['machine_config'].update(path='synthetic-config.toml', error='Synthetic config error', ignore_missing_tools=[])
+    page.route('**/api/status', lambda route: route.fulfill(json=status))
+    _open_app(page, seed['url'])
+    card = page.locator('.project-card').filter(has=page.get_by_text('Synthetic coverage repository', exact=True))
+    expect(card).to_contain_text('1 warning')
+    expect(page.get_by_text('Current machine config (synthetic-config.toml): Synthetic config error')).to_be_visible()
+    page.locator('nav').get_by_role('link', name='Dependencies', exact=True).click()
+    expect(page.locator('.table-row').filter(has=page.get_by_text('Synthetic coverage repository', exact=True))).to_contain_text('1 warning')
+    _open_coverage(page, seed)
+    expect(page.get_by_test_id('dep-coverage')).to_contain_text('Synthetic config error')
+    expect(page.get_by_test_id('dep-coverage')).not_to_contain_text('Incomplete coverage')
+    report = json.loads(_download_text(page, 'Export JSON'))
+    assert report['machine_config']['path'] == 'synthetic-config.toml'
+    assert report['machine_config']['error'] == 'Synthetic config error'
+    rendered = MarkdownIt('commonmark').enable('table').render(_download_text(page, 'Export MD'))
+    assert 'Synthetic config error' in rendered and 'Check Now applies current config' in rendered
+
+
+@pytest.mark.parametrize('path', [
+    ' [synthetic]*<&>_file.toml', '\u2003synthetic_file.toml',
+    'synthetic_\\x80_file.toml', 'synthetic_\\\\x80_file.toml', 'synthetic_😀_file.toml',
+])
+def test_markdown_renders_display_paths_as_text(page, seeded_coverage, path):
+    import sqlite3
+    seed = seeded_coverage
+    with sqlite3.connect(seed['db_path']) as db:
+        db.execute("UPDATE dependencies SET source_path=? WHERE repo_id=? AND name='synthetic-direct'", (path, seed['repo_id']))
+        db.execute('UPDATE working_state SET dep_manifests=?, dep_exceptions=? WHERE repo_id=?',
+                   (json.dumps([dict(path=path, kind='synthetic', dependencies=0, error=None, excluded_by=path)]),
+                    json.dumps([dict(path=path, git='tracked', error=None, entries=[])]), seed['repo_id']))
+    _open_coverage(page, seed)
+    tables = _markdown_tables(_download_text(page, 'Export MD'))
+    assert tables['Exception Files'][1][0] == path
+    assert tables['Manifests Scanned'][1][0] == path
+    assert tables['Manifests Scanned'][1][4] == path
+    row = next(row for row in tables['All Dependencies'][1:] if row[0] == 'synthetic-direct')
+    assert row[7] == path
 
 
 def test_overlap_lists_manifest_uses_without_duplicate_keys(page, seeded_coverage):
@@ -613,7 +806,7 @@ def test_fleet_retains_repository_coverage_without_unchecked_rows(page, seeded_c
     _open_app(page, seeded['url'])
     card = page.locator('.project-card').filter(has=page.get_by_text('Synthetic coverage repository', exact=True))
     expect(card.locator('[title*="Incomplete coverage"]')).to_be_visible()
-    expect(card.locator('[title="All declarations fully checked"]')).to_have_count(0)
+    expect(card.locator('[title^="All declarations fully checked"]')).to_have_count(0)
     if failure == 'inventory':
         expect(card.locator('[title*="analysis error"]')).to_be_visible()
     else:
@@ -622,7 +815,9 @@ def test_fleet_retains_repository_coverage_without_unchecked_rows(page, seeded_c
     row = page.locator('.table-row').filter(has=page.get_by_text('Synthetic coverage repository', exact=True))
     expect(row).to_be_visible()
     expect(row.locator('[title*="Incomplete coverage"]')).to_be_visible()
-    expect(row.locator('span').last).to_have_text('0')
+    headers = page.locator('.table-header').filter(has=page.get_by_text('Not Checked', exact=True))
+    column = headers.locator('span').all_text_contents().index('Not Checked')
+    expect(row.locator(':scope > span').nth(column)).to_have_text('0')
     expect(page.get_by_text('Not Checked', exact=True).first.locator('..').locator('div').first).to_have_text('0')
     expect(page.get_by_text('No dependencies detected. Run a Full Scan to discover dependencies in your repos.')).to_have_count(0)
 

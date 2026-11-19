@@ -41,7 +41,7 @@ These are declared in the launcher's PEP 723 header and resolved by uv on first 
 | `python-pptx` | PPTX slide text, tables, speaker notes |
 | `openpyxl` | XLSX sheet extraction |
 | `beautifulsoup4` + `lxml` | HTML parsing |
-| `readability-lxml<0.9` | HTML main-content extraction; 0.9 excludes Python 3.15 in its published metadata |
+| `readability-lxml<0.9` | HTML main-content extraction; 0.9 excludes Python 3.15 in its published metadata; see [.gitfleet.toml](.gitfleet.toml) |
 | `markdownify` | HTML→Markdown conversion (primary path) |
 
 ## Quick Start

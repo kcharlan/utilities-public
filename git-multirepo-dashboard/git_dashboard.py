@@ -2130,6 +2130,7 @@ def _path_pattern_matches(pattern: str, rel_path: str) -> bool:
 
 
 def _git_file_statuses(repo_path: Path, rel_paths: list[str]) -> dict[str, str]:
+    import unicodedata
     result = dict.fromkeys(rel_paths, 'unknown')
     if not rel_paths:
         return result
@@ -2140,10 +2141,33 @@ def _git_file_statuses(repo_path: Path, rel_paths: list[str]) -> dict[str, str]:
             return result
         found = {os.fsdecode(p) for p in tracked.stdout.split(b'\0') if p}
         remaining = [p for p in rel_paths if p not in found]
-        ignored = subprocess.run([*base, 'check-ignore', '-z', '--stdin'], input=b''.join(os.fsencode('./' + p) + b'\0' for p in remaining), capture_output=True, timeout=30) if remaining else None
+        # Git stores precomposed names on opted-in macOS filesystems. Only use
+        # an alternate spelling when both names identify the same real entry.
+        alternates = {}
+        for p in remaining:
+            alternate = unicodedata.normalize('NFC', p)
+            if alternate != p and alternate not in result:
+                try:
+                    if os.path.samefile(repo_path / p, repo_path / alternate):
+                        alternates[p] = alternate
+                except OSError:
+                    pass
+        use_alternates = False
+        if alternates:
+            config = subprocess.run([*base, 'config', '--bool', '--get', 'core.precomposeunicode'], capture_output=True, timeout=30)
+            if config.returncode not in (0, 1):
+                return result
+            if config.returncode == 0 and config.stdout.strip() == b'true':
+                use_alternates = True
+                for p, alternate in alternates.items():
+                    if alternate in found:
+                        found.add(p)
+        probes = {p: alternates.get(p, p) if use_alternates else p for p in remaining if p not in found}
+        ignored = subprocess.run([*base, 'check-ignore', '-z', '--stdin'], input=b''.join(os.fsencode('./' + p) + b'\0' for p in probes.values()), capture_output=True, timeout=30) if probes else None
         if ignored is not None and ignored.returncode not in (0, 1):
             return result
-        ignored_paths = {os.fsdecode(p).removeprefix('./') for p in ignored.stdout.split(b'\0') if p} if ignored else set()
+        matches = {os.fsdecode(p).removeprefix('./') for p in ignored.stdout.split(b'\0') if p} if ignored else set()
+        ignored_paths = {p for p, probe in probes.items() if probe in matches}
         return {p: 'tracked' if p in found else 'ignored' if p in ignored_paths else 'untracked' for p in rel_paths}
     except (OSError, subprocess.TimeoutExpired):
         return result
@@ -2153,24 +2177,24 @@ def _dep_scan_date():
     return date.today()
 
 
-def _load_bounded_toml(path: Path, *, regular_only: bool = False) -> dict:
+def _load_bounded_toml(path: Path, *, no_follow: bool = False) -> dict:
     """Read a bounded UTF-8 TOML file; reject pathological nesting as invalid."""
-    if regular_only:
-        if not stat.S_ISREG(path.stat().st_mode):
+    before = path.lstat() if no_follow else path.stat()
+    if not stat.S_ISREG(before.st_mode):
+        raise ValueError('config is not a regular file')
+    fd = os.open(path, os.O_RDONLY | getattr(os, 'O_NONBLOCK', 0) | getattr(os, 'O_BINARY', 0) | (getattr(os, 'O_NOFOLLOW', 0) if no_follow else 0))
+    try:
+        opened = os.fstat(fd)
+        if not stat.S_ISREG(opened.st_mode):
             raise ValueError('config is not a regular file')
-        fd = os.open(path, os.O_RDONLY | getattr(os, 'O_NONBLOCK', 0) | getattr(os, 'O_BINARY', 0))
-        try:
-            if not stat.S_ISREG(os.fstat(fd).st_mode):
-                raise ValueError('config is not a regular file')
-            stream = os.fdopen(fd, 'rb')
-            fd = -1
-        finally:
-            if fd != -1:
-                os.close(fd)
-    else:
-        stream = path.open('rb')
-    with stream:
-        data = stream.read(MAX_DEP_FILE_SIZE + 1)
+        if no_follow:
+            after = path.lstat()
+            if not stat.S_ISREG(after.st_mode) or not os.path.samestat(before, opened) or not os.path.samestat(after, opened):
+                raise ValueError('config changed while opening')
+        with os.fdopen(fd, 'rb', closefd=False) as stream:
+            data = stream.read(MAX_DEP_FILE_SIZE + 1)
+    finally:
+        os.close(fd)
     if len(data) > MAX_DEP_FILE_SIZE:
         raise ValueError('exceeds size limit')
     try:
@@ -2187,7 +2211,7 @@ def load_machine_config() -> dict:
         display = str(path)
     result = {'path': _dep_path_display(display), 'error': None, 'ignore_missing_tools': []}
     try:
-        obj = _load_bounded_toml(path, regular_only=True)
+        obj = _load_bounded_toml(path)
         if type(obj.get('schema')) is not int or obj['schema'] != 1 or set(obj) - {'schema', 'dependencies'}:
             raise ValueError('invalid schema or root keys')
         deps = obj.get('dependencies', {})
@@ -2216,13 +2240,11 @@ def create_machine_config() -> None:
         except FileExistsError:
             return
         try:
-            with os.fdopen(fd, 'w', encoding='utf-8') as stream:
-                fd = -1
+            with os.fdopen(fd, 'w', encoding='utf-8', closefd=False) as stream:
                 stream.write('# See Git Fleet README: Data and configuration\n# Tool names: ' + ', '.join(names) +
                              '\nschema = 1\n\n[dependencies]\nignore_missing_tools = []\n')
         finally:
-            if fd != -1:
-                os.close(fd)
+            os.close(fd)
     except OSError as exc:
         raise SystemExit(f'Error creating machine config {path}: {exc}') from exc
 
@@ -2260,7 +2282,7 @@ def load_dep_exceptions(repo_path: Path, paths) -> list[DepExceptionFile]:
         f = DepExceptionFile(rel, directory, statuses[rel])
         files.append(f)
         try:
-            obj = _load_bounded_toml(path)
+            obj = _load_bounded_toml(path, no_follow=True)
             if type(obj.get('schema')) is not int or obj['schema'] != 1 or set(obj) - {'schema', *requirements}:
                 raise ValueError('invalid schema or root keys')
             for kind, required in requirements.items():
@@ -4233,6 +4255,8 @@ const htmlTag = htm.bind(preact.h);
 
       useEffect(() => {
         let active = true;
+        const updateStatus = event => setStatus(event.detail);
+        window.addEventListener('git-fleet-status', updateStatus);
         fetch('/api/status')
           .then(res => res.json())
           .then(data => {
@@ -4243,6 +4267,7 @@ const htmlTag = htm.bind(preact.h);
           });
         return () => {
           active = false;
+          window.removeEventListener('git-fleet-status', updateStatus);
         };
       }, []);
 
@@ -4260,7 +4285,7 @@ const htmlTag = htm.bind(preact.h);
           alignItems: 'center',
           justifyContent: 'space-between',
           gap: '12px',
-        }}><div style=${{ display: 'flex', flexDirection: 'column', gap: '2px' }}><strong style=${{ fontFamily: 'var(--font-heading)', fontSize: '13px', color: 'var(--text-primary)' }}>Tool status</strong><span style=${{ fontFamily: 'var(--font-body)', fontSize: '12px', color: 'var(--text-secondary)' }}>Version ${status.version} with ${toolCount} detected helper tool${toolCount === 1 ? '' : 's'}.</span></div><button onClick=${() => {
+        }}><div style=${{ display: 'flex', flexDirection: 'column', gap: '2px' }}><strong style=${{ fontFamily: 'var(--font-heading)', fontSize: '13px', color: 'var(--text-primary)' }}>Tool status</strong><span style=${{ fontFamily: 'var(--font-body)', fontSize: '12px', color: 'var(--text-secondary)' }}>Version ${status.version} with ${toolCount} detected helper tool${toolCount === 1 ? '' : 's'}.</span>${status.machine_config?.error && htmlTag`<span style=${{color: 'var(--status-orange)'}}>Current machine config (${status.machine_config.path}): ${status.machine_config.error}</span>`}</div><button onClick=${() => {
               try {
                 sessionStorage.setItem('git-fleet-status-banner-dismissed', '1');
               } catch (_err) {
@@ -4584,18 +4609,18 @@ const htmlTag = htm.bind(preact.h);
     }
 
     // DepBadge — compact dep summary pill with coverage dot
-    function DepBadge({ dep, missingTools, analysisError }) {
-      if (!dep && !missingTools?.length && !analysisError) return null;
+    function DepBadge({ dep, missingTools, analysisError, exceptionWarnings = 0 }) {
+      if (!dep && !missingTools?.length && !analysisError && !exceptionWarnings) return null;
       dep = dep || {total: 0};
       const { total, outdated, vulnerable } = dep;
       if (!total && total !== 0) return null;
 
       const hasMissing = missingTools && missingTools.length > 0;
       const incomplete = analysisError || hasMissing || dep.unchecked > 0;
-      const dotColor = incomplete ? 'var(--status-orange)' : 'var(--status-green)';
-      const dotTitle = incomplete
+      const dotColor = incomplete || exceptionWarnings ? 'var(--status-orange)' : 'var(--status-green)';
+      const dotTitle = (incomplete
         ? 'Incomplete coverage: ' + (dep.unchecked || 0) + ' not checked' + (analysisError ? '; analysis error — see repository dependencies' : '') + (hasMissing ? '; missing tools: ' + missingTools.map(t => t.tool || t).join(', ') : '')
-        : 'All declarations fully checked';
+        : 'All declarations fully checked') + '; ' + (dep.accepted || 0) + ' accepted; ' + exceptionWarnings + ' exception warnings';
 
       let label = null;
       if (vulnerable > 0) {
@@ -4616,13 +4641,14 @@ const htmlTag = htm.bind(preact.h);
       }
       if (!label && hasMissing) label = htmlTag`<span>Missing tools</span>`;
       if (!label && analysisError) label = htmlTag`<span>Analysis error</span>`;
+      if (!label && exceptionWarnings) label = htmlTag`<span>Exception warnings</span>`;
       if (!label) return null;
 
       return (
         htmlTag`<span style=${{ display: 'inline-flex', alignItems: 'center', gap: '4px' }}><span title=${dotTitle} style=${{
               display: 'inline-block', width: '6px', height: '6px',
               borderRadius: '50%', background: dotColor, flexShrink: 0,
-            }} />${label}${total > 0 && analysisError && htmlTag`<span style=${{color: 'var(--status-orange)'}}>Analysis error</span>`}</span>`
+            }} />${label}${dep.accepted > 0 && htmlTag`<span style=${{color: 'var(--text-muted)'}}>${dep.accepted} accepted</span>`}${exceptionWarnings > 0 && htmlTag`<span style=${{color: 'var(--status-orange)'}}>${exceptionWarnings} warning${exceptionWarnings === 1 ? '' : 's'}</span>`}${total > 0 && analysisError && htmlTag`<span style=${{color: 'var(--status-orange)'}}>Analysis error</span>`}</span>`
       );
     }
 
@@ -4729,7 +4755,7 @@ const htmlTag = htm.bind(preact.h);
             }}>${repo.current_branch}</span><span style=${{
               fontSize: '13px', fontFamily: 'var(--font-mono)', fontWeight: 400,
               color: branchColor,
-            }}>${repo.branch_count || 0}br</span><${DepBadge} dep=${repo.dep_summary} missingTools=${repo.missing_dep_tools} analysisError=${repo.dep_check_error} /></div><${SparklineOverlay} sparkline=${repo.sparkline} visible=${active} /></div>`
+            }}>${repo.branch_count || 0}br</span><${DepBadge} dep=${repo.dep_summary} missingTools=${repo.missing_dep_tools} analysisError=${repo.dep_check_error} exceptionWarnings=${repo.exception_warning_count} /></div><${SparklineOverlay} sparkline=${repo.sparkline} visible=${active} /></div>`
       );
     }
 
@@ -4768,7 +4794,7 @@ const htmlTag = htm.bind(preact.h);
         : String(kpis.net_lines_this_week ?? 0);
       const vulnValue = `${kpis.vulnerable_deps ?? 0} / ${kpis.outdated_deps ?? 0}`;
       return (
-        htmlTag`<div style=${{ display: 'flex', gap: '16px', flexWrap: 'wrap' }}><${KpiCard} value=${kpis.total_repos ?? 0} label=${"Repos"} tooltip=${"Total repositories tracked"} /><${KpiCard} value=${kpis.repos_with_changes ?? 0} label=${"Dirty"} color=${dirtyColor} tooltip=${"Repos with uncommitted changes (modified, untracked, or staged files)"} /><${KpiCard} value=${commitValue} label=${"Commits"} tooltip=${"Commits this week / this month (across all repos)"} /><${KpiCard} value=${locValue} label=${"Net LOC"} tooltip=${"Net lines of code changed this week (insertions minus deletions, across all repos)"} /><${KpiCard} value=${kpis.stale_branches ?? 0} label=${"Stale Branches"} color=${staleColor} tooltip=${"Branches with no commits in the last 30 days (across all repos)"} /><${KpiCard} value=${vulnValue} label=${"Vuln / Outdated"} color=${vulnColor} tooltip=${"Vulnerable dependencies / outdated dependencies (across all repos)"} /><${KpiCard} value=${kpis.unchecked_deps ?? 0} label=${"Not Checked"} color=${kpis.unchecked_deps > 0 ? 'var(--status-orange)' : undefined} tooltip=${"Declarations with incomplete outdated or vulnerability coverage, including those with findings"} /></div>`
+        htmlTag`<div style=${{ display: 'flex', gap: '16px', flexWrap: 'wrap' }}><${KpiCard} value=${kpis.total_repos ?? 0} label=${"Repos"} tooltip=${"Total repositories tracked"} /><${KpiCard} value=${kpis.repos_with_changes ?? 0} label=${"Dirty"} color=${dirtyColor} tooltip=${"Repos with uncommitted changes (modified, untracked, or staged files)"} /><${KpiCard} value=${commitValue} label=${"Commits"} tooltip=${"Commits this week / this month (across all repos)"} /><${KpiCard} value=${locValue} label=${"Net LOC"} tooltip=${"Net lines of code changed this week (insertions minus deletions, across all repos)"} /><${KpiCard} value=${kpis.stale_branches ?? 0} label=${"Stale Branches"} color=${staleColor} tooltip=${"Branches with no commits in the last 30 days (across all repos)"} /><${KpiCard} value=${vulnValue} label=${"Vuln / Outdated"} color=${vulnColor} tooltip=${"Vulnerable dependencies / outdated dependencies (across all repos)"} /><${KpiCard} value=${kpis.unchecked_deps ?? 0} label=${"Not Checked"} color=${kpis.unchecked_deps > 0 ? 'var(--status-orange)' : undefined} tooltip=${"Declarations with incomplete outdated or vulnerability coverage, including those with findings; accepted coverage is excluded"} /></div>`
       );
     }
 
@@ -5246,14 +5272,15 @@ const htmlTag = htm.bind(preact.h);
     }
 
     function fullyChecked(pkg) {
-      return ['checked', 'floating'].includes(pkg.outdated_state) && pkg.vuln_state === 'checked';
+      return ['checked', 'floating', 'accepted'].includes(pkg.outdated_state) && ['checked', 'accepted'].includes(pkg.vuln_state);
     }
 
     function summarizeDeps(groups, manifests = []) {
-      const summary = { declarations: 0, manifests: manifests.length, ok: 0, outdated: 0, major: 0, vulnerable: 0, unchecked: 0, fullyChecked: 0 };
+      const summary = { declarations: 0, manifests: manifests.length, ok: 0, outdated: 0, major: 0, vulnerable: 0, accepted: 0, unchecked: 0, fullyChecked: 0 };
       for (const group of groups) for (const pkg of group.packages) {
         summary.declarations++;
         if (['ok', 'outdated', 'major', 'vulnerable'].includes(pkg.severity)) summary[pkg.severity]++;
+        if (pkg.acceptances?.length) summary.accepted++;
         if (fullyChecked(pkg)) summary.fullyChecked++; else summary.unchecked++;
       }
       return summary;
@@ -5266,9 +5293,10 @@ const htmlTag = htm.bind(preact.h);
     }
 
     function statusText(pkg) {
-      const advisory = pkg.advisory_id && !(pkg.advisories || []).length ? `${pkg.advisory_id} (legacy; rescan)` : pkg.advisory_id;
-      const headline = ({ok: 'up to date', outdated: 'outdated', major: 'major update', vulnerable: advisory || 'vulnerable', unchecked: 'not checked'})[pkg.severity] || 'not checked';
-      return headline + (pkg.severity !== 'unchecked' && !fullyChecked(pkg) ? ' — incomplete coverage' : '');
+      const covered = new Set((pkg.acceptances || []).filter(a => a.kind === 'advisory').flatMap(a => a.detail?.ids || []));
+      const advisory = (pkg.advisories || []).map(a => a.id + (a.aliases?.length ? ' [' + a.aliases.join(', ') + ']' : '') + (covered.has(a.id) ? ' (accepted)' : '')).join(', ') || (pkg.advisory_id ? pkg.advisory_id + ' (legacy; rescan)' : '');
+      const headline = ({ok: 'up to date', outdated: 'outdated', major: 'major update', vulnerable: 'vulnerable', unchecked: 'not checked', accepted: 'accepted'})[pkg.severity] || 'not checked';
+      return headline + (advisory ? ' — ' + advisory : '') + (pkg.advisories_complete === false ? ' — unknown advisory attribution; rescan' : '') + (pkg.severity !== 'unchecked' && !fullyChecked(pkg) ? ' — incomplete coverage' : '');
     }
 
     function severityColor(severity) {
@@ -5277,8 +5305,18 @@ const htmlTag = htm.bind(preact.h);
         case 'outdated':   return 'var(--status-yellow)';
         case 'major':      return 'var(--status-orange)';
         case 'vulnerable': return 'var(--status-red)';
+        case 'accepted':   return 'var(--text-secondary)';
         default:           return 'var(--text-muted)';
       }
+    }
+
+    function exceptionIdentity(entry) {
+      return entry.kind === 'ignored-tool' ? 'machine config' : entry.file + ':' + entry.kind + '#' + entry.index;
+    }
+
+    function acceptanceDetail(entry) {
+      return Object.entries(entry.detail || {}).map(([key, value]) =>
+        key + ': ' + (Array.isArray(value) ? value.join(', ') : value)).join('; ');
     }
 
     function DepsTab({ repoId }) {
@@ -5293,16 +5331,17 @@ const htmlTag = htm.bind(preact.h);
         setError(null);
         if (scan) setScanning(true); else setLoading(true);
         try {
-          const depsResponse = await fetch(scan ? '/api/repos/' + repoId + '/scan/deps' : '/api/repos/' + repoId + '/deps', scan ? { method: 'POST' } : undefined);
-          if (!depsResponse.ok) throw new Error('Dependency request failed: ' + depsResponse.status);
-          const groups = await depsResponse.json();
-          // Fetch persisted metadata after the scan transaction has completed.
-          const responses = await Promise.all([fetch('/api/repos/' + repoId), fetch('/api/status')]);
+          if (scan) {
+            const scanResponse = await fetch('/api/repos/' + repoId + '/scan/deps', { method: 'POST' });
+            if (!scanResponse.ok) throw new Error('Dependency request failed: ' + scanResponse.status);
+          }
+          const responses = await Promise.all([fetch('/api/repos/' + repoId + '/deps/snapshot'), fetch('/api/status')]);
           if (responses.some(r => !r.ok)) throw new Error('Coverage metadata request failed');
-          const [detail, status] = await Promise.all(responses.map(r => r.json()));
-          setManagerGroups(Array.isArray(groups) ? groups : []);
-          setRepo(detail);
+          const [snapshot, status] = await Promise.all(responses.map(r => r.json()));
+          setManagerGroups(Array.isArray(snapshot.groups) ? snapshot.groups : []);
+          setRepo(snapshot.repo);
           setAppStatus(status);
+          window.dispatchEvent(new CustomEvent('git-fleet-status', {detail: status}));
         } catch (e) {
           setError(e.message);
         } finally {
@@ -5315,12 +5354,17 @@ const htmlTag = htm.bind(preact.h);
       const ws = repo?.working_state || {};
       const manifests = ws.dep_manifests || [];
       const missingTools = ws.missing_dep_tools || [];
+      const ignoredTools = ws.ignored_dep_tools || [];
+      const exceptions = ws.dep_exceptions || [];
+      const warnings = ws.exception_warning_count || 0;
+      const machineConfig = appStatus?.machine_config || {};
       const summary = summarizeDeps(managerGroups, manifests);
       const packages = managerGroups.flatMap(group => group.packages.map(pkg => ({...pkg, _manager: group.manager, _label: group.label || group.manager})));
       const severityOrder = {vulnerable: 0, major: 1, outdated: 2};
       const issues = packages.filter(pkg => pkg.severity in severityOrder).sort((a, b) =>
         severityOrder[a.severity] - severityOrder[b.severity] || a.name.localeCompare(b.name));
       const unchecked = packages.filter(pkg => !fullyChecked(pkg));
+      const accepted = packages.filter(pkg => pkg.acceptances?.length);
       const incomplete = summary.unchecked > 0 || missingTools.length > 0 || manifests.some(m => m.error) || ws.dep_check_error;
       const newestScan = packages.map(p => p.checked_at).filter(Boolean).sort().at(-1) || null;
 
@@ -5331,9 +5375,10 @@ const htmlTag = htm.bind(preact.h);
         document.body.appendChild(a); a.click(); a.remove(); URL.revokeObjectURL(url);
       }
       function report() {
-        return {format: 'git-fleet-dependency-report', format_version: 2, generated_at: new Date().toISOString(),
+        return {format: 'git-fleet-dependency-report', format_version: 3, generated_at: new Date().toISOString(),
           git_fleet_version: appStatus?.version, repo: {id: repoId, name: repo?.name}, missing_tools: missingTools,
-          summary, scope: appStatus?.dependency_scope, manifests, groups: managerGroups};
+          summary, scope: appStatus?.dependency_scope, manifests, exceptions, ignored_tools: ignoredTools,
+          machine_config: machineConfig, groups: managerGroups.map(g => ({...g, packages: g.packages.map(p => ({...p, report_status: statusText(p)}))}))};
       }
       function handleExportJSON() {
         downloadBlob(JSON.stringify(report(), null, 2), 'deps-export.json', 'application/json');
@@ -5341,26 +5386,69 @@ const htmlTag = htm.bind(preact.h);
       function handleExportMD() {
         const data = report();
         const cell = value => String(value ?? '—').replace(/\\|/g, '\\\\|').replace(/[\\r\\n]+/g, ' ');
+        const literalCell = value => Array.from(String(value ?? '—').replace(/[\\r\\n]+/g, ' '), c => {
+          const code = c.codePointAt(0);
+          return code >= 33 && code <= 126 && !/[a-zA-Z0-9]/.test(c) ? String.fromCharCode(92) + c : c;
+        }).join('');
+        const pathCell = value => value == null ? cell(value) : Array.from(String(value), c => '&#' + c.codePointAt(0) + ';').join('');
         const table = rows => '| Package | Declared | Version | Latest | Outdated check | Vulnerability check | Status | Source | Reasons |\\n' +
           '|---|---|---|---|---|---|---|---|---|\\n' + rows.map(p => '| ' + [p.name, p.declared_spec, currentText(p), p.latest_version,
-            p.outdated_state, p.vuln_state, statusText(p), p.source_path, p.check_note].map(cell).join(' | ') + ' |\\n').join('');
+            p.outdated_state, p.vuln_state, statusText(p)].map(cell).concat([pathCell(p.source_path), cell(p.check_note)]).join(' | ') + ' |\\n').join('');
         let md = '# Dependency Report\\n\\nRepository: ' + cell(data.repo.name) + ' (' + cell(repoId) + ')\\n\\n' +
           'Generated: ' + data.generated_at + '\\n\\nGit Fleet version: ' + data.git_fleet_version + '\\n\\nNewest declaration check: ' + (newestScan || 'No declaration check timestamp available') + '\\n\\n' +
           'Declarations: ' + summary.declarations + '; Manifests: ' + summary.manifests + '; Fully checked: ' + summary.fullyChecked + '; Not checked: ' + summary.unchecked + '\\n\\n' +
-          'Vulnerable: ' + summary.vulnerable + '; Major: ' + summary.major + '; Outdated: ' + summary.outdated + '; Up to date: ' + summary.ok + '\\n\\n' +
+          'Vulnerable: ' + summary.vulnerable + '; Major: ' + summary.major + '; Outdated: ' + summary.outdated + '; Up to date: ' + summary.ok + '; Accepted: ' + summary.accepted + '\\n\\n' +
           'Coverage: ' + (incomplete ? 'Incomplete' : 'Complete') + '\\n\\nMissing tools: ' + (missingTools.map(t => cell(t.tool) + ' — ' + cell(t.description)).join('; ') || 'None') + '\\n\\n' +
+          'Ignored tools in saved scan: ' + cell(JSON.stringify(ignoredTools)) + '\\n\\n' + cell(machineConfig.label) + ': ' + pathCell(machineConfig.path) + ' — ' + cell(machineConfig.error || 'no error') + '; ignored tools: ' + cell(JSON.stringify(machineConfig.ignore_missing_tools || [])) + '.\\n\\n' +
           '## Scope\\n\\n' + JSON.stringify(data.scope, null, 2) + '\\n\\n' +
-          '## Attention Required\\n\\n' + table(issues) + '\\n## Not Checked\\n\\n' + table(unchecked) + '\\n## All Dependencies\\n\\n' + table(packages) +
-          '\\n## Manifests Scanned\\n\\n| File | Kind | Declarations | Error |\\n|---|---|---|---|\\n' +
-          manifests.map(m => '| ' + [m.path, m.kind, m.dependencies, m.error].map(cell).join(' | ') + ' |\\n').join('');
+          '## Attention Required\\n\\n' + table(issues) + '\\n## Not Checked\\n\\n' + table(unchecked) + '\\n## Accepted Exceptions\\n\\n| Package | Declared | Version | Latest | Accepted detail / reason / expiry | Exception file |\\n|---|---|---|---|---|---|\\n' +
+          accepted.flatMap(p => p.acceptances.map(a => '| ' + [p.name, p.declared_spec, currentText(p), p.latest_version, acceptanceDetail(a) + ' — ' + a.reason + ' — ' + (a.expires || 'no expiry')].map(literalCell).concat([pathCell(exceptionIdentity(a))]).join(' | ') + ' |\\n')).join('') +
+          '\\n## Exception Files\\n\\n| File | Git status | Error | Entry status and details |\\n|---|---|---|---|\\n' + exceptions.flatMap(f => (f.entries?.length ? f.entries : [null]).map(e => '| ' + [pathCell(f.path), literalCell(f.git), literalCell(f.error), e ? literalCell(e.kind + '#' + e.index + ' — ' + e.status + ' — ' + (e.manager || '') + ' ' + (e.package || '') + ' — ' + e.reason + ' — ' + (e.expires || 'no expiry')) + ' ' + (e.detail?.unused || []).map(u => pathCell(u.source_path) + ': ' + literalCell(u.part) + ' — ' + literalCell(u.reason)).join('; ') : '—'].join(' | ') + ' |\\n')).join('') +
+          '\\n## All Dependencies\\n\\n' + table(packages) + '\\n## Manifests Scanned\\n\\n| File | Kind | Declarations | Error | Excluded by |\\n|---|---|---|---|---|\\n' +
+          manifests.map(m => '| ' + [pathCell(m.path), ...[m.kind, m.dependencies, m.error].map(cell), pathCell(m.excluded_by)].join(' | ') + ' |\\n').join('');
         downloadBlob(md, 'deps-export.md', 'text/markdown');
       }
       function dependencyTable(rows) {
         return htmlTag`<div class=${"table-container"} style=${{overflowX: 'auto'}}><table class=${"data-table"} style=${{width: '100%', textAlign: 'left', fontSize: '13px'}}><thead><tr>${['Package', 'Declared', 'Version', 'Latest', 'Status / Coverage', 'Source / Reasons'].map(h => htmlTag`<th key=${h} style=${{padding: '8px'}}>${h}</th>`)}</tr></thead><tbody>${rows.map(pkg => htmlTag`<tr key=${JSON.stringify([pkg._manager, pkg.source_path, pkg.name])}><td style=${{padding: '8px'}}>${pkg.name}</td><td>${pkg.declared_spec || '—'}</td><td>${currentText(pkg)}</td><td>${pkg.latest_version || '—'}</td><td style=${{color: severityColor(pkg.severity)}}>${statusText(pkg)}<br /><small>outdated: ${pkg.outdated_state || 'unchecked'}; vulnerability: ${pkg.vuln_state || 'unchecked'}</small></td><td>${pkg._label}<br />${pkg.check_note}</td></tr>`)}</tbody></table></div>`;
       }
+      function acceptedSection() {
+        if (!accepted.length) return null;
+        const headers = ['Package', 'Declared', 'Version', 'Latest', 'Accepted detail / reason / expiry', 'Exception file'];
+        return htmlTag`<section data-testid=${"dep-accepted"}>
+          <h3>Accepted Exceptions</h3>
+          <table class=${"data-table"}>
+            <thead><tr>${headers.map(h => htmlTag`<th key=${h}>${h}</th>`)}</tr></thead>
+            <tbody>${accepted.flatMap(p => p.acceptances.map(a => htmlTag`
+              <tr key=${JSON.stringify([p._manager, p.source_path, p.name, a.file, a.kind, a.index])}>
+                <td>${p.name}</td><td>${p.declared_spec}</td><td>${currentText(p)}</td>
+                <td>${p.latest_version || '—'}</td>
+                <td>${acceptanceDetail(a)} — ${a.reason} — ${a.expires || 'no expiry'}</td>
+                <td>${exceptionIdentity(a)}</td>
+              </tr>`))}</tbody>
+          </table>
+        </section>`;
+      }
+      function exceptionSection() {
+        return htmlTag`<section><h3>Exception Files</h3>${exceptions.map(f => {
+          const warning = f.error || f.git !== 'tracked' || f.entries?.some(e => e.status !== 'applied');
+          return htmlTag`<div key=${f.path} style=${{color: warning ? 'var(--status-orange)' : 'var(--text-secondary)'}}>
+            ${f.path} — ${f.git}${f.error ? ' — ' + f.error : ''}
+            ${(f.entries || []).map(e => htmlTag`<div key=${e.kind + '#' + e.index}>
+              ${e.kind}#${e.index} — ${e.status} — ${e.manager || ''} ${e.package || ''} — ${e.reason} — ${e.expires || 'no expiry'}
+              ${(e.detail?.unused || []).map(u => htmlTag`<div>${u.source_path || ''} — ${u.part} — ${u.reason}</div>`)}
+            </div>`)}
+          </div>`;
+        })}</section>`;
+      }
       if (loading) return htmlTag`<div class=${"table-empty"}>Loading…</div>`;
-      return htmlTag`<div><div style=${{display: 'flex', justifyContent: 'flex-end', gap: '8px', marginBottom: '12px'}}><button class=${"btn btn-secondary"} onClick=${handleExportMD} disabled=${!repo || !appStatus}>Export MD</button><button class=${"btn btn-secondary"} onClick=${handleExportJSON} disabled=${!repo || !appStatus}>Export JSON</button><button class=${"btn btn-secondary"} onClick=${() => fetchDeps(true)} disabled=${scanning}>${scanning ? 'Checking…' : 'Check Now'}</button></div>${error && htmlTag`<div role=${"alert"}>${error}</div>`}<div data-testid=${"dep-coverage"} style=${{padding: '12px', marginBottom: '16px', color: incomplete ? 'var(--status-orange)' : 'var(--text-secondary)'}}>${incomplete && htmlTag`<strong>Incomplete coverage — </strong>`}${summary.declarations} declarations; ${summary.manifests} manifests; ${summary.fullyChecked} fully checked; ${summary.unchecked} not checked.${missingTools.map(t => htmlTag`<div key=${t.tool}>${t.tool} — ${t.description}</div>`)}</div>${issues.length > 0 && htmlTag`<section><h3>Attention Required</h3>${dependencyTable(issues)}</section>`}${unchecked.length > 0 && htmlTag`<section data-testid=${"dep-not-checked"}><h3>Not Checked</h3>${dependencyTable(unchecked)}</section>`}${summary.declarations > 0 && issues.length === 0 && summary.fullyChecked === summary.declarations && !incomplete &&
-          htmlTag`<div style=${{color: 'var(--status-green)'}}>No issues found — all dependencies are up to date.</div>`}<section data-testid=${"dep-all"}><h3>All Dependencies</h3>${managerGroups.map(group => htmlTag`<div key=${JSON.stringify([group.manager, group.source_path])} style=${{marginBottom: '16px'}}><h4>${group.label || group.manager}</h4>${dependencyTable(packages.filter(pkg => pkg._manager === group.manager && pkg.source_path === group.source_path))}</div>`)}${!packages.length && htmlTag`<div>No dependencies detected</div>`}</section><section><h3>Manifests Scanned</h3>${manifests.map(m => htmlTag`<div key=${m.path}>${m.path} — ${m.kind} — ${m.dependencies} declarations${m.error ? ' — ' + m.error : ''}</div>`)}</section><div style=${{marginTop: '12px', color: 'var(--text-muted)'}}>Newest declaration check: ${newestScan ? timeAgo(newestScan) : 'No declaration check timestamp available'} · Git Fleet ${appStatus?.version}</div></div>`;
+      return htmlTag`<div><div style=${{display: 'flex', justifyContent: 'flex-end', gap: '8px', marginBottom: '12px'}}><button class=${"btn btn-secondary"} onClick=${handleExportMD} disabled=${!repo || !appStatus}>Export MD</button><button class=${"btn btn-secondary"} onClick=${handleExportJSON} disabled=${!repo || !appStatus}>Export JSON</button><button class=${"btn btn-secondary"} onClick=${() => fetchDeps(true)} disabled=${scanning}>${scanning ? 'Checking…' : 'Check Now'}</button></div>${error && htmlTag`<div role=${"alert"}>${error}</div>`}<div data-testid=${"dep-coverage"} style=${{padding: '12px', marginBottom: '16px', color: incomplete || warnings || machineConfig.error ? 'var(--status-orange)' : 'var(--text-secondary)'}}>${incomplete && htmlTag`<strong>Incomplete coverage — </strong>`}${summary.declarations} declarations; ${summary.manifests} manifests; ${summary.fullyChecked} fully checked; ${summary.unchecked} not checked.${missingTools.map(t => htmlTag`<div key=${t.tool}>${t.tool} — ${t.description}</div>`)}<div>${warnings} exception warnings; ignored tools in saved scan: ${ignoredTools.map(t => t.tool || t).join(', ') || 'none'}.</div><div>Current machine config (loaded at view refresh): ${machineConfig.path} ${machineConfig.error || ''}. Check Now applies current config.</div></div>${issues.length > 0 && htmlTag`<section><h3>Attention Required</h3>${dependencyTable(issues)}</section>`}${unchecked.length > 0 && htmlTag`<section data-testid=${"dep-not-checked"}><h3>Not Checked</h3>${dependencyTable(unchecked)}</section>`}${summary.declarations > 0 && issues.length === 0 && summary.fullyChecked === summary.declarations && !incomplete &&
+          htmlTag`<div style=${{color: 'var(--status-green)'}}>${summary.accepted ? `No issues found — ${summary.accepted} accepted exception${summary.accepted === 1 ? '' : 's'}; all other dependencies are up to date.` : 'No issues found — all dependencies are up to date.'}</div>`}
+          ${acceptedSection()}
+          ${exceptionSection()}
+          <section data-testid=${"dep-all"}><h3>All Dependencies</h3>${managerGroups.map(group => htmlTag`<div key=${JSON.stringify([group.manager, group.source_path])} style=${{marginBottom: '16px'}}><h4>${group.label || group.manager}</h4>${dependencyTable(packages.filter(pkg => pkg._manager === group.manager && pkg.source_path === group.source_path))}</div>`)}${!packages.length && htmlTag`<div>No dependencies detected</div>`}
+          </section>
+          <section><h3>Manifests Scanned</h3>${manifests.map(m => htmlTag`<div key=${m.path}>${m.path} — ${m.kind} — ${m.dependencies} declarations${m.error ? ' — ' + m.error : ''}${m.excluded_by ? ' — Excluded by ' + m.excluded_by : ''}</div>`)}
+          </section><div style=${{marginTop: '12px', color: 'var(--text-muted)'}}>Newest declaration check: ${newestScan ? timeAgo(newestScan) : 'No declaration check timestamp available'} · Git Fleet ${appStatus?.version}</div></div>`;
     }
 
     function PlaceholderTab({ text }) {
@@ -5797,20 +5885,20 @@ const htmlTag = htm.bind(preact.h);
       };
 
       const reposWithDeps = repos.filter(r => r.dep_summary && r.dep_summary.total > 0);
-      const reposWithCoverage = repos.filter(r => r.dep_summary?.total > 0 || r.dep_check_error || r.missing_dep_tools?.length);
+      const reposWithCoverage = repos.filter(r => r.dep_summary?.total > 0 || r.dep_check_error || r.missing_dep_tools?.length || r.exception_warning_count);
       const totalDeps = reposWithDeps.reduce((sum, r) => sum + (r.dep_summary?.total || 0), 0);
       const totalOutdated = reposWithDeps.reduce((sum, r) => sum + (r.dep_summary?.outdated || 0), 0);
       const totalVuln = reposWithDeps.reduce((sum, r) => sum + (r.dep_summary?.vulnerable || 0), 0);
       const totalUnchecked = reposWithDeps.reduce((sum, r) => sum + (r.dep_summary?.unchecked || 0), 0);
 
       return (
-        htmlTag`<div style=${{ display: 'flex', flexDirection: 'column', gap: '32px' }}><div style=${{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))', gap: '12px' }}><${KpiCard} label=${"Total Deps"} value=${loading ? '...' : totalDeps} tooltip=${"Total dependencies detected across all repos"} /><${KpiCard} label=${"Outdated"} value=${loading ? '...' : totalOutdated} tooltip=${"Dependencies with newer versions available (minor or major)"} /><${KpiCard} label=${"Vulnerable"} value=${loading ? '...' : totalVuln} tooltip=${"Dependencies with known security vulnerabilities"} /><${KpiCard} label=${"Not Checked"} value=${loading ? '...' : totalUnchecked} tooltip=${"Declarations with incomplete check coverage, including findings"} /><${KpiCard} label=${"Repos w/ Deps"} value=${loading ? '...' : reposWithDeps.length} tooltip=${"Repos where at least one dependency manifest was detected"} /></div><section><h2 style=${sectionHeaderStyle}>Per-Repo Health</h2>${loading ? (
+        htmlTag`<div style=${{ display: 'flex', flexDirection: 'column', gap: '32px' }}><div style=${{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))', gap: '12px' }}><${KpiCard} label=${"Total Deps"} value=${loading ? '...' : totalDeps} tooltip=${"Total dependencies detected across all repos"} /><${KpiCard} label=${"Outdated"} value=${loading ? '...' : totalOutdated} tooltip=${"Dependencies with newer versions available (minor or major)"} /><${KpiCard} label=${"Vulnerable"} value=${loading ? '...' : totalVuln} tooltip=${"Dependencies with known security vulnerabilities"} /><${KpiCard} label=${"Not Checked"} value=${loading ? '...' : totalUnchecked} tooltip=${"Declarations with incomplete check coverage, including findings; accepted coverage is excluded"} /><${KpiCard} label=${"Repos w/ Deps"} value=${loading ? '...' : reposWithDeps.length} tooltip=${"Repos where at least one dependency manifest was detected"} /></div><section><h2 style=${sectionHeaderStyle}>Per-Repo Health</h2>${loading ? (
               htmlTag`<div style=${{ color: 'var(--text-muted)', fontFamily: 'var(--font-body)', fontSize: '13px' }}>Loading...</div>`
             ) : reposWithCoverage.length === 0 ? (
               htmlTag`<div style=${{ padding: '32px', textAlign: 'center', color: 'var(--text-muted)', fontFamily: 'var(--font-body)', fontSize: '13px' }}>No dependencies detected. Run a Full Scan to discover dependencies in your repos.</div>`
             ) : (
-              htmlTag`<div class=${"table-container"}><div class=${"table-header"} style=${{ gridTemplateColumns: '1fr repeat(4, 100px)' }}><span>Repo</span><span>Total</span><span>Outdated</span><span>Vulnerable</span><span>Not Checked</span></div>${reposWithCoverage.map(r => (
-                  htmlTag`<div key=${r.id} class=${"table-row"} style=${{ gridTemplateColumns: '1fr repeat(4, 100px)', cursor: 'pointer' }} onClick=${() => { window.location.hash = '#/repo/' + r.id + '/deps'; }}><span style=${{ fontFamily: 'var(--font-mono)', fontSize: '14px', color: 'var(--text-primary)' }}><span>${r.name}</span><span style=${{display: 'block', fontSize: '11px'}}><${DepBadge} dep=${r.dep_summary} missingTools=${r.missing_dep_tools} analysisError=${r.dep_check_error} /></span></span><span style=${{ fontSize: '13px', fontFamily: 'var(--font-mono)', color: 'var(--text-secondary)' }}>${r.dep_summary?.total || 0}</span><span style=${{ fontSize: '13px', fontFamily: 'var(--font-mono)', color: r.dep_summary?.outdated > 0 ? 'var(--status-yellow)' : 'var(--text-muted)' }}>${r.dep_summary?.outdated || 0}</span><span style=${{ fontSize: '13px', fontFamily: 'var(--font-mono)', color: r.dep_summary?.vulnerable > 0 ? 'var(--status-red)' : 'var(--text-muted)' }}>${r.dep_summary?.vulnerable || 0}</span><span style=${{color: 'var(--status-orange)'}}>${r.dep_summary?.unchecked || 0}</span></div>`
+              htmlTag`<div class=${"table-container"}><div class=${"table-header"} style=${{ gridTemplateColumns: '1fr repeat(5, 100px)' }}><span>Repo</span><span>Total</span><span>Outdated</span><span>Vulnerable</span><span>Not Checked</span><span>Accepted</span></div>${reposWithCoverage.map(r => (
+                  htmlTag`<div key=${r.id} class=${"table-row"} style=${{ gridTemplateColumns: '1fr repeat(5, 100px)', cursor: 'pointer' }} onClick=${() => { window.location.hash = '#/repo/' + r.id + '/deps'; }}><span style=${{ fontFamily: 'var(--font-mono)', fontSize: '14px', color: 'var(--text-primary)' }}><span>${r.name}</span><span style=${{display: 'block', fontSize: '11px'}}><${DepBadge} dep=${r.dep_summary} missingTools=${r.missing_dep_tools} analysisError=${r.dep_check_error} exceptionWarnings=${r.exception_warning_count} /></span></span><span style=${{ fontSize: '13px', fontFamily: 'var(--font-mono)', color: 'var(--text-secondary)' }}>${r.dep_summary?.total || 0}</span><span style=${{ fontSize: '13px', fontFamily: 'var(--font-mono)', color: r.dep_summary?.outdated > 0 ? 'var(--status-yellow)' : 'var(--text-muted)' }}>${r.dep_summary?.outdated || 0}</span><span style=${{ fontSize: '13px', fontFamily: 'var(--font-mono)', color: r.dep_summary?.vulnerable > 0 ? 'var(--status-red)' : 'var(--text-muted)' }}>${r.dep_summary?.vulnerable || 0}</span><span style=${{color: 'var(--status-orange)'}}>${r.dep_summary?.unchecked || 0}</span><span>${r.dep_summary?.accepted || 0}</span></div>`
                 ))}</div>`
             )}</section><section><h2 style=${sectionHeaderStyle}>Dependency Overlap</h2><${DepOverlap} /></section></div>`
       );
@@ -7001,7 +7089,8 @@ async def get_ui():
 @app.get("/api/status")
 async def get_status():
     """Return tool availability and app version for the frontend banner."""
-    return {"tools": TOOLS, "version": VERSION, "dependency_scope": dependency_report_scope(), "machine_config": load_machine_config()}
+    config = {**load_machine_config(), "label": "Current config loaded at view refresh; Check Now applies current config"}
+    return {"tools": TOOLS, "version": VERSION, "dependency_scope": dependency_report_scope(), "machine_config": config}
 
 
 def dependency_report_scope() -> dict:
@@ -7525,6 +7614,18 @@ async def get_repo_deps(repo_id: str, db=Depends(get_db)):
     if not await cursor.fetchone():
         raise HTTPException(status_code=404, detail="Repo not found")
     return await _fetch_repo_deps(repo_id, db)
+
+
+@app.get("/api/repos/{repo_id}/deps/snapshot")
+async def get_repo_deps_snapshot(repo_id: str, db=Depends(get_db)):
+    """Read saved dependency rows and their metadata from one snapshot."""
+    await db.execute('BEGIN')
+    try:
+        repo = await get_repo_detail(repo_id, db)
+        groups = await _fetch_repo_deps(repo_id, db)
+        return {'repo': repo, 'groups': groups}
+    finally:
+        await db.rollback()
 
 
 @app.post("/api/repos/{repo_id}/scan/deps")

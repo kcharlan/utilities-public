@@ -28,6 +28,24 @@ except ImportError:
 import git_dashboard  # noqa: E402
 
 
+@pytest.mark.parametrize('scenario', ['clean', 'partial', 'excluded', 'stale', 'untracked', 'ignored'])
+def test_exception_scenarios_in_api(test_app, tmp_path, dependency_report_seed, scenario):
+    client, db_path = test_app
+    dependency_report_seed['seed'](db_path, 'synthetic-case', tmp_path, scenario)
+    detail = client.get('/api/repos/synthetic-case').json()['working_state']
+    rows = [p for group in client.get('/api/repos/synthetic-case/deps').json() for p in group['packages']]
+    case = dependency_report_seed['scenarios'][scenario]
+    if scenario in ('clean', 'partial'):
+        assert rows[0]['severity'] == case['severity']
+        assert rows[0]['acceptances'] == case['acceptances']
+    elif scenario == 'excluded':
+        assert detail['dep_manifests'] == [case['manifest']]
+    elif scenario in ('stale', 'untracked'):
+        assert detail['exception_warning_count'] == 1
+    else:
+        assert detail['ignored_dep_tools'] == case['ignored_tools']
+
+
 def _insert_repo(db_path, repo_id="testrepo001", name="myrepo",
                  path="/tmp/myrepo", runtime="python", default_branch="main"):
     """Insert a repo row."""
@@ -271,3 +289,25 @@ def test_dependency_response_exposes_coverage(test_app, tmp_path, dependency_rep
     assert 'includes that resolve outside the repository are skipped' in scope_groups
     assert status['dependency_scope']['discovery']['max_depth'] == git_dashboard._DEP_WALK_MAX_DEPTH
     assert status['dependency_scope']['discovery']['skip_directories'] == sorted(git_dashboard._DEP_WALK_SKIP)
+
+
+def test_dependency_snapshot_is_coherent_during_concurrent_scan(test_app, monkeypatch):
+    import json
+    client, db_path = test_app
+    _insert_repo(db_path, repo_id='snapshot')
+    _insert_dep(db_path, 'snapshot', 'pip', 'old-package', '1', '1', '1', 'ok')
+    with sqlite3.connect(db_path) as writer:
+        writer.execute("INSERT INTO working_state (repo_id, dep_exceptions) VALUES (?, ?)", ('snapshot', json.dumps([{'path': 'old'}])))
+    original = git_dashboard._fetch_repo_deps
+    async def commit_between_reads(repo_id, db):
+        with sqlite3.connect(db_path) as writer:
+            writer.execute("UPDATE working_state SET dep_exceptions=? WHERE repo_id=?", (json.dumps([{'path': 'new'}]), repo_id))
+            writer.execute("UPDATE dependencies SET name='new-package' WHERE repo_id=?", (repo_id,))
+        return await original(repo_id, db)
+    monkeypatch.setattr(git_dashboard, '_fetch_repo_deps', commit_between_reads)
+    response = client.get('/api/repos/snapshot/deps/snapshot')
+    assert response.status_code == 200
+    snapshot = response.json()
+    assert snapshot['repo']['working_state']['dep_exceptions'][0]['path'] == 'old'
+    assert snapshot['groups'][0]['packages'][0]['name'] == 'old-package'
+    assert client.get('/api/repos/missing/deps/snapshot').status_code == 404

@@ -1,0 +1,7 @@
+schema = 1
+
+[[hold]]
+manager = "pip"
+package = "readability-lxml"
+latest = "0.9"
+reason = "0.9 requires Python <3.15; see docs/lessons_learned.md, '2026-10-30 — uv ignores dependency Python upper bounds'."

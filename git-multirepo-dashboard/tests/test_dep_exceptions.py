@@ -523,12 +523,12 @@ def test_unreadable_exception_and_prelude_failure_do_not_consume(tmp_path, monke
     assert manifests[0]['error'] == 'synthetic prelude failure'
     assert files[0].entries[0].status == 'stale'
     assert {u['part'] for u in files[0].entries[0].detail['unused']} == {'broken.py', 'plain.py'}
-    original_open = Path.open
+    original_open = gd.os.open
     def fail_open(path, *args, **kwargs):
         if path == config:
             raise PermissionError('synthetic config failure')
         return original_open(path, *args, **kwargs)
-    monkeypatch.setattr(Path, 'open', fail_open)
+    monkeypatch.setattr(gd.os, 'open', fail_open)
     result = gd.load_dep_exceptions(repo, [config])[0]
     assert result.error == 'synthetic config failure' and not result.entries
 
@@ -544,3 +544,181 @@ def test_excluded_script_named_include_keeps_requirements_ownership(tmp_path):
     owned = next(m for m in manifests if m['path'] == 'owned.py')
     assert owned['kind'] == 'requirements' and owned['excluded_by'] == '.gitfleet.toml'
     assert files[0].entries[0].status == 'applied'
+
+@pytest.mark.parametrize('replacement', ['symlink', 'fifo'])
+def test_discovered_exception_replaced_before_open_is_rejected(tmp_path, monkeypatch, replacement):
+    import os
+    if replacement == 'fifo' and not hasattr(os, 'mkfifo'):
+        pytest.skip('FIFO unavailable')
+    repo = tmp_path / 'repo'
+    make_repo(repo, 'main')
+    config = repo / '.gitfleet.toml'
+    config.write_text('schema = 1\n')
+    target = tmp_path / 'target'
+    target.write_text('schema = 1\n')
+    real_statuses = gd._git_file_statuses
+    def replace_after_discovery(root, paths):
+        result = real_statuses(root, paths)
+        config.unlink()
+        if replacement == 'symlink':
+            config.symlink_to(target)
+        else:
+            os.mkfifo(config)
+        return result
+    monkeypatch.setattr(gd, '_git_file_statuses', replace_after_discovery)
+    real_path_open = gd.Path.open
+    def guarded_open(path, *args, **kwargs):
+        if path == config and replacement == 'fifo':
+            raise AssertionError('blocking FIFO open')
+        return real_path_open(path, *args, **kwargs)
+    monkeypatch.setattr(gd.Path, 'open', guarded_open)
+    assert gd.load_dep_exceptions(repo, [config])[0].error
+
+
+def test_precomposed_git_paths_match_only_same_filesystem_entry(tmp_path):
+    import os
+    import subprocess
+    import unicodedata
+    repo = tmp_path / 'repo'
+    make_repo(repo, 'main')
+    subprocess.run(['git', '-C', str(repo), 'config', 'core.precomposeunicode', 'true'], check=True)
+    nfc = 'synthetic-é'
+    nfd = unicodedata.normalize('NFD', nfc)
+    (repo / nfc).mkdir()
+    (repo / nfc / '.gitfleet.toml').write_text('schema = 1\n')
+    if not (repo / nfd).exists() or not os.path.samefile(repo / nfd, repo / nfc):
+        pytest.skip('filesystem distinguishes Unicode spellings')
+    subprocess.run(['git', '-C', str(repo), 'add', nfc + '/.gitfleet.toml'], check=True)
+    ignored_nfc = 'ignored-é'
+    ignored_nfd = unicodedata.normalize('NFD', ignored_nfc)
+    (repo / '.gitignore').write_text(ignored_nfc + '/\n')
+    (repo / ignored_nfc).mkdir()
+    (repo / ignored_nfc / '.gitfleet.toml').write_text('schema = 1\n')
+    paths = [nfd + '/.gitfleet.toml', ignored_nfd + '/.gitfleet.toml']
+    assert gd._git_file_statuses(repo, paths) == dict(zip(paths, ['tracked', 'ignored']))
+
+
+def test_git_precomposition_never_applies_to_distinct_entries(tmp_path, monkeypatch):
+    import subprocess
+    from unittest.mock import MagicMock
+    decomposed = 'synthetic-e\u0301/.gitfleet.toml'
+    composed = 'synthetic-é/.gitfleet.toml'
+    def run(args, **kwargs):
+        if 'ls-files' in args:
+            return MagicMock(returncode=0, stdout=(composed + '\0').encode())
+        if 'check-ignore' in args:
+            return MagicMock(returncode=1, stdout=b'')
+        raise AssertionError('precomposition config should not be queried')
+    monkeypatch.setattr(gd.subprocess, 'run', run)
+    monkeypatch.setattr(gd.os.path, 'samefile', lambda *args: False)
+    assert gd._git_file_statuses(tmp_path, [decomposed]) == {decomposed: 'untracked'}
+
+
+def test_git_precomposition_disabled_keeps_raw_spelling(tmp_path, monkeypatch):
+    from unittest.mock import MagicMock
+    decomposed = 'synthetic-e\u0301/.gitfleet.toml'
+    composed = 'synthetic-é/.gitfleet.toml'
+    def run(args, **kwargs):
+        if 'ls-files' in args:
+            return MagicMock(returncode=0, stdout=(composed + '\0').encode())
+        if 'check-ignore' in args:
+            return MagicMock(returncode=1, stdout=b'')
+        return MagicMock(returncode=0, stdout=b'false\n')
+    monkeypatch.setattr(gd.subprocess, 'run', run)
+    monkeypatch.setattr(gd.os.path, 'samefile', lambda *args: True)
+    assert gd._git_file_statuses(tmp_path, [decomposed]) == {decomposed: 'untracked'}
+
+
+def test_git_precomposition_does_not_merge_separately_discovered_names(tmp_path, monkeypatch):
+    from unittest.mock import MagicMock
+    decomposed = 'synthetic-e\u0301/.gitfleet.toml'
+    composed = 'synthetic-é/.gitfleet.toml'
+    def run(args, **kwargs):
+        if 'ls-files' in args:
+            return MagicMock(returncode=0, stdout=(composed + '\0').encode())
+        if 'check-ignore' in args:
+            return MagicMock(returncode=1, stdout=b'')
+        raise AssertionError('alternate spelling should not be probed')
+    monkeypatch.setattr(gd.subprocess, 'run', run)
+    monkeypatch.setattr(gd.os.path, 'samefile', lambda *args: True)
+    assert gd._git_file_statuses(tmp_path, [decomposed, composed]) == {decomposed: 'untracked', composed: 'tracked'}
+
+
+@pytest.mark.parametrize('replacement', ['symlink', 'fifo'])
+def test_exception_replaced_after_lstat_is_rejected(tmp_path, monkeypatch, replacement):
+    import os
+    if replacement == 'fifo' and not hasattr(os, 'mkfifo'):
+        pytest.skip('FIFO unavailable')
+    if not hasattr(os, 'O_NOFOLLOW') or not hasattr(os, 'O_NONBLOCK'):
+        pytest.skip('POSIX open flags unavailable')
+    repo = tmp_path / 'repo'
+    make_repo(repo, 'main')
+    config = repo / '.gitfleet.toml'
+    config.write_text('schema = 1\n')
+    target = tmp_path / 'target'
+    target.write_text('schema = 1\n')
+    real_open = gd.os.open
+    def replace_before_open(path, flags, *args, **kwargs):
+        if path == config:
+            assert flags & os.O_NOFOLLOW and flags & os.O_NONBLOCK
+            config.unlink()
+            if replacement == 'symlink':
+                config.symlink_to(target)
+            else:
+                os.mkfifo(config)
+        return real_open(path, flags, *args, **kwargs)
+    monkeypatch.setattr(gd.os, 'open', replace_before_open)
+    assert gd.load_dep_exceptions(repo, [config])[0].error
+
+
+def test_exception_regular_file_without_nofollow_flag(tmp_path, monkeypatch):
+    repo = tmp_path / 'repo'
+    make_repo(repo, 'main')
+    config = repo / '.gitfleet.toml'
+    config.write_text('schema = 1\n')
+    monkeypatch.delattr(gd.os, 'O_NOFOLLOW', raising=False)
+    assert gd.load_dep_exceptions(repo, [config])[0].error is None
+
+
+def test_exception_swap_without_nofollow_flag_is_rejected(tmp_path, monkeypatch):
+    repo = tmp_path / 'repo'
+    make_repo(repo, 'main')
+    config = repo / '.gitfleet.toml'
+    config.write_text('schema = 1\n')
+    target = tmp_path / 'target'
+    target.write_text('schema = 1\n')
+    real_open = gd.os.open
+    def replace_before_open(path, flags, *args, **kwargs):
+        if path == config:
+            config.unlink()
+            config.symlink_to(target)
+        return real_open(path, flags, *args, **kwargs)
+    monkeypatch.delattr(gd.os, 'O_NOFOLLOW', raising=False)
+    monkeypatch.setattr(gd.os, 'open', replace_before_open)
+    assert gd.load_dep_exceptions(repo, [config])[0].error
+
+
+def test_git_precomposition_uses_canonical_ignore_rules(tmp_path):
+    import os
+    import subprocess
+    import unicodedata
+    repo = tmp_path / 'repo'
+    make_repo(repo, 'main')
+    subprocess.run(['git', '-C', str(repo), 'config', 'core.precomposeunicode', 'true'], check=True)
+    composed = 'synthetic-é'
+    decomposed = unicodedata.normalize('NFD', composed)
+    (repo / composed).mkdir()
+    (repo / composed / '.gitfleet.toml').write_text('schema = 1\n')
+    if not (repo / decomposed).exists() or not os.path.samefile(repo / decomposed, repo / composed):
+        pytest.skip('filesystem distinguishes Unicode spellings')
+    raw = decomposed + '/.gitfleet.toml'
+    canonical = composed + '/.gitfleet.toml'
+    (repo / '.gitignore').write_text('/' + raw + '\n!/' + canonical + '\n')
+    def check(path):
+        return subprocess.run(['git', '-C', str(repo), 'check-ignore', '-z', '--stdin'],
+                              input=os.fsencode('./' + path) + b'\0', capture_output=True).returncode
+    assert check(raw) == 0
+    assert check(canonical) == 1
+    status = subprocess.run(['git', '-C', str(repo), 'status', '--short', '-z', '--untracked-files=all', '--ignored'], capture_output=True, check=True)
+    assert b'?? ' + os.fsencode(canonical) + b'\0' in status.stdout
+    assert gd._git_file_statuses(repo, [raw]) == {raw: 'untracked'}

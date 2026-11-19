@@ -2714,3 +2714,7 @@ and dependency scans. Check the target type before opening, use nonblocking open
 where available, and verify the opened descriptor again to handle path swaps.
 Exercise direct and symlinked pipes without allowing the regression test itself
 to block, and preserve symlinks to regular configuration files.
+
+### 2026-11-19 — Snapshot and filesystem identities in dependency evidence
+
+A report combining separate reads can mix dependency rows with a newer scan's exception inventory. Read related persisted evidence in one SQLite transaction, and label independently fetched current configuration as current. On macOS, Git may use precomposed names while discovery returns decomposed names; reconcile only when Git enables precomposition and both spellings identify the same filesystem entry. Recheck file type on the opened descriptor and reject symlink targets when repository-controlled files may change after discovery; one owner must close each descriptor even when stream creation fails.

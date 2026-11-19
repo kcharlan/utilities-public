@@ -154,6 +154,7 @@ def test_status_and_snapshot_report_machine_config(tmp_path, monkeypatch, test_a
     path = gd.MACHINE_CONFIG_PATH
     path.write_text('schema = 1\n[dependencies]\nignore_missing_tools = ["npm"]')
     assert client.get('/api/status').json()['machine_config']['ignore_missing_tools'] == ['npm']
+    assert client.get('/api/status').json()['machine_config']['label'] == 'Current config loaded at view refresh; Check Now applies current config'
     (tmp_path / 'package.json').write_text('{"dependencies":{"synthetic-widget":"*"}}')
     monkeypatch.setitem(gd.TOOLS, 'npm', None)
     with sqlite3.connect(db_path) as db:
@@ -290,3 +291,25 @@ def test_config_replaced_after_stat_cannot_block(tmp_path, monkeypatch):
         return real_open(path, flags, *args, **kwargs)
     monkeypatch.setattr(gd.os, 'open', replace_before_open)
     assert gd.load_machine_config()['error']
+
+
+@pytest.mark.parametrize('create', [False, True])
+def test_fdopen_failure_closes_owned_descriptor(tmp_path, monkeypatch, create):
+    import os
+    path = tmp_path / 'config.toml'
+    monkeypatch.setattr(gd, 'MACHINE_CONFIG_PATH', path)
+    if not create:
+        path.write_text('schema = 1\n')
+    opened = []
+    def fail_fdopen(fd, *args, **kwargs):
+        assert kwargs['closefd'] is False
+        opened.append(fd)
+        raise OSError('synthetic fdopen failure')
+    monkeypatch.setattr(gd.os, 'fdopen', fail_fdopen)
+    if create:
+        with pytest.raises(SystemExit, match='synthetic fdopen failure'):
+            gd.create_machine_config()
+    else:
+        assert 'synthetic fdopen failure' in gd.load_machine_config()['error']
+    with pytest.raises(OSError):
+        os.fstat(opened[0])

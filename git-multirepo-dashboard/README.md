@@ -56,7 +56,7 @@ When Git status fails, the card shows a **status failed** badge with the error i
 
 **Not Checked** counts declarations whose outdated or vulnerability check is incomplete, including declarations that also have a vulnerability or update finding. Outdated totals include minor and major update severities. Card coverage dots explain unchecked counts and missing tools; the fleet Dependencies view shows the same coverage per repository.
 
-The API also counts accepted declarations independently of their headline severity. Accepted coverage satisfies the corresponding check, while other uncovered findings remain visible. Exception inventory warnings are reported even for repositories without dependency rows.
+Accepted declarations are counted independently of their headline severity. Accepted coverage satisfies the corresponding check, while other uncovered findings remain visible. Cards show accepted counts and exception warnings; Per-Repo Health includes an Accepted column and warning-only repositories without dependency rows.
 
 The **Scan Dir** browser can navigate local directories and register repositories without a command-line path. Discovery skips hidden, generated, virtual-environment, and dependency directories and does not descend into a repository after finding its `.git` entry. Within one discovery, linked worktrees are grouped by their shared Git directory; the main checkout is preferred when found, otherwise the first linked worktree is kept.
 
@@ -85,11 +85,11 @@ Repository `.gitfleet.toml` entries can hold a specific update, accept reported 
 
 If a registered repository moves, its path can be repaired from the detail view. Removing a repository cascades to its stored working state, history, branches, and dependency rows.
 
-The Dependencies view reloads coverage metadata and the application version on mount and after **Check Now**. It shows declared specifications, evaluated versions (floating selections are not installed versions), both check states, and reasons. **Not Checked** includes partially checked findings. The clean banner requires every declaration to be fully checked and no missing tools or inventory errors. **Manifests Scanned** includes empty and failed files, independently of dependency groups; exports remain available with an empty declaration set.
+The Dependencies view reloads coverage metadata and the application version on mount and after **Check Now**. It shows declared specifications, evaluated versions (floating selections are not installed versions), both check states, advisory evidence, and reasons. **Not Checked** includes partially checked findings but excludes accepted coverage. **Accepted Exceptions** can overlap Attention Required or Not Checked when another finding remains. Exception Files lists Git status, entry status and warnings; Manifests Scanned shows excluded attribution. Warnings alone do not make coverage incomplete. The clean banner requires every declaration to be fully checked or accepted and no missing tools or analysis errors. Exports include the saved scan's acceptances and ignored tools. The machine config is current at view refresh; Check Now applies current config. Exports remain available with an empty declaration set.
 
 Dependency results retain each advisory identifier and its aliases, plus the independently computed update level. npm attribution follows `via` chains and retains known IDs even when a cause cannot be identified; that declaration remains vulnerable with its vulnerability check marked incomplete. Older stored single-ID findings are labeled legacy and require a rescan for complete evidence.
 
-Markdown reports contain repository identity, generation time, application version, newest declaration check timestamp (explicitly unavailable when no declaration timestamps exist), coverage, missing tools, scope, and the Attention Required, Not Checked, All Dependencies, and Manifests Scanned sections. JSON downloads use `git-fleet-dependency-report` format version 2 with `generated_at`, `git_fleet_version`, `repo`, `missing_tools`, `summary`, `scope`, `manifests`, and `groups`. Scope describes declaration resolution limits, reference exclusions, traversal limits and dependency-group boundaries. The ordinary dependency API remains a grouped list.
+Markdown reports contain repository identity, generation time, application version, newest declaration check timestamp (explicitly unavailable when no declaration timestamps exist), coverage, missing tools, scope, and the Attention Required, Not Checked, Accepted Exceptions, Exception Files, All Dependencies, and Manifests Scanned sections. JSON downloads use `git-fleet-dependency-report` format version 3 with `generated_at`, `git_fleet_version`, `repo`, `missing_tools`, `ignored_tools`, current `machine_config`, `exceptions`, `summary`, `scope`, `manifests`, and `groups`. Scope describes declaration resolution limits, reference exclusions, traversal limits and dependency-group boundaries. The ordinary dependency API remains a grouped list.
 
 ### Analytics
 
@@ -209,3 +209,18 @@ uv run --script tools/check_uv_headers.py
 ## Platform notes
 
 The code supports macOS, Linux, and Windows. Unix users can run the executable directly; Windows users should use `uv run --script git_dashboard.py`. Local paths are handled with `pathlib`, and subprocess commands pass arguments directly rather than through a shell.
+
+### Exception authoring
+
+Each entry is an array of tables (`[[hold]]`, `[[advisory]]`, `[[unchecked]]`, or `[[exclude]]`):
+
+| Kind | Required | Optional |
+| --- | --- | --- |
+| `hold` | `manager`, `package`, `reason`, exactly one of `latest` or `latest_below` | `paths`, `expires` |
+| `advisory` | `manager`, `package`, `reason`, `version`, `ids` | `paths`, `expires` |
+| `unchecked` | `manager`, `package`, `reason`, `declared` | `paths`, `expires`, `checks` |
+| `exclude` | `paths`, `reason` | `expires` |
+
+Managers are `pip`, `npm`, `gomod`, `cargo`, `bundler`, and `composer`. Scalar fields are nonempty strings, except `expires`, which is an unquoted TOML date. `paths`, advisory `ids`, and `checks` are nonempty arrays of nonempty strings. Advisory IDs match reported IDs or aliases. `checks` may contain `outdated` and `vulnerability`; omitted, it includes both. `latest_below` must be a comparable version. Unknown fields invalidate the file.
+
+The Dependencies tab and its exports read saved repository metadata and groups together from `GET /api/repos/{id}/deps/snapshot`. Current `/api/status` information is fetched separately; current machine configuration is not scan-time provenance. The existing dependency and scan endpoints continue returning grouped lists.
