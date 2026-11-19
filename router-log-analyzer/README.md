@@ -34,12 +34,12 @@ router_log_analyze.py --version
 router_log_analyze.py --help
 ```
 
-The launcher runs via [uv](https://docs.astral.sh/uv/) using a PEP 723 inline-metadata header. On the first run, uv resolves its PDF-parsing dependencies (`PyMuPDF`, `pypdf`) into its shared cache; that invocation may briefly hit the network. Its SQLite state lives under `~/.router-log-analyzer/` by default.
+The launcher runs via [uv](https://docs.astral.sh/uv/) using a PEP 723 inline-metadata header. On the first run, uv resolves its PDF-parsing dependencies (`pymupdf-lite`, `pypdf`) into its shared cache; that invocation may briefly hit the network. The [lite distribution](https://pypi.org/pypi/pymupdf-lite/2.1/json) provides the PDF APIs used here without the full distribution's extra dependencies. Its SQLite state lives under `~/.router-log-analyzer/` by default.
 
 ## Requirements
 
 - [uv](https://docs.astral.sh/uv/) (`brew install uv`) — manages the Python interpreter and dependencies
-- Network access on first run so uv can resolve `PyMuPDF` and `pypdf`
+- Network access on first run so uv can resolve `pymupdf-lite` and `pypdf`
 
 ## Input Formats and Router Identity
 

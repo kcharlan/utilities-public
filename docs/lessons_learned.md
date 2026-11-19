@@ -2676,3 +2676,10 @@ refresh and page generation, including a later source, to verify isolation.
 Filter change rows using the same score formatting as the renderer, while keeping
 raw scores for frontier calculations. Borrowed-axis notes must identify the
 source and unit of the borrowed values, including per-prompt costs.
+
+## 2026-11-19: Allow alternate distributions for an import
+
+An import can be supplied by more than one distribution. The uv header guard
+previously accepted only a single provider for each alias, so it rejected the
+lite PDF distribution even though it provides both `fitz` and `pymupdf`.
+Check all accepted providers in both direct and transitive import validation.
