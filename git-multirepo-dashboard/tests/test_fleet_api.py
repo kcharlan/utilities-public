@@ -58,6 +58,29 @@ def run(coro):
     return asyncio.run(coro)
 
 
+def test_fleet_acceptance_and_unchecked_counts_are_independent(tmp_path):
+    import json
+    db_path = tmp_path / 'fleet.db'
+    git_dashboard.init_schema(db_path)
+    async def exercise():
+        async with aiosqlite.connect(str(db_path)) as db:
+            for repo in ('with-rows', 'warning-only'):
+                await db.execute('INSERT INTO repositories (id, name, path, added_at) VALUES (?, ?, ?, ?)', (repo, repo, str(tmp_path / repo), '2026-01-01'))
+            await db.execute('INSERT INTO working_state (repo_id, dep_exceptions) VALUES (?, ?)', ('warning-only', json.dumps([{'git': 'untracked', 'entries': []}])))
+            await db.execute("INSERT INTO dependencies (repo_id, manager, name, severity, outdated_state, vuln_state, acceptances) VALUES (?, ?, ?, ?, ?, ?, ?)", ('with-rows', 'pip', 'synthetic', 'vulnerable', 'accepted', 'unchecked', '[{"kind":"hold"}]'))
+            await db.execute("INSERT INTO dependencies (repo_id, manager, name, severity, outdated_state, vuln_state) VALUES (?, ?, ?, ?, ?, ?)", ('with-rows', 'pip', 'synthetic-null', 'ok', None, 'checked'))
+            await db.execute("INSERT INTO dependencies (repo_id, manager, name, severity, outdated_state, vuln_state, acceptances) VALUES (?, ?, ?, ?, ?, ?, ?)", ('with-rows', 'pip', 'synthetic-covered', 'accepted', 'checked', 'accepted', '[{"kind":"unchecked"}]'))
+            result = await git_dashboard.get_fleet(db)
+            repos = {r['id']: r for r in result['repos']}
+            assert repos['with-rows']['dep_summary']['accepted'] == 2
+            assert repos['with-rows']['dep_summary']['unchecked'] == 2
+            assert repos['warning-only']['dep_summary'] is None
+            assert repos['warning-only']['exception_warning_count'] == 1
+            assert result['kpis']['accepted_deps'] == 2
+            assert result['kpis']['unchecked_deps'] == 2
+    run(exercise())
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # 1. scan_fleet_quick — parallel scan populates working_state for all repos
 # ─────────────────────────────────────────────────────────────────────────────

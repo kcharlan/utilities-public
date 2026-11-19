@@ -264,7 +264,7 @@ def test_dependency_response_exposes_coverage(test_app, tmp_path, dependency_rep
     for row in dependency_report_seed['rows']:
         assert actual[(row['source_path'], row['name'])] == {
             **{k: v for k, v in row.items() if k != 'manager'},
-            'advisories': [], 'advisories_complete': True, 'update_level': None}
+            'advisories': [], 'advisories_complete': True, 'update_level': None, 'acceptances': []}
     status = client.get('/api/status').json()
     scope_groups = status['dependency_scope']['groups']
     assert 'external includes' not in scope_groups

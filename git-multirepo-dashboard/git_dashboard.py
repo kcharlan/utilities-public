@@ -243,6 +243,7 @@ CREATE TABLE IF NOT EXISTS dependencies (
   advisory_id TEXT,
   advisories TEXT DEFAULT '[]',
   advisories_complete INTEGER DEFAULT 1,
+  acceptances TEXT DEFAULT '[]',
   update_level TEXT,
   outdated_state TEXT DEFAULT 'unchecked',
   vuln_state TEXT DEFAULT 'unchecked',
@@ -351,6 +352,7 @@ _MIGRATION_SQL = [
     "ALTER TABLE dependencies ADD COLUMN source_path TEXT DEFAULT ''",
     "ALTER TABLE dependencies ADD COLUMN advisories TEXT DEFAULT '[]'",
     "ALTER TABLE dependencies ADD COLUMN advisories_complete INTEGER DEFAULT 1",
+    "ALTER TABLE dependencies ADD COLUMN acceptances TEXT DEFAULT '[]'",
     "ALTER TABLE dependencies ADD COLUMN update_level TEXT",
 ]
 
@@ -1010,7 +1012,8 @@ def analyze_repo_deps(repo_path: Path) -> DepAnalysis:
     """Run blocking manifest/tool work away from the server event loop."""
     manifests: list[dict] = []
     exceptions = []
-    raw = parse_deps_for_repo(repo_path, manifests_out=manifests, exceptions_out=exceptions)
+    scan_date = _dep_scan_date()
+    raw = parse_deps_for_repo(repo_path, manifests_out=manifests, exceptions_out=exceptions, scan_date=scan_date)
     managers = {d['manager'] for d in raw} | {('pip' if m['kind'] in ('requirements', 'pyproject', 'pep723') else
                  next(manager for filename, manager, _ in _DEP_FILE_PRIORITY if filename == m['kind']))
                 for m in manifests if not m.get('excluded_by')}
@@ -1035,6 +1038,7 @@ def analyze_repo_deps(repo_path: Path) -> DepAnalysis:
             enriched = [mark_unchecked(dict(d), note) if d.get('manager') == manager else d
                         for d in enriched]
     enriched = finalize_dep_health(enriched)
+    apply_dep_exceptions(enriched, exceptions, scan_date)
     any_error |= bool(missing) or any('unchecked' in (d['outdated_state'], d['vuln_state'])
                                      for d in enriched)
     return DepAnalysis(enriched, any_error, missing, manifests, exceptions)
@@ -1043,7 +1047,13 @@ def analyze_repo_deps(repo_path: Path) -> DepAnalysis:
 async def run_dep_scan_for_repo(db, repo_id: str, repo_path: str) -> None:
     """Analyze in a worker thread; persist rows and metadata together."""
     analysis = await asyncio.to_thread(analyze_repo_deps, Path(repo_path))
-    enriched = [dict(dep, source_path=_dep_path_display(dep.get('source_path') or '')) for dep in analysis.enriched]
+    enriched = []
+    for dep in analysis.enriched:
+        stored = dict(dep)
+        stored['source_path'] = _dep_path_display(dep.get('source_path') or '')
+        stored['acceptances'] = [dict(a, file=_dep_path_display(a['file']))
+                                 for a in dep.get('acceptances', [])]
+        enriched.append(stored)
     manifests = []
     for manifest in analysis.manifests:
         stored = dict(manifest)
@@ -1070,8 +1080,8 @@ async def run_dep_scan_for_repo(db, repo_id: str, repo_path: str) -> None:
                    (repo_id, manager, name, current_version, wanted_version,
                     latest_version, severity, advisory_id, checked_at, source_path,
                     declared_spec, outdated_state, vuln_state, check_note,
-                    advisories, advisories_complete, update_level)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                    advisories, advisories_complete, update_level, acceptances)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                 (
                     repo_id,
                     dep.get("manager", ""),
@@ -1090,6 +1100,7 @@ async def run_dep_scan_for_repo(db, repo_id: str, repo_path: str) -> None:
                     json.dumps(dep.get("advisories", [])),
                     dep.get("advisories_complete", True),
                     dep.get("update_level"),
+                    json.dumps(dep.get("acceptances", [])),
                 ),
             )
 
@@ -1850,7 +1861,7 @@ def parse_composer_json(file_path: Path) -> list[dict]:
     return deps
 
 
-def parse_deps_for_repo(repo_path: Path, manifests_out: list[dict] | None = None, exceptions_out=None) -> list[dict]:
+def parse_deps_for_repo(repo_path: Path, manifests_out: list[dict] | None = None, exceptions_out=None, scan_date=None) -> list[dict]:
     """Parse declarations with a shared inventory of attempted manifest reads."""
     inventory: dict[Path, dict] = {}
     visited: set[str] = set()
@@ -1865,16 +1876,14 @@ def parse_deps_for_repo(repo_path: Path, manifests_out: list[dict] | None = None
     exception_paths = []
     entries = sorted(detect_dep_files(repo_path, exception_paths), key=lambda entry: entry['kind'] == 'pep723')
     exceptions = load_dep_exceptions(repo_path, exception_paths)
-    scan_date = _dep_scan_date()
+    scan_date = scan_date or _dep_scan_date()
     if exceptions_out is not None:
         exceptions_out.extend(exceptions)
     def exclude(path, *, consume=True):
         source = _source_path(repo_path, path)
-        if Path(source).is_absolute():
-            return None
         winners = []
         for f in exceptions:
-            relative = source[len(f.directory) + 1:] if f.directory and source.startswith(f.directory + '/') else source if not f.directory else None
+            relative = _dep_relative_source(source, f.directory)
             if relative is None:
                 continue
             for e in f.entries:
@@ -1995,14 +2004,15 @@ def derive_severity(dep: dict) -> str:
         return "vulnerable"
     level = dep.get('update_level') if 'update_level' in dep else dep.get('severity')
     if (dep.get("outdated_state") in ("checked", "floating")
-            and level in ("major", "outdated")):
+            and level in ("major", "outdated")
+            and not any(a['kind'] == 'hold' for a in dep.get('acceptances', []))):
         return level
     if "unchecked" in (
         dep.get("outdated_state", "unchecked"),
         dep.get("vuln_state", "unchecked"),
     ):
         return "unchecked"
-    return "ok"
+    return "accepted" if dep.get('acceptances') else "ok"
 
 
 def _exact_pip_version(value: str | None) -> str | None:
@@ -2080,6 +2090,16 @@ def _dep_path_display(value: str) -> str:
     escaped = value.replace('\\', '\\\\')
     return ''.join(f'\\x{ord(c):02x}' if ord(c) < 32 or 127 <= ord(c) < 160
                    else c.encode('utf-8', errors='backslashreplace').decode('utf-8') for c in escaped)
+
+
+def _dep_relative_source(source: str, directory: str) -> str | None:
+    if Path(source).is_absolute():
+        return None
+    if not directory:
+        return source
+    if source.startswith(directory + '/'):
+        return source[len(directory) + 1:]
+    return None
 
 
 def _utf8_safe(value: str) -> str:
@@ -2184,7 +2204,7 @@ def load_dep_exceptions(repo_path: Path, paths) -> list[DepExceptionFile]:
                             raise ValueError('invalid checks')
                     if 'latest_below' in values:
                         try:
-                            Version(values['latest_below'].removeprefix('v'))
+                            Version(_version_text(values['latest_below']))
                         except InvalidVersion as exc:
                             raise ValueError('invalid latest_below') from exc
                     f.entries.append(DepExceptionEntry(kind, index, rel, directory, **values))
@@ -2195,15 +2215,157 @@ def load_dep_exceptions(repo_path: Path, paths) -> list[DepExceptionFile]:
 
 
 def _serialize_exceptions(files):
-    return [dict(path=_dep_path_display(f.path), git=f.git, error=_utf8_safe(f.error) if f.error else None,
-                 entries=[dict(kind=e.kind, index=e.index, manager=e.manager, package=e.package,
-                               reason=e.reason, expires=e.expires.isoformat() if e.expires else None,
-                               status=e.status, detail=({**e.detail, 'unused': [{**u, 'source_path': _dep_path_display(u['source_path']) if u.get('source_path') is not None else None} for u in e.detail['unused']]} if e.detail and 'unused' in e.detail else e.detail)) for e in f.entries]) for f in files]
+    inventory = []
+    for f in files:
+        entries = []
+        for e in f.entries:
+            detail = e.detail
+            if detail and 'unused' in detail:
+                unused = []
+                for item in detail['unused']:
+                    source = item.get('source_path')
+                    unused.append(dict(item, source_path=_dep_path_display(source) if source is not None else None))
+                detail = dict(detail, unused=unused)
+            entries.append(dict(kind=e.kind, index=e.index, manager=e.manager, package=e.package,
+                                reason=e.reason, expires=e.expires.isoformat() if e.expires else None,
+                                status=e.status, detail=detail))
+        inventory.append(dict(path=_dep_path_display(f.path), git=f.git,
+                              error=_utf8_safe(f.error) if f.error else None, entries=entries))
+    return inventory
 
 
 def exception_warning_count(inventory):
     return sum((f.get('git') != 'tracked') + bool(f.get('error')) +
                sum(e.get('status') != 'applied' for e in f.get('entries', [])) for f in inventory)
+
+
+def _version_text(value):
+    return value.removeprefix('v') if value else value
+
+
+def _audited_pip_version(dep):
+    return (_exact_pip_version(dep.get('current_version'))
+            or _exact_pip_version(dep.get('version'))
+            or _exact_pip_version(dep.get('wanted_version')))
+
+
+def _evaluate_dep_exception(entry, row, dimension, parts):
+    from packaging.version import InvalidVersion, Version
+    failure, used = None, []
+    if entry.kind == 'hold':
+        latest = row.get('latest_version')
+        if row.get('outdated_state') not in ('checked', 'floating'):
+            failure = 'outdated check did not complete'
+        elif row.get('update_level') not in ('outdated', 'major'):
+            failure = f'no update pending (latest {latest})'
+        elif entry.latest is not None and _version_text(latest) != _version_text(entry.latest):
+            failure = f'latest is {latest}; entry accepts {entry.latest}'
+        elif entry.latest_below is not None:
+            try:
+                if Version(_version_text(latest)) >= Version(_version_text(entry.latest_below)):
+                    failure = f'latest is {latest}; entry accepts {entry.latest_below}'
+            except (InvalidVersion, TypeError):
+                failure = f'latest {latest} not comparable'
+        return {'latest': latest}, failure, parts if not failure else []
+    if entry.kind == 'advisory':
+        version = _audited_pip_version(row) if entry.manager == 'pip' else row.get('current_version')
+        advisories = row.get('advisories') or []
+        if row.get('vuln_state') != 'checked':
+            failure = 'vulnerability check did not complete'
+        elif not advisories:
+            failure = 'no advisories reported'
+        elif _version_text(version) != _version_text(entry.version):
+            failure = f'audited version is {version}'
+        else:
+            used = [p for p in parts if any(p in [a['id'], *a.get('aliases', [])] for a in advisories)]
+            if not used:
+                failure = 'no listed advisory IDs reported'
+        ids = [a['id'] for a in advisories if any(p in [a['id'], *a.get('aliases', [])] for p in used)]
+        return {'ids': ids}, failure, used
+    check = dimension.removeprefix('coverage:')
+    field = 'outdated_state' if check == 'outdated' else 'vuln_state'
+    if row.get('declared_spec') != entry.declared:
+        failure = f"declared text is now {row.get('declared_spec')}"
+    elif row.get(field) != 'unchecked':
+        failure = f'{check} already checked'
+    else:
+        row[field] = 'accepted'
+        used = parts
+    return {'checks': used}, failure, used
+
+
+def apply_dep_exceptions(rows, files, scan_date=None):
+    """Apply the winning exception independently to each row and dimension."""
+    scan_date = scan_date or _dep_scan_date()
+    entries = [e for f in files for e in f.entries if e.kind != 'exclude']
+    outcomes = {id(e): [] for e in entries}
+    used_paths = {id(e): set() for e in entries}
+    for row in rows:
+        row['acceptances'] = []
+        source = row.get('source_path') or ''
+        matching = []
+        for e in entries:
+            if e.expires and e.expires < scan_date:
+                continue
+            if e.manager != row.get('manager') or dependency_identity_name({**row, 'name': e.package}) != dependency_identity_name(row):
+                continue
+            relative = _dep_relative_source(source, e.directory)
+            if relative is None or (e.paths and not any(_path_pattern_matches(p, relative) for p in e.paths)):
+                continue
+            matching.append((e, relative))
+        dimensions = {}
+        for e, relative in matching:
+            for part in (['update'] if e.kind == 'hold' else ['advisory'] if e.kind == 'advisory' else ['coverage:' + c for c in e.checks]):
+                dimensions.setdefault(part, []).append((e, relative))
+        covered = set()
+        for dimension, candidates in sorted(dimensions.items(), key=lambda item: item[0].startswith('coverage:')):
+            candidates.sort(key=lambda pair: (-(pair[0].directory.count('/') + bool(pair[0].directory)), pair[0].index))
+            winner = candidates[0][0]
+            for e, relative in candidates:
+                parts = e.ids if e.kind == 'advisory' else [dimension.removeprefix('coverage:')]
+                if e is not winner:
+                    reason = f"decided by {_dep_path_display(winner.file)} {winner.kind} #{winner.index}"
+                    loss = 'overridden' if e.directory != winner.directory else 'duplicate'
+                    outcomes[id(e)].extend((source, p, reason, loss) for p in parts)
+                    continue
+                detail, failure, used = _evaluate_dep_exception(e, row, dimension, parts)
+                if e.kind == 'advisory':
+                    covered.update(detail['ids'])
+                for p in parts:
+                    if p in used:
+                        outcomes[id(e)].append((source, p, None, 'used'))
+                    else:
+                        reason = failure or f'listed advisory ID {p} not reported'
+                        outcomes[id(e)].append((source, p, reason, 'failed'))
+                if used:
+                    used_paths[id(e)].update(p for p in e.paths if _path_pattern_matches(p, relative))
+                    existing = next((a for a in row['acceptances'] if a['kind'] == e.kind and a['file'] == e.file and a['index'] == e.index), None)
+                    if existing:
+                        existing['detail']['checks'].extend(detail['checks'])
+                    else:
+                        row['acceptances'].append(dict(kind=e.kind, file=e.file, index=e.index, reason=e.reason, expires=e.expires.isoformat() if e.expires else None, detail=detail))
+        if covered:
+            row['advisory_id'] = next((a['id'] for a in row.get('advisories', []) if a['id'] not in covered), None)
+        row['severity'] = derive_severity(row)
+    for e in entries:
+        if e.expires and e.expires < scan_date:
+            e.status, e.detail = 'expired', {'unused': []}
+            continue
+        results = outcomes[id(e)]
+        unused = [dict(source_path=s, part=p, reason=r) for s, p, r, state in results if state != 'used']
+        unused.extend(dict(source_path=None, part=p, reason='path pattern not used') for p in e.paths if p not in used_paths[id(e)])
+        if not results:
+            unused.append(dict(source_path=None, part=None, reason='no matching declaration'))
+        states = [r[3] for r in results]
+        if 'used' in states:
+            e.status = 'partial' if unused else 'applied'
+        elif states and all(s == 'overridden' for s in states):
+            e.status = 'overridden'
+        elif states and all(s == 'duplicate' for s in states):
+            e.status = 'duplicate'
+        else:
+            e.status = 'stale'
+        e.detail = {'unused': unused}
 
 
 def classify_severity(current: str, latest: str) -> str:
@@ -2432,9 +2594,7 @@ def check_python_vulns(repo_path: Path, deps: list[dict]) -> list[dict]:
         if d.get('direct_ref'):
             mark_unchecked(d, NOTE_DIRECT_REF)
             continue
-        version = (_exact_pip_version(d.get('current_version'))
-                   or _exact_pip_version(d.get('version'))
-                   or _exact_pip_version(d.get('wanted_version')))
+        version = _audited_pip_version(d)
         if version is None:
             mark_unchecked(d, 'no concrete Python version to audit', 'vuln_state')
         elif not pip_audit:
@@ -7210,7 +7370,7 @@ async def _fetch_repo_deps(repo_id: str, db):
         SELECT manager, name, current_version, wanted_version, latest_version,
                severity, advisory_id, checked_at, source_path,
                declared_spec, outdated_state, vuln_state, check_note, advisories,
-               advisories_complete, update_level
+               advisories_complete, update_level, acceptances
         FROM dependencies
         WHERE repo_id = ?
         ORDER BY source_path, manager,
@@ -7231,7 +7391,7 @@ async def _fetch_repo_deps(repo_id: str, db):
     for row in rows:
         (mgr, name, cur_ver, wanted_ver, latest_ver, severity, advisory_id,
          checked_at, source_path, declared_spec, outdated_state, vuln_state, check_note,
-         advisories, advisories_complete, update_level) = row
+         advisories, advisories_complete, update_level, acceptances) = row
         # Group by (manager, source_path) so monorepo subdirs show separately
         gkey = (mgr, source_path)
         if gkey not in group_key_index:
@@ -7255,6 +7415,7 @@ async def _fetch_repo_deps(repo_id: str, db):
                 "advisories": json.loads(advisories or '[]'),
                 "advisories_complete": bool(advisories_complete),
                 "update_level": update_level,
+                "acceptances": json.loads(acceptances or '[]'),
                 "source_path": source_path,
                 "declared_spec": declared_spec,
                 "outdated_state": outdated_state,
@@ -7381,6 +7542,9 @@ async def get_analytics_dep_overlap(db=Depends(get_db)):
 
 # ── Fleet API ─────────────────────────────────────────────────────────────────
 
+_FULLY_COVERED_SQL = "(COALESCE(outdated_state IN ('checked', 'floating', 'accepted'), 0) AND COALESCE(vuln_state IN ('checked', 'accepted'), 0))"
+
+
 @app.get("/api/fleet")
 async def get_fleet(db=Depends(get_db)):
     """Return the stored fleet overview without dispatching scans."""
@@ -7443,17 +7607,19 @@ async def get_fleet(db=Depends(get_db)):
             "SELECT COUNT(*), "
             "SUM(CASE WHEN severity IN ('outdated', 'major') THEN 1 ELSE 0 END), "
             "SUM(CASE WHEN severity = 'vulnerable' THEN 1 ELSE 0 END), "
-            "SUM(CASE WHEN outdated_state IN ('checked', 'floating') AND vuln_state = 'checked' THEN 0 ELSE 1 END) "
+            f"SUM(CASE WHEN {_FULLY_COVERED_SQL} THEN 0 ELSE 1 END), "
+            "SUM(CASE WHEN COALESCE(acceptances, '[]') != '[]' THEN 1 ELSE 0 END) "
             "FROM dependencies WHERE repo_id = ?",
             (repo["id"],),
         )
-        total_deps, outdated_count, vuln_count, unchecked_count = await cursor.fetchone()
+        total_deps, outdated_count, vuln_count, unchecked_count, accepted_count = await cursor.fetchone()
         if total_deps and total_deps > 0:
             repo["dep_summary"] = {
                 "total": total_deps,
                 "outdated": (outdated_count or 0),
                 "vulnerable": (vuln_count or 0),
                 "unchecked": (unchecked_count or 0),
+                "accepted": (accepted_count or 0),
             }
         else:
             repo["dep_summary"] = None
@@ -7484,10 +7650,11 @@ async def get_fleet(db=Depends(get_db)):
     cursor = await db.execute(
         "SELECT COALESCE(SUM(CASE WHEN severity = 'vulnerable' THEN 1 ELSE 0 END), 0), "
         "COALESCE(SUM(CASE WHEN severity IN ('outdated', 'major') THEN 1 ELSE 0 END), 0), "
-        "COALESCE(SUM(CASE WHEN outdated_state IN ('checked', 'floating') AND vuln_state = 'checked' THEN 0 ELSE 1 END), 0) "
+        f"COALESCE(SUM(CASE WHEN {_FULLY_COVERED_SQL} THEN 0 ELSE 1 END), 0), "
+        "COALESCE(SUM(CASE WHEN COALESCE(acceptances, '[]') != '[]' THEN 1 ELSE 0 END), 0) "
         "FROM dependencies"
     )
-    vuln_total, outdated_total, unchecked_total = await cursor.fetchone()
+    vuln_total, outdated_total, unchecked_total, accepted_total = await cursor.fetchone()
 
     kpis = {
         "total_repos": len(results),
@@ -7499,6 +7666,7 @@ async def get_fleet(db=Depends(get_db)):
         "vulnerable_deps": vuln_total,
         "outdated_deps": outdated_total,
         "unchecked_deps": unchecked_total,
+        "accepted_deps": accepted_total,
     }
 
     return {

@@ -56,6 +56,8 @@ When Git status fails, the card shows a **status failed** badge with the error i
 
 **Not Checked** counts declarations whose outdated or vulnerability check is incomplete, including declarations that also have a vulnerability or update finding. Outdated totals include minor and major update severities. Card coverage dots explain unchecked counts and missing tools; the fleet Dependencies view shows the same coverage per repository.
 
+The API also counts accepted declarations independently of their headline severity. Accepted coverage satisfies the corresponding check, while other uncovered findings remain visible. Exception inventory warnings are reported even for repositories without dependency rows.
+
 The **Scan Dir** browser can navigate local directories and register repositories without a command-line path. Discovery skips hidden, generated, virtual-environment, and dependency directories and does not descend into a repository after finding its `.git` entry. Within one discovery, linked worktrees are grouped by their shared Git directory; the main checkout is preferred when found, otherwise the first linked worktree is kept.
 
 ### Full scan
@@ -78,6 +80,8 @@ Each repository has four views:
 - **Dependencies** — packages grouped by ecosystem and manifest path, with vulnerable and outdated packages surfaced first. Independent outdated and vulnerability coverage distinguish checked results from unchecked declarations; incomplete checks retain a reason. Missing dependency tools and discovered manifests are stored with the repository detail, including scans with no dependency rows. Results can be rescanned on demand or exported as Markdown or JSON.
 - **Branches** — local branches with default/stale status and live commits-ahead and diff statistics against the default branch.
 - **Commits** — paginated live Git history for all refs or a selected branch.
+
+Repository `.gitfleet.toml` entries can hold a specific update, accept reported advisory IDs, or accept an unchecked dimension for a specific declaration. They are evaluated against each scan; their reason, source and status remain available in the dependency API and exception inventory. A hold does not hide a separate vulnerability, and an advisory acceptance does not hide a pending update.
 
 If a registered repository moves, its path can be repaired from the detail view. Removing a repository cascades to its stored working state, history, branches, and dependency rows.
 

@@ -1,6 +1,229 @@
 """Synthetic exception-file discovery and exclusion regressions."""
 import git_dashboard as gd
+import pytest
 from test_default_branch import make_repo
+
+
+def test_hold_accepts_pending_update_but_not_uncovered_vulnerability():
+    entry = gd.DepExceptionEntry('hold', 1, '.gitfleet.toml', '', manager='pip',
+                                 package='Synthetic_Package', reason='synthetic', latest='v2')
+    row = dict(manager='pip', name='synthetic-package', source_path='requirements.txt',
+               current_version='1', latest_version='2', update_level='major',
+               outdated_state='checked', vuln_state='checked', advisory_id='SYNTH-1',
+               advisories=[dict(id='SYNTH-1', aliases=[])])
+    gd.apply_dep_exceptions([row], [gd.DepExceptionFile('.gitfleet.toml', '', 'tracked', entries=[entry])])
+    assert entry.status == 'applied'
+    assert row['acceptances'][0]['detail'] == {'latest': '2'}
+    assert row['severity'] == 'vulnerable'
+
+
+def test_advisory_alias_partial_ids_and_pending_update():
+    entry = gd.DepExceptionEntry('advisory', 1, '.gitfleet.toml', '', manager='pip', package='synthetic', reason='synthetic', version='v1', ids=['ALIAS', 'MISSING'])
+    row = dict(manager='pip', name='synthetic', source_path='requirements.txt', wanted_version='1', latest_version='2', update_level='major', outdated_state='floating', vuln_state='checked', advisory_id='SYNTH-1', advisories=[dict(id='SYNTH-1', aliases=['ALIAS'])])
+    gd.apply_dep_exceptions([row], [gd.DepExceptionFile('.gitfleet.toml', '', 'tracked', entries=[entry])])
+    assert entry.status == 'partial'
+    assert entry.detail['unused'] == [dict(source_path='requirements.txt', part='MISSING', reason='listed advisory ID MISSING not reported')]
+    assert row['advisory_id'] is None and row['severity'] == 'major'
+    assert row['acceptances'][0]['detail'] == {'ids': ['SYNTH-1']}
+
+
+def test_unchecked_independent_check_precedence_and_partial_status():
+    root = gd.DepExceptionEntry('unchecked', 1, '.gitfleet.toml', '', manager='npm', package='synthetic', reason='synthetic', declared='*', checks=['outdated', 'vulnerability'])
+    child = gd.DepExceptionEntry('unchecked', 1, 'nested/.gitfleet.toml', 'nested', manager='npm', package='synthetic', reason='synthetic', declared='*', checks=['outdated'])
+    row = dict(manager='npm', name='synthetic', source_path='nested/package.json', declared_spec='*', outdated_state='unchecked', vuln_state='unchecked')
+    gd.apply_dep_exceptions([row], [gd.DepExceptionFile(root.file, '', 'tracked', entries=[root]), gd.DepExceptionFile(child.file, 'nested', 'tracked', entries=[child])])
+    assert root.status == 'partial' and child.status == 'applied'
+    assert row['outdated_state'] == row['vuln_state'] == 'accepted'
+    assert row['severity'] == 'accepted'
+    assert {a['detail']['checks'][0] for a in row['acceptances']} == {'outdated', 'vulnerability'}
+
+
+def test_optional_path_obligation_requires_effect():
+    entry = gd.DepExceptionEntry('hold', 1, '.gitfleet.toml', '', manager='npm', package='synthetic', reason='synthetic', latest='2', paths=['one/**', 'two/**'])
+    row = dict(manager='npm', name='synthetic', source_path='one/package.json', latest_version='2', update_level='major', outdated_state='checked', vuln_state='checked')
+    gd.apply_dep_exceptions([row], [gd.DepExceptionFile(entry.file, '', 'tracked', entries=[entry])])
+    assert entry.status == 'partial'
+    assert entry.detail['unused'][0]['part'] == 'two/**'
+
+
+def test_docpipe_hold_scan_persist_rescan_and_expiry(tmp_path, monkeypatch):
+    import asyncio
+    import aiosqlite
+    import json
+    from unittest.mock import MagicMock
+    repo = tmp_path / 'repo'
+    make_repo(repo, 'main')
+    config = repo / '.gitfleet.toml'
+    hold = ('schema = 1\n\n[[hold]]\nmanager = "pip"\npackage = "readability-lxml"\n'
+            'latest = "0.9"\nreason = "0.9 requires Python <3.15; see docs/lessons_learned.md, '
+            "'2026-10-30 — uv ignores dependency Python upper bounds'.\"\n")
+    config.write_text(hold)
+    (repo / 'requirements.txt').write_text('readability-lxml==0.8\nsynthetic-independent==1\n')
+    latest = ['0.9']
+    def registry(url, timeout):
+        response = MagicMock()
+        version = latest[0] if 'readability-lxml' in url else '2'
+        response.__enter__.return_value.read.return_value = json.dumps({'info': {'version': version}}).encode()
+        return response
+    original_run = gd.subprocess.run
+    def run_tool(args, **kwargs):
+        if args[0] != '/synthetic/audit':
+            return original_run(args, **kwargs)
+        return MagicMock(returncode=1, stderr='', stdout=json.dumps({'dependencies': [
+            {'name': 'readability-lxml', 'version': '0.8', 'vulns': []},
+            {'name': 'synthetic-independent', 'version': '1', 'vulns': [{'id': 'SYNTH-1'}]},
+        ]}))
+    monkeypatch.setattr(gd.urllib.request, 'urlopen', registry)
+    monkeypatch.setattr(gd.subprocess, 'run', run_tool)
+    monkeypatch.setattr(gd, 'TOOLS', {'pip_audit': '/synthetic/audit'})
+    async def exercise():
+        async with aiosqlite.connect(':memory:') as db:
+            await db.executescript(gd._SCHEMA_SQL)
+            await db.execute('INSERT INTO repositories (id,name,path,added_at) VALUES (?,?,?,?)', ('synthetic', 'synthetic', str(repo), '2026-01-01'))
+            async def scan():
+                await gd.run_dep_scan_for_repo(db, 'synthetic', str(repo))
+                groups = await gd._fetch_repo_deps('synthetic', db)
+                return {r['name']: r for g in groups for r in g['packages']}
+            first = await scan()
+            assert first['readability-lxml']['severity'] == 'accepted'
+            assert first['synthetic-independent']['severity'] == 'vulnerable'
+            latest[0] = '1.0'
+            second = await scan()
+            assert second['readability-lxml']['severity'] == 'major'
+            assert second['readability-lxml']['acceptances'] == []
+            assert second['synthetic-independent']['severity'] == 'vulnerable'
+            latest[0] = '0.9'
+            config.write_text(hold + 'expires = 2000-01-01\n')
+            third = await scan()
+            assert third['readability-lxml']['severity'] == 'outdated'
+            assert third['readability-lxml']['acceptances'] == []
+            assert third['synthetic-independent']['severity'] == 'vulnerable'
+            cursor = await db.execute('SELECT dep_exceptions FROM working_state WHERE repo_id = ?', ('synthetic',))
+            inventory = json.loads((await cursor.fetchone())[0])
+            assert inventory[0]['entries'][0]['status'] == 'expired'
+    asyncio.run(exercise())
+
+
+def test_advisory_ids_are_obligations_per_matching_row():
+    entry = gd.DepExceptionEntry('advisory', 1, '.gitfleet.toml', '', manager='npm', package='synthetic', reason='synthetic', version='1', ids=['SYNTH-1', 'SYNTH-2'])
+    rows = [dict(manager='npm', name='synthetic', source_path=f'{n}/package.json', current_version='1', outdated_state='checked', vuln_state='checked', advisory_id=f'SYNTH-{n}', advisories=[dict(id=f'SYNTH-{n}', aliases=[])]) for n in (1, 2)]
+    gd.apply_dep_exceptions(rows, [gd.DepExceptionFile(entry.file, '', 'tracked', entries=[entry])])
+    assert entry.status == 'partial'
+    assert {(u['source_path'], u['part']) for u in entry.detail['unused']} == {('1/package.json', 'SYNTH-2'), ('2/package.json', 'SYNTH-1')}
+
+
+def test_duplicate_overridden_and_mixed_precedence_losses():
+    def hold(file, directory, index):
+        return gd.DepExceptionEntry('hold', index, file, directory, manager='npm', package='synthetic', reason='synthetic', latest='2')
+    root, later, child = hold('.gitfleet.toml', '', 1), hold('.gitfleet.toml', '', 2), hold('nested/.gitfleet.toml', 'nested', 1)
+    rows = [dict(manager='npm', name='synthetic', source_path=p, latest_version='2', update_level='major', outdated_state='checked', vuln_state='checked') for p in ('package.json', 'nested/package.json')]
+    gd.apply_dep_exceptions(rows, [gd.DepExceptionFile(root.file, '', 'tracked', entries=[root, later]), gd.DepExceptionFile(child.file, 'nested', 'tracked', entries=[child])])
+    assert root.status == 'partial'
+    assert later.status == 'stale'  # one same-file and one deeper-file loss
+    assert child.status == 'applied'
+    only_child = hold('.gitfleet.toml', '', 3)
+    gd.apply_dep_exceptions(rows[1:], [gd.DepExceptionFile(root.file, '', 'tracked', entries=[only_child]), gd.DepExceptionFile(child.file, 'nested', 'tracked', entries=[child])])
+    assert only_child.status == 'overridden'
+    gd.apply_dep_exceptions(rows[:1], [gd.DepExceptionFile(root.file, '', 'tracked', entries=[root, later])])
+    assert later.status == 'duplicate'
+
+
+def test_failing_deeper_winner_blocks_matching_shallower_hold():
+    root = gd.DepExceptionEntry('hold', 1, '.gitfleet.toml', '', manager='npm', package='synthetic', reason='synthetic', latest='2')
+    child = gd.DepExceptionEntry('hold', 1, 'nested/.gitfleet.toml', 'nested', manager='npm', package='synthetic', reason='synthetic', latest='3')
+    row = dict(manager='npm', name='synthetic', source_path='nested/package.json', latest_version='2', update_level='major', outdated_state='checked', vuln_state='checked')
+    gd.apply_dep_exceptions([row], [gd.DepExceptionFile(root.file, '', 'tracked', entries=[root]), gd.DepExceptionFile(child.file, 'nested', 'tracked', entries=[child])])
+    assert row['acceptances'] == [] and row['severity'] == 'major'
+    assert child.status == 'stale'
+    assert child.detail['unused'][0]['reason'] == 'latest is 2; entry accepts 3'
+    assert root.status == 'overridden'
+    assert root.detail['unused'][0]['reason'] == 'decided by nested/.gitfleet.toml hold #1'
+
+
+def test_reference_identity_is_not_normalized_and_zero_id_match_is_stale():
+    entry = gd.DepExceptionEntry('advisory', 1, '.gitfleet.toml', '', manager='pip', package='example/Path', reason='synthetic', version='1', ids=['OTHER'])
+    row = dict(manager='pip', name='example/Path', reference_identity=True, source_path='requirements.txt', current_version='1', outdated_state='checked', vuln_state='checked', advisory_id='SYNTH-1', advisories=[dict(id='SYNTH-1', aliases=[])])
+    gd.apply_dep_exceptions([row], [gd.DepExceptionFile(entry.file, '', 'tracked', entries=[entry])])
+    assert entry.status == 'stale' and entry.detail['unused'][0]['reason'] == 'no listed advisory IDs reported'
+    entry.package = 'example/path'
+    gd.apply_dep_exceptions([row], [gd.DepExceptionFile(entry.file, '', 'tracked', entries=[entry])])
+    assert entry.detail['unused'][0]['reason'] == 'no matching declaration'
+
+
+def test_root_acceptance_never_matches_outside_repository(tmp_path):
+    entry = gd.DepExceptionEntry('hold', 1, '.gitfleet.toml', '', manager='pip', package='synthetic', reason='synthetic', latest='2')
+    row = dict(manager='pip', name='synthetic', source_path=str(tmp_path / 'outside.txt'), latest_version='2', update_level='major', outdated_state='checked', vuln_state='checked')
+    gd.apply_dep_exceptions([row], [gd.DepExceptionFile(entry.file, '', 'tracked', entries=[entry])])
+    assert entry.status == 'stale' and row['acceptances'] == []
+    assert row['severity'] == 'major'
+
+
+@pytest.mark.parametrize(('change', 'reason'), [
+    ({'outdated_state': 'unchecked'}, 'outdated check did not complete'),
+    ({'update_level': 'ok'}, 'no update pending (latest 2)'),
+    ({'latest_version': '3'}, 'latest is 3; entry accepts 2'),
+])
+def test_hold_condition_details(change, reason):
+    entry = gd.DepExceptionEntry('hold', 1, '.gitfleet.toml', '', manager='npm', package='synthetic', reason='synthetic', latest='2')
+    row = dict(manager='npm', name='synthetic', source_path='package.json', latest_version='2', update_level='major', outdated_state='checked', vuln_state='checked')
+    row.update(change)
+    gd.apply_dep_exceptions([row], [gd.DepExceptionFile(entry.file, '', 'tracked', entries=[entry])])
+    assert entry.status == 'stale' and entry.detail['unused'][0]['reason'] == reason
+
+
+@pytest.mark.parametrize(('change', 'reason'), [
+    ({'vuln_state': 'unchecked'}, 'vulnerability check did not complete'),
+    ({'advisories': []}, 'no advisories reported'),
+    ({'current_version': '2'}, 'audited version is 2'),
+])
+def test_advisory_condition_details(change, reason):
+    entry = gd.DepExceptionEntry('advisory', 1, '.gitfleet.toml', '', manager='npm', package='synthetic', reason='synthetic', version='1', ids=['SYNTH-1'])
+    row = dict(manager='npm', name='synthetic', source_path='package.json', current_version='1', outdated_state='checked', vuln_state='checked', advisories=[dict(id='SYNTH-1', aliases=[])])
+    row.update(change)
+    gd.apply_dep_exceptions([row], [gd.DepExceptionFile(entry.file, '', 'tracked', entries=[entry])])
+    assert entry.status == 'stale' and entry.detail['unused'][0]['reason'] == reason
+
+
+def test_hold_below_versions_and_unchecked_condition_details():
+    hold = gd.DepExceptionEntry('hold', 1, '.gitfleet.toml', '', manager='npm', package='synthetic', reason='synthetic', latest_below='v3')
+    unchecked = gd.DepExceptionEntry('unchecked', 1, '.gitfleet.toml', '', manager='npm', package='synthetic', reason='synthetic', declared='*', checks=['vulnerability'])
+    file = gd.DepExceptionFile('.gitfleet.toml', '', 'tracked', entries=[hold, unchecked])
+    row = dict(manager='npm', name='synthetic', source_path='package.json', declared_spec='*', latest_version='v2', update_level='major', outdated_state='checked', vuln_state='checked')
+    gd.apply_dep_exceptions([row], [file])
+    assert hold.status == 'applied'
+    assert unchecked.detail['unused'][0]['reason'] == 'vulnerability already checked'
+    row.update(latest_version='not-a-version', declared_spec='changed', vuln_state='unchecked')
+    gd.apply_dep_exceptions([row], [file])
+    assert hold.detail['unused'][0]['reason'] == 'latest not-a-version not comparable'
+    assert unchecked.detail['unused'][0]['reason'] == 'declared text is now changed'
+
+
+def test_analysis_acceptance_clears_only_unchecked_error(tmp_path, monkeypatch):
+    entry = gd.DepExceptionEntry('unchecked', 1, '.gitfleet.toml', '', manager='pip', package='synthetic', reason='synthetic', declared='*', checks=['outdated', 'vulnerability'])
+    file = gd.DepExceptionFile(entry.file, '', 'tracked', entries=[entry])
+    row = dict(manager='pip', name='synthetic', version='*', source_path='requirements.txt', declared_spec='*', outdated_state='unchecked', vuln_state='unchecked')
+    manifests = []
+    def parse(_, manifests_out, exceptions_out, scan_date):
+        manifests_out.extend(manifests)
+        exceptions_out.append(file)
+        return [row]
+    monkeypatch.setattr(gd, 'parse_deps_for_repo', parse)
+    monkeypatch.setattr(gd, 'check_python_deps', lambda _, rows: rows)
+    monkeypatch.setattr(gd, 'TOOLS', {key: '/synthetic/tool' for requirements in gd.DEP_TOOL_REQUIREMENTS.values() for key, _, _ in requirements})
+    assert not gd.analyze_repo_deps(tmp_path).any_error
+    entry.checks = ['outdated']
+    assert gd.analyze_repo_deps(tmp_path).any_error
+    entry.checks = ['outdated', 'vulnerability']
+    manifests.append(dict(kind='requirements', error='synthetic read error'))
+    assert gd.analyze_repo_deps(tmp_path).any_error
+    manifests.clear()
+    file.error = 'synthetic invalid file'
+    assert gd.analyze_repo_deps(tmp_path).any_error
+    file.error = None
+    def crash(*_):
+        raise ValueError('synthetic checker crash')
+    monkeypatch.setattr(gd, 'check_python_deps', crash)
+    assert gd.analyze_repo_deps(tmp_path).any_error
 
 
 def test_exclude_skips_named_manifest_and_reports_inventory(tmp_path):
