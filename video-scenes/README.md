@@ -8,6 +8,8 @@ detecting cuts, splitting videos, and exporting scene previews.
 
 - [uv](https://docs.astral.sh/uv/) (`brew install uv`).
 - `ffmpeg` must be available on `PATH` to use `split-video`.
+- On macOS, OpenCV 5.1.0.95 requires macOS 15 or later, as noted in its
+  [release notes](https://github.com/opencv/opencv-python/releases/tag/95).
 
 ## Setup
 
