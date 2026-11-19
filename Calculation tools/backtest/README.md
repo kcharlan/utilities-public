@@ -12,8 +12,9 @@ comparisons stay in page memory. Only the appearance preference is stored in
 ## Setup and build
 
 Use Node.js 24 or newer and npm, matching this project's `engines` contract.
-Cold data setup also needs Python 3.11 or newer available for external venv
-creation; the default command is `python3.14` (override with `--python`).
+Cold data setup needs Python 3.12 or newer for the locked compiler
+dependencies. Setup defaults to `python3.14`, the tested interpreter series
+(override with `--python`).
 
 The public checkout contains application/compiler source and invented tests.
 Real workbooks, generated history, builds, exports and validation records stay

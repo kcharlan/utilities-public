@@ -51,14 +51,15 @@ NON_UV_ENTRYPOINT_ALLOWLIST: tuple[str, ...] = (
 )
 
 IMPORT_DISTRIBUTION_ALIASES = {
-    "bs4": "beautifulsoup4",
-    "dateutil": "python-dateutil",
-    "docx": "python-docx",
-    "fitz": "pymupdf",
-    "pptx": "python-pptx",
-    "readability": "readability-lxml",
-    "whisper": "openai-whisper",
-    "yaml": "pyyaml",
+    "bs4": ("beautifulsoup4",),
+    "dateutil": ("python-dateutil",),
+    "docx": ("python-docx",),
+    "fitz": ("pymupdf", "pymupdf-lite"),
+    "pymupdf": ("pymupdf", "pymupdf-lite"),
+    "pptx": ("python-pptx",),
+    "readability": ("readability-lxml",),
+    "whisper": ("openai-whisper",),
+    "yaml": ("pyyaml",),
 }
 
 # The migrated launchers (repo-relative). model_sentinel's own entry point is
@@ -425,6 +426,12 @@ def _is_local_import(path: Path, import_name: str) -> bool:
     return (path.parent / f"{import_name}.py").is_file() or (path.parent / import_name).is_dir()
 
 
+def import_is_declared(import_name: str, declared: set[str]) -> bool:
+    """True when a distribution providing import_name is declared."""
+    accepted = IMPORT_DISTRIBUTION_ALIASES.get(import_name, (import_name,))
+    return any(normalize_distribution(name) in declared for name in accepted)
+
+
 def missing_declared_imports(path: Path, text: str, dependencies: list[str]) -> list[str]:
     """Return third-party imports at any scope absent from PEP 723 dependencies."""
     try:
@@ -445,8 +452,7 @@ def missing_declared_imports(path: Path, text: str, dependencies: list[str]) -> 
         for import_name in import_names:
             if import_name in sys.stdlib_module_names or _is_local_import(path, import_name):
                 continue
-            distribution = IMPORT_DISTRIBUTION_ALIASES.get(import_name, import_name)
-            if normalize_distribution(distribution) not in declared:
+            if not import_is_declared(import_name, declared):
                 missing.add(import_name)
     return sorted(missing)
 
@@ -541,7 +547,7 @@ def check_import_graph(launcher: Path, dependencies: list[str]) -> list[str]:
                                     problems.append(f'{path.relative_to(REPO_ROOT)}: unresolved namespace import: {name}.{child_name}')
                 elif not level and name:
                     top = name.partition('.')[0]
-                    if (not module_file(base, top, source_root) or (peer_root and source_root == peer_root)) and top not in sys.stdlib_module_names and normalize_distribution(IMPORT_DISTRIBUTION_ALIASES.get(top, top)) not in declared:
+                    if (not module_file(base, top, source_root) or (peer_root and source_root == peer_root)) and top not in sys.stdlib_module_names and not import_is_declared(top, declared):
                         problems.append(f'{path.relative_to(REPO_ROOT)}: third-party imports missing from dependencies: {top}')
     return problems
 

@@ -235,6 +235,11 @@ def test_lazy_imports_are_checked(tmp_path: Path) -> None:
         source,
         ["PyMuPDF>=1.24,<2", "pypdf>=5,<7"],
     ) == []
+    for name in ("fitz", "pymupdf"):
+        source = f"def load_pdf():\n    import {name}\n"
+        assert missing_declared_imports(launcher, source, []) == [name]
+        for provider in ("PyMuPDF>=2.1,<3", "pymupdf-lite>=2.1,<3"):
+            assert missing_declared_imports(launcher, source, [provider]) == []
 
 
 def test_local_import_graph_reports_missing_dependencies_and_syntax(tmp_path, monkeypatch):
@@ -248,6 +253,17 @@ def test_local_import_graph_reports_missing_dependencies_and_syntax(tmp_path, mo
     assert any('parse' in p and 'nested.py' in p for p in guard.check_launcher('launcher'))
     launcher.write_text(launcher.read_text() + 'def broken(:\n')
     assert any('parse' in p and 'launcher' in p for p in guard.check_launcher('launcher'))
+
+
+@pytest.mark.parametrize('name', ['fitz', 'pymupdf'])
+def test_local_import_graph_accepts_pdf_providers(tmp_path, monkeypatch, name):
+    monkeypatch.setattr(guard, 'REPO_ROOT', tmp_path)
+    launcher = tmp_path / 'launcher'
+    launcher.write_text('import sibling\n')
+    (tmp_path / 'sibling.py').write_text(f'import {name}\n')
+    assert any(name in problem for problem in guard.check_import_graph(launcher, []))
+    for provider in ('pymupdf>=2.1,<3', 'pymupdf-lite>=2.1,<3'):
+        assert guard.check_import_graph(launcher, [provider]) == []
 
 
 def test_local_import_graph_checks_package_initializers(tmp_path, monkeypatch):

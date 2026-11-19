@@ -3,11 +3,11 @@
 # requires-python = ">=3.12,<3.13"
 # dependencies = [
 #     "openai-whisper==20250625",
-#     "streamlit==1.66.1",
+#     "streamlit==1.67.0",
 #     "pillow==13.0.0",
-#     "pandas==3.0.6",
-#     "openai==3.31.0",
-#     "librosa==1.0.0",
+#     "pandas==3.1.1",
+#     "openai==3.55.1",
+#     "librosa==1.0.1",
 # ]
 # ///
 

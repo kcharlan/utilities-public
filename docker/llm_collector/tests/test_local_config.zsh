@@ -9,6 +9,7 @@ trap 'rm -r -- "${TEST_ROOT:?}"' EXIT
 # Source must be baked into a non-root image and not bind-mounted writable.
 grep -q '^COPY collector/ ' "$PROJECT_DIR/llm_collector_container/Dockerfile"
 grep -q '^USER ' "$PROJECT_DIR/llm_collector_container/Dockerfile"
+grep -Eq '^CMD[[:space:]]+\["gunicorn",.*"--no-control-socket"' "$PROJECT_DIR/llm_collector_container/Dockerfile"
 ! grep -q '\.\.:/workspace/llm_collector' "$PROJECT_DIR/llm_collector_container/docker-compose.yml"
 grep -q '^!snapshots/rollup_snapshots\.py$' "$PROJECT_DIR/.dockerignore"
 

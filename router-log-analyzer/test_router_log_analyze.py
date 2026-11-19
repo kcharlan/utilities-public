@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import copy
 import hashlib
+import importlib.metadata
+import importlib.util
 import json
 import os
 import re
@@ -15,15 +17,31 @@ from datetime import datetime
 from pathlib import Path
 
 import pytest
+from packaging.requirements import Requirement
 
 UTILITIES_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(UTILITIES_ROOT))
 
 from tools.testkit import load_launcher
+from tools.check_uv_headers import extract_pep723
 
 
 MODULE_PATH = Path(__file__).with_name("router_log_analyze.py")
 analyzer = load_launcher(MODULE_PATH, "router_log_analyze")
+
+
+def test_pdf_dependency_declarations_match_installed_environment() -> None:
+    metadata = extract_pep723(MODULE_PATH.read_text(encoding="utf-8"))
+    assert metadata is not None
+    requirements = {req.name.lower(): req for req in map(Requirement, metadata["dependencies"])}
+    assert "pymupdf-lite" in requirements
+    assert "pymupdf" not in requirements
+    assert "pypdf" in requirements
+    assert str(requirements["pymupdf-lite"].specifier) == "<3,>=2.1"
+    assert str(requirements["pypdf"].specifier) == "<8,>=7"
+    for name in ("pymupdf-lite", "pypdf"):
+        assert importlib.metadata.version(name) in requirements[name].specifier
+    assert importlib.util.find_spec("onnxruntime") is None
 
 
 LEGACY_PARSE_STATS_KEYS = (
@@ -5143,7 +5161,7 @@ def test_cli_version_and_help_describe_supported_router_contracts(
 ) -> None:
     with pytest.raises(SystemExit):
         analyzer.parse_args(["--version"])
-    assert capsys.readouterr().out.strip() == "router-log-analyzer 0.5.3"
+    assert capsys.readouterr().out.strip() == "router-log-analyzer 0.5.4"
 
     with pytest.raises(SystemExit):
         analyzer.parse_args(["--help"])
@@ -7581,7 +7599,7 @@ def test_trusted_overlap_identity_is_resolved_router_instance_scoped(
 
 
 def make_synthetic_pdf_export(tmp_path: Path) -> tuple[Path, Path]:
-    import fitz
+    import pymupdf
 
     pages = [
         [
@@ -7597,7 +7615,7 @@ def make_synthetic_pdf_export(tmp_path: Path) -> tuple[Path, Path]:
     ]
     pdf_path = tmp_path / "synthetic-netgear.pdf"
     log_path = tmp_path / "synthetic-netgear.log"
-    with fitz.open() as document:
+    with pymupdf.open() as document:
         for lines in pages:
             page = document.new_page()
             for index, line in enumerate(lines):
@@ -7612,7 +7630,7 @@ def test_pdf_export_parses_like_text_export(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, backend: str,
 ) -> None:
     pdf_path, log_path = make_synthetic_pdf_export(tmp_path)
-    monkeypatch.setitem(sys.modules, "pypdf" if backend == "pymupdf" else "fitz", None)
+    monkeypatch.setitem(sys.modules, "pypdf" if backend == "pymupdf" else "pymupdf", None)
 
     _, text = analyzer.load_log_content(pdf_path)
     events, stats = analyzer.parse_log_text(text, source="synthetic-netgear.log")

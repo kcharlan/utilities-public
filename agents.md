@@ -216,7 +216,7 @@ Raise a launcher's Python upper bound on a branch only after validating the new 
 
 Key design rules:
 - Prefer a user-home runtime directory like `~/.toolname/` over scattered fixed paths, for mutable state.
-- Keep dependencies unpinned in the header unless a tool needs a specific range (e.g. `router-log-analyzer` pins `PyMuPDF>=1.24,<2`).
+- Keep dependencies unpinned in the header unless a tool needs a specific range (see the `router-log-analyzer` launcher header for an example).
 - Keep tracked test requirements (or a pyproject test extra) for the full suite. Registered projects use test-only requirements alongside launcher metadata through the shared runner; nonregistered projects document their test interpreter and dependencies. Never rely on an untracked local venv's package history.
 - Single entry point — no separate `setup.sh`.
 - Under uv, the first invocation of any command (including `--help`) may resolve/cache the environment; that is expected and not worth a workaround.

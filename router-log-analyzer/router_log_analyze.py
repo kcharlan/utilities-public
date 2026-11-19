@@ -2,8 +2,8 @@
 # /// script
 # requires-python = ">=3.12,<3.16"
 # dependencies = [
-#     "PyMuPDF>=1.24,<2",
-#     "pypdf>=5,<7",
+#     "pymupdf-lite>=2.1,<3",
+#     "pypdf>=7,<8",
 # ]
 # ///
 import argparse
@@ -553,7 +553,7 @@ def parse_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
     parser.add_argument(
         "--version",
         action="version",
-        version="router-log-analyzer 0.5.3",
+        version="router-log-analyzer 0.5.4",
     )
     parser.add_argument(
         "--reprocess",
@@ -5793,9 +5793,9 @@ def parse_router_security_config_text(text: str) -> Dict[str, Any]:
 def extract_text_from_pdf(path: Path) -> str:
     errors: List[str] = []
     try:
-        import fitz  # type: ignore
+        import pymupdf  # type: ignore
 
-        with fitz.open(path) as doc:
+        with pymupdf.open(path) as doc:
             pages = [page.get_text("text", sort=True) for page in doc]
         text = "\n".join(pages).strip()
         if text:
