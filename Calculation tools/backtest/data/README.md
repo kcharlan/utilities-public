@@ -88,15 +88,18 @@ their external targets are never chmodded.
 ## Environment and tests
 
 Python execution and installation require a virtual environment. The tested
-maintainer environment is Python 3.14.8 on macOS arm64. Source syntax requires
-Python 3.10 or newer, while pandas 3.0.6 declares `Requires-Python: >=3.11`.
-The `environment()` guard in `tools/setup_data.mjs` therefore checks Python
-3.11 or newer, an isolated venv and the pinned installed dependencies rather
-than requiring the maintainer patch version or CPU identity. Other
-interpreter/platform combinations remain unverified.
-`requirements.txt` retains the direct requirements pandas 3.0.6 and xlrd 2.0.2.
-`requirements.lock` records the complete resolution installed from public PyPI
-wheels in a fresh `--copies` venv. Do not run the script's shebang directly.
+maintainer environment is Python 3.14.10 on macOS arm64. The `environment()`
+guard in `tools/setup_data.mjs` checks the Python version, venv isolation and
+the pinned installed dependencies. The locked NumPy release requires Python
+3.12 or newer. Other interpreter and platform combinations remain unverified.
+[Direct requirements](requirements.txt) declare the
+compiler dependencies, and the [lock](requirements.lock) records the complete
+resolution installed from public PyPI wheels in a fresh `--copies` venv.
+Run the compiler with the venv interpreter.
+
+[The compiler](compile_market_data.py) reads retained XLS workbooks with
+`engine="xlrd"`. The [pandas 3.1 deprecation notes](https://pandas.pydata.org/docs/whatsnew/v3.1.0.html#deprecations)
+recommend using the Calamine engine for future migrations.
 
 `MARKET_ATLAS_DATA_HOME` defaults to `~/.cache/market-atlas`; a nonempty override
 selects the external local data root. Setup places its compiler venv in `.venv`,
