@@ -209,7 +209,7 @@ def test_analysis_acceptance_clears_only_unchecked_error(tmp_path, monkeypatch):
         return [row]
     monkeypatch.setattr(gd, 'parse_deps_for_repo', parse)
     monkeypatch.setattr(gd, 'check_python_deps', lambda _, rows: rows)
-    monkeypatch.setattr(gd, 'TOOLS', {key: '/synthetic/tool' for requirements in gd.DEP_TOOL_REQUIREMENTS.values() for key, _, _ in requirements})
+    monkeypatch.setattr(gd, 'TOOLS', {key: '/synthetic/tool' for requirements in gd.DEP_TOOL_REQUIREMENTS.values() for key, _, _, _ in requirements})
     assert not gd.analyze_repo_deps(tmp_path).any_error
     entry.checks = ['outdated']
     assert gd.analyze_repo_deps(tmp_path).any_error

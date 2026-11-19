@@ -2706,3 +2706,11 @@ individual file boundary so a malformed file cannot suppress neighboring valid f
 Do not match absolute outside-root fallback paths against repository-relative patterns,
 or mark patterns used by defensive filtering of parser-only rows. Capture the scan date
 once so an expiry cannot change between applying an effect and reporting its status.
+
+## 2026-11-19: Reject special files before reading local configuration
+
+A named pipe at Git Fleet's machine-config path could block both status requests
+and dependency scans. Check the target type before opening, use nonblocking open
+where available, and verify the opened descriptor again to handle path swaps.
+Exercise direct and symlinked pipes without allowing the regression test itself
+to block, and preserve symlinks to regular configuration files.

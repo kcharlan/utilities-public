@@ -155,8 +155,11 @@ usage: git_dashboard [-h] [--port N] [--no-browser] [--scan PATH]
 | --- | --- | --- |
 | Runtime home | `~/.git_dashboard/` | `GIT_DASHBOARD_HOME` |
 | SQLite database | `~/.git_dashboard/dashboard.db` | `GIT_DASHBOARD_DB` |
+| Machine configuration | `<runtime-home>/config.toml` | Runtime home override |
 
 SQLite uses WAL mode and enables foreign-key enforcement for application connections. Mutable state stays outside the repository.
+
+On startup Git Fleet creates a private `config.toml` template if absent. Its `schema = 1` and optional `[dependencies]` table support `ignore_missing_tools = []`, a list of tool display names from the requirements table above (including auxiliary tools). For example, `ignore_missing_tools = ["pip-audit", "cargo-outdated"]` accepts the unchecked dimensions directly gated by those tools when they are missing. An installed tool is never ignored, and ignoring a parent does not ignore its auxiliary tools. Repository exceptions take precedence. Invalid configuration accepts nothing and is reported in analysis and `/api/status`. Edits take effect on the next dependency scan; tool installation or removal takes effect after restart.
 
 ## Architecture
 

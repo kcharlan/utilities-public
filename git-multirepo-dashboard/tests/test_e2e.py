@@ -102,7 +102,7 @@ app.run_dep_scan_for_repo = no_op
 uvicorn.run(app.app, host="127.0.0.1", port=int(sys.argv[6]), log_level="error")
 ''')
     port = _find_free_port()
-    env = dict(os.environ, GIT_DASHBOARD_NO_BROWSER="1")
+    env = dict(os.environ, GIT_DASHBOARD_NO_BROWSER="1", GIT_DASHBOARD_HOME=str(tmp_path / 'runtime'), GIT_DASHBOARD_DB=str(db_path))
     proc = subprocess.Popen(
         [sys.executable, str(script), str(PROJECT_ROOT), str(db_path), str(repo),
          str(timeout_seen), str(release), str(port)], env=env,
@@ -296,6 +296,7 @@ def server_context(tmp_path_factory):
     env["GIT_CONFIG_SYSTEM"] = os.devnull
     env["GIT_DASHBOARD_NO_BROWSER"] = "1"
     env["GIT_DASHBOARD_DB"] = str(db_path)
+    env["GIT_DASHBOARD_HOME"] = str(server_home / 'runtime')
 
     proc = subprocess.Popen(
         [sys.executable, str(GIT_DASHBOARD), "--port", str(port), "--no-browser", "--yes"],

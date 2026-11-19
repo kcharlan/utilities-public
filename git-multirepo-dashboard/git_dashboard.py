@@ -27,6 +27,7 @@ import sys
 import shutil
 import socket
 import signal
+import stat
 import argparse
 import sqlite3
 import subprocess
@@ -135,6 +136,7 @@ def testing_mode_enabled() -> bool:
 RUNTIME_PATHS = build_runtime_paths()
 DATA_DIR = RUNTIME_PATHS.home
 DB_PATH = RUNTIME_PATHS.db_path
+MACHINE_CONFIG_PATH = RUNTIME_PATHS.home / 'config.toml'
 
 
 # ── Third-party imports ───────────────────────────────────────────────────────
@@ -304,6 +306,7 @@ CREATE TABLE IF NOT EXISTS working_state (
   quick_scan_error     TEXT DEFAULT NULL,
   dep_check_error      BOOLEAN DEFAULT FALSE,
   missing_dep_tools    TEXT DEFAULT '[]',
+  ignored_dep_tools    TEXT DEFAULT '[]',
   dep_manifests        TEXT DEFAULT '[]',
   dep_exceptions       TEXT DEFAULT '[]'
 );
@@ -347,6 +350,7 @@ _MIGRATION_SQL = [
     "ALTER TABLE working_state ADD COLUMN quick_scan_error TEXT DEFAULT NULL",
     "ALTER TABLE working_state ADD COLUMN dep_check_error BOOLEAN DEFAULT FALSE",
     "ALTER TABLE working_state ADD COLUMN missing_dep_tools TEXT DEFAULT '[]'",
+    "ALTER TABLE working_state ADD COLUMN ignored_dep_tools TEXT DEFAULT '[]'",
     "ALTER TABLE working_state ADD COLUMN dep_manifests TEXT DEFAULT '[]'",
     "ALTER TABLE working_state ADD COLUMN dep_exceptions TEXT DEFAULT '[]'",
     "ALTER TABLE dependencies ADD COLUMN source_path TEXT DEFAULT ''",
@@ -986,16 +990,16 @@ async def emit_scan_progress(scan_id: int, event: dict) -> None:
 
 
 DEP_TOOL_REQUIREMENTS = {
-    "pip":      [("pip_audit", "pip-audit", "Python vulnerability scanning")],
-    "npm":      [("npm", "npm", "Node.js dependency checks")],
-    "gomod":    [("go", "go", "Go dependency checks"),
-                 ("govulncheck", "govulncheck", "Go vulnerability scanning")],
-    "cargo":    [("cargo", "cargo", "Rust dependency checks"),
-                 ("cargo_outdated", "cargo-outdated", "Rust outdated checks"),
-                 ("cargo_audit", "cargo-audit", "Rust vulnerability scanning")],
-    "bundler":  [("bundle", "bundle", "Ruby dependency checks"),
-                 ("bundler_audit", "bundler-audit", "Ruby vulnerability scanning")],
-    "composer": [("composer", "composer", "PHP dependency checks")],
+    "pip":      [("pip_audit", "pip-audit", "Python vulnerability scanning", ("vulnerability",))],
+    "npm":      [("npm", "npm", "Node.js dependency checks", ("outdated", "vulnerability"))],
+    "gomod":    [("go", "go", "Go dependency checks", ("outdated",)),
+                 ("govulncheck", "govulncheck", "Go vulnerability scanning", ("vulnerability",))],
+    "cargo":    [("cargo", "cargo", "Rust dependency checks", ()),
+                 ("cargo_outdated", "cargo-outdated", "Rust outdated checks", ("outdated",)),
+                 ("cargo_audit", "cargo-audit", "Rust vulnerability scanning", ("vulnerability",))],
+    "bundler":  [("bundle", "bundle", "Ruby dependency checks", ("outdated",)),
+                 ("bundler_audit", "bundler-audit", "Ruby vulnerability scanning", ("vulnerability",))],
+    "composer": [("composer", "composer", "PHP dependency checks", ("outdated", "vulnerability"))],
 }
 
 
@@ -1006,6 +1010,7 @@ class DepAnalysis:
     missing_tools: list[dict]
     manifests: list[dict]
     exceptions: list = field(default_factory=list)
+    ignored_tools: list = field(default_factory=list)
 
 
 def analyze_repo_deps(repo_path: Path) -> DepAnalysis:
@@ -1013,13 +1018,14 @@ def analyze_repo_deps(repo_path: Path) -> DepAnalysis:
     manifests: list[dict] = []
     exceptions = []
     scan_date = _dep_scan_date()
+    config = load_machine_config()
     raw = parse_deps_for_repo(repo_path, manifests_out=manifests, exceptions_out=exceptions, scan_date=scan_date)
     managers = {d['manager'] for d in raw} | {('pip' if m['kind'] in ('requirements', 'pyproject', 'pep723') else
                  next(manager for filename, manager, _ in _DEP_FILE_PRIORITY if filename == m['kind']))
                 for m in manifests if not m.get('excluded_by')}
     missing = []
     for manager in sorted(managers):
-        for key, tool, description in DEP_TOOL_REQUIREMENTS.get(manager, []):
+        for key, tool, description, checks in DEP_TOOL_REQUIREMENTS.get(manager, []):
             if not TOOLS.get(key) and not any(m['tool'] == tool for m in missing):
                 missing.append(dict(tool=tool, description=description))
                 logger.info('Missing %s (%s)', tool, description)
@@ -1039,9 +1045,12 @@ def analyze_repo_deps(repo_path: Path) -> DepAnalysis:
                         for d in enriched]
     enriched = finalize_dep_health(enriched)
     apply_dep_exceptions(enriched, exceptions, scan_date)
-    any_error |= bool(missing) or any('unchecked' in (d['outdated_state'], d['vuln_state'])
+    ignored = [m for m in missing if m['tool'] in config['ignore_missing_tools']]
+    missing = [m for m in missing if m['tool'] not in config['ignore_missing_tools']]
+    apply_ignored_tools(enriched, {m['tool'] for m in ignored})
+    any_error |= bool(config['error']) or bool(missing) or any('unchecked' in (d['outdated_state'], d['vuln_state'])
                                      for d in enriched)
-    return DepAnalysis(enriched, any_error, missing, manifests, exceptions)
+    return DepAnalysis(enriched, any_error, missing, manifests, exceptions, ignored)
 
 
 async def run_dep_scan_for_repo(db, repo_id: str, repo_path: str) -> None:
@@ -1066,11 +1075,11 @@ async def run_dep_scan_for_repo(db, repo_id: str, repo_path: str) -> None:
     await db.execute('SAVEPOINT dep_scan_snapshot')
     try:
         await db.execute(
-            "INSERT INTO working_state (repo_id, dep_check_error, missing_dep_tools, dep_manifests, dep_exceptions) "
-            "VALUES (?, ?, ?, ?, ?) ON CONFLICT(repo_id) DO UPDATE SET "
+            "INSERT INTO working_state (repo_id, dep_check_error, missing_dep_tools, dep_manifests, dep_exceptions, ignored_dep_tools) "
+            "VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT(repo_id) DO UPDATE SET "
             "dep_check_error = excluded.dep_check_error, missing_dep_tools = excluded.missing_dep_tools, "
-            "dep_manifests = excluded.dep_manifests, dep_exceptions = excluded.dep_exceptions",
-            (repo_id, analysis.any_error, json.dumps(analysis.missing_tools), json.dumps(manifests), json.dumps(_serialize_exceptions(analysis.exceptions))),
+            "dep_manifests = excluded.dep_manifests, dep_exceptions = excluded.dep_exceptions, ignored_dep_tools = excluded.ignored_dep_tools",
+            (repo_id, analysis.any_error, json.dumps(analysis.missing_tools), json.dumps(manifests), json.dumps(_serialize_exceptions(analysis.exceptions)), json.dumps(analysis.ignored_tools)),
         )
 
         # 3. Upsert into dependencies table
@@ -2144,9 +2153,23 @@ def _dep_scan_date():
     return date.today()
 
 
-def _load_bounded_toml(path: Path) -> dict:
+def _load_bounded_toml(path: Path, *, regular_only: bool = False) -> dict:
     """Read a bounded UTF-8 TOML file; reject pathological nesting as invalid."""
-    with path.open('rb') as stream:
+    if regular_only:
+        if not stat.S_ISREG(path.stat().st_mode):
+            raise ValueError('config is not a regular file')
+        fd = os.open(path, os.O_RDONLY | getattr(os, 'O_NONBLOCK', 0) | getattr(os, 'O_BINARY', 0))
+        try:
+            if not stat.S_ISREG(os.fstat(fd).st_mode):
+                raise ValueError('config is not a regular file')
+            stream = os.fdopen(fd, 'rb')
+            fd = -1
+        finally:
+            if fd != -1:
+                os.close(fd)
+    else:
+        stream = path.open('rb')
+    with stream:
         data = stream.read(MAX_DEP_FILE_SIZE + 1)
     if len(data) > MAX_DEP_FILE_SIZE:
         raise ValueError('exceeds size limit')
@@ -2154,6 +2177,73 @@ def _load_bounded_toml(path: Path) -> dict:
         return tomllib.loads(data.decode('utf-8'))
     except RecursionError as exc:
         raise ValueError('TOML nesting exceeds parser limit') from exc
+
+
+def load_machine_config() -> dict:
+    path = MACHINE_CONFIG_PATH
+    try:
+        display = '~/' + str(path.relative_to(Path.home()))
+    except (ValueError, RuntimeError):
+        display = str(path)
+    result = {'path': _dep_path_display(display), 'error': None, 'ignore_missing_tools': []}
+    try:
+        obj = _load_bounded_toml(path, regular_only=True)
+        if type(obj.get('schema')) is not int or obj['schema'] != 1 or set(obj) - {'schema', 'dependencies'}:
+            raise ValueError('invalid schema or root keys')
+        deps = obj.get('dependencies', {})
+        if not isinstance(deps, dict) or set(deps) - {'ignore_missing_tools'}:
+            raise ValueError('invalid dependencies table')
+        names = deps.get('ignore_missing_tools', [])
+        allowed = {tool for requirements in DEP_TOOL_REQUIREMENTS.values() for _, tool, _, _ in requirements}
+        if not isinstance(names, list) or any(not isinstance(n, str) or n not in allowed for n in names):
+            raise ValueError('invalid ignore_missing_tools')
+        result['ignore_missing_tools'] = list(dict.fromkeys(names))
+    except FileNotFoundError as exc:
+        if path.is_symlink():
+            result['error'] = _utf8_safe(str(exc))
+    except (OSError, UnicodeError, ValueError, tomllib.TOMLDecodeError) as exc:
+        result['error'] = _utf8_safe(str(exc))
+    return result
+
+
+def create_machine_config() -> None:
+    path = MACHINE_CONFIG_PATH
+    try:
+        path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+        names = sorted({tool for requirements in DEP_TOOL_REQUIREMENTS.values() for _, tool, _, _ in requirements})
+        try:
+            fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+        except FileExistsError:
+            return
+        try:
+            with os.fdopen(fd, 'w', encoding='utf-8') as stream:
+                fd = -1
+                stream.write('# See Git Fleet README: Data and configuration\n# Tool names: ' + ', '.join(names) +
+                             '\nschema = 1\n\n[dependencies]\nignore_missing_tools = []\n')
+        finally:
+            if fd != -1:
+                os.close(fd)
+    except OSError as exc:
+        raise SystemExit(f'Error creating machine config {path}: {exc}') from exc
+
+
+def apply_ignored_tools(rows: list[dict], ignored: set[str]) -> None:
+    for row in rows:
+        tools, checks = [], []
+        for key, tool, _, dimensions in DEP_TOOL_REQUIREMENTS.get(row['manager'], []):
+            if tool not in ignored or TOOLS.get(key):
+                continue
+            affected = [check for check in dimensions if row[{'outdated': 'outdated_state', 'vulnerability': 'vuln_state'}[check]] == 'unchecked']
+            if affected:
+                tools.append(tool)
+                for check in affected:
+                    row[{'outdated': 'outdated_state', 'vulnerability': 'vuln_state'}[check]] = 'accepted'
+                    if check not in checks:
+                        checks.append(check)
+        if checks:
+            row.setdefault('acceptances', []).append(dict(kind='ignored-tool', file='machine config', index=None,
+                reason='missing tool ignored in machine config', expires=None, detail={'tools': tools, 'checks': checks}))
+            row['severity'] = derive_severity(row)
 
 
 def load_dep_exceptions(repo_path: Path, paths) -> list[DepExceptionFile]:
@@ -6911,7 +7001,7 @@ async def get_ui():
 @app.get("/api/status")
 async def get_status():
     """Return tool availability and app version for the frontend banner."""
-    return {"tools": TOOLS, "version": VERSION, "dependency_scope": dependency_report_scope()}
+    return {"tools": TOOLS, "version": VERSION, "dependency_scope": dependency_report_scope(), "machine_config": load_machine_config()}
 
 
 def dependency_report_scope() -> dict:
@@ -7146,7 +7236,7 @@ async def get_repo_detail(repo_id: str, db=Depends(get_db)):
     ws_cursor = await db.execute(
         "SELECT repo_id, has_uncommitted, modified_count, untracked_count, "
         "staged_count, current_branch, last_commit_hash, last_commit_message, "
-        "last_commit_date, checked_at, dep_check_error, missing_dep_tools, dep_manifests, quick_scan_error, dep_exceptions "
+        "last_commit_date, checked_at, dep_check_error, missing_dep_tools, dep_manifests, quick_scan_error, dep_exceptions, ignored_dep_tools "
         "FROM working_state WHERE repo_id = ?",
         (repo_id,),
     )
@@ -7166,6 +7256,7 @@ async def get_repo_detail(repo_id: str, db=Depends(get_db)):
             "missing_dep_tools": json.loads(ws_row[11] or "[]"),
             "dep_manifests": json.loads(ws_row[12] or "[]"),
             "dep_exceptions": json.loads(ws_row[14] or "[]"),
+            "ignored_dep_tools": json.loads(ws_row[15] or "[]"),
             "exception_warning_count": exception_warning_count(json.loads(ws_row[14] or "[]")),
         }
 
@@ -7704,6 +7795,7 @@ def main() -> None:
     TRUST_REPO_TOOLS = args.trust_repo_tools
 
     run_preflight()
+    create_machine_config()
 
     DB_PATH.parent.mkdir(parents=True, exist_ok=True)
     init_schema(DB_PATH)

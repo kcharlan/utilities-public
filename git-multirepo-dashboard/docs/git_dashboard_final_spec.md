@@ -52,6 +52,7 @@ Runtime paths are resolved once when the module loads:
 | --- | --- | --- |
 | Runtime home | `~/.git_dashboard` | `GIT_DASHBOARD_HOME` |
 | Database | `<runtime-home>/dashboard.db` | `GIT_DASHBOARD_DB` |
+| Machine config | `<runtime-home>/config.toml` | Runtime home override |
 
 The runtime home contains mutable state only. SQLite is initialized idempotently and uses WAL mode. Startup applies additive column migrations followed by the transactional 0.2.0 dependency-key rebuild when needed. The rebuild preserves version values and timestamps, normalizes Python names, coalesces missing or NULL sources to an empty string, and keeps the first row by rowid on a normalized-key collision. Legacy severity and advisory values move into a rescan note; active advisory is cleared and severity/outdated/vulnerability coverage become unchecked. Already migrated rows are unchanged.
 
@@ -62,7 +63,7 @@ Startup performs these steps:
 1. Parse `--port`, `--no-browser`, `--scan`, `--trust-repo-tools` (enables the Bundler and cargo checks, which are skipped by default), and the backward-compatible no-op `--yes` flag.
 2. Require Python 3.12 or newer and Git in `PATH`.
 3. Discover optional ecosystem tools and require at least one of `npm`, `go`, `cargo`, `bundle`, `composer`, or `pip-audit`. `govulncheck`, `cargo-audit`, `cargo-outdated`, and `bundler-audit` are looked up only when their parent tool is present.
-4. Create and migrate the SQLite database, then mark scans left `running` by an earlier process as failed.
+4. Create the runtime home and an exclusive private machine-config template if absent, then create and migrate the SQLite database and mark scans left `running` by an earlier process as failed. Existing config is preserved, including invalid files, whose errors are reported.
 5. If `--scan PATH` is supplied, recursively discover and register repositories below the path. A path that is not a directory prints a warning and startup continues.
 6. Select a free loopback port, optionally schedule browser launch, register signal handlers, and start uvicorn.
 
@@ -93,7 +94,7 @@ One latest quick-scan snapshot per repository:
 - latest commit hash, message, and date
 - check timestamp
 - independent `quick_scan_error`, `scan_error`, and `dep_check_error` fields
-- JSON-text `missing_dep_tools` (tool/description objects), `dep_manifests` (manifest inventory), and `dep_exceptions` (exception inventory), returned as parsed arrays by repository detail; fleet returns missing tools and the exception warning count
+- JSON-text `missing_dep_tools` and `ignored_dep_tools` (tool/description objects), `dep_manifests` (manifest inventory), and `dep_exceptions` (exception inventory), returned as parsed arrays by repository detail; fleet returns missing tools and the exception warning count
 
 Quick scans preserve dependency metadata. Dependency scans persist metadata and dependency rows in one savepoint, including empty results. A write failure rolls back the scan snapshot before re-raising, so a later caller commit cannot publish partial coverage. Releasing the savepoint preserves an existing caller-owned transaction.
 
@@ -187,6 +188,8 @@ A full scan stores a missing repository path or a per-repository failure in `sca
 
 ## Dependency model
 
+Machine config uses `schema = 1` and an optional `[dependencies]` table with `ignore_missing_tools`, an array of known tool display names. It is loaded at each dependency scan. After repository exceptions, each missing ignored tool accepts only its directly gated unchecked dimensions, retaining a machine-config acceptance record; installed tools have no effect. Invalid configuration accepts nothing and sets an analysis error. Availability is detected at startup, with auxiliary tools probed only when their parent is present.
+
 Manifest discovery walks through depth three and skips hidden, virtual-environment, generated, and vendored directories, symbolic links, and files larger than 2 MiB (`MAX_DEP_FILE_SIZE`). It recognizes:
 
 | File | Manager |
@@ -251,7 +254,7 @@ The local SPA consumes these JSON and streaming endpoints:
 | Method | Path | Purpose |
 | --- | --- | --- |
 | GET | `/` | Embedded SPA |
-| GET | `/api/status` | Version and ecosystem-tool paths |
+| GET | `/api/status` | Version, ecosystem-tool paths, and current machine config with path, error and ignored-tool list |
 | GET | `/api/browse` | Local directory listing |
 | GET | `/api/repos` | Registry listing without a scan |
 | POST | `/api/repos` | Discover/register below a path |

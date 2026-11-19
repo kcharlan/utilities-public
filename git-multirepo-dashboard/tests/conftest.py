@@ -1,11 +1,15 @@
 """Shared test fixtures."""
 import os
 import sys
+import tempfile
 from pathlib import Path
 
 import pytest
 
 os.environ.setdefault("UTILITIES_TESTING", "1")
+_import_runtime = tempfile.TemporaryDirectory(prefix='git-fleet-import-')
+os.environ['GIT_DASHBOARD_HOME'] = str(Path(_import_runtime.name) / 'home')
+os.environ['GIT_DASHBOARD_DB'] = str(Path(_import_runtime.name) / 'dashboard.db')
 
 PROJECT_ROOT = Path(__file__).parent.parent
 REPO_ROOT = PROJECT_ROOT.parent
@@ -24,6 +28,13 @@ except ImportError:
 
 import git_dashboard  # noqa: E402
 from tools.testkit import ASGISyncClient  # noqa: E402
+
+
+@pytest.fixture(autouse=True)
+def isolated_machine_config(tmp_path, monkeypatch):
+    monkeypatch.setattr(git_dashboard, 'MACHINE_CONFIG_PATH', tmp_path / 'config.toml')
+    monkeypatch.setenv('GIT_DASHBOARD_HOME', str(tmp_path / 'runtime'))
+    monkeypatch.setenv('GIT_DASHBOARD_DB', str(tmp_path / 'runtime' / 'dashboard.db'))
 
 
 @pytest.fixture

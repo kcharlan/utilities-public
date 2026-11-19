@@ -102,7 +102,8 @@ def test_node_advisory_attribution_is_row_local(tmp_path, monkeypatch, via, extr
 
 
 @pytest.mark.parametrize('unresolved', ['mixed_unidentified', 'mixed_cycle'])
-def test_mixed_unresolved_npm_exceptions_persist_vulnerable(tmp_path, monkeypatch, unresolved):
+@pytest.mark.parametrize('repository_accepts', [True, False])
+def test_mixed_unresolved_npm_exceptions_persist_vulnerable(tmp_path, monkeypatch, unresolved, repository_accepts):
     import asyncio
     import aiosqlite
     _write_npm_lock(tmp_path, {'synthetic-widget': '1.0.0'})
@@ -124,9 +125,11 @@ def test_mixed_unresolved_npm_exceptions_persist_vulnerable(tmp_path, monkeypatc
     common = dict(manager='npm', package='synthetic-widget', reason='synthetic')
     entries = [gd.DepExceptionEntry('hold', 1, '.gitfleet.toml', '', latest='2.0.0', **common),
                gd.DepExceptionEntry('advisory', 1, '.gitfleet.toml', '', version='1.0.0', ids=['npm:42'], **common),
-               gd.DepExceptionEntry('unchecked', 1, '.gitfleet.toml', '', declared='*', checks=['vulnerability'], **common)]
+               gd.DepExceptionEntry('unchecked', 1, '.gitfleet.toml', '', declared='*' if repository_accepts else '!=*', checks=['vulnerability'], **common)]
     file = gd.DepExceptionFile('.gitfleet.toml', '', 'tracked', entries=entries)
     gd.apply_dep_exceptions([row], [file])
+    monkeypatch.setitem(gd.TOOLS, 'npm', None)
+    gd.apply_ignored_tools([row], {'npm'})
     assert row['advisories_complete'] is False and row['severity'] == 'vulnerable'
     assert row['vuln_state'] == 'accepted' and row['acceptances']
     monkeypatch.setattr(gd, 'analyze_repo_deps', lambda _: gd.DepAnalysis([row], False, [], [], [file]))
@@ -142,11 +145,10 @@ def test_mixed_unresolved_npm_exceptions_persist_vulnerable(tmp_path, monkeypatc
     assert saved['severity'] == 'vulnerable' and saved['advisories_complete'] is False
     assert saved['advisory_id'] == 'npm:42'
     assert saved['advisories'] == [{'id': 'npm:42', 'aliases': []}]
-    assert {a['kind'] for a in saved['acceptances']} == {'hold', 'unchecked'}
+    assert {a['kind'] for a in saved['acceptances']} == {'hold', 'unchecked' if repository_accepts else 'ignored-tool'}
     advisory = next(e for e in inventory[0]['entries'] if e['kind'] == 'advisory')
     assert advisory['status'] == 'stale'
     assert advisory['detail']['unused'][0]['reason'] == 'vulnerability check did not complete'
-    # Task 4 adds machine ignored-tool coverage; Task 5 checks browser membership.
 
 
 def test_empty_npm_cause_is_structurally_rejected(tmp_path, monkeypatch):
