@@ -93,7 +93,7 @@ One latest quick-scan snapshot per repository:
 - latest commit hash, message, and date
 - check timestamp
 - independent `quick_scan_error`, `scan_error`, and `dep_check_error` fields
-- JSON-text `missing_dep_tools` (tool/description objects) and `dep_manifests` (manifest inventory), returned as parsed arrays by repository detail; fleet returns missing tools
+- JSON-text `missing_dep_tools` (tool/description objects), `dep_manifests` (manifest inventory), and `dep_exceptions` (exception inventory), returned as parsed arrays by repository detail; fleet returns missing tools and the exception warning count
 
 Quick scans preserve dependency metadata. Dependency scans persist metadata and dependency rows in one savepoint, including empty results. A write failure rolls back the scan snapshot before re-raising, so a later caller commit cannot publish partial coverage. Releasing the savepoint preserves an existing caller-owned transaction.
 
@@ -226,6 +226,14 @@ The shared npm lock reader selects `npm-shrinkwrap.json` before `package-lock.js
 
 `parse_deps_for_repo(repo_path, manifests_out=None)` populates an inventory of `{path, kind, dependencies, error}` records. Paths are resolved repository-relative POSIX paths. A requirements include must resolve to a regular file inside the repository no larger than 2 MiB: an include that escapes the repository is skipped without an inventory record, and a missing, non-regular, or oversized one records an error. Requirements recursion shares resolved-path inventory and visited state: declarations retain their physically declaring `source_file`, each file counts only its own declarations, and empty, included, and failed files survive. `dep_manifests` persists the inventory atomically with coverage; errors set `DepAnalysis.any_error`. Empty files need no dependency group. Python outdated checks call the PyPI JSON API; other ecosystems use the tools listed in the README.
 
+### Exception discovery snapshot
+
+Dependency discovery collects regular, non-symlink `.gitfleet.toml` files within the same walk boundary. Each requires integer `schema = 1`; invalid files are reported and apply no entries. Excludes match POSIX component patterns relative to their file, with globstar and ancestor-prefix matching. Expired excludes do not apply. Skipped manifests retain zero-count inventory records and their deciding file; included requirements are checked after their boundary guard. Script candidates must contain leading PEP 723 metadata before exclusion can consume a pattern. The deepest matching exception file and earliest exclude decide attribution.
+
+The `working_state.dep_exceptions` JSON inventory persists with the dependency scan snapshot. Each file records its escaped display path, Git status, error, and entries with kind, per-kind index, manager, package, reason, expiry, status and detail. The repository detail API returns this inventory and its warning count; fleet rows also expose the warning count. Paths are escaped once before persistence, retaining distinct filesystem identities while keeping SQLite and JSON UTF-8 safe. The status API's dependency scope describes exception discovery.
+
+Previously saved paths remain readable as stored; the next dependency scan writes the escaped display form. Migration does not rewrite old snapshots.
+
 ### Python health evaluation and scope
 
 The evaluated version is the validated current declared/locked PEP 440 version, or a floating selection stored only in `wanted_version`. `_floating_specifier` accepts PEP 508 requirement syntax or standalone PEP 440 constraints; unsupported Poetry syntax remains unchecked. `resolve_floating_version` selects the highest allowed release using [`SpecifierSet.filter`](https://packaging.pypa.io/en/stable/specifiers.html#packaging.specifiers.SpecifierSet.filter), excluding invalid versions and releases without a non-yanked file. When there is no releases mapping, valid `info.version` is the fallback candidate. Compare the evaluated version to the registry's latest version with `classify_severity`, including versions beyond a declaration's cap. Exact evaluations set `outdated_state=checked`; floating evaluations set `outdated_state=floating`.
@@ -264,6 +272,8 @@ The local SPA consumes these JSON and streaming endpoints:
 | GET | `/api/analytics/dep-overlap` | Identities with at least two manifest declaration uses |
 
 `/api/status` also returns `dependency_scope`, the report's scan-boundary metadata. Discovery depth and skipped directories come from the scanner's runtime constants. `/api/repos/{id}/deps` and its scan endpoint retain the grouped-list response, with declared specifications, versions, independent states, notes and timestamps on each package. Packages also expose `advisories` as a decoded list, `advisories_complete` as a boolean, and `update_level` independently of headline severity.
+
+Repository detail exposes `working_state.dep_exceptions` and `exception_warning_count`. Fleet rows expose the same warning count independently of dependency rows. The count sums untracked, ignored or unknown files, file errors, and entries whose status is not applied; warnings alone do not make analysis incomplete.
 
 Unknown repository IDs return 404. `POST /api/repos` takes `{"path"}` and returns `{registered, repos}`, or 400 for a path that is not a directory; `PATCH` takes `{"path"}` and returns 400 unless it is an existing directory; `DELETE` returns 204. `/history`, `/api/analytics/heatmap`, and `/api/analytics/allocation` take `days` (defaults 90, 365, and 90). `/commits` takes `page`, `per_page` (default 25, clamped to 1–100), and an optional `branch`; without one it lists all refs. A branch must be in the stored branch snapshot, otherwise the response is 400 `Unknown branch`; it is passed to Git after `--end-of-options` and before `--`, so it cannot be read as an option or a path. `/commits` also returns 404 when the repository path is missing.
 

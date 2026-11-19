@@ -17,6 +17,7 @@ Usage:
 
 # ── stdlib imports ────────────────────────────────────────────────────────────
 import asyncio
+import fnmatch
 import hashlib
 import json
 import logging
@@ -35,8 +36,8 @@ import urllib.error
 import urllib.parse
 import urllib.request
 import webbrowser
-from datetime import datetime, timezone, timedelta
-from dataclasses import dataclass
+from datetime import date, datetime, timezone, timedelta
+from dataclasses import dataclass, field
 from pathlib import Path
 from threading import Timer
 from typing import Literal
@@ -302,7 +303,8 @@ CREATE TABLE IF NOT EXISTS working_state (
   quick_scan_error     TEXT DEFAULT NULL,
   dep_check_error      BOOLEAN DEFAULT FALSE,
   missing_dep_tools    TEXT DEFAULT '[]',
-  dep_manifests        TEXT DEFAULT '[]'
+  dep_manifests        TEXT DEFAULT '[]',
+  dep_exceptions       TEXT DEFAULT '[]'
 );
 
 CREATE TABLE IF NOT EXISTS scan_log (
@@ -345,6 +347,7 @@ _MIGRATION_SQL = [
     "ALTER TABLE working_state ADD COLUMN dep_check_error BOOLEAN DEFAULT FALSE",
     "ALTER TABLE working_state ADD COLUMN missing_dep_tools TEXT DEFAULT '[]'",
     "ALTER TABLE working_state ADD COLUMN dep_manifests TEXT DEFAULT '[]'",
+    "ALTER TABLE working_state ADD COLUMN dep_exceptions TEXT DEFAULT '[]'",
     "ALTER TABLE dependencies ADD COLUMN source_path TEXT DEFAULT ''",
     "ALTER TABLE dependencies ADD COLUMN advisories TEXT DEFAULT '[]'",
     "ALTER TABLE dependencies ADD COLUMN advisories_complete INTEGER DEFAULT 1",
@@ -425,6 +428,9 @@ def run_migrations(db_path: Path) -> None:
 
 # ── Git Quick Scan ────────────────────────────────────────────────────────────
 
+_GIT_GLOBAL_OPTS = ("--no-optional-locks", "-c", "core.fsmonitor=false", "-c", "core.hooksPath=/dev/null")
+
+
 async def run_git(repo_path, *args: str, timeout: float = 30.0, strip_output: bool = True) -> tuple:
     """Run a git command and return (stdout, stderr, returncode).
 
@@ -434,8 +440,7 @@ async def run_git(repo_path, *args: str, timeout: float = 30.0, strip_output: bo
     On timeout, kills the process and returns ("", "timeout", -1).
     """
     proc = await asyncio.create_subprocess_exec(
-        "git", "--no-optional-locks", "-c", "core.fsmonitor=false",
-        "-c", "core.hooksPath=/dev/null", "-C", str(repo_path), *args,
+        "git", *_GIT_GLOBAL_OPTS, "-C", str(repo_path), *args,
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.PIPE,
     )
@@ -998,15 +1003,17 @@ class DepAnalysis:
     any_error: bool
     missing_tools: list[dict]
     manifests: list[dict]
+    exceptions: list = field(default_factory=list)
 
 
 def analyze_repo_deps(repo_path: Path) -> DepAnalysis:
     """Run blocking manifest/tool work away from the server event loop."""
     manifests: list[dict] = []
-    raw = parse_deps_for_repo(repo_path, manifests_out=manifests)
+    exceptions = []
+    raw = parse_deps_for_repo(repo_path, manifests_out=manifests, exceptions_out=exceptions)
     managers = {d['manager'] for d in raw} | {('pip' if m['kind'] in ('requirements', 'pyproject', 'pep723') else
                  next(manager for filename, manager, _ in _DEP_FILE_PRIORITY if filename == m['kind']))
-                for m in manifests}
+                for m in manifests if not m.get('excluded_by')}
     missing = []
     for manager in sorted(managers):
         for key, tool, description in DEP_TOOL_REQUIREMENTS.get(manager, []):
@@ -1014,7 +1021,7 @@ def analyze_repo_deps(repo_path: Path) -> DepAnalysis:
                 missing.append(dict(tool=tool, description=description))
                 logger.info('Missing %s (%s)', tool, description)
     enriched = raw
-    any_error = any(m.get('error') for m in manifests)
+    any_error = any(m.get('error') for m in manifests) or any(f.error for f in exceptions)
     for manager, checker in (
         ('pip', check_python_deps), ('npm', check_node_deps),
         ('gomod', check_go_deps), ('cargo', check_rust_deps),
@@ -1030,21 +1037,30 @@ def analyze_repo_deps(repo_path: Path) -> DepAnalysis:
     enriched = finalize_dep_health(enriched)
     any_error |= bool(missing) or any('unchecked' in (d['outdated_state'], d['vuln_state'])
                                      for d in enriched)
-    return DepAnalysis(enriched, any_error, missing, manifests)
+    return DepAnalysis(enriched, any_error, missing, manifests, exceptions)
 
 
 async def run_dep_scan_for_repo(db, repo_id: str, repo_path: str) -> None:
     """Analyze in a worker thread; persist rows and metadata together."""
     analysis = await asyncio.to_thread(analyze_repo_deps, Path(repo_path))
-    enriched = analysis.enriched
+    enriched = [dict(dep, source_path=_dep_path_display(dep.get('source_path') or '')) for dep in analysis.enriched]
+    manifests = []
+    for manifest in analysis.manifests:
+        stored = dict(manifest)
+        for key in ('path', 'excluded_by'):
+            if stored.get(key):
+                stored[key] = _dep_path_display(stored[key])
+        if stored.get('error'):
+            stored['error'] = _utf8_safe(stored['error'])
+        manifests.append(stored)
     await db.execute('SAVEPOINT dep_scan_snapshot')
     try:
         await db.execute(
-            "INSERT INTO working_state (repo_id, dep_check_error, missing_dep_tools, dep_manifests) "
-            "VALUES (?, ?, ?, ?) ON CONFLICT(repo_id) DO UPDATE SET "
+            "INSERT INTO working_state (repo_id, dep_check_error, missing_dep_tools, dep_manifests, dep_exceptions) "
+            "VALUES (?, ?, ?, ?, ?) ON CONFLICT(repo_id) DO UPDATE SET "
             "dep_check_error = excluded.dep_check_error, missing_dep_tools = excluded.missing_dep_tools, "
-            "dep_manifests = excluded.dep_manifests",
-            (repo_id, analysis.any_error, json.dumps(analysis.missing_tools), json.dumps(analysis.manifests)),
+            "dep_manifests = excluded.dep_manifests, dep_exceptions = excluded.dep_exceptions",
+            (repo_id, analysis.any_error, json.dumps(analysis.missing_tools), json.dumps(manifests), json.dumps(_serialize_exceptions(analysis.exceptions))),
         )
 
         # 3. Upsert into dependencies table
@@ -1368,7 +1384,7 @@ def _source_path(repo_path: Path, file_path: Path) -> str:
         return str(resolved)
 
 
-def detect_dep_files(repo_path: Path) -> list[dict]:
+def detect_dep_files(repo_path: Path, exception_files_out=None) -> list[dict]:
     """Discover coexisting Python manifests and other ecosystem manifests."""
     results = []
     dirs_to_walk = [(repo_path, 0)]
@@ -1386,6 +1402,10 @@ def detect_dep_files(repo_path: Path) -> list[dict]:
                     dirs_to_walk.append((entry, depth + 1))
                 continue
             if not entry.is_file():
+                continue
+            if entry.name == '.gitfleet.toml':
+                if exception_files_out is not None:
+                    exception_files_out.append(entry)
                 continue
             try:
                 if entry.stat().st_size > MAX_DEP_FILE_SIZE:
@@ -1427,7 +1447,7 @@ def _manifest_record(inventory: dict | None, path: Path, kind: str) -> dict:
     return record
 
 
-def _find_pep723_block(script: str) -> str | None:
+def _pep723_script_blocks(script: str):
     """Apply PEP 723's reference grammar only to the leading comment prelude."""
     prelude = []
     for line in script.splitlines(keepends=True):
@@ -1436,7 +1456,11 @@ def _find_pep723_block(script: str) -> str | None:
         prelude.append(line)
     # https://peps.python.org/pep-0723/#reference-implementation
     regex = r'(?m)^# /// (?P<type>[a-zA-Z0-9-]+)$\s(?P<content>(^#(| .*)$\s)+)^# ///$'
-    blocks = [m for m in re.finditer(regex, ''.join(prelude)) if m.group('type') == 'script']
+    return [m for m in re.finditer(regex, ''.join(prelude)) if m.group('type') == 'script']
+
+
+def _find_pep723_block(script: str) -> str | None:
+    blocks = _pep723_script_blocks(script)
     if len(blocks) > 1:
         raise ValueError('Multiple script blocks found')
     if not blocks:
@@ -1534,7 +1558,7 @@ def parse_python_requirement(text: str) -> dict | None:
         return None
 
 
-def parse_requirements_txt(file_path: Path, _visited: set[str] | None = None, *, manifests_out: dict | None = None, repo_root: Path | None = None) -> list[dict]:
+def parse_requirements_txt(file_path: Path, _visited: set[str] | None = None, *, manifests_out: dict | None = None, repo_root: Path | None = None, exclude=None) -> list[dict]:
     """Parse PEP 508 declarations and direct URLs with circular-safe includes.
 
     Join continuations and remove comments/options while preserving extras and
@@ -1558,6 +1582,9 @@ def parse_requirements_txt(file_path: Path, _visited: set[str] | None = None, *,
         return []
     _visited.add(resolved)
     record = _manifest_record(manifests_out, file_path, 'requirements')
+    if exclude and (deciding := exclude(file_path)):
+        record['excluded_by'] = deciding
+        return []
 
     try:
         text = file_path.read_text(encoding="utf-8", errors="replace")
@@ -1579,7 +1606,7 @@ def parse_requirements_txt(file_path: Path, _visited: set[str] | None = None, *,
             if len(parts) < 2:
                 continue
             include_path = file_path.parent / parts[1].strip()
-            deps.extend(parse_requirements_txt(include_path, _visited, manifests_out=manifests_out, repo_root=repo_root))
+            deps.extend(parse_requirements_txt(include_path, _visited, manifests_out=manifests_out, repo_root=repo_root, exclude=exclude))
             continue
         if line.startswith("-"):
             # Other flags: -i, --index-url, -f, --find-links, etc.
@@ -1823,7 +1850,7 @@ def parse_composer_json(file_path: Path) -> list[dict]:
     return deps
 
 
-def parse_deps_for_repo(repo_path: Path, manifests_out: list[dict] | None = None) -> list[dict]:
+def parse_deps_for_repo(repo_path: Path, manifests_out: list[dict] | None = None, exceptions_out=None) -> list[dict]:
     """Parse declarations with a shared inventory of attempted manifest reads."""
     inventory: dict[Path, dict] = {}
     visited: set[str] = set()
@@ -1835,17 +1862,55 @@ def parse_deps_for_repo(repo_path: Path, manifests_out: list[dict] | None = None
     seen = set()
     # Parse explicit manifests/includes before probing script candidates. This
     # gives arbitrary include filenames stable ownership regardless of walk order.
-    entries = sorted(detect_dep_files(repo_path), key=lambda entry: entry['kind'] == 'pep723')
+    exception_paths = []
+    entries = sorted(detect_dep_files(repo_path, exception_paths), key=lambda entry: entry['kind'] == 'pep723')
+    exceptions = load_dep_exceptions(repo_path, exception_paths)
+    scan_date = _dep_scan_date()
+    if exceptions_out is not None:
+        exceptions_out.extend(exceptions)
+    def exclude(path, *, consume=True):
+        source = _source_path(repo_path, path)
+        if Path(source).is_absolute():
+            return None
+        winners = []
+        for f in exceptions:
+            relative = source[len(f.directory) + 1:] if f.directory and source.startswith(f.directory + '/') else source if not f.directory else None
+            if relative is None:
+                continue
+            for e in f.entries:
+                if e.kind != 'exclude' or (e.expires and e.expires < scan_date):
+                    continue
+                matched = [p for p in e.paths if _path_pattern_matches(p, relative)]
+                if matched:
+                    if consume:
+                        e.used.update(matched)
+                    winners.append((f.directory.count('/') + bool(f.directory), -e.index, f.path))
+        return max(winners)[2] if winners else None
     for entry in entries:
         file_path = entry['dir'] / entry['file']
         kind = entry['kind']
         try:
             if kind == 'requirements':
-                parsed = parse_requirements_txt(file_path, visited, manifests_out=inventory, repo_root=repo_path)
+                parsed = parse_requirements_txt(file_path, visited, manifests_out=inventory, repo_root=repo_path, exclude=exclude)
             elif kind in ('pyproject', 'pep723'):
-                parsed = parsers[kind](file_path, manifests_out=inventory)
+                if kind == 'pep723' and file_path.resolve() in inventory:
+                    continue
+                candidate = exclude(file_path, consume=False)
+                recognized = (kind != 'pep723' or not candidate or
+                              bool(_pep723_script_blocks(file_path.read_text(encoding='utf-8'))))
+                if candidate and not recognized:
+                    continue
+                deciding = exclude(file_path) if candidate else None
+                if deciding:
+                    _manifest_record(inventory, file_path, kind)['excluded_by'] = deciding
+                    parsed = []
+                else:
+                    parsed = parsers[kind](file_path, manifests_out=inventory)
             else:
                 record = _manifest_record(inventory, file_path, kind)
+                if deciding := exclude(file_path):
+                    record['excluded_by'] = deciding
+                    continue
                 # Validate structured manifests here because legacy parsers return
                 # [] for errors as well as valid empty files.
                 text = file_path.read_text(encoding='utf-8')
@@ -1861,6 +1926,8 @@ def parse_deps_for_repo(repo_path: Path, manifests_out: list[dict] | None = None
             parsed = []
         for dep in parsed:
             source = _source_path(repo_path, Path(dep.pop('source_file', file_path)))
+            if exclude(repo_path / source, consume=False):
+                continue
             dep['name'] = dependency_identity_name(dep)
             key = (dep['manager'], source, dep['name'])
             if key not in seen:
@@ -1872,6 +1939,14 @@ def parse_deps_for_repo(repo_path: Path, manifests_out: list[dict] | None = None
     if manifests_out is not None:
         manifests_out.extend(dict(path=_source_path(repo_path, path), **record)
                              for path, record in inventory.items())
+    for f in exceptions:
+        for e in f.entries:
+            if e.kind == 'exclude':
+                expired = bool(e.expires and e.expires < scan_date)
+                unused = [] if expired else [dict(source_path=None, part=p, reason='no matching manifest') for p in e.paths if p not in e.used]
+                e.status = ('expired' if expired else
+                            'partial' if e.used and unused else 'applied' if e.used else 'stale')
+                e.detail = dict(unused=unused)
     return all_deps
 
 
@@ -1968,6 +2043,167 @@ def finalize_dep_health(deps: list[dict]) -> list[dict]:
         d['severity'] = derive_severity(d)
         result.append(d)
     return result
+
+
+@dataclass
+class DepExceptionEntry:
+    kind: str
+    index: int
+    file: str
+    directory: str
+    manager: str | None = None
+    package: str | None = None
+    reason: str | None = None
+    expires: date | None = None
+    paths: list[str] = field(default_factory=list)
+    latest: str | None = None
+    latest_below: str | None = None
+    version: str | None = None
+    ids: list[str] = field(default_factory=list)
+    declared: str | None = None
+    checks: list[str] = field(default_factory=list)
+    status: str | None = None
+    detail: dict | None = None
+    used: set[str] = field(default_factory=set, repr=False)
+
+
+@dataclass
+class DepExceptionFile:
+    path: str
+    directory: str
+    git: str
+    error: str | None = None
+    entries: list[DepExceptionEntry] = field(default_factory=list)
+
+
+def _dep_path_display(value: str) -> str:
+    escaped = value.replace('\\', '\\\\')
+    return ''.join(f'\\x{ord(c):02x}' if ord(c) < 32 or 127 <= ord(c) < 160
+                   else c.encode('utf-8', errors='backslashreplace').decode('utf-8') for c in escaped)
+
+
+def _utf8_safe(value: str) -> str:
+    return value.encode('utf-8', errors='backslashreplace').decode('utf-8')
+
+
+def _path_pattern_matches(pattern: str, rel_path: str) -> bool:
+    pat = [p for p in pattern.strip('/').split('/') if p not in ('', '.')]
+    parts = [p for p in rel_path.split('/') if p]
+    reachable = {0}
+    for component in pat:
+        if component == '**':
+            reachable = set(range(min(reachable), len(parts) + 1)) if reachable else set()
+        else:
+            reachable = {i + 1 for i in reachable if i < len(parts) and fnmatch.fnmatchcase(parts[i], component)}
+        if not reachable:
+            return False
+    return bool(reachable)
+
+
+def _git_file_statuses(repo_path: Path, rel_paths: list[str]) -> dict[str, str]:
+    result = dict.fromkeys(rel_paths, 'unknown')
+    if not rel_paths:
+        return result
+    try:
+        base = ['git', *_GIT_GLOBAL_OPTS, '-C', str(repo_path)]
+        tracked = subprocess.run([*base, '--literal-pathspecs', 'ls-files', '-z', '--full-name', '--', *rel_paths], capture_output=True, timeout=30)
+        if tracked.returncode != 0:
+            return result
+        found = {os.fsdecode(p) for p in tracked.stdout.split(b'\0') if p}
+        remaining = [p for p in rel_paths if p not in found]
+        ignored = subprocess.run([*base, 'check-ignore', '-z', '--stdin'], input=b''.join(os.fsencode('./' + p) + b'\0' for p in remaining), capture_output=True, timeout=30) if remaining else None
+        if ignored is not None and ignored.returncode not in (0, 1):
+            return result
+        ignored_paths = {os.fsdecode(p).removeprefix('./') for p in ignored.stdout.split(b'\0') if p} if ignored else set()
+        return {p: 'tracked' if p in found else 'ignored' if p in ignored_paths else 'untracked' for p in rel_paths}
+    except (OSError, subprocess.TimeoutExpired):
+        return result
+
+
+def _dep_scan_date():
+    return date.today()
+
+
+def _load_bounded_toml(path: Path) -> dict:
+    """Read a bounded UTF-8 TOML file; reject pathological nesting as invalid."""
+    with path.open('rb') as stream:
+        data = stream.read(MAX_DEP_FILE_SIZE + 1)
+    if len(data) > MAX_DEP_FILE_SIZE:
+        raise ValueError('exceeds size limit')
+    try:
+        return tomllib.loads(data.decode('utf-8'))
+    except RecursionError as exc:
+        raise ValueError('TOML nesting exceeds parser limit') from exc
+
+
+def load_dep_exceptions(repo_path: Path, paths) -> list[DepExceptionFile]:
+    from packaging.version import InvalidVersion, Version
+    rels = [_source_path(repo_path, p) for p in paths]
+    statuses = _git_file_statuses(repo_path, rels)
+    files = []
+    requirements = {'hold': {'manager', 'package', 'reason'}, 'advisory': {'manager', 'package', 'reason', 'version', 'ids'},
+                    'unchecked': {'manager', 'package', 'reason', 'declared'}, 'exclude': {'paths', 'reason'}}
+    optional = {'hold': {'latest', 'latest_below', 'paths', 'expires'}, 'advisory': {'paths', 'expires'},
+                'unchecked': {'paths', 'expires', 'checks'}, 'exclude': {'expires'}}
+    for path, rel in zip(paths, rels):
+        directory = rel.rpartition('/')[0]
+        f = DepExceptionFile(rel, directory, statuses[rel])
+        files.append(f)
+        try:
+            obj = _load_bounded_toml(path)
+            if type(obj.get('schema')) is not int or obj['schema'] != 1 or set(obj) - {'schema', *requirements}:
+                raise ValueError('invalid schema or root keys')
+            for kind, required in requirements.items():
+                items = obj.get(kind, [])
+                if not isinstance(items, list):
+                    raise ValueError(f'{kind} must be an array of tables')
+                for index, item in enumerate(items, 1):
+                    if not isinstance(item, dict) or required - item.keys() or item.keys() - required - optional[kind]:
+                        raise ValueError(f'invalid {kind} fields')
+                    if kind == 'hold' and (('latest' in item) == ('latest_below' in item)):
+                        raise ValueError('hold requires exactly one latest condition')
+                    values = dict(item)
+                    for key, value in item.items():
+                        if key == 'expires':
+                            if type(value) is not date:
+                                raise ValueError('expires must be a date')
+                        elif key in ('paths', 'ids', 'checks'):
+                            if not isinstance(value, list) or not value or any(not isinstance(v, str) or not v.strip() for v in value):
+                                raise ValueError(f'invalid {key}')
+                            values[key] = list(dict.fromkeys(value))
+                        elif not isinstance(value, str) or not value.strip():
+                            raise ValueError(f'invalid {key}')
+                    if 'manager' in values and values['manager'] not in DEP_TOOL_REQUIREMENTS:
+                        raise ValueError('invalid manager')
+                    for pattern in values.get('paths', []):
+                        if pattern.startswith('/') or '\\' in pattern or re.match(r'^[A-Za-z]:', pattern) or '..' in pattern.split('/'):
+                            raise ValueError('invalid path pattern')
+                    if kind == 'unchecked':
+                        values.setdefault('checks', ['outdated', 'vulnerability'])
+                        if set(values['checks']) - {'outdated', 'vulnerability'}:
+                            raise ValueError('invalid checks')
+                    if 'latest_below' in values:
+                        try:
+                            Version(values['latest_below'].removeprefix('v'))
+                        except InvalidVersion as exc:
+                            raise ValueError('invalid latest_below') from exc
+                    f.entries.append(DepExceptionEntry(kind, index, rel, directory, **values))
+        except (OSError, UnicodeError, ValueError, tomllib.TOMLDecodeError) as exc:
+            f.error = str(exc)
+            f.entries.clear()
+    return files
+
+
+def _serialize_exceptions(files):
+    return [dict(path=_dep_path_display(f.path), git=f.git, error=_utf8_safe(f.error) if f.error else None,
+                 entries=[dict(kind=e.kind, index=e.index, manager=e.manager, package=e.package,
+                               reason=e.reason, expires=e.expires.isoformat() if e.expires else None,
+                               status=e.status, detail=({**e.detail, 'unused': [{**u, 'source_path': _dep_path_display(u['source_path']) if u.get('source_path') is not None else None} for u in e.detail['unused']]} if e.detail and 'unused' in e.detail else e.detail)) for e in f.entries]) for f in files]
+
+
+def exception_warning_count(inventory):
+    return sum((f.get('git') != 'tracked') + bool(f.get('error')) +
+               sum(e.get('status') != 'applied' for e in f.get('entries', [])) for f in inventory)
 
 
 def classify_severity(current: str, latest: str) -> str:
@@ -6529,6 +6765,7 @@ def dependency_report_scope() -> dict:
                   "Floating selections are evaluated versions, not installed versions.",
         "direct_references": "Direct VCS/URL references are not compared with PyPI or audited; "
                              "remote metadata and VCS commit resolution are excluded.",
+        "exceptions": "Repository .gitfleet.toml files are discovered within the manifest walk. Excludes skip matching manifests and reached requirements includes; invalid files have no effect.",
         "discovery": {
             "max_depth": _DEP_WALK_MAX_DEPTH,
             "skip_directories": sorted(_DEP_WALK_SKIP),
@@ -6749,7 +6986,7 @@ async def get_repo_detail(repo_id: str, db=Depends(get_db)):
     ws_cursor = await db.execute(
         "SELECT repo_id, has_uncommitted, modified_count, untracked_count, "
         "staged_count, current_branch, last_commit_hash, last_commit_message, "
-        "last_commit_date, checked_at, dep_check_error, missing_dep_tools, dep_manifests, quick_scan_error "
+        "last_commit_date, checked_at, dep_check_error, missing_dep_tools, dep_manifests, quick_scan_error, dep_exceptions "
         "FROM working_state WHERE repo_id = ?",
         (repo_id,),
     )
@@ -6768,6 +7005,8 @@ async def get_repo_detail(repo_id: str, db=Depends(get_db)):
             "dep_check_error": bool(ws_row[10]) if ws_row[10] is not None else False,
             "missing_dep_tools": json.loads(ws_row[11] or "[]"),
             "dep_manifests": json.loads(ws_row[12] or "[]"),
+            "dep_exceptions": json.loads(ws_row[14] or "[]"),
+            "exception_warning_count": exception_warning_count(json.loads(ws_row[14] or "[]")),
         }
 
     return {
@@ -7171,18 +7410,19 @@ async def get_fleet(db=Depends(get_db)):
         ids = [r["id"] for r in results]
         placeholders = ",".join("?" * len(ids))
         ws_cursor = await db.execute(
-            f"SELECT repo_id, scan_error, dep_check_error, missing_dep_tools "
+            f"SELECT repo_id, scan_error, dep_check_error, missing_dep_tools, dep_exceptions "
             f"FROM working_state WHERE repo_id IN ({placeholders})",
             ids,
         )
         ws_map = {}
         for row in await ws_cursor.fetchall():
-            ws_map[row[0]] = (row[1], bool(row[2]), json.loads(row[3] or "[]"))
+            ws_map[row[0]] = (row[1], bool(row[2]), json.loads(row[3] or "[]"), exception_warning_count(json.loads(row[4] or "[]")))
         for repo in results:
-            scan_err, dep_err, missing_tools = ws_map.get(repo["id"], (None, False, []))
+            scan_err, dep_err, missing_tools, warnings = ws_map.get(repo["id"], (None, False, [], 0))
             repo["scan_error"] = scan_err
             repo["dep_check_error"] = dep_err
             repo["missing_dep_tools"] = missing_tools
+            repo["exception_warning_count"] = warnings
 
     # Augment with branch counts from branches table (packet 08) and placeholders
     for repo in results:

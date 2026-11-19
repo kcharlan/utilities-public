@@ -2698,3 +2698,11 @@ start. The collector smoke test found a permission error because the
 unprivileged container user could not create the default socket directory.
 Disable the unused socket in the container command and check startup logs
 alongside successful HTTP requests.
+
+### Git Fleet: bound exception parsing and path effects
+
+A size limit alone does not stop TOML parser recursion failures; contain those at the
+individual file boundary so a malformed file cannot suppress neighboring valid files.
+Do not match absolute outside-root fallback paths against repository-relative patterns,
+or mark patterns used by defensive filtering of parser-only rows. Capture the scan date
+once so an expiry cannot change between applying an effect and reporting its status.
