@@ -1,7 +1,7 @@
 #!/usr/bin/env -S uv run --script
 # /// script
 # requires-python = ">=3.12,<3.13"
-# dependencies = ["pydivsufsort==0.0.20"]
+# dependencies = ["pydivsufsort==0.0.23"]
 # ///
 import argparse, struct, sys
 import contextlib, os, tempfile
