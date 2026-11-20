@@ -196,7 +196,7 @@ retains previous tap listings when a source fails and reports separate counts:
 “N tap packages can't be checked.” for unsupported, missing or unreadable
 sources (with singular wording for one). These rows never notify or increase
 the watched amber count, but they can contribute to the optional Other updates
-dot. Tap notifications use “NAME VERSION is in TAP”; see
+count. Tap notifications use “NAME VERSION is in TAP”; see
 the rolling alert behavior under Saved watches and checks.
 
 Rollback safety: official watches/cache remain under the original `watched`
@@ -264,7 +264,7 @@ ignored (`stateWithoutAlertListLoads`, `entryDecodingIgnoresUnknownKeys`).
 The optional catalog client reads Homebrew's formula and cask bulk lists for
 prefix search suggestions and installed, unwatched updates. Only admitted
 Homebrew core/cask and currently tapped installations appear; these updates never notify or affect
-the watched update count. An optional mug-color dot follows the Other updates
+the watched update count. An optional count beside the mug follows the Other updates
 list. Self-updating casks retain their installed-version
 source, including the fallback to Homebrew's records. Like `brew outdated`,
 Other updates hides a self-updating cask whose installed version comes only
@@ -353,22 +353,25 @@ continues to show website data. The command-line tool also uses website data.
 
 Rolling back to 1.2.4 discards the new pending-release fields, so an announced
 release may alert under the older website-only behavior. The 1.3.0 build ignores
-the Other updates dot setting when reading state and drops it when saving; after
-that save, upgrading again defaults the setting to off.
+the Other updates indicator setting when reading state and drops it when saving; after
+that save, upgrading again defaults the setting to off. The 1.4.0 dot release
+uses the same setting key and default, so its saved choice carries between it
+and 1.5.0.
 
 Build the signed app and CLI with `make -C brew_version release` from the
 repository root. Products are `brew_version/build/release/Brew Version.app`
 and `brew_version/build/release/brew-version`. Signing is local ad hoc signing;
 the bundle includes Homebrew's license notice. Open the app to get a mug in
 the menu bar. Initial launch stays quiet, including at login; opening the running
-app again shows its popover. An amber dot on the mug means a watched update is
-available, matching the dot on its row. Optionally, a dot in the mug's color
-shows while Other updates has entries; the amber watched dot takes precedence.
-Opening or closing the popover does not dismiss it. The accessibility label
-reports watched updates and, when enabled, the number of other updates. The mug
-outline and other-updates dot follow the menu bar's light or dark appearance.
-The status item is as wide as its image rather than the bar's height, so it
-widens by 3pt while either dot shows.
+app again shows its popover. With no counts, the menu bar shows a bare mug. An
+amber chip beside the mug counts watched updates,
+matching the amber dots on their rows. An optional grey second count shows the number
+of entries in Other updates; both counts can appear together, and the watched
+count is independent of the setting. Counts above 99 display as 99+. Opening
+or closing the popover does not dismiss them. The accessibility label reports
+watched updates and, when enabled, the number of other updates. The mug outline
+and Other updates count follow the menu bar's light or dark appearance. The
+status item fits its image, widening for the visible counts.
 
 The popover shows the last check, refresh, and a search field. Search accepts
 space-separated names, rejects invalid names, and suggests catalog prefixes.
@@ -408,7 +411,7 @@ its acknowledgements and skipped version. The recovery line stays visible
 while searching too. The usual five-second expiry applies before a failure.
 
 **Other updates** lists installed, unwatched updates on this Mac using website
-data. Its optional mug dot never sends notifications.
+data. Its optional menu bar count never sends notifications.
 Use Watch to move an item to Watching. Click its header to collapse the list,
 or turn it off in Settings. Below the header, the section shows when the list
 was last updated; set how often it refreshes in Settings. The footer's watch
@@ -422,7 +425,7 @@ list scrolls when needed. Its scroll bar travels in the popover's right margin, 
 it never covers counts, chevrons or row actions, and the "Watching" and "Other
 updates" headers stay pinned while their own rows scroll beneath them. Hover or select a watch to reveal its icon actions.
 The Settings gear activates a reused AppKit-owned window containing the version,
-interval, Other updates toggle, mug dot toggle, Other updates interval, Include self-updating
+interval, Other updates toggle, menu bar count toggle, Other updates interval, Include self-updating
 apps and Open at login, including the service's status
 and registration errors. The login status refreshes whenever that window becomes
 key; required approval offers **Open Login Items Settings**. Notification
@@ -477,7 +480,7 @@ on the acceptance host).
 
 Record each current-system check separately:
 
-- Mug, amber update count, optional other-updates dot and accessibility state. Press the status item
+- Mug, amber update count, optional Other updates count and accessibility state. Press the status item
   repeatedly, slowly and quickly; every press must open or close the popover
   exactly once, with the whole popover, including header and footer, on-screen.
   Reopen the app from Finder, or click a notification, then press the icon once:

@@ -1,4 +1,5 @@
 import AppKit
+import CoreText
 import BrewVersionCore
 import Observation
 
@@ -16,39 +17,64 @@ import Observation
 struct StatusPresentation {
     let amberCount: Int
     var otherCount: Int = 0
-    enum Badge { case none, watched, other }
-    var badge: Badge { amberCount > 0 ? .watched : (otherCount > 0 ? .other : .none) }
+    static func countLabel(_ count: Int) -> String {
+        count > 99 ? "99+" : String(count)
+    }
     var accessibility: String {
         let watched = amberCount == 0 ? "Brew Version, no watched updates" : "Brew Version, \(amberCount) watched update\(amberCount == 1 ? "" : "s") available"
         guard otherCount > 0 else { return watched }
         return watched + ", \(otherCount) other update\(otherCount == 1 ? "" : "s")"
     }
 }
-/// The menu bar mug resolves its outline and other-updates dot in the bar's
-/// appearance. A watched update takes precedence and draws one amber dot.
-/// Badged images draw their own colours because macOS 27 ignores a status
+/// The menu bar mug shows an amber watched-count chip and an optional Other
+/// updates count beside it. Their colours resolve in the bar's appearance.
+/// Count images draw their own colours because macOS 27 ignores a status
 /// button's contentTintColor when drawing template images.
 @MainActor enum StatusIcon {
-    static let dotDiameter: CGFloat = 7
-    /// How far the dot extends past the mug's right edge.
-    static let dotOverhang: CGFloat = 3
+    private static func line(_ text: String, font: NSFont, color: NSColor) -> CTLine {
+        CTLineCreateWithAttributedString(NSAttributedString(string: text, attributes: [.font: font, .foregroundColor: color]))
+    }
     static func image(for presentation: StatusPresentation) -> NSImage? {
         guard let mug = NSImage(systemSymbolName: "mug", accessibilityDescription: presentation.accessibility) else { return nil }
-        guard presentation.badge != .none, let outline = mug.withSymbolConfiguration(.init(paletteColors: [.textColor])) else {
+        guard presentation.amberCount > 0 || presentation.otherCount > 0 else {
             mug.isTemplate = true
             return mug
         }
-        let size = NSSize(width: mug.size.width + dotOverhang, height: mug.size.height)
+        guard let outline = mug.withSymbolConfiguration(.init(paletteColors: [.textColor])) else {
+            mug.isTemplate = true
+            return mug
+        }
+        let base = NSFont.systemFont(ofSize: 11, weight: .bold)
+        let chipFont = base.fontDescriptor.withDesign(.rounded).flatMap { NSFont(descriptor: $0, size: 11) } ?? base
+        let countFont = NSFont.monospacedDigitSystemFont(ofSize: 12, weight: .medium)
+        let watched = presentation.amberCount > 0 ? StatusPresentation.countLabel(presentation.amberCount) : nil
+        let other = presentation.otherCount > 0 ? StatusPresentation.countLabel(presentation.otherCount) : nil
+        func width(_ text: String, font: NSFont) -> CGFloat {
+            CGFloat(CTLineGetTypographicBounds(line(text, font: font, color: .textColor), nil, nil, nil))
+        }
+        let chipWidth = watched.map { max(15, width($0, font: chipFont) + 8) } ?? 0
+        let chipRect = NSRect(x: mug.size.width + 3, y: 1, width: chipWidth, height: 14)
+        let otherWidth = other.map { width($0, font: countFont) } ?? 0
+        let otherX = (watched == nil ? mug.size.width : chipRect.maxX) + 3
+        let rightEdge = other == nil ? chipRect.maxX : otherX + otherWidth
+        let size = NSSize(width: ceil(rightEdge), height: mug.size.height)
         let image = NSImage(size: size, flipped: false) { _ in
             outline.draw(in: NSRect(origin: .zero, size: mug.size))
-            let dot = NSRect(x: size.width - dotDiameter, y: size.height - dotDiameter, width: dotDiameter, height: dotDiameter)
-            // Clear a thin ring so the dot reads apart from the mug's rim.
-            NSGraphicsContext.saveGraphicsState()
-            NSGraphicsContext.current?.compositingOperation = .clear
-            NSBezierPath(ovalIn: dot.insetBy(dx: -1, dy: -1)).fill()
-            NSGraphicsContext.restoreGraphicsState()
-            (presentation.badge == .watched ? NSColor.systemOrange : NSColor.textColor).setFill()
-            NSBezierPath(ovalIn: dot).fill()
+            guard let context = NSGraphicsContext.current?.cgContext else { return false }
+            if let watched {
+                NSColor.systemOrange.setFill()
+                NSBezierPath(roundedRect: chipRect, xRadius: 7, yRadius: 7).fill()
+                let textLine = line(watched, font: chipFont, color: NSColor(white: 0, alpha: 0.88))
+                let textWidth = CGFloat(CTLineGetTypographicBounds(textLine, nil, nil, nil))
+                context.textPosition = CGPoint(x: chipRect.midX - textWidth / 2, y: chipRect.midY - chipFont.capHeight / 2)
+                CTLineDraw(textLine, context)
+            }
+            if let other {
+                let textLine = line(other, font: countFont, color: NSColor.textColor.withAlphaComponent(0.62))
+                let textWidth = CGFloat(CTLineGetTypographicBounds(textLine, nil, nil, nil))
+                context.textPosition = CGPoint(x: otherX + otherWidth / 2 - textWidth / 2, y: 7.5 - countFont.capHeight / 2)
+                CTLineDraw(textLine, context)
+            }
             return true
         }
         image.isTemplate = false

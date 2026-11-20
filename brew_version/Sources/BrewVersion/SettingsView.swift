@@ -46,9 +46,11 @@ struct SettingsView: View {
                 Section("Other updates") {
                     Toggle("Show other updates on this Mac", isOn: Binding(get: { controller.state.showOtherUpdates }, set: { controller.setShowOtherUpdates($0) })).disabled(!controller.canSave)
                     VStack(alignment: .leading, spacing: 3) {
-                        Toggle("Show a dot on the menu bar mug", isOn: Binding(get: { controller.state.badgeOtherUpdates }, set: { controller.setBadgeOtherUpdates($0) }))
+                        Toggle("Show the count beside the menu bar mug", isOn: Binding(get: { controller.state.badgeOtherUpdates }, set: { controller.setBadgeOtherUpdates($0) }))
                             .disabled(!controller.canSave || !controller.state.showOtherUpdates)
-                        Text("Uses the mug's color while this list has updates. Watched updates still show amber. Never sends notifications.")
+                        let captionBody = "Shows how many updates this list has, beside the mug. Watched updates always show an amber count."
+                        let captionSuffix = " Never sends notifications."
+                        Text(captionBody + captionSuffix)
                             .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
                     }
                     Picker("Check every", selection: Binding(get: { controller.state.catalogInterval }, set: { controller.setCatalogInterval($0) })) {
