@@ -1,4 +1,5 @@
 import AppKit
+import CoreText
 import SwiftUI
 import Observation
 import ServiceManagement
@@ -957,50 +958,92 @@ private struct ReopenCatalogTransport: HTTPTransport {
         #expect(idle.isTemplate)
         #expect(idle.accessibilityDescription == "Brew Version, no watched updates")
     }
-    @Test func alertStatusIconFollowsBarAppearanceAndKeepsAmberDot() throws {
-        // macOS 27 renders a tinted template status image black, so the alert
-        // mug must carry its own colours and resolve them at draw time.
+    @Test func watchedStatusIconDrawsAmberChipBesideMug() throws {
         let idle = try #require(StatusIcon.image(for: StatusPresentation(amberCount: 0)))
-        let alert = try #require(StatusIcon.image(for: StatusPresentation(amberCount: 2)))
-        #expect(!alert.isTemplate)
-        #expect(alert.accessibilityDescription == "Brew Version, 2 watched updates available")
-        #expect(alert.size.height == idle.size.height && alert.size.width > idle.size.width)
-        for (appearance, outlineIsLight) in [(NSAppearance.Name.darkAqua, true), (.aqua, false), (.vibrantDark, true), (.vibrantLight, false)] {
-            let pixels = try statusIconPixels(alert, appearance: appearance)
-            let amber = pixels.filter(\.isAmber), outline = pixels.filter { !$0.isAmber }
-            #expect(!amber.isEmpty, "no amber dot in \(appearance.rawValue)")
-            // The dot sits in the top-right corner, above and right of the mug's centre.
-            #expect(amber.allSatisfy { $0.x > alert.size.width / 2 && $0.y > alert.size.height / 2 })
-            let brightness = outline.map(\.brightness).reduce(0, +) / Double(max(outline.count, 1))
-            #expect(outline.count > amber.count, "no mug outline in \(appearance.rawValue)")
-            #expect(outlineIsLight ? brightness > 0.8 : brightness < 0.3, "outline brightness \(brightness) in \(appearance.rawValue)")
-        }
-    }
-    @Test func otherStatusIconUsesMugColorDot() throws {
-        let idle = try #require(StatusIcon.image(for: StatusPresentation(amberCount: 0)))
-        let amber = try #require(StatusIcon.image(for: StatusPresentation(amberCount: 1)))
-        let other = try #require(StatusIcon.image(for: StatusPresentation(amberCount: 0, otherCount: 2)))
-        #expect(!other.isTemplate && other.size == amber.size)
-        for (appearance, light) in [(NSAppearance.Name.darkAqua, true), (.aqua, false), (.vibrantDark, true), (.vibrantLight, false)] {
-            let pixels = try statusIconPixels(other, appearance: appearance)
-            #expect(pixels.filter(\.isAmber).isEmpty)
-            let dot = pixels.filter { $0.x > idle.size.width && $0.y > other.size.height / 2 }
-            #expect(!dot.isEmpty)
-            let brightness = dot.map(\.brightness).reduce(0, +) / Double(max(dot.count, 1))
-            #expect(light ? brightness > 0.8 : brightness < 0.3)
-        }
-    }
-    @Test func watchedDotWinsOverOtherDot() throws {
-        let presentation = StatusPresentation(amberCount: 1, otherCount: 5)
-        #expect(presentation.badge == .watched)
-        let idle = try #require(StatusIcon.image(for: StatusPresentation(amberCount: 0)))
+        let presentation = StatusPresentation(amberCount: 2)
         let image = try #require(StatusIcon.image(for: presentation))
-        for appearance in [NSAppearance.Name.darkAqua, .aqua, .vibrantDark, .vibrantLight] {
+        #expect(!image.isTemplate && image.size.height == idle.size.height && image.size.width > idle.size.width)
+        #expect(image.accessibilityDescription == presentation.accessibility)
+        for (appearance, light) in [(NSAppearance.Name.darkAqua, true), (.aqua, false), (.vibrantDark, true), (.vibrantLight, false)] {
             let pixels = try statusIconPixels(image, appearance: appearance)
-            #expect(pixels.contains { $0.isAmber && $0.x > idle.size.width && $0.y > image.size.height / 2 })
+            let amber = pixels.filter(\.isAmber)
+            let outline = pixels.filter { !$0.isAmber && $0.x < idle.size.width }
+            #expect(!amber.isEmpty && amber.allSatisfy { $0.x > idle.size.width })
+            #expect(!outline.isEmpty)
+            let brightness = outline.map(\.brightness).reduce(0, +) / Double(max(outline.count, 1))
+            #expect(light ? brightness > 0.8 : brightness < 0.3)
+            #expect(pixels.contains { $0.x > idle.size.width + 5 && $0.x < image.size.width - 2 && $0.y > 3 && $0.y < 13 && !$0.isAmber && $0.brightness < 0.3 })
         }
     }
-    @Test func statusObservationRestoresOtherDotAfterSkip() async throws {
+    @Test func otherStatusIconDrawsGreyCountBesideMug() throws {
+        let idle = try #require(StatusIcon.image(for: StatusPresentation(amberCount: 0)))
+        let presentation = StatusPresentation(amberCount: 0, otherCount: 2)
+        let image = try #require(StatusIcon.image(for: presentation))
+        #expect(!image.isTemplate && image.size.height == idle.size.height && image.size.width > idle.size.width)
+        #expect(image.accessibilityDescription == presentation.accessibility)
+        for (appearance, light) in [(NSAppearance.Name.darkAqua, true), (.aqua, false), (.vibrantDark, true), (.vibrantLight, false)] {
+            let pixels = try statusIconPixels(image, appearance: appearance, minimumAlpha: 0.3)
+            #expect(pixels.filter(\.isAmber).isEmpty)
+            let count = pixels.filter { $0.x > idle.size.width }
+            #expect(!count.isEmpty)
+            let brightness = count.map(\.brightness).reduce(0, +) / Double(max(count.count, 1))
+            #expect(light ? brightness > 0.5 : brightness < 0.5)
+        }
+    }
+    @Test func watchedChipAndOtherCountShowTogether() throws {
+        let idle = try #require(StatusIcon.image(for: StatusPresentation(amberCount: 0)))
+        let presentation = StatusPresentation(amberCount: 1, otherCount: 5)
+        let image = try #require(StatusIcon.image(for: presentation))
+        let watched = try #require(StatusIcon.image(for: StatusPresentation(amberCount: 1)))
+        let other = try #require(StatusIcon.image(for: StatusPresentation(amberCount: 0, otherCount: 5)))
+        #expect(!image.isTemplate && image.size.height == idle.size.height)
+        #expect(image.accessibilityDescription == presentation.accessibility)
+        #expect(image.size.width > watched.size.width && image.size.width > other.size.width)
+        for appearance in [NSAppearance.Name.darkAqua, .aqua, .vibrantDark, .vibrantLight] {
+            let pixels = try statusIconPixels(image, appearance: appearance, minimumAlpha: 0.3)
+            let amber = pixels.filter(\.isAmber)
+            let right = try #require(amber.map(\.x).max())
+            #expect(pixels.contains { !$0.isAmber && $0.x > right && $0.x > watched.size.width })
+        }
+    }
+    @Test func statusCountLabelFollowsCap() {
+        for (count, expected) in statusCountCases { #expect(StatusPresentation.countLabel(count) == expected) }
+    }
+    @Test func statusIconPaintsExpectedCountLabels() throws {
+        let idle = try #require(StatusIcon.image(for: StatusPresentation(amberCount: 0)))
+        for (count, expected) in statusCountCases where count > 0 {
+            for watched in [false, true] {
+                let presentation = StatusPresentation(amberCount: watched ? count : 0, otherCount: watched ? 0 : count)
+                let image = try #require(StatusIcon.image(for: presentation))
+                #expect(!image.isTemplate && image.size.height == idle.size.height)
+                #expect(image.accessibilityDescription == presentation.accessibility)
+                let reference = referenceCountImage(expected, watched: watched, mugWidth: idle.size.width, height: image.size.height)
+                let actualPixels = try statusIconPixels(image, appearance: .aqua, minimumAlpha: watched ? 0.6 : 0.3)
+                let expectedPixels = try statusIconPixels(reference, appearance: .aqua, minimumAlpha: watched ? 0.6 : 0.3)
+                let select: (IconPixel) -> Bool = { pixel in
+                    pixel.x > idle.size.width + 3 && (watched ? !pixel.isAmber && pixel.brightness < 0.3 : true)
+                }
+                let actual = normalizedMask(actualPixels.filter(select))
+                let expectedMask = normalizedMask(expectedPixels.filter(select))
+                #expect(!actual.isEmpty && !expectedMask.isEmpty)
+                #expect(actual == expectedMask, "wrong glyph for \(count), watched=\(watched)")
+            }
+        }
+    }
+    @Test func statusIconWidthFollowsDigitsAndCap() throws {
+        let idle = try #require(StatusIcon.image(for: StatusPresentation(amberCount: 0)))
+        for watched in [false, true] {
+            let widths = try [1, 10, 99, 100, 999].map { count in
+                let p = StatusPresentation(amberCount: watched ? count : 0, otherCount: watched ? 0 : count)
+                let image = try #require(StatusIcon.image(for: p))
+                #expect(!image.isTemplate && image.size.height == idle.size.height && image.accessibilityDescription == p.accessibility)
+                #expect(image.size.width == ceil(image.size.width))
+                return image.size.width
+            }
+            #expect(widths[1] > widths[0] && widths[3] > widths[2] && widths[3] == widths[4])
+        }
+    }
+    @Test func statusObservationKeepsOtherCountAfterSkip() async throws {
         let home = FileManager.default.temporaryDirectory.appendingPathComponent("brew-version-synthetic-skip-status-" + UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: home) }
         let listing = Listing(name: PackageName("synthetic-status")!, kind: .formula, version: "2-synthetic")
@@ -1012,9 +1055,9 @@ private struct ReopenCatalogTransport: HTTPTransport {
         var values: [StatusPresentation] = []
         let observation = StatusObservation(controller: controller) { values.append($0) }
         let initial = try #require(values.last)
-        #expect(initial.amberCount > 0 && initial.otherCount > 0 && initial.badge == .watched)
+        #expect(initial.amberCount > 0 && initial.otherCount > 0)
         controller.skip(entry.name)
-        try await waitUntil { values.last?.amberCount == 0 && values.last?.badge == .other }
+        try await waitUntil { values.last?.amberCount == 0 }
         #expect(values.last?.otherCount == initial.otherCount)
         withExtendedLifetime(observation) {}
     }
@@ -1039,14 +1082,45 @@ private struct ReopenCatalogTransport: HTTPTransport {
         #expect(custom.validInterval?.minutes == 47)
     }
 }
+private let statusCountCases: [(Int, String)] = [(0, "0"), (1, "1"), (2, "2"), (10, "10"), (99, "99"), (100, "99+"), (999, "99+")]
+/// Independently paints the expected literal into the same 2x capture grid.
+@MainActor private func referenceCountImage(_ text: String, watched: Bool, mugWidth: CGFloat, height: CGFloat) -> NSImage {
+    let base = NSFont.systemFont(ofSize: 11, weight: .bold)
+    let font = watched ? (base.fontDescriptor.withDesign(.rounded).flatMap { NSFont(descriptor: $0, size: 11) } ?? base) : NSFont.monospacedDigitSystemFont(ofSize: 12, weight: .medium)
+    let measure = CTLineCreateWithAttributedString(NSAttributedString(string: text, attributes: [.font: font]))
+    let measuredWidth = CGFloat(CTLineGetTypographicBounds(measure, nil, nil, nil))
+    let elementWidth = watched ? max(15, measuredWidth + 8) : measuredWidth
+    let size = NSSize(width: ceil(mugWidth + 3 + elementWidth) + 4, height: height)
+    return NSImage(size: size, flipped: false) { _ in
+        let color = watched ? NSColor(white: 0, alpha: 0.88) : NSColor.textColor.withAlphaComponent(0.62)
+        let line = CTLineCreateWithAttributedString(NSAttributedString(string: text, attributes: [.font: font, .foregroundColor: color]))
+        let width = CGFloat(CTLineGetTypographicBounds(line, nil, nil, nil))
+        let x = mugWidth + 3
+        let middle: CGFloat
+        if watched {
+            let rect = NSRect(x: x, y: 1, width: max(15, width + 8), height: 14)
+            NSColor.systemOrange.setFill()
+            NSBezierPath(roundedRect: rect, xRadius: 7, yRadius: 7).fill()
+            middle = rect.midX
+        } else { middle = x + width / 2 }
+        guard let context = NSGraphicsContext.current?.cgContext else { return false }
+        context.textPosition = CGPoint(x: middle - width / 2, y: (watched ? 8 : 7.5) - font.capHeight / 2)
+        CTLineDraw(line, context)
+        return true
+    }
+}
+private func normalizedMask(_ pixels: [IconPixel]) -> Set<String> {
+    guard let x = pixels.map(\.x).min(), let y = pixels.map(\.y).min() else { return [] }
+    return Set(pixels.map { "\(Int((($0.x - x) * 2).rounded())),\(Int((($0.y - y) * 2).rounded()))" })
+}
 private struct IconPixel {
     let x: CGFloat, y: CGFloat, red: Double, green: Double, blue: Double
     var brightness: Double { (red + green + blue) / 3 }
     var isAmber: Bool { red > 0.8 && (0.35...0.8).contains(green) && blue < 0.35 }
 }
 /// Draws `image` into a 2x bitmap the way the menu bar does, with `appearance`
-/// current, and returns its mostly opaque pixels in image points (y up).
-@MainActor private func statusIconPixels(_ image: NSImage, appearance: NSAppearance.Name) throws -> [IconPixel] {
+/// current, and returns pixels above minimumAlpha in image points (y up).
+@MainActor private func statusIconPixels(_ image: NSImage, appearance: NSAppearance.Name, minimumAlpha: Double = 0.6) throws -> [IconPixel] {
     let scale = 2.0, size = image.size
     let rep = try #require(NSBitmapImageRep(bitmapDataPlanes: nil, pixelsWide: Int(size.width * scale), pixelsHigh: Int(size.height * scale),
                                             bitsPerSample: 8, samplesPerPixel: 4, hasAlpha: true, isPlanar: false,
@@ -1061,7 +1135,7 @@ private struct IconPixel {
     var pixels: [IconPixel] = []
     for row in 0..<rep.pixelsHigh {
         for column in 0..<rep.pixelsWide {
-            guard let color = rep.colorAt(x: column, y: row)?.usingColorSpace(.deviceRGB), color.alphaComponent > 0.6 else { continue }
+            guard let color = rep.colorAt(x: column, y: row)?.usingColorSpace(.deviceRGB), color.alphaComponent > minimumAlpha else { continue }
             // Bitmap rows run top-down.
             pixels.append(IconPixel(x: (Double(column) + 0.5) / scale, y: size.height - (Double(row) + 0.5) / scale,
                                     red: color.redComponent, green: color.greenComponent, blue: color.blueComponent))
