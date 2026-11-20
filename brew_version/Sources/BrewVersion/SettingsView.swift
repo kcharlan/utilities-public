@@ -48,9 +48,7 @@ struct SettingsView: View {
                     VStack(alignment: .leading, spacing: 3) {
                         Toggle("Show the count beside the menu bar mug", isOn: Binding(get: { controller.state.badgeOtherUpdates }, set: { controller.setBadgeOtherUpdates($0) }))
                             .disabled(!controller.canSave || !controller.state.showOtherUpdates)
-                        let captionBody = "Shows how many updates this list has, beside the mug. Watched updates always show an amber count."
-                        let captionSuffix = " Never sends notifications."
-                        Text(captionBody + captionSuffix)
+                        Text("Shows how many updates this list has, beside the mug. Watched updates always show an amber count. Never sends notifications.")
                             .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
                     }
                     Picker("Check every", selection: Binding(get: { controller.state.catalogInterval }, set: { controller.setCatalogInterval($0) })) {

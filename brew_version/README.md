@@ -368,7 +368,7 @@ amber chip beside the mug counts watched updates,
 matching the amber dots on their rows. An optional grey second count shows the number
 of entries in Other updates; both counts can appear together, and the watched
 count is independent of the setting. Counts above 99 display as 99+. Opening
-or closing the popover does not dismiss them. The accessibility label reports
+or closing the popover does not dismiss the Other updates count. The accessibility label reports
 watched updates and, when enabled, the number of other updates. The mug outline
 and Other updates count follow the menu bar's light or dark appearance. The
 status item fits its image, widening for the visible counts.
