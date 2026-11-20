@@ -137,8 +137,23 @@ def test_migration_preserves_data_and_invalidates_coverage(tmp_path):
     assert [row[k] for k in ('current_version', 'wanted_version', 'latest_version', 'checked_at')] == ['1.0', '1.5', '2.0', 'synthetic-time']
     assert [row[k] for k in ('severity', 'outdated_state', 'vuln_state')] == ['unchecked'] * 3
     assert row['advisory_id'] is None and row['declared_spec'] is None
+    assert (row['advisories'], row['advisories_complete'], row['update_level']) == ('[]', 1, None)
     assert 'vulnerable' in row['check_note'] and 'SYNTHETIC-ADVISORY' in row['check_note']
     assert 'rescan' in row['check_note'].lower()
+
+
+def test_additive_migration_preserves_existing_declaration_key_advisory(tmp_path):
+    db = tmp_path / 'declaration.db'
+    schema = _LEGACY_SCHEMA_SQL.replace('PRIMARY KEY (repo_id, manager, name)',
+                                        'PRIMARY KEY (repo_id, manager, source_path, name)')
+    with sqlite3.connect(db) as conn:
+        conn.executescript(schema)
+        conn.execute("INSERT INTO repositories (id, name, path, added_at) VALUES ('synthetic-repo', 'synthetic', '/synthetic/repo', 'synthetic-time')")
+        conn.execute("INSERT INTO dependencies (repo_id, manager, source_path, name, advisory_id) VALUES ('synthetic-repo', 'pip', 'requirements.txt', 'synthetic-pkg', 'SYNTHETIC-LEGACY')")
+    git_dashboard.run_migrations(db)
+    row, = _rows(db)
+    assert row['advisory_id'] == 'SYNTHETIC-LEGACY'
+    assert (row['advisories'], row['advisories_complete'], row['update_level']) == ('[]', 1, None)
 
 
 def test_migration_keeps_first_normalized_collision(tmp_path):

@@ -76,6 +76,108 @@ def _npm_audit_output(vulnerabilities: dict) -> str:
     return json.dumps({"vulnerabilities": vulns})
 
 
+@pytest.mark.parametrize('via,extra,expected,complete', [
+    ([{'url': 'https://github.com/advisories/GHSA-abcd-1234-efgh', 'source': 42}], {},
+     [{'id': 'GHSA-abcd-1234-efgh', 'aliases': ['npm:42']}], True),
+    (['synthetic-child', 'synthetic-child'], {'synthetic-child': [{'source': '42'}]},
+     [{'id': 'npm:42', 'aliases': []}], True),
+    (['synthetic-child'], {'synthetic-child': ['synthetic-widget', {'source': 42}]},
+     [{'id': 'npm:42', 'aliases': []}], False),
+    ([{'source': True}], {}, [], False),
+    ([{'source': 42}, 'synthetic-missing'], {}, [{'id': 'npm:42', 'aliases': []}], False),
+])
+def test_node_advisory_attribution_is_row_local(tmp_path, monkeypatch, via, extra, expected, complete):
+    _write_npm_lock(tmp_path, {'synthetic-widget': '1.0.0', 'synthetic-clean': '1.0.0'})
+    entries = {'synthetic-widget': via, **extra}
+    vulnerabilities = {name: {'name': name, 'severity': 'high', 'via': causes,
+                              'nodes': [f'node_modules/{name}']} for name, causes in entries.items()}
+    monkeypatch.setitem(gd.TOOLS, 'npm', 'synthetic-npm')
+    with patch('subprocess.run', return_value=_mock_proc(json.dumps({'vulnerabilities': vulnerabilities}), 1)):
+        rows = gd.check_node_vulns(tmp_path, [_make_npm_dep('synthetic-widget'), _make_npm_dep('synthetic-clean')])
+    assert rows[0]['advisories'] == expected
+    assert rows[0]['advisories_complete'] is complete
+    assert rows[0]['vuln_state'] == ('checked' if complete else 'unchecked')
+    assert gd.derive_severity(rows[0]) == 'vulnerable'
+    assert rows[1]['vuln_state'] == 'checked'
+
+
+@pytest.mark.parametrize('unresolved', ['mixed_unidentified', 'mixed_cycle'])
+@pytest.mark.parametrize('repository_accepts', [True, False])
+def test_mixed_unresolved_npm_exceptions_persist_vulnerable(tmp_path, monkeypatch, unresolved, repository_accepts):
+    import asyncio
+    import aiosqlite
+    _write_npm_lock(tmp_path, {'synthetic-widget': '1.0.0'})
+    causes = [{'source': 42}]
+    extra = {}
+    if unresolved == 'mixed_unidentified':
+        causes.append({'title': 'synthetic unresolved cause'})
+    else:
+        causes.append('synthetic-cycle')
+        extra['synthetic-cycle'] = ['synthetic-cycle']
+    entries = {'synthetic-widget': causes, **extra}
+    vulnerabilities = {name: {'name': name, 'severity': 'high', 'via': via,
+                              'nodes': [f'node_modules/{name}']} for name, via in entries.items()}
+    monkeypatch.setitem(gd.TOOLS, 'npm', 'synthetic-npm')
+    with patch('subprocess.run', return_value=_mock_proc(json.dumps({'vulnerabilities': vulnerabilities}), 1)):
+        row = gd.check_node_vulns(tmp_path, [_make_npm_dep('synthetic-widget')])[0]
+    row.update(source_path='package.json', declared_spec='*', latest_version='2.0.0', update_level='major', outdated_state='checked')
+    row = gd.finalize_dep_health([row])[0]
+    common = dict(manager='npm', package='synthetic-widget', reason='synthetic')
+    entries = [gd.DepExceptionEntry('hold', 1, '.gitfleet.toml', '', latest='2.0.0', **common),
+               gd.DepExceptionEntry('advisory', 1, '.gitfleet.toml', '', version='1.0.0', ids=['npm:42'], **common),
+               gd.DepExceptionEntry('unchecked', 1, '.gitfleet.toml', '', declared='*' if repository_accepts else '!=*', checks=['vulnerability'], **common)]
+    file = gd.DepExceptionFile('.gitfleet.toml', '', 'tracked', entries=entries)
+    gd.apply_dep_exceptions([row], [file])
+    monkeypatch.setitem(gd.TOOLS, 'npm', None)
+    gd.apply_ignored_tools([row], {'npm'})
+    assert row['advisories_complete'] is False and row['severity'] == 'vulnerable'
+    assert row['vuln_state'] == 'accepted' and row['acceptances']
+    monkeypatch.setattr(gd, 'analyze_repo_deps', lambda _: gd.DepAnalysis([row], False, [], [], [file]))
+    async def persist():
+        async with aiosqlite.connect(':memory:') as db:
+            await db.executescript(gd._SCHEMA_SQL)
+            await db.execute('INSERT INTO repositories (id,name,path,added_at) VALUES (?,?,?,?)', ('synthetic', 'synthetic', str(tmp_path), '2026-01-01'))
+            await gd.run_dep_scan_for_repo(db, 'synthetic', str(tmp_path))
+            cursor = await db.execute('SELECT dep_exceptions FROM working_state WHERE repo_id = ?', ('synthetic',))
+            inventory = json.loads((await cursor.fetchone())[0])
+            return (await gd._fetch_repo_deps('synthetic', db))[0]['packages'][0], inventory
+    saved, inventory = asyncio.run(persist())
+    assert saved['severity'] == 'vulnerable' and saved['advisories_complete'] is False
+    assert saved['advisory_id'] == 'npm:42'
+    assert saved['advisories'] == [{'id': 'npm:42', 'aliases': []}]
+    assert {a['kind'] for a in saved['acceptances']} == {'hold', 'unchecked' if repository_accepts else 'ignored-tool'}
+    advisory = next(e for e in inventory[0]['entries'] if e['kind'] == 'advisory')
+    assert advisory['status'] == 'stale'
+    assert advisory['detail']['unused'][0]['reason'] == 'vulnerability check did not complete'
+
+
+def test_empty_npm_cause_is_structurally_rejected(tmp_path, monkeypatch):
+    _write_npm_lock(tmp_path, {'synthetic-widget': '1.0.0'})
+    audit = json.loads(_npm_audit_output({'synthetic-widget': {'severity': 'high'}}))
+    audit['vulnerabilities']['synthetic-widget']['via'] = [{}]
+    monkeypatch.setitem(gd.TOOLS, 'npm', 'synthetic-npm')
+    with patch('subprocess.run', return_value=_mock_proc(json.dumps(audit), 1)):
+        row = gd.check_node_vulns(tmp_path, [_make_npm_dep('synthetic-widget')])[0]
+    assert row['vuln_state'] == 'unchecked' and not row.get('advisory_id')
+
+
+def test_node_deep_via_chain_does_not_abort_other_rows(tmp_path, monkeypatch):
+    _write_npm_lock(tmp_path, {'synthetic-0': '1.0.0', 'synthetic-clean': '1.0.0'})
+    vulnerabilities = {}
+    for index in range(1200):
+        name = f'synthetic-{index}'
+        via = [{'source': index}]
+        if index < 1199:
+            via.append(f'synthetic-{index + 1}')
+        vulnerabilities[name] = {'name': name, 'severity': 'high', 'via': via,
+                                 'nodes': [f'node_modules/{name}']}
+    monkeypatch.setitem(gd.TOOLS, 'npm', 'synthetic-npm')
+    with patch('subprocess.run', return_value=_mock_proc(json.dumps({'vulnerabilities': vulnerabilities}), 1)):
+        rows = gd.check_node_vulns(tmp_path, [_make_npm_dep('synthetic-0'), _make_npm_dep('synthetic-clean')])
+    assert rows[0]['advisories'] == [{'id': f'npm:{index}', 'aliases': []} for index in range(1200)]
+    assert rows[0]['vuln_state'] == rows[1]['vuln_state'] == 'checked'
+
+
 # ── check_node_outdated ────────────────────────────────────────────────────────
 
 
@@ -287,7 +389,7 @@ def test_check_node_vulns_one_vulnerable_dep(tmp_path):
             result = gd.check_node_vulns(tmp_path, [dep])
         r = result[0]
         assert r["severity"] == "vulnerable"
-        assert r["advisory_id"] == "npm:lodash"
+        assert r["advisory_id"] == "npm:1234"
     finally:
         gd.TOOLS["npm"] = None
 
@@ -380,7 +482,7 @@ def test_check_node_deps_full_pipeline(tmp_path):
         by_name = {r["name"]: r for r in result}
         assert by_name["axios"]["severity"] == "outdated"
         assert by_name["lodash"]["severity"] == "vulnerable"
-        assert by_name["lodash"]["advisory_id"] == "npm:lodash"
+        assert by_name["lodash"]["advisory_id"] == "npm:1234"
     finally:
         gd.TOOLS["npm"] = None
 
@@ -616,6 +718,19 @@ def test_node_audit_same_name_nested_finding_does_not_taint_direct_node(tmp_path
     assert row['vuln_state'] == 'checked'
     assert row['severity'] == 'ok'
     assert row['advisory_id'] is None
+
+
+def test_node_mixed_direct_and_nested_ranges_remain_candidate_evidence(tmp_path, monkeypatch):
+    _write_npm_lock(tmp_path, {'synthetic-widget': '2.0.0'})
+    audit = json.loads(_npm_audit_output({'synthetic-widget': {'severity': 'high'}}))
+    finding = audit['vulnerabilities']['synthetic-widget']
+    finding['nodes'].append('node_modules/synthetic-parent/node_modules/synthetic-widget')
+    finding['via'] = [{'source': 1, 'range': '<1'}, {'source': 2, 'range': '>=2'}]
+    monkeypatch.setitem(gd.TOOLS, 'npm', 'synthetic-npm')
+    with patch('subprocess.run', return_value=_mock_proc(json.dumps(audit), 1)):
+        row = gd.check_node_vulns(tmp_path, [dict(_make_npm_dep('synthetic-widget'), current_version='2.0.0')])[0]
+    assert row['advisories'] == [{'id': 'npm:1', 'aliases': []}, {'id': 'npm:2', 'aliases': []}]
+    assert row['vuln_state'] == 'checked'
 
 
 @pytest.mark.parametrize('nodes', [None, [], 'node_modules/synthetic-widget', [42]])

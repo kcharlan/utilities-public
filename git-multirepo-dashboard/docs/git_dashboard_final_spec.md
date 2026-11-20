@@ -52,6 +52,7 @@ Runtime paths are resolved once when the module loads:
 | --- | --- | --- |
 | Runtime home | `~/.git_dashboard` | `GIT_DASHBOARD_HOME` |
 | Database | `<runtime-home>/dashboard.db` | `GIT_DASHBOARD_DB` |
+| Machine config | `<runtime-home>/config.toml` | Runtime home override |
 
 The runtime home contains mutable state only. SQLite is initialized idempotently and uses WAL mode. Startup applies additive column migrations followed by the transactional 0.2.0 dependency-key rebuild when needed. The rebuild preserves version values and timestamps, normalizes Python names, coalesces missing or NULL sources to an empty string, and keeps the first row by rowid on a normalized-key collision. Legacy severity and advisory values move into a rescan note; active advisory is cleared and severity/outdated/vulnerability coverage become unchecked. Already migrated rows are unchanged.
 
@@ -62,7 +63,7 @@ Startup performs these steps:
 1. Parse `--port`, `--no-browser`, `--scan`, `--trust-repo-tools` (enables the Bundler and cargo checks, which are skipped by default), and the backward-compatible no-op `--yes` flag.
 2. Require Python 3.12 or newer and Git in `PATH`.
 3. Discover optional ecosystem tools and require at least one of `npm`, `go`, `cargo`, `bundle`, `composer`, or `pip-audit`. `govulncheck`, `cargo-audit`, `cargo-outdated`, and `bundler-audit` are looked up only when their parent tool is present.
-4. Create and migrate the SQLite database, then mark scans left `running` by an earlier process as failed.
+4. Create the runtime home and an exclusive private machine-config template if absent, then create and migrate the SQLite database and mark scans left `running` by an earlier process as failed. Existing config is preserved, including invalid files, whose errors are reported.
 5. If `--scan PATH` is supplied, recursively discover and register repositories below the path. A path that is not a directory prints a warning and startup continues.
 6. Select a free loopback port, optionally schedule browser launch, register signal handlers, and start uvicorn.
 
@@ -93,7 +94,7 @@ One latest quick-scan snapshot per repository:
 - latest commit hash, message, and date
 - check timestamp
 - independent `quick_scan_error`, `scan_error`, and `dep_check_error` fields
-- JSON-text `missing_dep_tools` (tool/description objects) and `dep_manifests` (manifest inventory), returned as parsed arrays by repository detail; fleet returns missing tools
+- JSON-text `missing_dep_tools` and `ignored_dep_tools` (tool/description objects), `dep_manifests` (manifest inventory), and `dep_exceptions` (exception inventory), returned as parsed arrays by repository detail; fleet returns missing tools and the exception warning count
 
 Quick scans preserve dependency metadata. Dependency scans persist metadata and dependency rows in one savepoint, including empty results. A write failure rolls back the scan snapshot before re-raising, so a later caller commit cannot publish partial coverage. Releasing the savepoint preserves an existing caller-owned transaction.
 
@@ -123,7 +124,7 @@ Dependency declarations keyed by `(repo_id, manager, source_path, name)`:
 - declared specification text and current, wanted, and latest versions
 - severity, defaulting to `unchecked`
 - independent `outdated_state` and `vuln_state`, defaulting to `unchecked`
-- active advisory identifier, check note, and check timestamp
+- active advisory identifier, ordered JSON advisory records with aliases, attribution-complete flag, independent update level, check note, and check timestamp
 
 Parsing retains the first repeated identity within a manifest and preserves declarations from different manifests. Python package identity lowercases names and replaces runs of hyphens, underscores, and dots with a hyphen. Other manager names and fallback reference identifiers retain their spelling. The dependency API exposes the declared text, row timestamp, and coverage fields alongside the versions and manifest attribution.
 
@@ -167,7 +168,7 @@ Results update `working_state` without erasing error fields created by broader s
 
 A failed status command records its error and leaves the dirty flag and counts unknown; the card shows a status-failed badge instead of Clean. A later successful quick scan clears that error. Worktree deletions and type changes count as modified files.
 
-Repository `dep_summary.unchecked` and fleet `kpis.unchecked_deps` count rows unless `outdated_state` is `checked` or `floating` and `vuln_state` is `checked`. Findings do not override incomplete coverage. Outdated counts include `outdated` and `major` severities; vulnerable counts use `vulnerable` severity.
+Repository `dep_summary.unchecked` and fleet `kpis.unchecked_deps` count rows unless `outdated_state` is `checked`, `floating`, or `accepted` and `vuln_state` is `checked` or `accepted`. Findings do not override incomplete coverage. `dep_summary.accepted` and `kpis.accepted_deps` count rows with acceptance records independently of severity. Outdated counts include `outdated` and `major` severities; vulnerable counts use `vulnerable` severity.
 
 ### Full history
 
@@ -186,6 +187,8 @@ The background task processes repositories sequentially. A full scan runs histor
 A full scan stores a missing repository path or a per-repository failure in `scan_error` and clears it on success; a dependency scan skips missing paths and only logs failures. Neither prevents remaining repositories from being attempted, and `repos_scanned` counts successes. The scan is `completed` when the fleet is empty or at least one repository succeeds; total failure is `failed`.
 
 ## Dependency model
+
+Machine config uses `schema = 1` and an optional `[dependencies]` table with `ignore_missing_tools`, an array of known tool display names. It is loaded at each dependency scan. After repository exceptions, each missing ignored tool accepts only its directly gated unchecked dimensions, retaining a machine-config acceptance record; installed tools have no effect. Invalid configuration accepts nothing and sets an analysis error. Availability is detected at startup, with auxiliary tools probed only when their parent is present.
 
 Manifest discovery walks through depth three and skips hidden, virtual-environment, generated, and vendored directories, symbolic links, and files larger than 2 MiB (`MAX_DEP_FILE_SIZE`). It recognizes:
 
@@ -210,9 +213,11 @@ Parsing is intentionally lightweight:
 - Bundler recognizes conventional `gem` declarations.
 - Composer reads require and require-dev while excluding PHP/platform extensions.
 
-Dependency parsing and blocking health checks run in `analyze_repo_deps` through `asyncio.to_thread`, keeping API and SSE work responsive. The analyzer returns enriched declarations, an incomplete-analysis flag, missing tool objects, and manifest inventory. The flag, persisted as `dep_check_error`, is set by a manifest error, a checker crash, a missing tool for a discovered manager, or any declaration left unchecked in either state. A checker crash invalidates coverage only for its manager; other managers continue.
+Dependency parsing and blocking health checks run in `analyze_repo_deps` through `asyncio.to_thread`, keeping API and SSE work responsive. The analyzer returns enriched declarations, an incomplete-analysis flag, missing tool objects, manifest inventory and exception inventory. The flag, persisted as `dep_check_error`, is set by a manifest error, invalid exception file, checker crash, missing tool for a discovered manager, or any declaration still unchecked after acceptances. A checker crash invalidates coverage only for its manager; other managers continue.
 
-Coverage is independent: `outdated_state` is `checked`, `floating`, or `unchecked`; `vuln_state` is `checked` or `unchecked`. Exit status, result shape, and row evidence must support a checked result. Missing evidence gets a retained reason. Advisory evidence has highest severity precedence, followed by proven major/outdated results; remaining incomplete coverage yields `unchecked`, and complete clean coverage yields `ok`. Finalization is idempotent and preserves checker-selected floating and direct-reference display values. Only exact PEP 440 Python parser versions and Go parser versions default current versions; other managers obtain concrete versions from tools.
+Coverage is independent: `outdated_state` is `checked`, `floating`, `accepted`, or `unchecked`; `vuln_state` is `checked`, `accepted`, or `unchecked`. Exit status, result shape, and row evidence must support a checked result. Missing evidence gets a retained reason. Uncovered advisory evidence has highest severity precedence, followed by unheld major/outdated results; remaining incomplete coverage yields `unchecked`, accepted exceptions yield `accepted`, and complete clean coverage yields `ok`. Repository entries select the deepest matching directory and earliest entry for each dimension; a failing winner blocks fallback. Each acceptance records its reason and effect, and every entry receives an evaluated status. Finalization is idempotent and preserves checker-selected floating and direct-reference display values. Only exact PEP 440 Python parser versions and Go parser versions default current versions; other managers obtain concrete versions from tools.
+
+Advisories are ordered `{id, aliases}` records; repeated IDs merge aliases in first-seen order. Python retains all validated pip-audit records. Go joins OSV aliases to findings regardless of stream order and attributes findings to the evaluated module version. Other audit producers retain their IDs with empty aliases. npm follows `via` chains, preserving GitHub advisory IDs and npm source aliases; unresolved causes or cycles leave known IDs intact but mark that row's attribution incomplete and vulnerability coverage unchecked. A proven finding with incomplete attribution remains vulnerable. npm's package-level candidate evidence does not prove each advisory affects the direct version; direct lock/version and affected-node guards still apply. The independently retained update level survives advisory severity changes. Historical declaration-key rows retain their single advisory ID, labeled legacy until rescan; older-key rebuilds retain their existing migration behavior.
 
 Cargo and Bundler tools can run repository-controlled code, so without `--trust-repo-tools` neither their outdated nor their audit commands run: those declarations are still parsed and stored, unchecked in both states with a `Skipped: enable --trust-repo-tools …` note. When a non-Python tool is not installed its check is skipped and finalization records `<state>: no evaluation evidence`; a missing pip-audit records `pip-audit: tool unavailable`. The commands are `npm outdated --json`, `npm audit --json`, `go list -m -u -json all`, `govulncheck -json ./...`, `cargo-outdated --format json`, `cargo-audit --json`, `bundle outdated --parseable`, `bundler-audit check --format json`, `composer outdated --all --format=json`, and `composer audit --format=json`. Each times out after 120 seconds, except govulncheck (300); PyPI requests time out after 15 seconds.
 
@@ -223,6 +228,14 @@ Go `list` needs a valid row for the declaration; absent and replaced modules rem
 The shared npm lock reader selects `npm-shrinkwrap.json` before `package-lock.json`, using the same layouts 1–3 and direct-node parser for outdated version evidence and audit attribution. An unreadable, malformed or unsupported selected shrinkwrap returns no lock evidence and never silently falls back to package-lock. See [npm lock precedence](https://docs.npmjs.com/cli/v11/configuring-npm/npm-shrinkwrap-json/), the [virtual-tree audit implementation](https://raw.githubusercontent.com/npm/cli/latest/workspaces/arborist/lib/arborist/index.js), and [audit affected-node serialization](https://raw.githubusercontent.com/npm/cli/latest/workspaces/arborist/lib/vuln.js).
 
 `parse_deps_for_repo(repo_path, manifests_out=None)` populates an inventory of `{path, kind, dependencies, error}` records. Paths are resolved repository-relative POSIX paths. A requirements include must resolve to a regular file inside the repository no larger than 2 MiB: an include that escapes the repository is skipped without an inventory record, and a missing, non-regular, or oversized one records an error. Requirements recursion shares resolved-path inventory and visited state: declarations retain their physically declaring `source_file`, each file counts only its own declarations, and empty, included, and failed files survive. `dep_manifests` persists the inventory atomically with coverage; errors set `DepAnalysis.any_error`. Empty files need no dependency group. Python outdated checks call the PyPI JSON API; other ecosystems use the tools listed in the README.
+
+### Exception discovery snapshot
+
+Dependency discovery collects regular, non-symlink `.gitfleet.toml` files within the same walk boundary. Each requires integer `schema = 1`; invalid files are reported and apply no entries. Excludes match POSIX component patterns relative to their file, with globstar and ancestor-prefix matching. Expired excludes do not apply. Skipped manifests retain zero-count inventory records and their deciding file; included requirements are checked after their boundary guard. Script candidates must contain leading PEP 723 metadata before exclusion can consume a pattern. The deepest matching exception file and earliest exclude decide attribution.
+
+The `working_state.dep_exceptions` JSON inventory persists with the dependency scan snapshot. Each file records its escaped display path, Git status, error, and entries with kind, per-kind index, manager, package, reason, expiry, status and detail. The repository detail API returns this inventory and its warning count; fleet rows also expose the warning count. Paths are escaped once before persistence, retaining distinct filesystem identities while keeping SQLite and JSON UTF-8 safe. The status API's dependency scope describes exception discovery.
+
+Previously saved paths remain readable as stored; the next dependency scan writes the escaped display form. Migration does not rewrite old snapshots.
 
 ### Python health evaluation and scope
 
@@ -241,7 +254,7 @@ The local SPA consumes these JSON and streaming endpoints:
 | Method | Path | Purpose |
 | --- | --- | --- |
 | GET | `/` | Embedded SPA |
-| GET | `/api/status` | Version and ecosystem-tool paths |
+| GET | `/api/status` | Version, ecosystem-tool paths, and current machine config with path, error and ignored-tool list |
 | GET | `/api/browse` | Local directory listing |
 | GET | `/api/repos` | Registry listing without a scan |
 | POST | `/api/repos` | Discover/register below a path |
@@ -261,7 +274,11 @@ The local SPA consumes these JSON and streaming endpoints:
 | GET | `/api/analytics/allocation` | Per-repository commit series |
 | GET | `/api/analytics/dep-overlap` | Identities with at least two manifest declaration uses |
 
-`/api/status` also returns `dependency_scope`, the report's scan-boundary metadata. Discovery depth and skipped directories come from the scanner's runtime constants. `/api/repos/{id}/deps` and its scan endpoint retain the grouped-list response, with declared specifications, versions, independent states, notes and timestamps on each package.
+`/api/status` also returns `dependency_scope`, the report's scan-boundary metadata. Its `machine_config` is current when requested, not scan-time provenance; Check Now applies current config. Persisted `ignored_dep_tools` and acceptances describe the saved scan. Discovery depth and skipped directories come from the scanner's runtime constants. `/api/repos/{id}/deps` and its scan endpoint retain the grouped-list response, with declared specifications, versions, independent states, notes and timestamps on each package. Packages also expose `advisories` as a decoded list, `advisories_complete` as a boolean, and `update_level` independently of headline severity.
+
+Repository detail exposes `working_state.dep_exceptions` and `exception_warning_count`. Fleet rows expose the same warning count independently of dependency rows. The count sums untracked, ignored or unknown files, file errors, and entries whose status is not applied; warnings alone do not make analysis incomplete.
+
+Dependency rows expose `acceptances`, each with its kind, exception file, entry index, reason, expiry and effect detail. Paths are escaped once when the scan is stored; API readers return the stored display values.
 
 Unknown repository IDs return 404. `POST /api/repos` takes `{"path"}` and returns `{registered, repos}`, or 400 for a path that is not a directory; `PATCH` takes `{"path"}` and returns 400 unless it is an existing directory; `DELETE` returns 204. `/history`, `/api/analytics/heatmap`, and `/api/analytics/allocation` take `days` (defaults 90, 365, and 90). `/commits` takes `page`, `per_page` (default 25, clamped to 1–100), and an optional `branch`; without one it lists all refs. A branch must be in the stored branch snapshot, otherwise the response is 400 `Unknown branch`; it is passed to Git after `--end-of-options` and before `--`, so it cannot be read as an option or a path. `/commits` also returns 404 when the repository path is missing.
 
@@ -282,15 +299,15 @@ Important interaction contracts:
 - Dependency findings can be exported entirely in the browser as Markdown or JSON.
 - Offline asset loading and JavaScript errors are covered by the separate Playwright suite.
 
-`summarizeDeps(groups, manifests)` returns declaration and inventory manifest counts, individual `ok`, `outdated`, `major`, and `vulnerable` severity counts, state-based `unchecked`, and `fullyChecked`. A fully checked declaration has outdated state `checked`/`floating` and vulnerability state `checked`. Inventory counts include empty and failed files, independent of nonempty groups.
+`summarizeDeps(groups, manifests)` returns declaration and inventory manifest counts, individual `ok`, `outdated`, `major`, and `vulnerable` severity counts, accepted row count, state-based `unchecked`, and `fullyChecked`. A fully checked declaration has outdated state `checked`/`floating`/`accepted` and vulnerability state `checked`/`accepted`. Inventory counts include empty and failed files, independent of nonempty groups.
 
-The Dependencies tab fetches detail metadata and application status on mount and after Check Now. It displays the declared text, current version or explicitly labeled floating evaluated selection, both check states, headline status and retained reasons. Partially checked findings appear in both Attention Required and Not Checked. An incomplete banner also covers missing tools, manifest errors and persisted analysis errors. The clean banner requires a nonempty declaration set, no findings, complete check states, and complete analysis metadata. Fleet KPIs, per-repository summaries and card coverage titles expose Not Checked independently of findings. Cards consume the independent `dep_check_error` signal and show an Analysis error label. Per-Repo Health includes repositories with analysis errors or missing tools even with no declaration rows; its badges retain those reasons for fully checked rows too. Repository-level errors never manufacture unchecked declarations or alter the state-based KPI predicate.
+The Dependencies tab fetches detail metadata and application status on mount and after Check Now. It displays the declared text, current version or explicitly labeled floating evaluated selection, both check states, headline status and retained reasons. Partially checked findings appear in both Attention Required and Not Checked; accepted rows can overlap either. Accepted Exceptions shows entry identities, reasons and effects. Exception Files shows Git status and entry details; manifests identify exclusions. Current config errors include their display path. An incomplete banner also covers missing tools, manifest errors and persisted analysis errors. The clean banner requires a nonempty declaration set, no findings, complete check states, and complete analysis metadata. Fleet KPIs, per-repository summaries and card coverage titles expose Not Checked independently of findings. Cards show accepted counts and exception warnings. Per-Repo Health includes warning-only repositories even with no declaration rows. Repository-level errors never manufacture unchecked declarations or alter the state-based KPI predicate.
 
 ### Downloaded dependency reports
 
-JSON downloads have `{format: "git-fleet-dependency-report", format_version: 2, generated_at, git_fleet_version, repo: {id, name}, missing_tools, summary, scope, manifests, groups}`. Only this downloaded envelope is versioned; the dependency API remains a grouped list. Scope documents Python declaration-evaluation limits, direct-reference exclusions, runtime discovery limits, PEP 723 prelude handling and dependency-group boundaries.
+JSON downloads have `{format: "git-fleet-dependency-report", format_version: 3, generated_at, git_fleet_version, repo: {id, name}, missing_tools, ignored_tools, machine_config, exceptions, summary, scope, manifests, groups}`. Machine config is labeled current; ignored tools and acceptances are saved scan evidence. Report status labels legacy IDs for rescan while retaining the original fields. Only this downloaded envelope is versioned; the dependency API remains a grouped list.
 
-Markdown reports include repository/report identity, generation time, app version, newest declaration check timestamp (or No declaration check timestamp available), coverage, missing tools and Scope. Attention Required, Not Checked and All Dependencies tables retain declared specifications, version displays, both check states, headline statuses, sources and reasons. Manifests Scanned lists inventory paths, kinds, declaration counts and errors. Empty inventories and declaration sets remain exportable.
+Markdown reports include repository/report identity, generation time, app version, newest declaration check timestamp, coverage, current machine config, saved ignored tools and Scope. Attention Required, Not Checked, Accepted Exceptions and All Dependencies retain findings and exception details. Exception Files lists entries and their statuses. Manifests Scanned lists inventory paths, errors and exclusion attribution. Path cells use numeric entities so rendered text preserves display paths. Empty inventories and declaration sets remain exportable.
 
 ## Testing contracts
 
@@ -301,3 +318,9 @@ UV_PYTHON_DOWNLOADS=never tools/run_project_tests.py git_fleet
 ```
 
 The E2E server must use a temporary database and suppress normal browser launch. See `README.md` for environment setup.
+
+### Exception authoring and snapshot endpoint
+
+Entries are arrays of tables. `hold` requires `manager`, `package`, `reason`, and exactly one of `latest` or `latest_below`; `advisory` requires `manager`, `package`, `reason`, `version`, and `ids`; `unchecked` requires `manager`, `package`, `reason`, and `declared`; `exclude` requires `paths` and `reason`. All kinds accept `expires`; the first three accept `paths`, and `unchecked` accepts `checks`. Managers are `pip`, `npm`, `gomod`, `cargo`, `bundler`, and `composer`. Scalar fields are nonempty strings except `expires`, an unquoted TOML date. `paths`, `ids`, and `checks` are nonempty arrays of nonempty strings. Advisory IDs match reported IDs or aliases. Checks contain only `outdated` and `vulnerability`, and default to both. Unknown fields invalidate the file.
+
+`GET /api/repos/{id}/deps/snapshot` returns `{repo, groups}` from one SQLite read transaction. The Dependencies tab uses that saved snapshot on mount and after Check Now; `/api/status` is fetched separately and describes current machine configuration, not saved scan provenance. The existing grouped-list endpoints remain unchanged.

@@ -56,6 +56,8 @@ When Git status fails, the card shows a **status failed** badge with the error i
 
 **Not Checked** counts declarations whose outdated or vulnerability check is incomplete, including declarations that also have a vulnerability or update finding. Outdated totals include minor and major update severities. Card coverage dots explain unchecked counts and missing tools; the fleet Dependencies view shows the same coverage per repository.
 
+Accepted declarations are counted independently of their headline severity. Accepted coverage satisfies the corresponding check, while other uncovered findings remain visible. Cards show accepted counts and exception warnings; Per-Repo Health includes an Accepted column and warning-only repositories without dependency rows.
+
 The **Scan Dir** browser can navigate local directories and register repositories without a command-line path. Discovery skips hidden, generated, virtual-environment, and dependency directories and does not descend into a repository after finding its `.git` entry. Within one discovery, linked worktrees are grouped by their shared Git directory; the main checkout is preferred when found, otherwise the first linked worktree is kept.
 
 ### Full scan
@@ -79,11 +81,15 @@ Each repository has four views:
 - **Branches** — local branches with default/stale status and live commits-ahead and diff statistics against the default branch.
 - **Commits** — paginated live Git history for all refs or a selected branch.
 
+Repository `.gitfleet.toml` entries can hold a specific update, accept reported advisory IDs, or accept an unchecked dimension for a specific declaration. They are evaluated against each scan; their reason, source and status remain available in the dependency API and exception inventory. A hold does not hide a separate vulnerability, and an advisory acceptance does not hide a pending update.
+
 If a registered repository moves, its path can be repaired from the detail view. Removing a repository cascades to its stored working state, history, branches, and dependency rows.
 
-The Dependencies view reloads coverage metadata and the application version on mount and after **Check Now**. It shows declared specifications, evaluated versions (floating selections are not installed versions), both check states, and reasons. **Not Checked** includes partially checked findings. The clean banner requires every declaration to be fully checked and no missing tools or inventory errors. **Manifests Scanned** includes empty and failed files, independently of dependency groups; exports remain available with an empty declaration set.
+The Dependencies view reloads coverage metadata and the application version on mount and after **Check Now**. It shows declared specifications, evaluated versions (floating selections are not installed versions), both check states, advisory evidence, and reasons. **Not Checked** includes partially checked findings but excludes accepted coverage. **Accepted Exceptions** can overlap Attention Required or Not Checked when another finding remains. Exception Files lists Git status, entry status and warnings; Manifests Scanned shows excluded attribution. Warnings alone do not make coverage incomplete. The clean banner requires every declaration to be fully checked or accepted and no missing tools or analysis errors. Exports include the saved scan's acceptances and ignored tools. The machine config is current at view refresh; Check Now applies current config. Exports remain available with an empty declaration set.
 
-Markdown reports contain repository identity, generation time, application version, newest declaration check timestamp (explicitly unavailable when no declaration timestamps exist), coverage, missing tools, scope, and the Attention Required, Not Checked, All Dependencies, and Manifests Scanned sections. JSON downloads use `git-fleet-dependency-report` format version 2 with `generated_at`, `git_fleet_version`, `repo`, `missing_tools`, `summary`, `scope`, `manifests`, and `groups`. Scope describes declaration resolution limits, reference exclusions, traversal limits and dependency-group boundaries. The ordinary dependency API remains a grouped list.
+Dependency results retain each advisory identifier and its aliases, plus the independently computed update level. npm attribution follows `via` chains and retains known IDs even when a cause cannot be identified; that declaration remains vulnerable with its vulnerability check marked incomplete. Older stored single-ID findings are labeled legacy and require a rescan for complete evidence.
+
+Markdown reports contain repository identity, generation time, application version, newest declaration check timestamp (explicitly unavailable when no declaration timestamps exist), coverage, missing tools, scope, and the Attention Required, Not Checked, Accepted Exceptions, Exception Files, All Dependencies, and Manifests Scanned sections. JSON downloads use `git-fleet-dependency-report` format version 3 with `generated_at`, `git_fleet_version`, `repo`, `missing_tools`, `ignored_tools`, current `machine_config`, `exceptions`, `summary`, `scope`, `manifests`, and `groups`. Scope describes declaration resolution limits, reference exclusions, traversal limits and dependency-group boundaries. The ordinary dependency API remains a grouped list.
 
 ### Analytics
 
@@ -113,6 +119,10 @@ Fleet cards and Per-Repo Health retain analysis errors and missing tools even wh
 The shared npm lock reader honors [`npm-shrinkwrap.json` precedence](https://docs.npmjs.com/cli/v11/configuring-npm/npm-shrinkwrap-json/) over `package-lock.json`, using the same supported layouts for version and audit evidence. An invalid or unsupported selected shrinkwrap cannot fall back to package-lock audit coverage.
 
 Go outdated coverage requires its own `go list` module row. Vulnerability checks consume the current [govulncheck streaming protocol](https://pkg.go.dev/golang.org/x/vuln/internal/govulncheck): matching module/version entries in the SBOM establish evaluation, and matching findings establish advisories. OSV database entries alone are not findings. The historical `Vulns` object is unsupported. Composer requests [`outdated --all`](https://getcomposer.org/doc/03-cli.md#outdated) so clean packages have explicit comparison rows. Cargo and Bundler findings-only reports do not establish evaluation of absent declarations; those rows conservatively remain unchecked. Cargo/Bundler audit findings are matched to the current version when known; their clean reports and Composer's clean audit report lack per-declaration evaluation evidence and remain unchecked. Non-comparable versions and unsupported report shapes also retain unchecked reasons.
+
+### Exception files
+
+A repository may place `.gitfleet.toml` in a scanned directory to describe dependency exceptions. Files use `schema = 1` and arrays of `hold`, `advisory`, `unchecked`, or `exclude` tables. An exclude supplies `paths` and a `reason`, with an optional TOML date `expires`. Paths are relative to the exception file, use POSIX components and support `*`, `?`, and `**`; matching an ancestor also matches its descendants. Expired entries have no effect. An invalid file has no effect and is reported as an analysis error. Excluded manifests remain in inventory with their deciding exception file, but are not parsed or checked. Git status indicates whether each exception file is tracked, ignored, untracked, or unknown.
 
 ### Python dependency-health scope
 
@@ -145,8 +155,11 @@ usage: git_dashboard [-h] [--port N] [--no-browser] [--scan PATH]
 | --- | --- | --- |
 | Runtime home | `~/.git_dashboard/` | `GIT_DASHBOARD_HOME` |
 | SQLite database | `~/.git_dashboard/dashboard.db` | `GIT_DASHBOARD_DB` |
+| Machine configuration | `<runtime-home>/config.toml` | Runtime home override |
 
 SQLite uses WAL mode and enables foreign-key enforcement for application connections. Mutable state stays outside the repository.
+
+On startup Git Fleet creates a private `config.toml` template if absent. Its `schema = 1` and optional `[dependencies]` table support `ignore_missing_tools = []`, a list of tool display names from the requirements table above (including auxiliary tools). For example, `ignore_missing_tools = ["pip-audit", "cargo-outdated"]` accepts the unchecked dimensions directly gated by those tools when they are missing. An installed tool is never ignored, and ignoring a parent does not ignore its auxiliary tools. Repository exceptions take precedence. Invalid configuration accepts nothing and is reported in analysis and `/api/status`. Edits take effect on the next dependency scan; tool installation or removal takes effect after restart.
 
 ## Architecture
 
@@ -196,3 +209,18 @@ uv run --script tools/check_uv_headers.py
 ## Platform notes
 
 The code supports macOS, Linux, and Windows. Unix users can run the executable directly; Windows users should use `uv run --script git_dashboard.py`. Local paths are handled with `pathlib`, and subprocess commands pass arguments directly rather than through a shell.
+
+### Exception authoring
+
+Each entry is an array of tables (`[[hold]]`, `[[advisory]]`, `[[unchecked]]`, or `[[exclude]]`):
+
+| Kind | Required | Optional |
+| --- | --- | --- |
+| `hold` | `manager`, `package`, `reason`, exactly one of `latest` or `latest_below` | `paths`, `expires` |
+| `advisory` | `manager`, `package`, `reason`, `version`, `ids` | `paths`, `expires` |
+| `unchecked` | `manager`, `package`, `reason`, `declared` | `paths`, `expires`, `checks` |
+| `exclude` | `paths`, `reason` | `expires` |
+
+Managers are `pip`, `npm`, `gomod`, `cargo`, `bundler`, and `composer`. Scalar fields are nonempty strings, except `expires`, which is an unquoted TOML date. `paths`, advisory `ids`, and `checks` are nonempty arrays of nonempty strings. Advisory IDs match reported IDs or aliases. `checks` may contain `outdated` and `vulnerability`; omitted, it includes both. `latest_below` must be a comparable version. Unknown fields invalidate the file.
+
+The Dependencies tab and its exports read saved repository metadata and groups together from `GET /api/repos/{id}/deps/snapshot`. Current `/api/status` information is fetched separately; current machine configuration is not scan-time provenance. The existing dependency and scan endpoints continue returning grouped lists.

@@ -1,11 +1,15 @@
 """Shared test fixtures."""
 import os
 import sys
+import tempfile
 from pathlib import Path
 
 import pytest
 
 os.environ.setdefault("UTILITIES_TESTING", "1")
+_import_runtime = tempfile.TemporaryDirectory(prefix='git-fleet-import-')
+os.environ['GIT_DASHBOARD_HOME'] = str(Path(_import_runtime.name) / 'home')
+os.environ['GIT_DASHBOARD_DB'] = str(Path(_import_runtime.name) / 'dashboard.db')
 
 PROJECT_ROOT = Path(__file__).parent.parent
 REPO_ROOT = PROJECT_ROOT.parent
@@ -24,6 +28,13 @@ except ImportError:
 
 import git_dashboard  # noqa: E402
 from tools.testkit import ASGISyncClient  # noqa: E402
+
+
+@pytest.fixture(autouse=True)
+def isolated_machine_config(tmp_path, monkeypatch):
+    monkeypatch.setattr(git_dashboard, 'MACHINE_CONFIG_PATH', tmp_path / 'config.toml')
+    monkeypatch.setenv('GIT_DASHBOARD_HOME', str(tmp_path / 'runtime'))
+    monkeypatch.setenv('GIT_DASHBOARD_DB', str(tmp_path / 'runtime' / 'dashboard.db'))
 
 
 @pytest.fixture
@@ -56,19 +67,42 @@ def dependency_report_seed():
                    **{s: sum(r['severity'] == s for r in rows) for s in ('ok', 'outdated', 'major', 'vulnerable')})
     summary['fullyChecked'] = sum(r['outdated_state'] in ('checked', 'floating') and r['vuln_state'] == 'checked' for r in rows)
     summary['unchecked'] = len(rows) - summary['fullyChecked']
+    summary['accepted'] = 0
     missing = [dict(tool='synthetic-audit', description='Synthetic missing audit tool')]
+    accepted = dict(kind='unchecked', file='synthetic/.gitfleet.toml', index=1,
+                    reason='Synthetic accepted check', expires=None, detail=dict(checks=['vulnerability']))
+    scenarios = {
+        'clean': dict(severity='accepted', outdated_state='checked', vuln_state='accepted', acceptances=[accepted]),
+        'partial': dict(severity='unchecked', outdated_state='checked', vuln_state='unchecked',
+                        acceptances=[dict(kind='hold', file='synthetic/.gitfleet.toml', index=1,
+                                          reason='Synthetic held update', expires=None, detail=dict(latest='2'))]),
+        'excluded': dict(manifest=dict(path='synthetic-excluded.txt', kind='requirements', dependencies=0, error=None, excluded_by='synthetic/.gitfleet.toml')),
+        'stale': dict(entry=dict(kind='hold', index=1, status='stale', reason='Synthetic stale', detail=dict(unused=[]))),
+        'untracked': dict(git='untracked'),
+        'ignored': dict(ignored_tools=[dict(tool='synthetic-audit', description='Synthetic ignored tool')]),
+    }
 
-    def seed(db_path, repo_id, path):
+    def seed(db_path, repo_id, path, scenario=None):
         with sqlite3.connect(db_path) as db:
-            db.execute('INSERT INTO repositories (id,name,path,added_at) VALUES (?,?,?,?)',
+            db.execute('INSERT OR IGNORE INTO repositories (id,name,path,added_at) VALUES (?,?,?,?)',
                        (repo_id, 'Synthetic coverage repository', str(path), '2026-01-01'))
-            db.execute('INSERT INTO working_state (repo_id,dep_check_error,missing_dep_tools,dep_manifests) VALUES (?,1,?,?)',
+            db.execute('INSERT OR IGNORE INTO working_state (repo_id,dep_check_error,missing_dep_tools,dep_manifests) VALUES (?,1,?,?)',
                        (repo_id, json.dumps(missing), json.dumps(manifests)))
-            for row in rows:
+            for row in ([] if scenario else rows):
                 keys = list(row)
                 db.execute(f"INSERT INTO dependencies (repo_id,{','.join(keys)}) VALUES ({','.join('?' for _ in range(len(keys)+1))})",
                            [repo_id] + [row[k] for k in keys])
-    return dict(rows=rows, manifests=manifests, summary=summary, missing_tools=missing, seed=seed)
+            if scenario:
+                case = scenarios[scenario]
+                db.execute('DELETE FROM dependencies WHERE repo_id=?', (repo_id,))
+                db.execute("UPDATE working_state SET dep_check_error=0,missing_dep_tools='[]',dep_manifests=?,dep_exceptions=?,ignored_dep_tools=? WHERE repo_id=?",
+                           (json.dumps([case['manifest']] if 'manifest' in case else []),
+                            json.dumps([dict(path='synthetic/.gitfleet.toml', git=case.get('git', 'tracked'), error=None, entries=[case['entry']] if 'entry' in case else [])]) if 'entry' in case or 'git' in case else '[]',
+                            json.dumps(case.get('ignored_tools', [])), repo_id))
+                if 'severity' in case:
+                    db.execute('INSERT INTO dependencies (repo_id,name,manager,source_path,severity,outdated_state,vuln_state,acceptances) VALUES (?,?,?,?,?,?,?,?)',
+                               (repo_id, 'synthetic-' + scenario, 'pip', 'synthetic.txt', case['severity'], case['outdated_state'], case['vuln_state'], json.dumps(case['acceptances'])))
+    return dict(rows=rows, manifests=manifests, summary=summary, missing_tools=missing, seed=seed, scenarios=scenarios)
 
 
 @pytest.fixture

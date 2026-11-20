@@ -879,6 +879,24 @@ def test_scan_persists_metadata_without_rows(tmp_path, monkeypatch, with_rows):
     assert json.loads(row[2]) == manifests
 
 
+def test_scan_round_trips_advisory_evidence(tmp_path, monkeypatch):
+    db_path = tmp_path / 'synthetic.db'
+    run(_make_db_with_repo(db_path))
+    evidence = [{'id': 'SYNTHETIC-A', 'aliases': ['SYNTHETIC-ALIAS']}]
+    row = dict(_make_dep('synthetic'), advisories=evidence, advisories_complete=False,
+               advisory_id='SYNTHETIC-A', update_level='major')
+    monkeypatch.setattr(git_dashboard, 'analyze_repo_deps', lambda path:
+                        git_dashboard.DepAnalysis([row], True, [], []))
+    async def scan_and_fetch():
+        async with aiosqlite.connect(db_path) as db:
+            await git_dashboard.run_dep_scan_for_repo(db, 'testrepo00000000', str(tmp_path))
+            return await git_dashboard._fetch_repo_deps('testrepo00000000', db)
+    result = run(scan_and_fetch())[0]['packages'][0]
+    assert result['advisories'] == evidence
+    assert result['advisories_complete'] is False
+    assert result['update_level'] == 'major'
+
+
 def test_dep_scan_allows_event_loop_progress(tmp_path, monkeypatch):
     import threading
     started, release = threading.Event(), threading.Event()
@@ -922,12 +940,12 @@ def test_failed_persistence_restores_snapshot_after_caller_commit(tmp_path, monk
     repo_id = 'synthetic-repo'
     run(_make_db_with_repo(db_path, repo_id))
     with sqlite3.connect(db_path) as db:
-        db.execute('INSERT INTO working_state (repo_id,dep_check_error,missing_dep_tools,dep_manifests) VALUES (?,0,?,?)',
+        db.execute('INSERT INTO working_state (repo_id,dep_check_error,missing_dep_tools,dep_manifests,dep_exceptions) VALUES (?,0,?,?,?)',
                    (repo_id, json.dumps([dict(tool='synthetic-old', description='Synthetic old check')]),
-                    json.dumps([dict(source_path='old.json', manager='npm')])))
+                    json.dumps([dict(source_path='old.json', manager='npm')]), json.dumps([dict(path='synthetic-old')])))
         for name in ('synthetic-existing', 'synthetic-stale'):
             db.execute('INSERT INTO dependencies (repo_id,manager,name,current_version) VALUES (?,\'npm\',?,\'1.0\')', (repo_id, name))
-        old_metadata = db.execute('SELECT dep_check_error,missing_dep_tools,dep_manifests FROM working_state').fetchall()
+        old_metadata = db.execute('SELECT dep_check_error,missing_dep_tools,dep_manifests,dep_exceptions FROM working_state').fetchall()
         old_rows = db.execute('SELECT * FROM dependencies ORDER BY name').fetchall()
         if failure_stage == 'later_row':
             db.execute("CREATE TRIGGER synthetic_failure BEFORE INSERT ON dependencies WHEN NEW.name = 'synthetic-failing' BEGIN SELECT RAISE(ABORT, 'synthetic write failure'); END")
@@ -950,7 +968,7 @@ def test_failed_persistence_restores_snapshot_after_caller_commit(tmp_path, monk
             await db.commit()
     run(scan_and_commit_as_caller())
     with sqlite3.connect(db_path) as db:
-        assert db.execute('SELECT dep_check_error,missing_dep_tools,dep_manifests FROM working_state').fetchall() == old_metadata
+        assert db.execute('SELECT dep_check_error,missing_dep_tools,dep_manifests,dep_exceptions FROM working_state').fetchall() == old_metadata
         assert db.execute('SELECT * FROM dependencies ORDER BY name').fetchall() == old_rows
         assert db.execute('SELECT name FROM repositories').fetchone()[0] == 'synthetic-caller-change'
 

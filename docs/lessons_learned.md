@@ -1,5 +1,12 @@
 # Lessons learned
 
+## 2026-11-19: Retain finding identity at the evaluated version
+
+An audit stream can report several versions of the same dependency and several
+advisories for each version. A name-keyed map loses evidence or assigns it to a
+different declaration. Retain ordered findings by package and evaluated version,
+then join advisory metadata independently of stream order.
+
 ## 2026-11-13: Choose a default source that has data
 
 Select the first available source for a fresh page while preserving explicit
@@ -2691,3 +2698,23 @@ start. The collector smoke test found a permission error because the
 unprivileged container user could not create the default socket directory.
 Disable the unused socket in the container command and check startup logs
 alongside successful HTTP requests.
+
+### Git Fleet: bound exception parsing and path effects
+
+A size limit alone does not stop TOML parser recursion failures; contain those at the
+individual file boundary so a malformed file cannot suppress neighboring valid files.
+Do not match absolute outside-root fallback paths against repository-relative patterns,
+or mark patterns used by defensive filtering of parser-only rows. Capture the scan date
+once so an expiry cannot change between applying an effect and reporting its status.
+
+## 2026-11-19: Reject special files before reading local configuration
+
+A named pipe at Git Fleet's machine-config path could block both status requests
+and dependency scans. Check the target type before opening, use nonblocking open
+where available, and verify the opened descriptor again to handle path swaps.
+Exercise direct and symlinked pipes without allowing the regression test itself
+to block, and preserve symlinks to regular configuration files.
+
+### 2026-11-19 — Snapshot and filesystem identities in dependency evidence
+
+A report combining separate reads can mix dependency rows with a newer scan's exception inventory. Read related persisted evidence in one SQLite transaction, and label independently fetched current configuration as current. On macOS, Git may use precomposed names while discovery returns decomposed names; reconcile only when Git enables precomposition and both spellings identify the same filesystem entry. Recheck file type on the opened descriptor and reject symlink targets when repository-controlled files may change after discovery; one owner must close each descriptor even when stream creation fails.

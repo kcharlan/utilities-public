@@ -331,6 +331,7 @@ def test_schema_dependencies_columns():
             "wanted_version", "latest_version", "severity",
             "advisory_id", "checked_at", "source_path",
             "declared_spec", "outdated_state", "vuln_state", "check_note",
+            "advisories", "advisories_complete", "update_level", "acceptances",
         }
         assert expected_cols == col_names, f"Column mismatch: {col_names}"
     finally:
@@ -353,7 +354,7 @@ def test_schema_working_state_columns():
             "last_commit_hash", "last_commit_message",
             "last_commit_date", "checked_at",
             # Added in packet 22: error state columns
-            "scan_error", "quick_scan_error", "dep_check_error", "missing_dep_tools", "dep_manifests",
+            "scan_error", "quick_scan_error", "dep_check_error", "missing_dep_tools", "ignored_dep_tools", "dep_manifests", "dep_exceptions",
         }
         assert expected_cols == col_names, f"Column mismatch: {col_names}"
     finally:

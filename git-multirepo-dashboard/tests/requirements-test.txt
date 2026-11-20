@@ -2,3 +2,4 @@ pytest
 httpx
 playwright>=1.63
 pytest-playwright>=0.9
+markdown-it-py
