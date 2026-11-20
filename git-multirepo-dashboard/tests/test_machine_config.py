@@ -29,6 +29,39 @@ def test_invalid_machine_config_accepts_nothing(tmp_path, monkeypatch, content):
     assert result['ignore_missing_tools'] == []
 
 
+def test_unknown_tool_name_error_names_it_and_lists_valid_names(tmp_path, monkeypatch):
+    path = tmp_path / 'config.toml'
+    monkeypatch.setattr(gd, 'MACHINE_CONFIG_PATH', path)
+    path.write_text('schema = 1\n[dependencies]\nignore_missing_tools = ["npm audit"]')
+    error = gd.load_machine_config()['error']
+    assert "'npm audit'" in error
+    assert 'pip-audit' in error and 'cargo-outdated' in error
+
+
+def test_readme_lists_every_accepted_tool_name():
+    from pathlib import Path
+    readme = (Path(gd.__file__).parent / 'README.md').read_text()
+    names = {tool for reqs in gd.DEP_TOOL_REQUIREMENTS.values() for _, tool, _, _ in reqs}
+    assert all(f'`{name}`' in readme for name in names), sorted(names)
+
+
+def test_tool_gating_matches_checker_call_sites():
+    """Each key's gated dimensions come from the checker functions that read it."""
+    import inspect
+    import re
+    derived = {}
+    for fname, func in inspect.getmembers(gd, inspect.isfunction):
+        match = re.fullmatch(r'check_\w+_(outdated|vulns)', fname)
+        if not match:
+            continue
+        dimension = 'outdated' if match.group(1) == 'outdated' else 'vulnerability'
+        for key in re.findall(r'TOOLS\.get\(["\'](\w+)["\']\)', inspect.getsource(func)):
+            derived.setdefault(key, set()).add(dimension)
+    declared = {key: set(dims) for reqs in gd.DEP_TOOL_REQUIREMENTS.values() for key, _, _, dims in reqs}
+    assert {k: derived.get(k, set()) for k in declared} == declared
+    assert set(derived) <= set(declared)
+
+
 def test_missing_ignored_npm_accepts_unchecked_dimensions(tmp_path, monkeypatch):
     path = tmp_path / 'config.toml'
     monkeypatch.setattr(gd, 'MACHINE_CONFIG_PATH', path)

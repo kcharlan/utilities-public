@@ -54,9 +54,10 @@ def test_docpipe_hold_scan_persist_rescan_and_expiry(tmp_path, monkeypatch):
     repo = tmp_path / 'repo'
     make_repo(repo, 'main')
     config = repo / '.gitfleet.toml'
-    hold = ('schema = 1\n\n[[hold]]\nmanager = "pip"\npackage = "readability-lxml"\n'
-            'latest = "0.9"\nreason = "0.9 requires Python <3.15; see docs/lessons_learned.md, '
-            "'2026-10-30 — uv ignores dependency Python upper bounds'.\"\n")
+    from pathlib import Path
+    # Use the checked-in docpipe file so this test follows any change to it.
+    hold = (Path(__file__).resolve().parents[2] / 'docpipe' / '.gitfleet.toml').read_text()
+    assert hold.endswith('\n') and 'package = "readability-lxml"' in hold
     config.write_text(hold)
     (repo / 'requirements.txt').write_text('readability-lxml==0.8\nsynthetic-independent==1\n')
     latest = ['0.9']
@@ -259,6 +260,25 @@ def test_validation_rejects_whole_file_and_defaults_checks(tmp_path):
         'schema = 1\n[[hold]]\nmanager = "pip"\npackage = "x"\nreason = "x"\nlatest_below = "bad version"',
         'schema = 1\n[[advisory]]\nmanager = "pip"\npackage = "x"\nreason = "x"\nversion = "1"\nids = []',
         'schema = 1\n[[unchecked]]\nmanager = "pip"\npackage = "x"\nreason = "x"\ndeclared = "x"\nchecks = ["invalid"]',
+        # Malformed TOML.
+        'schema = 1\n[[hold]\nmanager = "pip"',
+        'schema = 1\n[[exclude]]\npaths = ["x"\nreason = "x"',
+        # Missing required fields, per kind.
+        'schema = 1\n[[hold]]\nmanager = "pip"\nreason = "x"\nlatest = "1"',
+        'schema = 1\n[[advisory]]\nmanager = "pip"\npackage = "x"\nreason = "x"\nversion = "1"',
+        'schema = 1\n[[advisory]]\nmanager = "pip"\npackage = "x"\nreason = "x"\nids = ["X"]',
+        'schema = 1\n[[unchecked]]\nmanager = "pip"\npackage = "x"\nreason = "x"',
+        'schema = 1\n[[exclude]]\npaths = ["x"]',
+        # expires must be a plain TOML date.
+        'schema = 1\n[[exclude]]\npaths = ["x"]\nreason = "x"\nexpires = true',
+        'schema = 1\n[[exclude]]\npaths = ["x"]\nreason = "x"\nexpires = 2020-01-01T00:00:00',
+        'schema = 1\n[[exclude]]\npaths = ["x"]\nreason = "x"\nexpires = 12:00:00',
+        # Lists must be lists; scalars must be strings.
+        'schema = 1\n[[advisory]]\nmanager = "pip"\npackage = "x"\nreason = "x"\nversion = "1"\nids = "X"',
+        'schema = 1\n[[unchecked]]\nmanager = "pip"\npackage = "x"\nreason = "x"\ndeclared = "x"\nchecks = "outdated"',
+        'schema = 1\n[[hold]]\nmanager = "pip"\npackage = "x"\nreason = "x"\nlatest = 1',
+        'schema = 1\n[[advisory]]\nmanager = "pip"\npackage = "x"\nreason = "x"\nversion = 1\nids = ["X"]',
+        'schema = 1\n[[hold]]\nmanager = 1\npackage = "x"\nreason = "x"\nlatest = "1"',
     ]
     for text in bad:
         path.write_text(text)
@@ -269,6 +289,51 @@ def test_validation_rejects_whole_file_and_defaults_checks(tmp_path):
     assert result.error is None
     assert result.entries[0].checks == ['outdated', 'vulnerability']
     assert result.entries[0].expires.isoformat() == '2099-01-01'
+
+
+def test_repeated_ids_and_checks_are_deduplicated(tmp_path):
+    path = tmp_path / '.gitfleet.toml'
+    path.write_text('schema = 1\n'
+                    '[[advisory]]\nmanager = "pip"\npackage = "x"\nreason = "x"\nversion = "1"\nids = ["B", "A", "B"]\n'
+                    '[[unchecked]]\nmanager = "pip"\npackage = "x"\nreason = "x"\ndeclared = "x"\n'
+                    'checks = ["vulnerability", "outdated", "vulnerability"]\n')
+    result = gd.load_dep_exceptions(tmp_path, [path])[0]
+    assert result.error is None
+    assert result.entries[0].ids == ['B', 'A']
+    assert result.entries[1].checks == ['vulnerability', 'outdated']
+
+
+def test_first_reported_error_follows_file_order_of_kinds(tmp_path):
+    path = tmp_path / '.gitfleet.toml'
+    path.write_text('schema = 1\n'
+                    '[[exclude]]\npaths = ["/absolute"]\nreason = "x"\n'
+                    '[[hold]]\nmanager = "fake"\npackage = "x"\nreason = "x"\nlatest = "1"\n')
+    assert gd.load_dep_exceptions(tmp_path, [path])[0].error == 'invalid path pattern'
+    path.write_text('schema = 1\n'
+                    '[[hold]]\nmanager = "fake"\npackage = "x"\nreason = "x"\nlatest = "1"\n'
+                    '[[exclude]]\npaths = ["/absolute"]\nreason = "x"\n')
+    assert gd.load_dep_exceptions(tmp_path, [path])[0].error == 'invalid manager'
+
+
+def test_latest_below_failure_detail_names_the_bound():
+    entry = gd.DepExceptionEntry('hold', 1, '.gitfleet.toml', '', manager='npm', package='synthetic',
+                                 reason='synthetic', latest_below='1.0')
+    row = dict(manager='npm', name='synthetic', source_path='package.json', latest_version='1.0',
+               update_level='major', outdated_state='checked', vuln_state='checked')
+    gd.apply_dep_exceptions([row], [gd.DepExceptionFile(entry.file, '', 'tracked', entries=[entry])])
+    assert entry.status == 'stale'
+    assert entry.detail['unused'][0]['reason'] == 'latest is 1.0; entry accepts below 1.0'
+
+
+def test_one_unchecked_entry_winning_both_checks_records_one_acceptance():
+    entry = gd.DepExceptionEntry('unchecked', 1, '.gitfleet.toml', '', manager='npm', package='synthetic',
+                                 reason='synthetic', declared='*', checks=['outdated', 'vulnerability'])
+    row = dict(manager='npm', name='synthetic', source_path='package.json', declared_spec='*',
+               outdated_state='unchecked', vuln_state='unchecked')
+    gd.apply_dep_exceptions([row], [gd.DepExceptionFile(entry.file, '', 'tracked', entries=[entry])])
+    assert entry.status == 'applied'
+    assert len(row['acceptances']) == 1
+    assert sorted(row['acceptances'][0]['detail']['checks']) == ['outdated', 'vulnerability']
 
 
 def test_pattern_component_boundaries_and_long_globstars():

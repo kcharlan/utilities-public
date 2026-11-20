@@ -65,9 +65,11 @@ def dependency_report_seed():
                                  ('broken.txt', 'requirements', 'Synthetic read failure')]]
     summary = dict(declarations=len(rows), manifests=len(manifests),
                    **{s: sum(r['severity'] == s for r in rows) for s in ('ok', 'outdated', 'major', 'vulnerable')})
-    summary['fullyChecked'] = sum(r['outdated_state'] in ('checked', 'floating') and r['vuln_state'] == 'checked' for r in rows)
+    # Mirrors git_dashboard._FULLY_COVERED_SQL and the page's fullyChecked().
+    summary['fullyChecked'] = sum(r['outdated_state'] in ('checked', 'floating', 'accepted')
+                                  and r['vuln_state'] in ('checked', 'accepted') for r in rows)
     summary['unchecked'] = len(rows) - summary['fullyChecked']
-    summary['accepted'] = 0
+    summary['accepted'] = sum(bool(r.get('acceptances')) for r in rows)
     missing = [dict(tool='synthetic-audit', description='Synthetic missing audit tool')]
     accepted = dict(kind='unchecked', file='synthetic/.gitfleet.toml', index=1,
                     reason='Synthetic accepted check', expires=None, detail=dict(checks=['vulnerability']))
