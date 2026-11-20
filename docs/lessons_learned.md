@@ -1,12 +1,5 @@
 # Lessons learned
 
-## 2026-11-19: Retain finding identity at the evaluated version
-
-An audit stream can report several versions of the same dependency and several
-advisories for each version. A name-keyed map loses evidence or assigns it to a
-different declaration. Retain ordered findings by package and evaluated version,
-then join advisory metadata independently of stream order.
-
 ## 2026-11-13: Choose a default source that has data
 
 Select the first available source for a fresh page while preserving explicit
@@ -2699,7 +2692,14 @@ unprivileged container user could not create the default socket directory.
 Disable the unused socket in the container command and check startup logs
 alongside successful HTTP requests.
 
-### Git Fleet: bound exception parsing and path effects
+## 2026-11-19: Retain finding identity at the evaluated version
+
+An audit stream can report several versions of the same dependency and several
+advisories for each version. A name-keyed map loses evidence or assigns it to a
+different declaration. Retain ordered findings by package and evaluated version,
+then join advisory metadata independently of stream order.
+
+## 2026-11-19: Bound exception parsing and path effects
 
 A size limit alone does not stop TOML parser recursion failures; contain those at the
 individual file boundary so a malformed file cannot suppress neighboring valid files.
@@ -2715,6 +2715,13 @@ where available, and verify the opened descriptor again to handle path swaps.
 Exercise direct and symlinked pipes without allowing the regression test itself
 to block, and preserve symlinks to regular configuration files.
 
-### 2026-11-19 — Snapshot and filesystem identities in dependency evidence
+## 2026-11-19: Snapshot and filesystem identities in dependency evidence
 
 A report combining separate reads can mix dependency rows with a newer scan's exception inventory. Read related persisted evidence in one SQLite transaction, and label independently fetched current configuration as current. On macOS, Git may use precomposed names while discovery returns decomposed names; reconcile only when Git enables precomposition and both spellings identify the same filesystem entry. Recheck file type on the opened descriptor and reject symlink targets when repository-controlled files may change after discovery; one owner must close each descriptor even when stream creation fails.
+
+## 2026-11-19: Name accepted config values where users write them
+
+Git Fleet's README pointed users at a table of tool commands (`npm audit`) when
+`ignore_missing_tools` needed bare tool names (`npm`), and an invalid name made the whole
+config invalid with a generic error. List accepted values literally in the docs, test that
+the docs list every one, and name the offending value in the error.

@@ -596,8 +596,8 @@ def test_json_export_obeys_report_contract(page, seeded_coverage):
     assert report['missing_tools'] == seeded_coverage['missing_tools']
     assert report['repo'] == dict(id=seeded_coverage['repo_id'], name='Synthetic coverage repository')
     status = page.request.get(seeded_coverage['url'] + '/api/status').json()
-    assert status['version'] == '0.4.0'
-    assert 'VERSION = "0.4.0"' in (PROJECT_ROOT / 'git_dashboard.py').read_text()
+    assert status['version'] == '0.4.1'
+    assert 'VERSION = "0.4.1"' in (PROJECT_ROOT / 'git_dashboard.py').read_text()
     assert report['git_fleet_version'] == status['version']
     assert report['scope'] == status['dependency_scope']
     assert report['machine_config']['label'] == status['machine_config']['label']
@@ -691,7 +691,7 @@ def test_shared_exception_scenarios(page, seeded_coverage, scenario):
     elif scenario == 'excluded':
         expect(page.get_by_text('Excluded by synthetic/.gitfleet.toml', exact=False)).to_be_visible()
     elif scenario in ('stale', 'untracked'):
-        expect(page.get_by_test_id('dep-coverage')).to_contain_text('1 exception warnings')
+        expect(page.get_by_test_id('dep-coverage')).to_contain_text('1 exception warning;')
     else:
         expect(page.get_by_test_id('dep-coverage')).to_contain_text('synthetic-audit')
 
@@ -731,11 +731,12 @@ def test_warning_only_repo_and_current_config_error(page, seeded_coverage):
     _open_app(page, seed['url'])
     card = page.locator('.project-card').filter(has=page.get_by_text('Synthetic coverage repository', exact=True))
     expect(card).to_contain_text('1 warning')
+    expect(card.locator('[title^="No declarations"][title$="; 1 exception warning"]')).to_have_count(1)
     expect(page.get_by_text('Current machine config (synthetic-config.toml): Synthetic config error')).to_be_visible()
     page.locator('nav').get_by_role('link', name='Dependencies', exact=True).click()
     expect(page.locator('.table-row').filter(has=page.get_by_text('Synthetic coverage repository', exact=True))).to_contain_text('1 warning')
     _open_coverage(page, seed)
-    expect(page.get_by_test_id('dep-coverage')).to_contain_text('Synthetic config error')
+    expect(page.get_by_test_id('dep-coverage')).to_contain_text('synthetic-config.toml — Synthetic config error.')
     expect(page.get_by_test_id('dep-coverage')).not_to_contain_text('Incomplete coverage')
     report = json.loads(_download_text(page, 'Export JSON'))
     assert report['machine_config']['path'] == 'synthetic-config.toml'

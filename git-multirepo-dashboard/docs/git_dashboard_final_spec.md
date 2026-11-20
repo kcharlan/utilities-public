@@ -237,6 +237,10 @@ The `working_state.dep_exceptions` JSON inventory persists with the dependency s
 
 Previously saved paths remain readable as stored; the next dependency scan writes the escaped display form. Migration does not rewrite old snapshots.
 
+### Exception file format
+
+Entries are arrays of tables. `hold` requires `manager`, `package`, `reason`, and exactly one of `latest` or `latest_below`; `advisory` requires `manager`, `package`, `reason`, `version`, and `ids`; `unchecked` requires `manager`, `package`, `reason`, and `declared`; `exclude` requires `paths` and `reason`. All kinds accept `expires`; the first three accept `paths`, and `unchecked` accepts `checks`. Managers are `pip`, `npm`, `gomod`, `cargo`, `bundler`, and `composer`. Scalar fields are nonempty strings except `expires`, an unquoted TOML date. `paths`, `ids`, and `checks` are nonempty arrays of nonempty strings. Advisory IDs match reported IDs or aliases. Checks contain only `outdated` and `vulnerability`, and default to both. Unknown fields invalidate the file.
+
 ### Python health evaluation and scope
 
 The evaluated version is the validated current declared/locked PEP 440 version, or a floating selection stored only in `wanted_version`. `_floating_specifier` accepts PEP 508 requirement syntax or standalone PEP 440 constraints; unsupported Poetry syntax remains unchecked. `resolve_floating_version` selects the highest allowed release using [`SpecifierSet.filter`](https://packaging.pypa.io/en/stable/specifiers.html#packaging.specifiers.SpecifierSet.filter), excluding invalid versions and releases without a non-yanked file. When there is no releases mapping, valid `info.version` is the fallback candidate. Compare the evaluated version to the registry's latest version with `classify_severity`, including versions beyond a declaration's cap. Exact evaluations set `outdated_state=checked`; floating evaluations set `outdated_state=floating`.
@@ -269,6 +273,7 @@ The local SPA consumes these JSON and streaming endpoints:
 | GET | `/api/repos/{id}/commits` | Live paginated Git history |
 | GET | `/api/repos/{id}/branches` | Stored branches plus live comparison stats |
 | GET | `/api/repos/{id}/deps` | Grouped stored dependency results |
+| GET | `/api/repos/{id}/deps/snapshot` | Repository metadata and grouped dependency results from one read transaction |
 | POST | `/api/repos/{id}/scan/deps` | Synchronous single-repository dependency scan |
 | GET | `/api/analytics/heatmap` | Fleet daily commit totals |
 | GET | `/api/analytics/allocation` | Per-repository commit series |
@@ -279,6 +284,8 @@ The local SPA consumes these JSON and streaming endpoints:
 Repository detail exposes `working_state.dep_exceptions` and `exception_warning_count`. Fleet rows expose the same warning count independently of dependency rows. The count sums untracked, ignored or unknown files, file errors, and entries whose status is not applied; warnings alone do not make analysis incomplete.
 
 Dependency rows expose `acceptances`, each with its kind, exception file, entry index, reason, expiry and effect detail. Paths are escaped once when the scan is stored; API readers return the stored display values.
+
+`GET /api/repos/{id}/deps/snapshot` returns `{repo, groups}` from one SQLite read transaction. The Dependencies tab uses that saved snapshot on mount and after Check Now; `/api/status` is fetched separately and describes current machine configuration, not saved scan provenance. The existing grouped-list endpoints remain unchanged.
 
 Unknown repository IDs return 404. `POST /api/repos` takes `{"path"}` and returns `{registered, repos}`, or 400 for a path that is not a directory; `PATCH` takes `{"path"}` and returns 400 unless it is an existing directory; `DELETE` returns 204. `/history`, `/api/analytics/heatmap`, and `/api/analytics/allocation` take `days` (defaults 90, 365, and 90). `/commits` takes `page`, `per_page` (default 25, clamped to 1–100), and an optional `branch`; without one it lists all refs. A branch must be in the stored branch snapshot, otherwise the response is 400 `Unknown branch`; it is passed to Git after `--end-of-options` and before `--`, so it cannot be read as an option or a path. `/commits` also returns 404 when the repository path is missing.
 
@@ -318,9 +325,3 @@ UV_PYTHON_DOWNLOADS=never tools/run_project_tests.py git_fleet
 ```
 
 The E2E server must use a temporary database and suppress normal browser launch. See `README.md` for environment setup.
-
-### Exception authoring and snapshot endpoint
-
-Entries are arrays of tables. `hold` requires `manager`, `package`, `reason`, and exactly one of `latest` or `latest_below`; `advisory` requires `manager`, `package`, `reason`, `version`, and `ids`; `unchecked` requires `manager`, `package`, `reason`, and `declared`; `exclude` requires `paths` and `reason`. All kinds accept `expires`; the first three accept `paths`, and `unchecked` accepts `checks`. Managers are `pip`, `npm`, `gomod`, `cargo`, `bundler`, and `composer`. Scalar fields are nonempty strings except `expires`, an unquoted TOML date. `paths`, `ids`, and `checks` are nonempty arrays of nonempty strings. Advisory IDs match reported IDs or aliases. Checks contain only `outdated` and `vulnerability`, and default to both. Unknown fields invalidate the file.
-
-`GET /api/repos/{id}/deps/snapshot` returns `{repo, groups}` from one SQLite read transaction. The Dependencies tab uses that saved snapshot on mount and after Check Now; `/api/status` is fetched separately and describes current machine configuration, not saved scan provenance. The existing grouped-list endpoints remain unchanged.

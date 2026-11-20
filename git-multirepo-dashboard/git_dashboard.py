@@ -50,7 +50,7 @@ except ImportError:  # pragma: no cover - Windows
 
 # ── Constants ─────────────────────────────────────────────────────────────────
 DEFAULT_PORT = 8300
-VERSION = "0.4.0"
+VERSION = "0.4.1"
 
 # Populated by build_tools_dict() during preflight; global so /api/status can
 # return it without re-running which() on every request.
@@ -2219,8 +2219,12 @@ def load_machine_config() -> dict:
             raise ValueError('invalid dependencies table')
         names = deps.get('ignore_missing_tools', [])
         allowed = {tool for requirements in DEP_TOOL_REQUIREMENTS.values() for _, tool, _, _ in requirements}
-        if not isinstance(names, list) or any(not isinstance(n, str) or n not in allowed for n in names):
-            raise ValueError('invalid ignore_missing_tools')
+        if not isinstance(names, list):
+            raise ValueError('ignore_missing_tools must be a list')
+        unknown = [n for n in names if not isinstance(n, str) or n not in allowed]
+        if unknown:
+            raise ValueError(f'unknown ignore_missing_tools name {unknown[0]!r}; '
+                             f'valid names: {", ".join(sorted(allowed))}')
         result['ignore_missing_tools'] = list(dict.fromkeys(names))
     except FileNotFoundError as exc:
         if path.is_symlink():
@@ -2285,8 +2289,11 @@ def load_dep_exceptions(repo_path: Path, paths) -> list[DepExceptionFile]:
             obj = _load_bounded_toml(path, no_follow=True)
             if type(obj.get('schema')) is not int or obj['schema'] != 1 or set(obj) - {'schema', *requirements}:
                 raise ValueError('invalid schema or root keys')
-            for kind, required in requirements.items():
-                items = obj.get(kind, [])
+            # Validate kinds in the order they first appear in the file, so the
+            # reported error is the earliest one by kind.
+            for kind in [k for k in obj if k in requirements]:
+                required = requirements[kind]
+                items = obj[kind]
                 if not isinstance(items, list):
                     raise ValueError(f'{kind} must be an array of tables')
                 for index, item in enumerate(items, 1):
@@ -2375,7 +2382,7 @@ def _evaluate_dep_exception(entry, row, dimension, parts):
         elif entry.latest_below is not None:
             try:
                 if Version(_version_text(latest)) >= Version(_version_text(entry.latest_below)):
-                    failure = f'latest is {latest}; entry accepts {entry.latest_below}'
+                    failure = f'latest is {latest}; entry accepts below {entry.latest_below}'
             except (InvalidVersion, TypeError):
                 failure = f'latest {latest} not comparable'
         return {'latest': latest}, failure, parts if not failure else []
@@ -4608,6 +4615,11 @@ const htmlTag = htm.bind(preact.h);
       );
     }
 
+    // "1 exception warning" / "2 exception warnings"
+    function countLabel(n, singular) {
+      return n + ' ' + singular + (n === 1 ? '' : 's');
+    }
+
     // DepBadge — compact dep summary pill with coverage dot
     function DepBadge({ dep, missingTools, analysisError, exceptionWarnings = 0 }) {
       if (!dep && !missingTools?.length && !analysisError && !exceptionWarnings) return null;
@@ -4620,7 +4632,7 @@ const htmlTag = htm.bind(preact.h);
       const dotColor = incomplete || exceptionWarnings ? 'var(--status-orange)' : 'var(--status-green)';
       const dotTitle = (incomplete
         ? 'Incomplete coverage: ' + (dep.unchecked || 0) + ' not checked' + (analysisError ? '; analysis error — see repository dependencies' : '') + (hasMissing ? '; missing tools: ' + missingTools.map(t => t.tool || t).join(', ') : '')
-        : 'All declarations fully checked') + '; ' + (dep.accepted || 0) + ' accepted; ' + exceptionWarnings + ' exception warnings';
+        : (total ? 'All declarations fully checked' : 'No declarations')) + '; ' + (dep.accepted || 0) + ' accepted; ' + countLabel(exceptionWarnings, 'exception warning');
 
       let label = null;
       if (vulnerable > 0) {
@@ -5441,7 +5453,7 @@ const htmlTag = htm.bind(preact.h);
         })}</section>`;
       }
       if (loading) return htmlTag`<div class=${"table-empty"}>Loading…</div>`;
-      return htmlTag`<div><div style=${{display: 'flex', justifyContent: 'flex-end', gap: '8px', marginBottom: '12px'}}><button class=${"btn btn-secondary"} onClick=${handleExportMD} disabled=${!repo || !appStatus}>Export MD</button><button class=${"btn btn-secondary"} onClick=${handleExportJSON} disabled=${!repo || !appStatus}>Export JSON</button><button class=${"btn btn-secondary"} onClick=${() => fetchDeps(true)} disabled=${scanning}>${scanning ? 'Checking…' : 'Check Now'}</button></div>${error && htmlTag`<div role=${"alert"}>${error}</div>`}<div data-testid=${"dep-coverage"} style=${{padding: '12px', marginBottom: '16px', color: incomplete || warnings || machineConfig.error ? 'var(--status-orange)' : 'var(--text-secondary)'}}>${incomplete && htmlTag`<strong>Incomplete coverage — </strong>`}${summary.declarations} declarations; ${summary.manifests} manifests; ${summary.fullyChecked} fully checked; ${summary.unchecked} not checked.${missingTools.map(t => htmlTag`<div key=${t.tool}>${t.tool} — ${t.description}</div>`)}<div>${warnings} exception warnings; ignored tools in saved scan: ${ignoredTools.map(t => t.tool || t).join(', ') || 'none'}.</div><div>Current machine config (loaded at view refresh): ${machineConfig.path} ${machineConfig.error || ''}. Check Now applies current config.</div></div>${issues.length > 0 && htmlTag`<section><h3>Attention Required</h3>${dependencyTable(issues)}</section>`}${unchecked.length > 0 && htmlTag`<section data-testid=${"dep-not-checked"}><h3>Not Checked</h3>${dependencyTable(unchecked)}</section>`}${summary.declarations > 0 && issues.length === 0 && summary.fullyChecked === summary.declarations && !incomplete &&
+      return htmlTag`<div><div style=${{display: 'flex', justifyContent: 'flex-end', gap: '8px', marginBottom: '12px'}}><button class=${"btn btn-secondary"} onClick=${handleExportMD} disabled=${!repo || !appStatus}>Export MD</button><button class=${"btn btn-secondary"} onClick=${handleExportJSON} disabled=${!repo || !appStatus}>Export JSON</button><button class=${"btn btn-secondary"} onClick=${() => fetchDeps(true)} disabled=${scanning}>${scanning ? 'Checking…' : 'Check Now'}</button></div>${error && htmlTag`<div role=${"alert"}>${error}</div>`}<div data-testid=${"dep-coverage"} style=${{padding: '12px', marginBottom: '16px', color: incomplete || warnings || machineConfig.error ? 'var(--status-orange)' : 'var(--text-secondary)'}}>${incomplete && htmlTag`<strong>Incomplete coverage — </strong>`}${summary.declarations} declarations; ${summary.manifests} manifests; ${summary.fullyChecked} fully checked; ${summary.unchecked} not checked.${missingTools.map(t => htmlTag`<div key=${t.tool}>${t.tool} — ${t.description}</div>`)}<div>${countLabel(warnings, 'exception warning')}; ignored tools in saved scan: ${ignoredTools.map(t => t.tool || t).join(', ') || 'none'}.</div><div>Current machine config (loaded at view refresh): ${machineConfig.path}${machineConfig.error ? ' — ' + machineConfig.error : ''}. Check Now applies current config.</div></div>${issues.length > 0 && htmlTag`<section><h3>Attention Required</h3>${dependencyTable(issues)}</section>`}${unchecked.length > 0 && htmlTag`<section data-testid=${"dep-not-checked"}><h3>Not Checked</h3>${dependencyTable(unchecked)}</section>`}${summary.declarations > 0 && issues.length === 0 && summary.fullyChecked === summary.declarations && !incomplete &&
           htmlTag`<div style=${{color: 'var(--status-green)'}}>${summary.accepted ? `No issues found — ${summary.accepted} accepted exception${summary.accepted === 1 ? '' : 's'}; all other dependencies are up to date.` : 'No issues found — all dependencies are up to date.'}</div>`}
           ${acceptedSection()}
           ${exceptionSection()}
