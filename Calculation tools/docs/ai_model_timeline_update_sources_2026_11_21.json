@@ -1,0 +1,402 @@
+{
+  "checked": "2026-11-21",
+  "latestRelease": "2026-11-20",
+  "baselineManifest": "ai_model_timeline_update_sources_2026_11_17.json",
+  "preservedHistoricalRows": 646,
+  "additions": [
+    {
+      "model": "Inkling 2 Mini",
+      "lab": "Thinking Machines",
+      "date": "2026-11-20",
+      "tier": "open-weights",
+      "note": "Apache-2.0 multimodal model with 26.4B total parameters and 3.4B active. Its looped transformer processes text and images and generates text.",
+      "source": "https://thinkingmachines.ai/news/inkling-2-mini/"
+    },
+    {
+      "model": "Hy4 (open weights)",
+      "lab": "Tencent",
+      "date": "2026-11-20",
+      "tier": "open-weights",
+      "note": "Downloadable 770B multimodal flagship with 49B active text parameters and 1M context. Tencent published instruction-tuned, FP8 and base checkpoints under the Tencent Hy License after the hosted release.",
+      "source": "https://github.com/Tencent-Hunyuan/Hy4"
+    },
+    {
+      "model": "WeMM-Video family",
+      "lab": "Tencent",
+      "date": "2026-11-20",
+      "tier": "open-weights",
+      "note": "Multimodal understanding family that accepts text, images, audio, and video and generates text. WeChat Vision released 2B, 4B, 9B, and 35B-A3B checkpoints under Apache-2.0.",
+      "source": "https://github.com/Tencent/WeMM-Video"
+    },
+    {
+      "model": "GPT-Live-1.1 (API release)",
+      "lab": "OpenAI",
+      "date": "2026-11-19",
+      "tier": "specialty",
+      "note": "Live API rollout of the voice model introduced in ChatGPT in October. It improves multilingual pronunciation, accent consistency, and transcription.",
+      "source": "https://developers.openai.com/api/docs/changelog"
+    },
+    {
+      "model": "Olala mini 7A1B",
+      "lab": "OVHcloud",
+      "date": "2026-11-19",
+      "tier": "open-weights",
+      "note": "Apache-2.0 reasoning model for text chat, instruction following, and tool use. Its hybrid mixture-of-experts architecture activates about 1B parameters and supports roughly 32K context. Also available through OVHcloud AI Endpoints.",
+      "source": "https://huggingface.co/OVHaiLLM/Olala-v1.0-mini-7A1B"
+    },
+    {
+      "model": "Gemini 4 Neon",
+      "lab": "Google",
+      "date": "2026-11-18",
+      "tier": "mid",
+      "note": "Hosted multimodal reasoning model with 1M context, optimized for fast completion of software engineering, knowledge work, and science tasks. Available on the Gemini API paid tier and in eligible Google products.",
+      "source": "https://blog.google/innovation-and-ai/models-and-research/gemini-models/introducing-gemini-4-neon/"
+    },
+    {
+      "model": "Genie 4 (Project Genie rollout)",
+      "lab": "Google",
+      "date": "2026-11-18",
+      "tier": "specialty",
+      "note": "Interactive world model with real-time text-guided editing and native audio. Rolled out to eligible Google AI Ultra subscribers through Project Genie on November 18 and to Gemini API developers on November 19.",
+      "source": "https://blog.google/innovation-and-ai/models-and-research/google-deepmind/genie-4-now-available-project-genie/"
+    },
+    {
+      "model": "DaisyRose-27B",
+      "lab": "RadixArk",
+      "date": "2026-11-18",
+      "tier": "open-weights",
+      "note": "Multimodal reasoning model based on Qwen3.8-27B and post-trained with reinforcement learning. RadixArk released BF16, FP8, and NVFP4 checkpoints under Apache-2.0.",
+      "source": "https://huggingface.co/blog/RadixArk/daisyrose-27b-pushing-the-frontier-of-post-trainin"
+    },
+    {
+      "model": "Aion 1.0 Instruct (open weights)",
+      "lab": "Microsoft",
+      "date": "2026-11-18",
+      "tier": "open-weights",
+      "note": "MIT-licensed 2.3B on-device text model with a 32K context window. Microsoft published the unquantized checkpoint on Hugging Face ahead of the Windows rollout.",
+      "source": "https://huggingface.co/microsoft/Aion-1.0-Instruct-2.3B"
+    },
+    {
+      "model": "Hy4 flash (open weights)",
+      "lab": "Tencent",
+      "date": "2026-11-18",
+      "tier": "open-weights",
+      "note": "Downloadable multimodal model with 12B active parameters and 1M context. Tencent released instruction-tuned, FP8 and base checkpoints under the Tencent Hy License after the November 16 hosted release.",
+      "source": "https://github.com/Tencent-Hunyuan/Hy4-flash"
+    },
+    {
+      "model": "Phai-A1 (announcement)",
+      "lab": "Phancy",
+      "date": "2026-11-18",
+      "tier": "open-weights",
+      "note": "35B mixture-of-experts coding and agent model with a 1M-token context window. Apache-2.0 weights are downloadable. The date marks the announcement, and the first download date is unverified.",
+      "source": "https://phai.phanthy.com/"
+    },
+    {
+      "model": "Phai-M1",
+      "lab": "Phancy",
+      "date": "2026-11-18",
+      "tier": "specialty",
+      "note": "Hosted model that generates video with synchronized audio from text or an image. Phancy offers an online trial and lists downloadable weights as forthcoming.",
+      "source": "https://phai.phanthy.com/"
+    },
+    {
+      "model": "Astra for Law 6.2",
+      "lab": "OpenAI",
+      "date": "2026-11-17",
+      "tier": "specialty",
+      "note": "Legal research configuration of GPT-6.2 Astra with an expanded legal search index. ChatGPT Enterprise customers can request access through the Trusted Access Program, including API access.",
+      "source": "https://openai.com/index/astra-law-6-2/"
+    },
+    {
+      "model": "MAI Code 2",
+      "lab": "Microsoft",
+      "date": "2026-11-17",
+      "tier": "specialty",
+      "note": "Coding model for multi-file changes, repository-wide reasoning and debugging. Available to eligible GitHub Copilot subscribers at launch.",
+      "source": "https://microsoft.ai/news/microsoft-ignite-2026/"
+    },
+    {
+      "model": "MAI Code 2 Flash",
+      "lab": "Microsoft",
+      "date": "2026-11-17",
+      "tier": "specialty",
+      "note": "Smaller coding model for targeted edits, explanations and routine fixes. Available to eligible GitHub Copilot users, including Free and Student plans, and in limited preview through Microsoft Foundry.",
+      "source": "https://microsoft.ai/news/microsoft-ignite-2026/"
+    },
+    {
+      "model": "MAI Image 2.7 (Foundry preview)",
+      "lab": "Microsoft",
+      "date": "2026-11-17",
+      "tier": "specialty",
+      "note": "Image generation and image editing model released in public preview through Microsoft Foundry, following the October image-editing preview.",
+      "source": "https://microsoft.ai/news/introducing-mai-image-2-7/"
+    },
+    {
+      "model": "MAI Image 2.7 Flash (Foundry preview)",
+      "lab": "Microsoft",
+      "date": "2026-11-17",
+      "tier": "specialty",
+      "note": "Faster image generation and editing variant for high-volume workflows. Available in public preview through Microsoft Foundry and powers the MAI Canvas workspace.",
+      "source": "https://microsoft.ai/news/introducing-mai-image-2-7/"
+    },
+    {
+      "model": "MAI Realtime 1",
+      "lab": "Microsoft",
+      "date": "2026-11-17",
+      "tier": "specialty",
+      "note": "Microsoft’s first low-latency live speech-to-speech model. A demo launched in MAI Labs, and Microsoft opened registration for interested customers.",
+      "source": "https://microsoft.ai/news/microsoft-ignite-2026/"
+    },
+    {
+      "model": "MAI Cyber 2 Flash (announcement)",
+      "lab": "Microsoft",
+      "date": "2026-11-17",
+      "tier": "specialty",
+      "note": "Security model announced at Ignite. Microsoft scheduled the rollout to eligible customers in its security products for mid-December.",
+      "source": "https://microsoft.ai/news/introducing-mai-cyber-2-flash/"
+    },
+    {
+      "model": "Microsoft-Decision-1.1 (GA)",
+      "lab": "Microsoft",
+      "date": "2026-11-17",
+      "tier": "specialty",
+      "note": "Multimodal decision model for structured tasks such as routing and classification. Generally available through Microsoft Foundry, OpenRouter, and Vercel after an October public preview.",
+      "source": "https://commandline.microsoft.com/microsoft-decision-model-ga/"
+    },
+    {
+      "model": "Sarvam-105B-1711",
+      "lab": "Sarvam AI",
+      "date": "2026-11-17",
+      "tier": "open-weights",
+      "note": "Updated 105B mixture-of-experts checkpoint with 10.3B active parameters and additional post-training for tool use, instruction following, and Indian languages. Sarvam published NVFP4 and BF16 builds under Apache-2.0.",
+      "source": "https://huggingface.co/sarvamai/sarvam-105b-1711"
+    }
+  ],
+  "corrections": [],
+  "dateEvidence": [
+    {
+      "models": [
+        "Inkling 2 Mini"
+      ],
+      "sourceURLs": [
+        "https://thinkingmachines.ai/news/inkling-2-mini/",
+        "https://thinkingmachines.ai/model-card/inkling-2-mini/",
+        "https://huggingface.co/thinkingmachines/Inkling-2-Mini"
+      ],
+      "result": "The November 20 launch and model card date the downloadable release."
+    },
+    {
+      "models": [
+        "Hy4 (open weights)"
+      ],
+      "sourceURLs": [
+        "https://github.com/Tencent-Hunyuan/Hy4",
+        "https://huggingface.co/tencent/Hy4",
+        "https://huggingface.co/tencent/Hy4/tree/c10c0de5b6f850703fb0a90e65d1c32b558b9167",
+        "https://x.com/TencentHunyuan/status/2123625549147070538"
+      ],
+      "result": "The publisher documents the downloadable variants and license. The November 20 UTC repository revision and the publisher’s announcement in China date the final weight release."
+    },
+    {
+      "models": [
+        "WeMM-Video family"
+      ],
+      "sourceURLs": [
+        "https://github.com/Tencent/WeMM-Video",
+        "https://arxiv.org/abs/2611.26409",
+        "https://huggingface.co/collections/tencent/wemm-video",
+        "https://huggingface.co/tencent/WeMM-Video-2B/tree/aaff85654e51d16aecf4f8197f7eb625333b74db",
+        "https://github.com/Tencent/WeMM-Video/blob/main/LICENSE"
+      ],
+      "result": "The technical report is dated November 19. Tencent dates the collection’s model license and uploaded BF16 checkpoints November 20."
+    },
+    {
+      "models": [
+        "GPT-Live-1.1 (API release)"
+      ],
+      "sourceURLs": [
+        "https://developers.openai.com/api/docs/changelog"
+      ],
+      "result": "OpenAI dates the gpt-live-1.1 Live API rollout November 19. The October entry represents the earlier ChatGPT rollout."
+    },
+    {
+      "models": [
+        "Olala mini 7A1B"
+      ],
+      "sourceURLs": [
+        "https://huggingface.co/OVHaiLLM/Olala-v1.0-mini-7A1B",
+        "https://corporate.ovhcloud.com/en-ie/newsroom/news/ovh-olala-mini/"
+      ],
+      "result": "OVHcloud’s November 17 announcement set November 19 as the official launch. The model card confirms that date and the downloadable and hosted options."
+    },
+    {
+      "models": [
+        "Gemini 4 Neon"
+      ],
+      "sourceURLs": [
+        "https://blog.google/innovation-and-ai/models-and-research/gemini-models/introducing-gemini-4-neon/",
+        "https://aistudio.google.com/docs/changelog#11-18-2026"
+      ],
+      "result": "Google dates the model announcement and Gemini API rollout November 18."
+    },
+    {
+      "models": [
+        "Genie 4 (Project Genie rollout)"
+      ],
+      "sourceURLs": [
+        "https://blog.google/innovation-and-ai/models-and-research/google-deepmind/genie-4-now-available-project-genie/",
+        "https://blog.google/innovation-and-ai/technology/developers-tools/genie-4-in-gemini-api/"
+      ],
+      "result": "Google dates the first rollout beyond trusted testers November 18 and the developer rollout November 19."
+    },
+    {
+      "models": [
+        "DaisyRose-27B"
+      ],
+      "sourceURLs": [
+        "https://huggingface.co/blog/RadixArk/daisyrose-27b-pushing-the-frontier-of-post-trainin",
+        "https://huggingface.co/RadixArk/DaisyRose-27B"
+      ],
+      "result": "RadixArk dates the checkpoint release November 18. Later gateway listings reflect separate hosting dates."
+    },
+    {
+      "models": [
+        "Aion 1.0 Instruct (open weights)"
+      ],
+      "sourceURLs": [
+        "https://huggingface.co/microsoft/Aion-1.0-Instruct-2.3B",
+        "https://huggingface.co/microsoft/Aion-1.0-Instruct-2.3B/tree/1423a073e270175034fba08814f83723e8db8e70",
+        "https://devblogs.microsoft.com/foundry-on-windows/aion-instruct-local-ai-windows-gpu/"
+      ],
+      "result": "Microsoft’s initial Hugging Face revision was published November 18 and contains the unquantized MIT weights. Microsoft dates its earlier standalone developer package to October."
+    },
+    {
+      "models": [
+        "Hy4 flash (open weights)"
+      ],
+      "sourceURLs": [
+        "https://github.com/Tencent-Hunyuan/Hy4-flash",
+        "https://x.com/TencentHunyuan/status/2122912575302119554",
+        "https://huggingface.co/tencent/Hy4-flash"
+      ],
+      "result": "Tencent publicly announced the downloadable weights November 18."
+    },
+    {
+      "models": [
+        "Phai-A1 (announcement)"
+      ],
+      "sourceURLs": [
+        "https://phai.phanthy.com/",
+        "https://markets.ft.markitdigital.com/data/announce/detail?dockey=600-202611180345DGAP____ASPR_____corporate_2437554_en-1",
+        "https://huggingface.co/PhaiModelLab/Phai-A1-35B-1M"
+      ],
+      "result": "The November 18 company announcement establishes the launch date. The publisher’s model page links to weights; the exact date of first public download is unverified."
+    },
+    {
+      "models": [
+        "Phai-M1"
+      ],
+      "sourceURLs": [
+        "https://phai.phanthy.com/",
+        "https://markets.ft.markitdigital.com/data/announce/detail?dockey=600-202611180345DGAP____ASPR_____corporate_2437554_en-1"
+      ],
+      "result": "The November 18 company announcement introduces the model. The publisher offers a hosted trial and lists weights as coming soon."
+    },
+    {
+      "models": [
+        "Astra for Law 6.2"
+      ],
+      "sourceURLs": [
+        "https://openai.com/index/astra-law-6-2/"
+      ],
+      "result": "OpenAI dates the release and expanded application-based access November 17."
+    },
+    {
+      "models": [
+        "MAI Code 2"
+      ],
+      "sourceURLs": [
+        "https://microsoft.ai/news/microsoft-ignite-2026/",
+        "https://github.blog/changelog/2026-11-17-mai-code-2-and-mai-code-2-flash-in-github-copilot/"
+      ],
+      "result": "The November 17 keynote announces the model and same-day Copilot access."
+    },
+    {
+      "models": [
+        "MAI Code 2 Flash"
+      ],
+      "sourceURLs": [
+        "https://microsoft.ai/news/microsoft-ignite-2026/",
+        "https://github.blog/changelog/2026-11-17-mai-code-2-and-mai-code-2-flash-in-github-copilot/"
+      ],
+      "result": "The November 17 keynote confirms Copilot access and the limited Foundry preview."
+    },
+    {
+      "models": [
+        "MAI Image 2.7 (Foundry preview)"
+      ],
+      "sourceURLs": [
+        "https://microsoft.ai/news/introducing-mai-image-2-7/"
+      ],
+      "result": "Microsoft dates the Foundry preview to November 17 and describes both generation and editing."
+    },
+    {
+      "models": [
+        "MAI Image 2.7 Flash (Foundry preview)"
+      ],
+      "sourceURLs": [
+        "https://microsoft.ai/news/introducing-mai-image-2-7/"
+      ],
+      "result": "Microsoft announces the Flash model and its public preview November 17."
+    },
+    {
+      "models": [
+        "MAI Realtime 1"
+      ],
+      "sourceURLs": [
+        "https://microsoft.ai/news/microsoft-ignite-2026/"
+      ],
+      "result": "The November 17 keynote identifies the live demo and customer registration."
+    },
+    {
+      "models": [
+        "MAI Cyber 2 Flash (announcement)"
+      ],
+      "sourceURLs": [
+        "https://microsoft.ai/news/introducing-mai-cyber-2-flash/"
+      ],
+      "result": "Microsoft’s November 17 announcement places customer access in mid-December."
+    },
+    {
+      "models": [
+        "Microsoft-Decision-1.1 (GA)"
+      ],
+      "sourceURLs": [
+        "https://commandline.microsoft.com/microsoft-decision-model-ga/"
+      ],
+      "result": "Microsoft confirms general availability and the three distribution channels on November 17."
+    },
+    {
+      "models": [
+        "Sarvam-105B-1711"
+      ],
+      "sourceURLs": [
+        "https://huggingface.co/sarvamai/sarvam-105b-1711",
+        "https://huggingface.co/sarvamai/sarvam-105b-1711/tree/3fe06304ae6861ad806b690caa4def7522c450cc"
+      ],
+      "result": "The publisher’s initial release commit dates the new checkpoint to November 17."
+    }
+  ],
+  "exclusions": [
+    {
+      "candidate": "PixVerse V6-max, Kimi K3.1 Pro Prime, and Dragon Copilot Transcribe",
+      "reason": "PixVerse added V6-max to its own API October 22, before the November reseller listing. Kimi Prime is a faster serving mode of K3.1 Pro. Dragon Copilot Transcribe uses the already recorded MAI Transcribe 2.",
+      "sources": [
+        "https://docs.platform.pixverse.ai/changelog-2394996m0",
+        "https://platform.qianwenai.com/docs/changelog/models",
+        "https://microsoft.ai/news/microsoft-ignite-2026/"
+      ]
+    }
+  ]
+}
