@@ -1,0 +1,331 @@
+{
+  "checked": "2026-11-24",
+  "latestRelease": "2026-11-24",
+  "baselineManifest": "ai_model_timeline_update_sources_2026_11_21.json",
+  "preservedHistoricalRows": 667,
+  "additions": [
+    {
+      "model": "ERNIE 5.5 Flash Preview (open weights)",
+      "lab": "Baidu",
+      "date": "2026-11-24",
+      "tier": "open-weights",
+      "note": "Baidu published Apache-2.0 checkpoints for the post-trained 280B mixture-of-experts model with 14B active parameters and 1M context. Builds include BF16, FP8 and a mixed FP8/FP4 checkpoint.",
+      "source": "https://huggingface.co/baidu/ERNIE-5.5-Flash-Preview"
+    },
+    {
+      "model": "Hy-MT3 family",
+      "lab": "Tencent",
+      "date": "2026-11-24",
+      "tier": "open-weights",
+      "note": "Apache-2.0 translation family covering 102 languages, with 1.8B, 7B, and 30B-A3B checkpoints. Tencent also published a translation evaluation suite.",
+      "source": "https://github.com/Tencent-Hunyuan/Hy-MT3"
+    },
+    {
+      "model": "GPT-6.2 Sol (November 23, ChatGPT)",
+      "lab": "OpenAI",
+      "date": "2026-11-23",
+      "tier": "mid",
+      "note": "Conversation-tuned GPT-6.2 Sol snapshot rolled out in the Chat tab for Plus, Pro, Business, and eligible Enterprise users.",
+      "source": "https://help.openai.com/en/articles/6825453-chatgpt-release-notes"
+    },
+    {
+      "model": "GLM-5.4 (Coding Plan release)",
+      "lab": "Z.ai (Zhipu)",
+      "date": "2026-11-23",
+      "tier": "flagship",
+      "note": "Multimodal flagship with 1M context for coding and long-running agent tasks. It reuses 28 transformer layers across two passes. Z.ai launched it for GLM Coding Plan subscribers and listed the general API as forthcoming.",
+      "source": "https://docs.z.ai/guides/llm/glm-5.4"
+    },
+    {
+      "model": "Solar Mini 4.5 Preview",
+      "lab": "Upstage",
+      "date": "2026-11-23",
+      "tier": "small",
+      "note": "Early-access hosted model for agents with 512K context, tool calling, and structured outputs. Upstage released it in the API and Playground ahead of the planned December general release.",
+      "source": "https://console.upstage.ai/docs/models/solar-mini-4-5-preview"
+    },
+    {
+      "model": "Ling-3.2-air",
+      "lab": "Ant Group (inclusionAI)",
+      "date": "2026-11-23",
+      "tier": "open-weights",
+      "note": "MIT-licensed multimodal mixture-of-experts model with 124B total and 5.5B active parameters. It accepts text, images, and video and targets agent workflows.",
+      "source": "https://huggingface.co/inclusionAI/Ling-3.2-air"
+    },
+    {
+      "model": "Kolibri 1.1",
+      "lab": "Aleph Alpha",
+      "date": "2026-11-23",
+      "tier": "open-weights",
+      "note": "Apache-2.0 update of the English and German reasoning model. The 75B mixture-of-experts model uses 3.44B active parameters and offers adjustable reasoning effort and downloadable GGUF builds.",
+      "source": "https://aleph-alpha.com/en/blog/kolibri-1-1/"
+    },
+    {
+      "model": "MemT-1.0-Pro",
+      "lab": "MemTensor",
+      "date": "2026-11-23",
+      "tier": "open-weights",
+      "note": "554B mixture-of-experts model built with NVIDIA on Nemotron 3 Ultra. It maintains a compact memory state across turns and ships under OpenMDW-1.1.",
+      "source": "https://huggingface.co/MemTensor/MemT-1.0-Pro"
+    },
+    {
+      "model": "SenseNova-RoboRSI-27B",
+      "lab": "SenseNova",
+      "date": "2026-11-23",
+      "tier": "open-weights",
+      "note": "Apache-2.0 vision-language model for robot manipulation. The full 27B checkpoint can invoke robot policies, review proposed trajectories, and generate control code.",
+      "source": "https://github.com/OpenSenseNova/SenseNova-RoboRSI"
+    },
+    {
+      "model": "WePocketModel 1.0 family",
+      "lab": "Tencent",
+      "date": "2026-11-23",
+      "tier": "open-weights",
+      "note": "Compact on-device multimodal family with 2B and 4B variants. A shared vision-language backbone supports text generation, multimodal embeddings, and structured decisions. Tencent released Transformers and GGUF weights under Apache-2.0.",
+      "source": "https://github.com/Tencent/WePocketModel"
+    },
+    {
+      "model": "Qwen-Audio-3.1-Live",
+      "lab": "Alibaba (Qwen)",
+      "date": "2026-11-23",
+      "tier": "specialty",
+      "note": "Hosted real-time voice model that can keep a conversation going while a background model handles a task and relay the result when ready. At launch Alibaba listed availability in Beijing and Singapore.",
+      "source": "https://help.aliyun.com/en/model-studio/newly-released-models"
+    },
+    {
+      "model": "Qwen-Audio-3.1-Captioner",
+      "lab": "Alibaba (Qwen)",
+      "date": "2026-11-23",
+      "tier": "specialty",
+      "note": "Hosted audio understanding model that transcribes speech, separates voices from background audio, and describes speakers, music, and other sounds. At launch Alibaba listed availability in Beijing.",
+      "source": "https://help.aliyun.com/en/model-studio/newly-released-models"
+    },
+    {
+      "model": "HungerG (Qoder preview)",
+      "lab": "Undisclosed (stealth)",
+      "date": "2026-11-23",
+      "tier": "specialty",
+      "note": "Hosted stealth coding model offered in Qoder for a limited preview with adjustable thinking effort. Qoder did not identify the underlying developer.",
+      "source": "https://docs.qoder.com/events/hungerg-free"
+    },
+    {
+      "model": "LingSante-3.1-flash",
+      "lab": "Ant Group (inclusionAI)",
+      "date": "2026-11-22",
+      "tier": "open-weights",
+      "note": "MIT-licensed medical reasoning model with 560B total and 25B active parameters, built for clinical workflows and complex medical reasoning. FP8 and MXFP4 weights are available.",
+      "source": "https://huggingface.co/inclusionAI/LingSante-3.1-flash"
+    },
+    {
+      "model": "LingSante-3.1-air-VL",
+      "lab": "Ant Group (inclusionAI)",
+      "date": "2026-11-22",
+      "tier": "open-weights",
+      "note": "MIT-licensed multimodal medical model with 124B total and 5.5B active parameters, trained for medical image understanding, report generation, and clinical reasoning.",
+      "source": "https://huggingface.co/inclusionAI/LingSante-3.1-air-VL"
+    },
+    {
+      "model": "Sarvam-105B-1711 (hosted rollout)",
+      "lab": "Sarvam AI",
+      "date": "2026-11-22",
+      "tier": "small",
+      "note": "Sarvam switched the existing sarvam-105b and sarvam-105b-conversations API endpoints to its 1711 checkpoint for tool use, long conversations, and Indian languages.",
+      "source": "https://docs.sarvam.ai/changelog/2026/11/22"
+    },
+    {
+      "model": "Ideogram 4.6",
+      "lab": "Ideogram",
+      "date": "2026-11-19",
+      "tier": "specialty",
+      "note": "Image generation and editing model with up to 4K output, up to five generation reference images, and a Precise Edit API with optional masking.",
+      "source": "https://ideogram.ai/models/4.6/"
+    }
+  ],
+  "corrections": [],
+  "dateEvidence": [
+    {
+      "models": [
+        "ERNIE 5.5 Flash Preview (open weights)"
+      ],
+      "sourceURLs": [
+        "https://huggingface.co/baidu/ERNIE-5.5-Flash-Preview",
+        "https://x.com/Baidu_ERNIE/status/2125072735336546546",
+        "https://ernie.baidu.com/release/ernie-5-5-flash-preview/"
+      ],
+      "result": "Baidu announced public weights on November 24 in UTC and China local time. Its model card confirms the license and variants. The earlier timeline entry records the hosted release."
+    },
+    {
+      "models": [
+        "Hy-MT3 family"
+      ],
+      "sourceURLs": [
+        "https://github.com/Tencent-Hunyuan/Hy-MT3",
+        "https://arxiv.org/abs/2611.27673"
+      ],
+      "result": "Tencent dates its downloadable checkpoints and TransRubric release to November 24."
+    },
+    {
+      "models": [
+        "GPT-6.2 Sol (November 23, ChatGPT)"
+      ],
+      "sourceURLs": [
+        "https://help.openai.com/en/articles/6825453-chatgpt-release-notes",
+        "https://deploymentsafety.openai.com/gpt-6-2-chatgpt/gpt-6-2-chatgpt.pdf"
+      ],
+      "result": "OpenAI dates the Chat rollout November 23 and assesses the updated checkpoint in a separate system card. The November 17 entry records the Work, Codex, and API release."
+    },
+    {
+      "models": [
+        "GLM-5.4 (Coding Plan release)"
+      ],
+      "sourceURLs": [
+        "https://docs.z.ai/guides/llm/glm-5.4",
+        "https://x.com/ZixuanLi_/status/2124719282512859480",
+        "https://z.ai/blog/glm-5.4"
+      ],
+      "result": "The November 23 rollout announcement dates subscriber access. The developer docs describe the model and its access limits."
+    },
+    {
+      "models": [
+        "Solar Mini 4.5 Preview"
+      ],
+      "sourceURLs": [
+        "https://console.upstage.ai/docs/models/solar-mini-4-5-preview"
+      ],
+      "result": "Upstage dates API preview availability November 23. The date records the preview and its documented access."
+    },
+    {
+      "models": [
+        "Ling-3.2-air"
+      ],
+      "sourceURLs": [
+        "https://huggingface.co/inclusionAI/Ling-3.2-air",
+        "https://x.com/AntLingAGI/status/2124891223597240338"
+      ],
+      "result": "Ant Ling announced the public checkpoint on November 23. Its model card documents the architecture and license."
+    },
+    {
+      "models": [
+        "Kolibri 1.1"
+      ],
+      "sourceURLs": [
+        "https://aleph-alpha.com/en/blog/kolibri-1-1/",
+        "https://huggingface.co/Aleph-Alpha/Kolibri-1.1"
+      ],
+      "result": "Aleph Alpha dates the release announcement and downloadable weights November 23."
+    },
+    {
+      "models": [
+        "MemT-1.0-Pro"
+      ],
+      "sourceURLs": [
+        "https://huggingface.co/MemTensor/MemT-1.0-Pro",
+        "https://www.prnewswire.com/news-releases/memtensor-releases-and-open-sources-memt-1-0-pro-a-554b-memory-native-model-302948905.html",
+        "https://github.com/MemTensor/MemT-1.0"
+      ],
+      "result": "MemTensor dates the public launch announcement November 23. The date records the Pro announcement following earlier repository activity."
+    },
+    {
+      "models": [
+        "SenseNova-RoboRSI-27B"
+      ],
+      "sourceURLs": [
+        "https://github.com/OpenSenseNova/SenseNova-RoboRSI",
+        "https://huggingface.co/sensenova/SenseNova-RoboRSI-27B"
+      ],
+      "result": "SenseNova dates availability of the full checkpoint November 23 and links to the downloadable weights."
+    },
+    {
+      "models": [
+        "WePocketModel 1.0 family"
+      ],
+      "sourceURLs": [
+        "https://github.com/Tencent/WePocketModel",
+        "https://huggingface.co/tencent/WePocketModel1.0-4B",
+        "https://arxiv.org/abs/2611.27365"
+      ],
+      "result": "Tencent dates the downloadable weights November 23. The technical report appeared earlier and ModelScope availability followed November 24."
+    },
+    {
+      "models": [
+        "Qwen-Audio-3.1-Live"
+      ],
+      "sourceURLs": [
+        "https://help.aliyun.com/en/model-studio/newly-released-models",
+        "https://docs.qwencloud.com/changelog/models"
+      ],
+      "result": "Alibaba Cloud records the Model Studio release of qwen-audio-3.1-live on November 23. At launch Alibaba listed availability in Beijing and Singapore."
+    },
+    {
+      "models": [
+        "Qwen-Audio-3.1-Captioner"
+      ],
+      "sourceURLs": [
+        "https://help.aliyun.com/en/model-studio/newly-released-models",
+        "https://help.aliyun.com/en/model-studio/qwen-audio-asr-captioner-http-api"
+      ],
+      "result": "Alibaba Cloud records the Model Studio release of qwen-audio-3.1-captioner on November 23. At launch Alibaba listed availability in Beijing."
+    },
+    {
+      "models": [
+        "HungerG (Qoder preview)"
+      ],
+      "sourceURLs": [
+        "https://docs.qoder.com/events/hungerg-free"
+      ],
+      "result": "Qoder schedules access from midnight ending November 23 in Singapore, which falls on November 23 UTC."
+    },
+    {
+      "models": [
+        "LingSante-3.1-flash"
+      ],
+      "sourceURLs": [
+        "https://huggingface.co/inclusionAI/LingSante-3.1-flash",
+        "https://x.com/AntLingAGI/status/2124523916819648945",
+        "https://developer.ant-ling.com/en/blogs/lingsante-3.1-flash"
+      ],
+      "result": "Ant Ling announced downloadable weights November 22. The model card confirms the MIT license and available builds."
+    },
+    {
+      "models": [
+        "LingSante-3.1-air-VL"
+      ],
+      "sourceURLs": [
+        "https://huggingface.co/inclusionAI/LingSante-3.1-air-VL",
+        "https://x.com/AntLingAGI/status/2124555085640610194",
+        "https://developer.ant-ling.com/en/blogs/lingsante-3.1-air-vl"
+      ],
+      "result": "Ant Ling announced public weights November 22. Its model card describes the multimodal checkpoint and license."
+    },
+    {
+      "models": [
+        "Sarvam-105B-1711 (hosted rollout)"
+      ],
+      "sourceURLs": [
+        "https://docs.sarvam.ai/changelog/2026/11/22",
+        "https://www.sarvam.ai/blogs/sarvam-105b-1711"
+      ],
+      "result": "Sarvam dates the hosted API switch to the 1711 weights November 22. The November 17 entry records the earlier checkpoint upload."
+    },
+    {
+      "models": [
+        "Ideogram 4.6"
+      ],
+      "sourceURLs": [
+        "https://ideogram.ai/models/4.6/",
+        "https://developer.ideogram.ai/api-reference/images/generate/ideogram-4-6"
+      ],
+      "result": "Ideogram dates the release to November 19. This backfill records the original model release."
+    }
+  ],
+  "exclusions": [
+    {
+      "candidate": "Pixtral Large 2502 and MobileMoE PTE builds",
+      "reason": "OpenRouter added the February 2025 Pixtral snapshot in November. Meta describes its PTE builds as ExecuTorch exports of the MobileMoE checkpoints.",
+      "sources": [
+        "https://openrouter.ai/mistralai/pixtral-large-2502",
+        "https://huggingface.co/facebook/MobileMoE-S-SFT"
+      ]
+    }
+  ]
+}

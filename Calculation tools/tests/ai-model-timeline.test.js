@@ -362,8 +362,8 @@ test('static header metadata and initial chart domain cover the dataset', () => 
   const titleDate = new Date(`${latest}T00:00:00Z`).toLocaleDateString('en-US', {timeZone:'UTC', month:'short', day:'numeric', year:'numeric'});
   assert.ok(html.includes(`<title>AI Model Release Timeline — Jan 2024 to ${titleDate}</title>`), 'static title reflects the latest release before scripts run');
   assert.ok(html.includes(`<span data-latest-date>${latestLabel}</span>`));
-  assert.equal((html.match(/· checked November 21, 2026 ·/g) || []).length, 1);
-  assert.equal((html.match(/Verification checked November 21, 2026/g) || []).length, 1);
+  assert.equal((html.match(/· checked November 24, 2026 ·/g) || []).length, 1);
+  assert.equal((html.match(/Verification checked November 24, 2026/g) || []).length, 1);
   // Proportional range padding replaces the former fixed ±15-day x0 domain,
   // so assert the core-driven domain instead of its retired literal expression.
   const script = extractInlineScript();
@@ -512,15 +512,15 @@ const {analyze, render} = require('../scripts/timeline-analysis.cjs');
 
 test('narrative statistics match the expanded dataset', () => {
   const stats = analyze(data);
-  assert.equal(stats.total, 667);
-  assert.equal(new Set(data.map(row => row.lab)).size, 139);
-  assert.equal(stats.sameDay, 941);
-  assert.equal(stats.withinTwo, 3971);
-  assert.deepEqual(stats.years, {'2024': 88, '2025': 134, '2026': 445});
-  assert.deepEqual(stats.weekdays, {'0':21, '1':108, '2':140, '3':134, '4':166, '5':85, '6':13});
+  assert.equal(stats.total, 684);
+  assert.equal(new Set(data.map(row => row.lab)).size, 141);
+  assert.equal(stats.sameDay, 1000);
+  assert.equal(stats.withinTwo, 4120);
+  assert.deepEqual(stats.years, {'2024': 88, '2025': 134, '2026': 462});
+  assert.deepEqual(stats.weekdays, {'0':24, '1':119, '2':142, '3':134, '4':167, '5':85, '6':13});
   assert.equal(stats.months['2026-10'], 130);
-  assert.equal(stats.months['2026-11'], 108);
-  assert.equal(stats.cadence.OpenAI.major, 47.5);
+  assert.equal(stats.months['2026-11'], 125);
+  assert.equal(stats.cadence.OpenAI.major, 46);
   assert.equal(stats.cadence.Google.major, 28.5);
   assert.deepEqual(stats.moonshotLags, [14,90,50,31,38,64,4,16,10,25,25]);
   assert.ok(html.includes(render(stats)), 'published findings equal reproducible current analysis');
@@ -545,13 +545,16 @@ test('analysis handles same-day pairs, medians, and missing prior releases', () 
 
 test('recent-release summary follows the latest dated rows', () => {
   const summary = render(analyze(data));
-  assert.match(summary, /Inkling 2 Mini \(November 20\)/);
-  assert.match(summary, /Hy4 \(open weights\) \(November 20\)/);
-  assert.match(summary, /GPT-Live-1\.1 \(API release\) \(November 19\)/);
-  assert.match(summary, /DaisyRose-27B \(November 18\)/);
-  assert.match(summary, /Gemini 4 Neon \(November 18\)/);
-  assert.match(summary, /Genie 4 \(Project Genie rollout\) \(November 18\)/);
-  assert.match(summary, /Hy4 flash \(open weights\) \(November 18\)/);
+  assert.match(summary, /ERNIE 5\.5 Flash Preview \(open weights\) \(November 24\)/);
+  assert.match(summary, /Hy-MT3 family \(November 24\)/);
+  assert.match(summary, /GLM-5\.4 \(Coding Plan release\) \(November 23\)/);
+  assert.match(summary, /GPT-6\.2 Sol \(November 23, ChatGPT\) \(November 23\)/);
+  assert.match(summary, /Qwen-Audio-3\.1-Live \(November 23\)/);
+  assert.match(summary, /LingSante-3\.1-air-VL \(November 22\)/);
+  assert.match(summary, /LingSante-3\.1-flash \(November 22\)/);
+  assert.match(summary, /Sarvam-105B-1711 \(hosted rollout\) \(November 22\)/);
+  assert.doesNotMatch(summary, /Inkling 2 Mini \(November 20\)/);
+  assert.doesNotMatch(summary, /Ideogram 4\.6 \(November 19\)/);
   assert.doesNotMatch(summary, /GPT-6\.2 Astra \(November 17\)/);
   assert.doesNotMatch(summary, /HeyGen Decision 1 \(November 13\)/);
   assert.doesNotMatch(summary, /Shizuku-Duplex \(research announcement\) \(November 8\)/);
