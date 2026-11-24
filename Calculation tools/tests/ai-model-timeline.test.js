@@ -689,7 +689,7 @@ test('same-day labels stay beside their dots and clear the date axis', () => {
   const start = source.indexOf('const STACK_GAP =');
   const end = source.indexOf('\nfunction renderLanes()', start);
   const rows = data.filter(row => row.lab === 'OpenAI' && row.date === '2026-09-22').map(row => ({...row}));
-  const context = {DATA:rows, visible:() => true, yLane:() => 47};
+  const context = {DATA:rows, visible:() => true, yLane:() => 47, laneKey:row => row.lab};
   vm.createContext(context);
   vm.runInContext(source.slice(start, end) + '\nupdateStackOffsets(); globalThis.positions = DATA.map(d => ({model:d.model, dot:yDot(d), y:labelY(d), dx:labelDx(d), anchor:labelAnchor(d)}));', context);
   assert.equal(context.positions.length, 2);
@@ -706,6 +706,13 @@ test('same-day labels stay beside their dots and clear the date axis', () => {
   assert.equal(context.single.y, 38);
   assert.equal(context.single.dx, 0);
   assert.equal(context.single.anchor, 'middle');
+  // Different labs sharing a lane on the same day must stack together.
+  rows[1].lab = 'Another lab';
+  context.visible = () => true;
+  context.laneKey = () => 'Others: general';
+  vm.runInContext('updateStackOffsets();',context);
+  assert.equal(rows[0].stackOffset, -4);
+  assert.equal(rows[1].stackOffset, 4);
 });
 
 test('label placement retries colliding boxes and suppresses only labels with no room', () => {
@@ -738,9 +745,9 @@ test('label placement retries colliding boxes and suppresses only labels with no
 
 test('SVG placement integration coalesces redraws and restores labels when zoom creates room', () => {
   const core = loadCore();
-  let capturedItems;
+  let capturedItems, capturedObstacles;
   const originalPlace = core.placeLabelBoxes;
-  core.placeLabelBoxes = (items, bounds, obstacles) => { capturedItems = items; return originalPlace(items, bounds, obstacles); };
+  core.placeLabelBoxes = (items, bounds, obstacles) => { capturedItems = items; capturedObstacles = obstacles; return originalPlace(items, bounds, obstacles); };
   const rows = [100,130,160].map((px,i) => ({model:`Long label ${i}`,dt:px,lab:'Google',tier:'specialty',stackCount:1,stackOffset:0}));
   const makeNode = (d,attrs) => ({d,attrs:{...attrs},getAttribute(name){return this.attrs[name] ?? null;},setAttribute(name,value){this.attrs[name]=String(value);},
     getBBox(){return {width:80,height:10,y:Number(this.attrs.y)-8};}});
@@ -777,6 +784,13 @@ test('SVG placement integration coalesces redraws and restores labels when zoom 
       assert.ok(box.x+box.width+2<=cx-4.5 || box.x>=cx+4.5+2 || box.y+box.height+2<=42.5 || box.y>=51.5+2,'text clears every dot');
     }
   }
+  const fold = {model:'Folded release',dt:110,lab:'Google',tier:'specialty',of:{model:'Main'},stackCount:1,stackOffset:0};
+  const foldDot = makeNode(fold,{r:'3'}), foldLabel = makeNode(fold,{y:'38',display:'none'});
+  dotNodes.push(foldDot); labelNodes.push(foldLabel);
+  vm.runInContext('scheduleLabelPlacement();',context);
+  frames.shift()();
+  assert.ok(!capturedItems.some(item => item.id === fold), 'fold has no standalone label');
+  assert.ok(capturedObstacles.some(box => box.x === 137 && box.y === 44 && box.width === 6 && box.height === 6), 'folded dot is a label obstacle');
   assert.ok(extractInlineScript().includes('scheduleLabelPlacement();\n}'),'redraw invokes placement for zoom, filter and resize updates');
 });
 
@@ -826,4 +840,15 @@ test('classification joining preserves raw release properties', () => {
   assert.equal(row.tier,'mid');
   assert.equal(row.note,'Original');
   assert.equal(row.level,2);
+});
+
+test('lane mapping keeps notable labs and follows a folded parent tier', () => {
+  const {laneKey} = loadCore();
+  const labs = new Set(['Known']);
+  for (const tier of ['flagship','mid','small']) assert.equal(laneKey({lab:'Other',tier},labs), 'Others: general');
+  assert.equal(laneKey({lab:'Other',tier:'open-weights'},labs), 'Others: open weights');
+  assert.equal(laneKey({lab:'Other',tier:'specialty'},labs), 'Others: specialty');
+  assert.equal(laneKey({lab:'Known',tier:'small'},labs), 'Known');
+  assert.equal(laneKey({lab:'Other',tier:'small',parent:{lab:'Other',tier:'specialty'}},labs), 'Others: specialty');
+  assert.equal(laneKey({lab:'Other',tier:'unknown'},labs), 'Others: general');
 });

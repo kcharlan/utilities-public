@@ -95,7 +95,7 @@ Both calculators use `APR / 12` monthly compounding and round monthly amounts to
 
 A curated timeline of notable AI model releases by lab, with the dataset embedded in the page. It is not a calculator and has no build step.
 
-- **Timeline** view plots releases in per-lab lanes with an overview strip; scroll over lab names to move the page, or wheel or pinch over the plot to zoom. Drag pans, and hovering or clicking a dot shows its details and source link. **Report** view lists the selected releases as text that can be sorted, copied or printed.
+- **Timeline** view plots releases in dedicated or shared lanes with an overview strip; scroll over lab names to move the page, or wheel or pinch over the plot to zoom. Drag pans, and hovering or clicking a dot shows its details and source link. Hollow marks represent folded releases and connect to a visible main entry. **Report** view lists the selected releases as text that can be sorted, copied or printed.
 - Detail controls show Headline, Notable (the default), or Everything. Dot sizes indicate detail level; Report adds a Level column with folded relationships.
 - Range presets (Month, Quarter, Year, 12 mo, All, Custom) with a previous/next period stepper, tier checkboxes (in Filters on phones), and a lab/model filter that accepts comma-separated terms to compare labs. Press **?** for shortcuts (`T`/`R` switch views, `[`/`]` change period, Esc closes panels).
 - View, range, sort, tiers and filter terms are kept in the URL hash, so a view can be bookmarked; nothing is stored in browser storage.
@@ -106,7 +106,7 @@ The [levels file](docs/ai_model_timeline_levels.json) stores classification meta
 
 The `docs/ai_model_timeline_update_sources_*.json` manifests record the sources and corrections for each data update; the tests check the embedded data against them, so keep them when updating the timeline.
 
-Open it directly or use the installed [AI model timeline](http://127.0.0.1:7711/calculators/ai-model-timeline.html). Its direct-copy installer (`tools/deploy_ai_model_timeline.mjs`) and read-only drift audit are documented in [Local Deployment Synchronization](../docs/local_deployment_sync.md#calculator-page-direct-copy-deployments).
+Open it directly or use the installed [AI model timeline](http://127.0.0.1:7711/calculators/ai-model-timeline.html); its Help button describes the live controls. Its direct-copy installer (`tools/deploy_ai_model_timeline.mjs`) and read-only drift audit are documented in [Local Deployment Synchronization](../docs/local_deployment_sync.md#calculator-page-direct-copy-deployments).
 
 ## Usage
 

@@ -85,6 +85,7 @@ THIS SOFTWARE.
   .axis path,.axis line{stroke:var(--border);}
   .dot{cursor:pointer; stroke:#0d1117; stroke-width:1;}
   .dot:hover{stroke:#fff; stroke-width:1.5;}
+  .fold-link{stroke:#8b949e; stroke-width:1; opacity:.35; pointer-events:none;}
   .mlabel{font-size:9.5px; fill:var(--muted); pointer-events:none;}
   #tooltip{position:fixed; display:none; background:#1c2128; border:1px solid var(--border); border-radius:8px; padding:10px 12px; font-size:12.5px; max-width:min(340px, calc(100vw - 16px)); z-index:50; box-shadow:0 8px 24px rgba(0,0,0,.5); pointer-events:auto;}
   #tooltip .tt-model{font-weight:600; font-size:13.5px;}
@@ -215,7 +216,7 @@ THIS SOFTWARE.
       <span class="popover-anchor">
         <button type="button" class="btn" id="help-toggle" aria-label="Controls and shortcuts" aria-expanded="false" aria-controls="help-popover">?</button>
         <div class="popover" id="help-popover" hidden>
-          <p>Scroll over lab names to move the page · wheel or trackpad pinch over the plot to zoom time · mouse drag to pan · touch the overview strip to choose dates · filtering collapses lanes together. Headline, Notable and Everything select detail; larger dots indicate higher levels.</p>
+          <p>Scroll over lab names to move the page · wheel or trackpad pinch over the plot to zoom time · mouse drag to pan · touch the overview strip to choose dates · filtering collapses lanes together. Headline, Notable and Everything select detail; larger dots indicate higher levels. Hollow marks are folded releases; their tooltip names the main entry. A line connects visible pairs. A folded release can remain visible when filters hide its main entry. Labs without a Headline or Notable main entry share lanes by tier.</p>
           <p style="margin-top:8px">T / R switch views · [ / ] change period · Esc closes this panel or a pinned tooltip. Reset clears filters and zoom.</p>
         </div>
       </span>
@@ -6594,9 +6595,14 @@ THIS SOFTWARE.
     const level = row.kind === 'stage' && row.parent ? row.parent.level : (row.level || 3);
     return level <= ({headline:1, notable:2, all:3}[show] || 2);
   }
+  function laneKey(row, laneLabs) {
+    const main = row.parent || row;
+    if (laneLabs.has(main.lab)) return main.lab;
+    return main.tier === 'open-weights' ? 'Others: open weights' : main.tier === 'specialty' ? 'Others: specialty' : 'Others: general';
+  }
   const levelLabel = row => row.kind || ({1:'Headline', 2:'Notable', 3:'Record'}[row.level] || 'Record');
   const wheelInsidePlot = (x, left, right) => x >= left && x <= right;
-  window.TimelineCore = {rowKey, attachLevels, rowShown, levelLabel, wheelInsidePlot, toISODateLocal, snapToLocalDay, daysBetweenISO, addDays, daysInclusive,
+  window.TimelineCore = {rowKey, attachLevels, rowShown, laneKey, levelLabel, wheelInsidePlot, toISODateLocal, snapToLocalDay, daysBetweenISO, addDays, daysInclusive,
     lastDayOfMonth, monthKey, fmtShortDate, fmtLongDate, fmtMonthLabel, presetSpec,
     periodOverlaps, stepSpec, normalizeCustom, resolveRange, domainPaddingDays,
     compareReleases, groupByMonth, monthlyTierCounts, formatFilters, reportLevel, formatReportText, encodeState, decodeState, placeLabelBoxes};
@@ -7877,12 +7883,15 @@ const labs = [
   ...LAB_ORDER.filter(l => DATA.some(d => d.lab === l)),
   ...[...new Set(DATA.map(d => d.lab))].filter(l => !LAB_ORDER.includes(l)).sort()
 ];
-const labCounts = {}; DATA.forEach(d => labCounts[d.lab] = (labCounts[d.lab]||0)+1);
 const earliestRelease = d3.min(DATA, d => d.dt);
 const latestRelease = d3.max(DATA, d => d.dt);
 const TimelineCore = window.TimelineCore;
 const LEVELS = JSON.parse(document.getElementById('timeline-levels').textContent);
 TimelineCore.attachLevels(DATA, LEVELS.entries);
+const laneLabs = new Set(DATA.filter(d => !d.of && d.level <= 2).map(d => d.lab));
+const laneKey = d => TimelineCore.laneKey(d, laneLabs);
+const laneOrder = [...labs.filter(l => laneLabs.has(l)), 'Others: general', 'Others: open weights', 'Others: specialty'];
+const laneCounts = new Map(); DATA.forEach(d => laneCounts.set(laneKey(d), (laneCounts.get(laneKey(d)) || 0) + 1));
 const bounds = {
   earliest:TimelineCore.toISODateLocal(earliestRelease),
   latest:TimelineCore.toISODateLocal(latestRelease)
@@ -8032,12 +8041,14 @@ function sizeStrip(){
 
 const gGrid = svg.append('g').attr('clip-path','url(#clip)');
 const gLanes = svg.append('g');
+const gLinks = svg.append('g').attr('clip-path','url(#clip)').attr('pointer-events','none');
 const gDots = svg.append('g').attr('clip-path','url(#clip)');
 const gAxis = svg.append('g').attr('class','axis');
 
-let visibleLabs = labs.slice();
-let laneIndex = new Map(labs.map((l,i)=>[l,i]));
-const yLane = lab => laneIndex.has(lab) ? MARGIN.top + laneIndex.get(lab) * LANE_H + LANE_H/2 : -200;
+let visibleLabs = [];
+let laneIndex = new Map();
+let laneGeometry = new Map();
+const yLane = lab => laneGeometry.has(lab) ? laneGeometry.get(lab).y + laneGeometry.get(lab).height/2 : -200;
 const STACK_GAP = 8;
 
 function updateStackOffsets(){
@@ -8047,7 +8058,7 @@ function updateStackOffsets(){
     d.stackIndex = 0;
     d.stackCount = 1;
     if (!visible(d)) return;
-    const key = `${d.lab}|${d.date}`;
+    const key = JSON.stringify([laneKey(d), d.date]);
     if (!groups.has(key)) groups.set(key, []);
     groups.get(key).push(d);
   });
@@ -8058,7 +8069,7 @@ function updateStackOffsets(){
   }));
 }
 
-const yDot = d => yLane(d.lab) + (d.stackOffset || 0);
+const yDot = d => yLane(laneKey(d)) + (d.stackOffset || 0);
 // Same-day labels sit beside their dots so the first lane clears the date axis.
 const labelY = d => yDot(d) + (d.stackCount > 1 ? 3 : -9);
 const labelAnchor = d => d.stackCount > 1 ? (d.stackIndex % 2 === 0 ? 'end' : 'start') : 'middle';
@@ -8074,7 +8085,7 @@ function renderLanes(){
   const all = gLanes.selectAll('g.lane');
   all.select('rect.lane-bg')
     .attr('x', 0).attr('width', W)
-    .attr('y', l => MARGIN.top + laneIndex.get(l)*LANE_H).attr('height', LANE_H)
+    .attr('y', l => laneGeometry.get(l).y).attr('height', l => laneGeometry.get(l).height)
     .attr('fill', '#ffffff').attr('opacity', l => laneIndex.get(l) % 2 === 0 ? 0.025 : 0);
   all.select('text.lane-label').attr('x', MARGIN.left - 10).attr('y', l => yLane(l)+4).each(function(l){
     const label = d3.select(this);
@@ -8086,9 +8097,9 @@ function renderLanes(){
     }
   });
   const counts = new Map(visibleLabs.map(l => [l, 0]));
-  DATA.forEach(d => { if (visible(d)) counts.set(d.lab, (counts.get(d.lab) || 0) + 1); });
+  DATA.forEach(d => { if (visible(d)) counts.set(laneKey(d), (counts.get(laneKey(d)) || 0) + 1); });
   all.select('text.lane-count').attr('x', MARGIN.left - 10).attr('y', l => yLane(l)+15)
-    .text(l => counts.get(l) === labCounts[l] ? counts.get(l) : `${counts.get(l)} / ${labCounts[l]}`);
+    .text(l => counts.get(l) === laneCounts.get(l) ? counts.get(l) : `${counts.get(l)} / ${laneCounts.get(l)}`);
 }
 
 const tooltip = d3.select('#tooltip');
@@ -8102,7 +8113,7 @@ function showTip(event, d){
      <div>${d.note}</div>
      <div style="margin-top:5px"><a href="${d.source}" target="_blank" rel="noopener">source ↗</a></div>`);
   const details = document.createElement('div');
-  details.textContent = [TimelineCore.levelLabel(d), LEVELS.fieldLabels[d.field] || d.field, d.reason, d.evidence].filter(Boolean).join(' · ');
+  details.textContent = [TimelineCore.reportLevel(d), LEVELS.fieldLabels[d.field] || d.field, d.reason, d.evidence].filter(Boolean).join(' · ');
   tooltip.node().querySelector('.tt-meta').after(details);
   const margin = 8, gap = 14;
   const tipRect = tooltip.node().getBoundingClientRect();
@@ -8289,9 +8300,17 @@ updateChromeHeight();
 
 function layout(){
   updateStackOffsets();
-  visibleLabs = labs.filter(lab => DATA.some(d => d.lab === lab && visible(d)));
+  visibleLabs = laneOrder.filter(lab => DATA.some(d => laneKey(d) === lab && visible(d)));
   laneIndex = new Map(visibleLabs.map((l, i) => [l, i]));
-  curH = MARGIN.top + (visibleLabs.length || 5) * LANE_H + MARGIN.bottom;
+  laneGeometry = new Map();
+  let top = MARGIN.top;
+  for (const lane of visibleLabs) {
+    const rows = DATA.filter(d => visible(d) && laneKey(d) === lane);
+    const height = Math.max(LANE_H, ...rows.map(d => (d.stackCount - 1) * STACK_GAP + 2 * dotRadius(d) + 1.5 + 4));
+    laneGeometry.set(lane, {y:top, height});
+    top += height;
+  }
+  curH = (visibleLabs.length ? top : MARGIN.top + 5 * LANE_H) + MARGIN.bottom;
   svg.attr('height', curH);
   defsClip.attr('height', curH);
   updateZoomConstraints();
@@ -8304,15 +8323,34 @@ function layout(){
   redraw();
 }
 
+const dotRadius = d => d.of ? 3 : ({1:6.5, 2:5, 3:3.5}[d.level] || 3.5);
+function dotAtPointer(event, fallback){
+  // SVG offset coordinates round to the nearest pixel; client coordinates can truncate it.
+  const px = event.offsetX, py = event.offsetY;
+  let nearest = fallback, best = Infinity;
+  for (const row of DATA) {
+    if (!visible(row)) continue;
+    const distance = Math.hypot(px - x(row.dt), py - yDot(row));
+    if (distance <= dotRadius(row) + 0.75 && distance < best) {
+      nearest = row;
+      best = distance;
+    }
+  }
+  return Boolean(nearest.of) !== Boolean(fallback.of) ? nearest : fallback;
+}
+let links = gLinks.selectAll('line').data(DATA.filter(d => d.of && d.parent)).join('line').attr('class','fold-link');
 let dots = gDots.selectAll('circle').data(DATA).join('circle')
   .attr('class','dot')
-  .attr('r', d => ({1:6.5, 2:5, 3:3.5}[d.level] || 3.5))
+  .attr('r', dotRadius)
   .attr('cy', yDot)
-  .attr('fill', d => TIER_COLOR[d.tier])
-  .on('mouseenter', (e,d) => { if(!pinnedRelease) showTip(e,d); })
-  .on('mousemove', (e,d) => { if(!pinnedRelease) showTip(e,d); })
+  .attr('fill', d => d.of ? 'none' : TIER_COLOR[d.tier])
+  .style('stroke', d => d.of ? TIER_COLOR[d.tier] : null)
+  .style('pointer-events', d => d.of ? 'all' : null)
+  .on('mouseenter', (e,d) => { if(!pinnedRelease) showTip(e,dotAtPointer(e,d)); })
+  .on('mousemove', (e,d) => { if(!pinnedRelease) showTip(e,dotAtPointer(e,d)); })
   .on('mouseleave', () => { if(!pinnedRelease) tooltip.style('display','none'); })
-  .on('click', (e,d) => { pinnedRelease = d; showTip(e,d); e.stopPropagation(); });
+  .on('click', (e,d) => { pinnedRelease = dotAtPointer(e,d); showTip(e,pinnedRelease); e.stopPropagation(); });
+dots.filter(d => d.of).raise();
 
 let labels = gDots.selectAll('text.mlabel').data(DATA).join('text')
   .attr('class','mlabel')
@@ -8402,10 +8440,12 @@ function redraw(){
   gAxis.selectAll('line').attr('stroke', '#21262d');
   gAxis.selectAll('.tick text').attr('fill', '#8b949e');
   dots.attr('cx', d => x(d.dt)).attr('display', d => visible(d) ? null : 'none');
+  links.attr('x1', d => x(d.dt)).attr('y1', yDot).attr('x2', d => x(d.parent.dt)).attr('y2', d => yDot(d.parent))
+    .attr('display', d => visible(d) && visible(d.parent) ? null : 'none');
   const daysInView = (x.domain()[1] - x.domain()[0]) / 864e5;
   const labelLimit = d => ({1:400, 2:168, 3:62}[d.level] || 62) * (state.terms.length ? 2 : 1);
   labels.attr('x', d => x(d.dt))
-    .attr('display', d => (daysInView <= labelLimit(d) && visible(d)) ? null : 'none');
+    .attr('display', d => (!d.of && daysInView <= labelLimit(d) && visible(d)) ? null : 'none');
   scheduleLabelPlacement();
 }
 
