@@ -101,4 +101,4 @@ if (require.main === module) {
     console.log(`${doc.entries.length} entries; levels ${totals}; ${doc.entries.filter(e => e.of).length} folds`);
   } catch (error) { console.error(error.message); process.exitCode = 1; }
 }
-module.exports = {readLevelsFile, readEmbeddedLevels, validateLevels, embedLevels};
+module.exports = {readLevelsFile, readEmbeddedLevels, validateLevels, embedLevels, key};

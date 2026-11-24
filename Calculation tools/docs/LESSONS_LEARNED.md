@@ -29,3 +29,4 @@
 - **Overlapping dots need shared hit selection.** Paint order alone can make either a hollow fold or a solid main entry unreachable. Resolve mixed fold and main hits by nearest visible center, retain native same-type hits, and test natural clicks at desktop and phone widths with neighboring rows present.
 
 - **Keep classification metadata outside DATA.** Update manifests compare raw release rows deeply; join levels only after loading the raw rows so classification changes do not alter manifest fidelity.
+- **Treat generated replacement text as literal.** A model name can contain replacement tokens such as `$&`; use a callback when replacing generated HTML and test repeat writes with such a name.

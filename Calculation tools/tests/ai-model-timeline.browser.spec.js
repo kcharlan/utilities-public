@@ -5,6 +5,8 @@ const fs = require('node:fs');
 const {readData} = require('../scripts/timeline-analysis.cjs');
 const raw = readData(fs.readFileSync(path.join(__dirname, '..', 'ai-model-timeline.html'), 'utf8'));
 const latest = raw.reduce((max,row) => row.date > max ? row.date : max, '');
+const levels = require('../docs/ai_model_timeline_levels.json');
+const longDate = date => new Date(date+'T00:00:00Z').toLocaleDateString('en-US',{month:'long',day:'numeric',year:'numeric',timeZone:'UTC'});
 const octoberMatches = terms => raw.filter(row => row.date.startsWith('2026-10') && terms.some(term => row.model.toLowerCase().includes(term.toLowerCase()) || row.lab.toLowerCase().includes(term.toLowerCase())));
 const releaseRow = (page,row) => page.locator('#report tr.release')
   .filter({has:page.getByRole('cell',{name:row.model,exact:true})})
@@ -159,11 +161,16 @@ for (const width of [1440, 375]) {
     page.on('pageerror', error => errors.push(error.message));
     page.on('console', message => { if (message.type() === 'error') errors.push(message.text()); });
     await page.goto('/ai-model-timeline.html#range=m:2026-11');
+    await expect(page.locator('.scope-note')).toBeVisible();
+    await expect(page.locator('.scope-note')).toContainText('Headline and Notable main entries');
     await page.getByRole('button', {name:'Everything', exact:true}).click();
-    await expect(page.locator('header')).toContainText('November 24, 2026');
-    await expect(page.locator('header')).toContainText('checked November 24, 2026');
+    await expect(page.locator('.scope-note')).toBeVisible();
+    await expect(page.locator('header')).toContainText(longDate(latest));
+    await expect(page.locator('header')).toContainText(`checked ${longDate(levels.checked)}`);
     await page.getByRole('button', { name: 'Previous period' }).click();
     await page.getByLabel('Filter labs or models').fill('Muse Wonder');
+    await expect(page.locator('.scope-note')).toBeVisible();
+    await expect(page.locator('.scope-note')).toContainText('access stages can appear in the chart and report outside that count');
     const metaMatches = octoberMatches(['Muse Wonder']);
     await expect(page.locator('#range-summary')).toContainText(`${metaMatches.length} releases · ${new Set(metaMatches.map(row => row.lab)).size} labs`);
     await expect(page.locator('#chartwrap circle.dot:visible')).toHaveCount(metaMatches.length);

@@ -3,6 +3,8 @@ const fs = require('node:fs');
 const path = require('node:path');
 const vm = require('node:vm');
 const {isDeepStrictEqual} = require('node:util');
+const os = require('node:os');
+const {execFileSync} = require('node:child_process');
 const test = require('node:test');
 
 const htmlPath = path.join(__dirname, '..', 'ai-model-timeline.html');
@@ -11,6 +13,10 @@ const html = fs.readFileSync(htmlPath, 'utf8');
 const {extractInlineScript, extractCoreScript, loadCore, rawRows:extractData} = require('./helpers/timeline-page.js');
 
 const data = extractData();
+const levels = require('../docs/ai_model_timeline_levels.json');
+const rowKey = row => JSON.stringify([row.model,row.lab,row.date]);
+const eligibleKeys = new Set(levels.entries.filter(row => row.level <= 2 && !row.of).map(rowKey));
+const eligible = data.filter(row => eligibleKeys.has(rowKey(row)));
 
 test('November 17 update records Astra and Sol as separate OpenAI releases', () => {
   const releases = data.filter(row => row.lab === 'OpenAI' && row.date === '2026-11-17' && ['flagship', 'mid'].includes(row.tier));
@@ -333,12 +339,21 @@ test('static header metadata and initial chart domain cover the dataset', () => 
   const labs = new Set(data.map(row => row.lab));
   assert.match(html, new RegExp(`<span data-release-count>${data.length}<\\/span>`));
   assert.match(html, new RegExp(`<span data-lab-count>${labs.size}<\\/span>`));
+  const scope = html.match(/<p class="scope-note">[\s\S]*?<\/p>/)?.[0];
+  const findings = html.match(/<section class="findings">[\s\S]*?<\/section>/)?.[0];
+  for (const section of [scope, findings]) assert.match(section, new RegExp(`<span data-notable-count>${eligible.length}<\\/span>`));
+  assert.equal((html.match(/<span data-notable-count>/g) || []).length, 2);
   const latestLabel = new Date(`${latest}T00:00:00Z`).toLocaleDateString('en-US', {timeZone:'UTC', month:'long', day:'numeric', year:'numeric'});
   const titleDate = new Date(`${latest}T00:00:00Z`).toLocaleDateString('en-US', {timeZone:'UTC', month:'short', day:'numeric', year:'numeric'});
-  assert.ok(html.includes(`<title>AI Model Release Timeline — Jan 2024 to ${titleDate}</title>`), 'static title reflects the latest release before scripts run');
+  const earliest = data.reduce((min, row) => row.date < min ? row.date : min, latest);
+  const firstTitle = new Date(`${earliest}T00:00:00Z`).toLocaleDateString('en-US', {timeZone:'UTC', month:'short', year:'numeric'});
+  const firstLabel = new Date(`${earliest}T00:00:00Z`).toLocaleDateString('en-US', {timeZone:'UTC', month:'long', year:'numeric'});
+  assert.ok(html.includes(`<title>AI Model Release Timeline — ${firstTitle} to ${titleDate}</title>`), 'static title reflects the latest release before scripts run');
+  assert.ok(html.includes(`<span data-earliest-month>${firstLabel}</span>`));
   assert.ok(html.includes(`<span data-latest-date>${latestLabel}</span>`));
-  assert.equal((html.match(/· checked November 24, 2026 ·/g) || []).length, 1);
-  assert.equal((html.match(/Verification checked November 24, 2026/g) || []).length, 1);
+  const checked = new Date(`${levels.checked}T00:00:00Z`).toLocaleDateString('en-US', {timeZone:'UTC', month:'long', day:'numeric', year:'numeric'});
+  assert.ok(html.includes(`checked <span data-checked>${checked}</span>`));
+  assert.ok(html.includes(`Verification checked ${checked}`));
   // Proportional range padding replaces the former fixed ±15-day x0 domain,
   // so assert the core-driven domain instead of its retired literal expression.
   const script = extractInlineScript();
@@ -508,19 +523,51 @@ test('field URL state and filter text preserve selections', () => {
 
 const {analyze, render} = require('../scripts/timeline-analysis.cjs');
 
+test('writer preserves replacement tokens in recent model names on repeat writes', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'timeline-writer-'));
+  try {
+    fs.mkdirSync(path.join(dir, 'scripts'));
+    for (const name of ['timeline-analysis.cjs', 'timeline-levels.cjs']) fs.copyFileSync(path.join(__dirname, '..', 'scripts', name), path.join(dir, 'scripts', name));
+    const synthetic = {model:'Synthetic $&',lab:'Synthetic lab',date:'2026-01-01',tier:'mid'};
+    const doc = {checked:'2026-01-05',fields:['general'],fieldLabels:{general:'General'},roster:[],entries:[{...synthetic,level:2,field:'general',reason:'Synthetic'}]};
+    const fixture = `<section class="findings">old</section>\n<script id="timeline-levels" type="application/json">${JSON.stringify(doc)}</script>\nconst DATA = ${JSON.stringify([synthetic])};\n\nconst TIER_COLOR`;
+    const file = path.join(dir, 'ai-model-timeline.html');
+    fs.writeFileSync(file, fixture);
+    const write = () => execFileSync(process.execPath, [path.join(dir, 'scripts', 'timeline-analysis.cjs'), '--write']);
+    write(); const first = fs.readFileSync(file, 'utf8');
+    assert.ok(first.includes('Synthetic $& ('));
+    write(); assert.equal(fs.readFileSync(file, 'utf8'), first);
+  } finally { fs.rmSync(dir, {recursive:true}); }
+});
+
+test('volume description anchors the observation period to the newest raw year', () => {
+  const rows = [{model:'A',lab:'A',date:'2025-12-31',tier:'mid'}, {model:'B',lab:'B',date:'2026-01-02',tier:'mid'}];
+  const stats = analyze(rows, {entries:rows.map((row,i) => ({...row,level:i ? 3 : 2}))});
+  assert.match(render(stats), /recorded observation period extends through January 2, 2026/);
+  assert.doesNotMatch(render(stats), /final year is partial/);
+});
+
+test('analysis counts classified main entries and anchors recent to raw dates', () => {
+  const rows = [
+    {model:'A', lab:'OpenAI', date:'2026-01-01', tier:'flagship'},
+    {model:'B', lab:'Google', date:'2026-01-03', tier:'mid'},
+    {model:'C', lab:'Google', date:'2026-01-04', tier:'mid'},
+  ];
+  const levels = {checked:'2026-01-05', entries:rows.map((row,i) => ({...row, level:i === 2 ? 3 : 1}))};
+  const stats = analyze(rows, levels);
+  assert.equal(stats.total, 2);
+  assert.equal(stats.recorded, 3);
+  assert.equal(stats.latest, '2026-01-04');
+  assert.deepEqual(stats.recent, [{model:'B',date:'2026-01-03'}]);
+  assert.throws(() => analyze([], levels), /empty/i);
+});
+
 test('narrative statistics match the expanded dataset', () => {
-  const stats = analyze(data);
-  assert.equal(stats.total, 684);
-  assert.equal(new Set(data.map(row => row.lab)).size, 141);
-  assert.equal(stats.sameDay, 1000);
-  assert.equal(stats.withinTwo, 4120);
-  assert.deepEqual(stats.years, {'2024': 88, '2025': 134, '2026': 462});
-  assert.deepEqual(stats.weekdays, {'0':24, '1':119, '2':142, '3':134, '4':167, '5':85, '6':13});
-  assert.equal(stats.months['2026-10'], 130);
-  assert.equal(stats.months['2026-11'], 125);
-  assert.equal(stats.cadence.OpenAI.major, 46);
-  assert.equal(stats.cadence.Google.major, 28.5);
-  assert.deepEqual(stats.moonshotLags, [14,90,50,31,38,64,4,16,10,25,25]);
+  const stats = analyze(data, levels);
+  assert.equal(stats.total, eligible.length);
+  assert.equal(stats.recorded, data.length);
+  assert.equal(Object.keys(stats.cadence).length, new Set(eligible.map(row => row.lab)).size);
+  for (const counts of [stats.years, stats.months, stats.weekdays]) assert.equal(Object.values(counts).reduce((a,b) => a+b,0), eligible.length);
   assert.ok(html.includes(render(stats)), 'published findings equal reproducible current analysis');
 });
 
@@ -542,29 +589,55 @@ test('analysis handles same-day pairs, medians, and missing prior releases', () 
 });
 
 test('recent-release summary follows the latest dated rows', () => {
-  const summary = render(analyze(data));
-  assert.match(summary, /ERNIE 5\.5 Flash Preview \(open weights\) \(November 24\)/);
-  assert.match(summary, /Hy-MT3 family \(November 24\)/);
-  assert.match(summary, /GLM-5\.4 \(Coding Plan release\) \(November 23\)/);
-  assert.match(summary, /GPT-6\.2 Sol \(November 23, ChatGPT\) \(November 23\)/);
-  assert.match(summary, /Qwen-Audio-3\.1-Live \(November 23\)/);
-  assert.match(summary, /LingSante-3\.1-air-VL \(November 22\)/);
-  assert.match(summary, /LingSante-3\.1-flash \(November 22\)/);
-  assert.match(summary, /Sarvam-105B-1711 \(hosted rollout\) \(November 22\)/);
-  assert.doesNotMatch(summary, /Inkling 2 Mini \(November 20\)/);
-  assert.doesNotMatch(summary, /Ideogram 4\.6 \(November 19\)/);
-  assert.doesNotMatch(summary, /GPT-6\.2 Astra \(November 17\)/);
-  assert.doesNotMatch(summary, /HeyGen Decision 1 \(November 13\)/);
-  assert.doesNotMatch(summary, /Shizuku-Duplex \(research announcement\) \(November 8\)/);
-  assert.doesNotMatch(summary, /Arete-27B \(November 6\)/);
-  assert.doesNotMatch(summary, /Gemini Omni 1\.2 Flash \(November 5\)/);
-  assert.doesNotMatch(summary, /Hydrogen-1\.0 \(November 2\)/);
-  assert.doesNotMatch(summary, /Mistral Large 4 \(open weights\) \(October 29\)/);
-  assert.doesNotMatch(summary, /Kimi K3\.1 Pro \(October 23\)/);
-  assert.doesNotMatch(summary, /Voxtral Transcribe 3 family \(public preview\) \(October 20\)/);
-  assert.doesNotMatch(summary, /Muse Wonder \(October 12\)/);
-  assert.doesNotMatch(summary, /MISSINGNO\. \(October 10\)/);
-  assert.doesNotMatch(summary, /The latest cluster spans Antigravity/);
+  const latest = data.map(row => row.date).sort().at(-1);
+  const latestDay = Date.parse(latest + 'T00:00:00Z');
+  const expected = eligible.filter(row => (latestDay - Date.parse(row.date + 'T00:00:00Z')) / 86400000 <= 2)
+    .sort((a,b) => b.date.localeCompare(a.date) || a.model.localeCompare(b.model))
+    .map(({model,date}) => ({model,date}));
+  const stats = analyze(data, levels);
+  assert.deepEqual(stats.recent, expected);
+  const paragraph = expected.map(row => `${row.model} (${new Date(row.date + 'T00:00:00Z').toLocaleDateString('en-US', {timeZone:'UTC',month:'long',day:'numeric'})})`).join(', ');
+  const expectedText = expected.length ? `Recent releases include ${paragraph}.` : 'No Headline or Notable main entries fall in the recent window.';
+  assert.ok(render(stats).includes(expectedText));
+  const rows = [
+    {model:'Outside',lab:'A',date:'2026-01-01',tier:'mid'},
+    {model:'Boundary',lab:'B',date:'2026-01-02',tier:'mid'},
+    {model:'Inside',lab:'A',date:'2026-01-03',tier:'mid'},
+    {model:'Latest',lab:'B',date:'2026-01-04',tier:'mid'},
+  ];
+  const doc = {checked:'2026-01-05',entries:rows.map((r,i) => ({...r,level:i === 3 ? 3 : 2}))};
+  assert.deepEqual(analyze(rows,doc).recent.map(r => r.model), ['Inside','Boundary']);
+  doc.entries[1].level = 3; doc.entries[2].level = 3;
+  assert.match(render(analyze(rows,doc)), /No Headline or Notable main entries fall in the recent window/);
+});
+
+test('classified analysis handles sparse and empty populations', () => {
+  const rows = [
+    {model:'A',lab:'OpenAI',date:'2026-01-01',tier:'flagship'},
+    {model:'B',lab:'Google',date:'2026-01-02',tier:'mid'},
+    {model:'C',lab:'OpenAI',date:'2026-01-03',tier:'flagship'},
+    {model:'D',lab:'Google',date:'2026-01-04',tier:'mid'},
+    {model:'E',lab:'Moonshot',date:'2026-01-04',tier:'specialty'},
+  ];
+  const doc = {checked:'2026-01-05', entries:rows.map(r => ({...r,level:2}))};
+  const stats = analyze(rows,doc);
+  assert.equal(stats.sameDay,1);
+  assert.equal(stats.withinTwo,6);
+  assert.deepEqual(stats.years,{'2026':5});
+  assert.deepEqual(stats.months,{'2026-01':5});
+  assert.deepEqual(stats.weekdays,{'0':2,'4':1,'5':1,'6':1});
+  assert.equal(stats.cadence.OpenAI.all,2);
+  assert.deepEqual(stats.googleLags,[1,1]);
+  assert.match(render(stats), /<td>Anthropic<\/td><td>Insufficient data/);
+  assert.match(render(stats), /Moonshot's 0 major releases[^]*Insufficient data/);
+  assert.match(render(analyze([rows[0]], {entries:[doc.entries[0]]})), /median lag is <b>Insufficient data<\/b>/);
+  doc.entries.forEach(entry => { entry.level = 3; });
+  doc.fields = ['general']; doc.fieldLabels = {general:'General'}; doc.roster = [];
+  doc.entries.forEach(entry => { entry.field = 'general'; entry.reason = 'Synthetic record'; });
+  assert.deepEqual(require('../scripts/timeline-levels.cjs').validateLevels(rows,doc), []);
+  const empty = render(analyze(rows,doc));
+  assert.match(empty, /5 recorded events[^]*zero Headline and Notable/);
+  assert.doesNotMatch(empty, /NaN|null days/);
 });
 
 test('Inkling releases share the same lab lane', () => {

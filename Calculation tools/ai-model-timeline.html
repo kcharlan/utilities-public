@@ -164,7 +164,7 @@ THIS SOFTWARE.
 <body>
 <header>
   <h1>AI Model Release Timeline</h1>
-  <div class="sub"><span data-release-count>684</span> model releases from <span data-lab-count>141</span> labs · <span data-earliest-month>January 2024</span> – <span data-latest-date>November 24, 2026</span> · checked November 24, 2026 · press ? for controls and shortcuts</div>
+  <div class="sub"><span data-release-count>684</span> model releases from <span data-lab-count>141</span> labs · <span data-earliest-month>January 2024</span> – <span data-latest-date>November 24, 2026</span> · checked <span data-checked>November 24, 2026</span> · press ? for controls and shortcuts</div>
 </header>
 <div class="chrome">
   <div class="toolbar">
@@ -233,39 +233,39 @@ THIS SOFTWARE.
 <section id="report" hidden><div id="report-empty" role="status" hidden></div></section>
 <div id="tooltip"></div>
 
-<p class="scope-note" hidden>The findings below describe the full dataset (<span data-earliest-month></span> – <span data-latest-date></span>), not the current range or filters.</p>
+<p class="scope-note">The findings analyze all <span data-notable-count>413</span> Headline and Notable main entries in the full dataset (<span data-earliest-month></span> – <span data-latest-date></span>). Folded access stages can appear in the chart and report outside that count.</p>
 <section class="findings">
   <h2>What the data says: release-timing patterns</h2>
-  <p>Descriptive analysis of all <span data-release-count>684</span> dated release events through November 24, 2026. “Major” means flagship + mid tiers. Grouped family releases count as one event; previews, hosted snapshots, and general releases can be separate events.</p>
+  <p>Descriptive analysis of <span data-notable-count>413</span> Headline and Notable main entries among 684 recorded events through November 24, 2026. Folded stages, snapshots and variants are excluded from analysis. “Major” means flagship + mid tiers. Grouped family releases count as one event.</p>
   <h3>1. Does Moonshot follow Anthropic by 6–8 weeks?</h3>
-  <div class="verdict"><b>No consistent 6–8 week pattern.</b> For Moonshot's 11 major releases with a prior Anthropic major, the lags are 14, 90, 50, 31, 38, 64, 4, 16, 10, 25, 25 days. Only 1 of 11 falls in the 42–56 day window. The median is 25 days. These dates alone do not establish whether either lab responds to the other.</div>
+  <div class="verdict"><b>Moonshot's 9 major releases with a prior Anthropic major:</b> the lags are 14, 90, 50, 38, 64, 4, 16, 10, 25 days. Only 1 of 9 falls in the 42–56 day window. The median is 25 days. These dates alone do not establish whether either lab responds to the other.</div>
   <h3>2. Google's timing relative to OpenAI</h3>
-  <p>Across 19 Google major releases with a prior OpenAI major, the median lag is <b>7 days</b> (mean 20.6). Gemini 1.5 Pro and Sora were announced on the same day, February 15, 2024; Gemini 2.5 Pro and GPT-4o image generation were also same-day events, March 25, 2025. Astra arrived after Gemini 3.8 Flash, so it does not change that earlier release's follower lag.</p>
+  <p>Across 17 Google major releases with a prior OpenAI major, the median lag is <b>17 days (mean 31.6)</b>.</p>
   <h3>3. Cross-lab release clusters</h3>
-  <p>There are <b>1000 same-day cross-lab release pairs</b> and 4120 pairs within 2 days (including same-day pairs). Multiple models on one date contribute multiple pairs, so these are event-pair counts, not distinct days.</p>
-  <p>Recent releases include ERNIE 5.5 Flash Preview (open weights) (November 24), Hy-MT3 family (November 24), GLM-5.4 (Coding Plan release) (November 23), GPT-6.2 Sol (November 23, ChatGPT) (November 23), HungerG (Qoder preview) (November 23), Kolibri 1.1 (November 23), Ling-3.2-air (November 23), MemT-1.0-Pro (November 23), Qwen-Audio-3.1-Captioner (November 23), Qwen-Audio-3.1-Live (November 23), SenseNova-RoboRSI-27B (November 23), Solar Mini 4.5 Preview (November 23), WePocketModel 1.0 family (November 23), LingSante-3.1-air-VL (November 22), LingSante-3.1-flash (November 22), Sarvam-105B-1711 (hosted rollout) (November 22).</p>
+  <p>There are <b>144 same-day cross-lab release pairs</b> and 562 pairs within 2 days (including same-day pairs). Multiple models on one date contribute multiple pairs, so these are event-pair counts, not distinct days.</p>
+  <p>Recent releases include GLM-5.4 (Coding Plan release) (November 23), Ling-3.2-air (November 23).</p>
   <h3>4. Release cadence</h3>
-  <table><tr><th>Lab</th><th>All releases (median gap)</th><th>Major releases (median gap)</th></tr>
-    <tr><td>Google</td><td>6 days</td><td>28.5 days</td></tr>
-    <tr><td>OpenAI</td><td>9.5 days</td><td>46 days</td></tr>
-    <tr><td>Alibaba (Qwen)</td><td>10 days</td><td>43.5 days</td></tr>
-    <tr><td>DeepSeek</td><td>39.5 days</td><td>64 days</td></tr>
-    <tr><td>Z.ai (Zhipu)</td><td>47 days</td><td>83.5 days</td></tr>
+  <table><tr><th>Lab</th><th>Headline and Notable (median gap)</th><th>Major releases (median gap)</th></tr>
+    <tr><td>Google</td><td>8 days</td><td>38.5 days</td></tr>
+    <tr><td>OpenAI</td><td>12 days</td><td>47.5 days</td></tr>
+    <tr><td>Alibaba (Qwen)</td><td>24 days</td><td>60 days</td></tr>
+    <tr><td>DeepSeek</td><td>42 days</td><td>112 days</td></tr>
+    <tr><td>Z.ai (Zhipu)</td><td>56 days</td><td>83.5 days</td></tr>
     <tr><td>Anthropic</td><td>39 days</td><td>48.5 days</td></tr>
-    <tr><td>Moonshot</td><td>53 days</td><td>72 days</td></tr>
-    <tr><td>MiniMax</td><td>53 days</td><td>70 days</td></tr>
-    <tr><td>xAI</td><td>26 days</td><td>81 days</td></tr>
-    <tr><td>Mistral</td><td>26 days</td><td>127 days</td></tr>
+    <tr><td>Moonshot</td><td>55 days</td><td>85 days</td></tr>
+    <tr><td>MiniMax</td><td>58 days</td><td>78 days</td></tr>
+    <tr><td>xAI</td><td>28 days</td><td>81 days</td></tr>
+    <tr><td>Mistral</td><td>46.5 days</td><td>137 days</td></tr>
   </table>
   <p>Gaps include same-day events. Open-weight releases are a separate tier and are excluded from “major” even when they are a lab's flagship; compare these cadence figures with that classification in mind.</p>
   <h3>5. Weekday distribution</h3>
-  <p>Sunday: 24 · Monday: 119 · Tuesday: 142 · Wednesday: 134 · Thursday: 167 · Friday: 85 · Saturday: 13. These describe the selected release events, not all industry launches.</p>
+  <p>Sunday: 11 · Monday: 76 · Tuesday: 91 · Wednesday: 85 · Thursday: 104 · Friday: 41 · Saturday: 5. These describe Headline and Notable main entries, not all industry launches.</p>
   <h3>6. Release volume</h3>
-  <p>Releases per year: 88 (2024) → 134 (2025) → 462 (2026). The final year is partial, through November 24, 2026.</p>
-  <p>Largest monthly totals: 2026-10: 130 · 2026-11: 125 · 2026-09: 93 · 2026-07: 24 · 2026-08: 20 · 2026-04: 17 · 2025-08: 16 · 2026-06: 15.</p>
+  <p>Releases per year: 86 (2024) → 127 (2025) → 200 (2026). The recorded observation period extends through November 24, 2026.</p>
+  <p>Largest monthly totals: 2026-09: 39 · 2026-11: 29 · 2026-10: 24 · 2026-07: 22 · 2026-08: 18 · 2026-04: 17 · 2025-08: 16 · 2026-06: 15.</p>
   <h3>7. Interpretation and limits</h3>
   <p>Release timing alone does not demonstrate competitive response or causation. These descriptive counts do not test statistical significance. Shared launch calendars, selection of notable releases, and multiple related models announced together can all produce apparent timing patterns.</p>
-  <p class="caveat">Dates generally represent public announcements; explicitly noted hosted availability dates are used for some API models. Approximate dates are flagged in tooltips. A follower lag uses the most recent same-day or earlier major release; events with no prior leader release are excluded. This is a curated timeline, not an exhaustive model registry. Access can be staged or restricted even after announcement. Verification checked November 24, 2026.</p>
+  <p class="caveat">Dates generally represent public announcements; explicitly noted hosted availability dates are used for some API models. Approximate dates are flagged in tooltips. A follower lag uses the most recent same-day or earlier major release; events with no prior leader release are excluded. Historical entries reflect earlier curation, while newer entries use current classification rules, so comparisons across periods are qualified. This is a curated timeline, not an exhaustive model registry. Access can be staged or restricted even after announcement. Verification checked November 24, 2026.</p>
 </section>
 
 <script id="timeline-levels" type="application/json">
@@ -7922,6 +7922,8 @@ function scheduleRangeAnnouncement(){
 }
 document.title = `AI Model Release Timeline — ${earliestRelease.toLocaleDateString('en-US', {year:'numeric', month:'short'})} to ${latestRelease.toLocaleDateString('en-US', {year:'numeric', month:'short', day:'numeric'})}`;
 document.querySelectorAll('[data-release-count]').forEach(el => { el.textContent = DATA.length; });
+document.querySelectorAll('[data-notable-count]').forEach(el => { el.textContent = DATA.filter(row => row.level <= 2 && !row.of).length; });
+document.querySelectorAll('[data-checked]').forEach(el => { el.textContent = TimelineCore.fmtLongDate(LEVELS.checked); });
 document.querySelectorAll('[data-lab-count]').forEach(el => { el.textContent = labs.length; });
 document.querySelectorAll('[data-earliest-month]').forEach(el => {
   el.textContent = TimelineCore.fmtMonthLabel(TimelineCore.monthKey(bounds.earliest));
@@ -8500,8 +8502,6 @@ function render(){
   const search = document.getElementById('search');
   const displayedTerms = search.value.toLowerCase().split(',').map(s => s.trim()).filter(Boolean);
   if (displayedTerms.join(',') !== state.terms.join(',')) search.value = state.terms.join(', ');
-  document.querySelector('.scope-note').hidden = state.range.kind === 'all' &&
-    state.tiers.size === ALL_TIERS.length && state.fields.size === ALL_FIELDS.length && state.terms.length === 0 && state.show === 'all';
   document.querySelectorAll('.detail-button').forEach(button => button.setAttribute('aria-pressed', String(button.dataset.show === state.show)));
   document.querySelectorAll('.view-button').forEach(button => {
     button.setAttribute('aria-pressed', String(button.dataset.view === state.view));
