@@ -67,7 +67,7 @@ ${cadenceLabs.map(lab=>`    <tr><td>${lab}</td><td>${s.cadence[lab].all} days</t
 </section>`;
 }
 const htmlPath = path.join(__dirname, '..', 'ai-model-timeline.html');
-function readData(html) { return JSON.parse(html.split('const DATA = ')[1].split(';\n\nconst TIER_COLOR')[0]); }
+function readData(html) { const match = html.match(/(?:^|\n)const DATA = ([\s\S]*?);\n\nconst TIER_COLOR/); if (!match) throw new Error('DATA declaration missing'); return JSON.parse(match[1]); }
 if (require.main === module) {
   const html = fs.readFileSync(htmlPath, 'utf8');
   const stats = analyze(readData(html));
