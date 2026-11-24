@@ -58,12 +58,16 @@ THIS SOFTWARE.
   .range-summary{color:var(--muted); font-size:12.5px;}
   .popover-anchor{position:relative;}
   .popover{position:absolute; top:calc(100% + 6px); left:0; z-index:30; background:#1c2128; border:1px solid var(--border); border-radius:8px; box-shadow:0 8px 24px rgba(0,0,0,.5); padding:12px; min-width:250px; max-width:min(350px,calc(100vw - 32px)); font-size:12.5px;}
-  .mobile-filters{display:none;}
+  .mobile-filters{display:inline-block;}
+  #filters-popover > .tier-filters{display:none;}
+  .field-filters{display:grid; gap:7px; margin:8px 0;}
+  #filters-popover .field-filters label{display:flex; align-items:center; gap:5px; font-size:12.5px; cursor:pointer;}
+  .filter-actions{display:flex; gap:6px;}
   .popover label{display:grid; gap:4px; margin-bottom:9px;}
   .popover-actions{display:flex; flex-wrap:wrap; gap:6px; margin-top:9px;}
   .popover-error{color:#ff9d96; margin-top:7px;}
   .visually-hidden{position:absolute!important; width:1px; height:1px; padding:0; margin:-1px; overflow:hidden; clip:rect(0,0,0,0); white-space:nowrap; border:0;}
-  @media (max-width:639px){.mobile-filters{display:inline-block;}.toolbar-row > .tier-filters{display:none;}.toolbar{padding:9px 12px;}.range-summary{flex-basis:100%;}.popover-anchor:last-child .popover{left:auto;right:0;}.toolbar #search{width:100%;flex:0 0 100%;}}
+  @media (max-width:639px){#filters-popover > .tier-filters{display:flex; margin-bottom:12px;}.toolbar-row > .tier-filters{display:none;}.toolbar{padding:9px 12px;}.range-summary{flex-basis:100%;}.popover-anchor:last-child .popover{left:auto;right:0;}.toolbar #search{width:100%;flex:0 0 100%;}}
   #chartwrap{position:relative; overflow:hidden;}
   #chartwrap svg{touch-action:manipulation;}
   #chart-empty{position:absolute; left:150px; right:20px; top:80px; z-index:2; display:none; text-align:center; color:var(--muted); font-size:13px;}
@@ -6498,6 +6502,7 @@ THIS SOFTWARE.
     const restrictions = [], tiers = [...meta.tiers], terms = meta.terms || [];
     if (meta.show && meta.show !== 'notable') restrictions.push(`Detail: ${{headline:"Headline",all:"Everything"}[meta.show]}`);
     if (tiers.length !== meta.allTiers.length) restrictions.push(`Tiers: ${tiers.length ? tiers.map(tier => ({flagship:"Flagship",mid:"Mid",small:"Small","open-weights":"Open-weights",specialty:"Specialty"}[tier] || tier)).join(", ") : "None"}`);
+    if (meta.fields && meta.allFields && meta.fields.size !== meta.allFields.length) restrictions.push(`Fields: ${meta.fields.size ? [...meta.fields].map(field => meta.fieldLabels[field] || field).join(", ") : "None"}`);
     if (terms.length) restrictions.push(`Search: ${terms.join(", ")}`);
     return restrictions.join('; ');
   }
@@ -6514,7 +6519,7 @@ THIS SOFTWARE.
     }
     return lines.join('\n');
   }
-  function encodeState(state, bounds) {
+  function encodeState(state, bounds, allFields = []) {
     const out = [];
     if (state.view !== 'timeline') out.push(['view', state.view]);
     const range = state.range || {kind:'all'};
@@ -6529,11 +6534,12 @@ THIS SOFTWARE.
     const tiers = [...state.tiers];
     if (tiers.length !== TIER_ORDER.length) out.push(['tiers', tiers.join(',')]);
     if (state.show && state.show !== 'notable') out.push(['show', state.show]);
+    if (state.fields && state.fields.size !== allFields.length) out.push(['fields', [...state.fields].join(',')]);
     if (state.terms.length) out.push(['q', state.terms.join(',')]);
     return out.length ? '#' + out.map(([key, value]) => `${key}=${encodeURIComponent(value)}`).join('&') : '';
   }
-  function decodeState(hash, bounds, allTiers) {
-    const state = {view:'timeline', range:{kind:'all'}, sort:'desc', tiers:new Set(allTiers), terms:[], show:'notable'};
+  function decodeState(hash, bounds, allTiers, allFields = []) {
+    const state = {view:'timeline', range:{kind:'all'}, sort:'desc', tiers:new Set(allTiers), fields:new Set(allFields), terms:[], show:'notable'};
     try {
       const params = new URLSearchParams(String(hash || '').replace(/^#/, ''));
       if (params.get('view') === 'report') state.view = 'report';
@@ -6550,14 +6556,15 @@ THIS SOFTWARE.
         if (!custom.error) spec = custom;
       }
       if (spec && periodOverlaps(spec, bounds)) state.range = spec;
-      const rawTiers = params.get('tiers');
-      if (rawTiers !== null) {
-        const selected = rawTiers.split(',');
-        if (rawTiers === '' || selected.every(tier => allTiers.includes(tier))) {
-          state.tiers = new Set(rawTiers === '' ? [] : selected);
-        }
-      }
+      const selection = (name, allowed) => {
+        const raw = params.get(name);
+        if (raw === null) return new Set(allowed);
+        const selected = raw === '' ? [] : raw.split(',');
+        return new Set(selected.every(value => allowed.includes(value)) ? selected : allowed);
+      };
+      state.tiers = selection('tiers', allTiers);
       if (['headline','notable','all'].includes(params.get('show'))) state.show = params.get('show');
+      state.fields = selection('fields', allFields);
       const rawTerms = params.get('q');
       if (rawTerms) state.terms = rawTerms.split(',').map(term => term.trim().toLowerCase()).filter(Boolean);
     } catch (_) { /* malformed hash keeps valid defaults */ }
@@ -7887,6 +7894,7 @@ const earliestRelease = d3.min(DATA, d => d.dt);
 const latestRelease = d3.max(DATA, d => d.dt);
 const TimelineCore = window.TimelineCore;
 const LEVELS = JSON.parse(document.getElementById('timeline-levels').textContent);
+const ALL_FIELDS = LEVELS.fields;
 TimelineCore.attachLevels(DATA, LEVELS.entries);
 const laneLabs = new Set(DATA.filter(d => !d.of && d.level <= 2).map(d => d.lab));
 const laneKey = d => TimelineCore.laneKey(d, laneLabs);
@@ -7896,7 +7904,7 @@ const bounds = {
   earliest:TimelineCore.toISODateLocal(earliestRelease),
   latest:TimelineCore.toISODateLocal(latestRelease)
 };
-let state = TimelineCore.decodeState(location.hash, bounds, ALL_TIERS);
+let state = TimelineCore.decodeState(location.hash, bounds, ALL_TIERS, ALL_FIELDS);
 let resolved = TimelineCore.resolveRange(state.range, bounds);
 let prevResolved = null;
 let announcementTimer = null;
@@ -8133,7 +8141,7 @@ document.addEventListener('click', e => {
 });
 
 function matchesOtherFilters(d){
-  if (!state.tiers.has(d.tier)) return false;
+  if (!state.tiers.has(d.tier) || !state.fields.has(d.field)) return false;
   return !state.terms.length || state.terms.some(t =>
     d.model.toLowerCase().includes(t) || d.lab.toLowerCase().includes(t));
 }
@@ -8147,7 +8155,7 @@ function emptyChoice(){
   if (!DATA.some(inResolvedRange)) return {message:`No releases between ${TimelineCore.fmtShortDate(resolved.start)} and ${TimelineCore.fmtShortDate(resolved.end)}.`, label:'Show all dates', patch:{range:{kind:'all'}}};
   const hidden = hiddenDetailCount();
   if (hidden) return {message:`${hidden} more in Everything.`, label:'Show everything', patch:{show:'all'}};
-  return {message:`No releases match these filters in ${resolved.label}.`, label:'Clear filters', patch:{tiers:new Set(ALL_TIERS), terms:[]}};
+  return {message:`No releases match these filters in ${resolved.label}.`, label:'Clear filters', patch:{tiers:new Set(ALL_TIERS), fields:new Set(ALL_FIELDS), terms:[]}};
 }
 function renderEmptyState(){
   const shown = DATA.filter(visible).length;
@@ -8165,7 +8173,7 @@ const labRank = lab => labs.indexOf(lab);
 const viewScroll = {timeline:0, report:0};
 let copyLabelTimer = null;
 function reportGroups(){ return TimelineCore.groupByMonth(DATA.filter(visible), state.sort, labRank); }
-function reportMeta(){ return {range:resolved, tiers:state.tiers, allTiers:ALL_TIERS, terms:state.terms, show:state.show}; }
+function reportMeta(){ return {range:resolved, tiers:state.tiers, allTiers:ALL_TIERS, fields:state.fields, allFields:ALL_FIELDS, fieldLabels:LEVELS.fieldLabels, terms:state.terms, show:state.show}; }
 function makeNode(tag, className, role, value){
   const node = document.createElement(tag);
   if (className) node.className = className;
@@ -8471,7 +8479,9 @@ function render(){
   const filtersChanged = !prevState || state.show !== prevState.show || state.terms.length !== prevState.terms.length ||
     state.terms.some((term, i) => term !== prevState.terms[i]) ||
     state.tiers.size !== prevState.tiers.size ||
-    [...state.tiers].some(tier => !prevState.tiers.has(tier));
+    [...state.tiers].some(tier => !prevState.tiers.has(tier)) ||
+    state.fields.size !== prevState.fields.size ||
+    [...state.fields].some(field => !prevState.fields.has(field));
   const viewChanged = !prevState || state.view !== prevState.view;
   const previousView = prevState?.view;
   if (previousView && viewChanged) viewScroll[previousView] = window.scrollY;
@@ -8485,12 +8495,13 @@ function render(){
   if (viewChanged || (pinnedRelease && !visible(pinnedRelease))) pinnedRelease = null;
   if (!pinnedRelease) tooltip.style('display','none');
   d3.selectAll('.tierbox').property('checked', function(){ return state.tiers.has(this.value); });
-  document.getElementById('filters-toggle').textContent = state.tiers.size === ALL_TIERS.length ? 'Filters' : 'Filters •';
+  d3.selectAll('.fieldbox').property('checked', function(){ return state.fields.has(this.value); });
+  document.getElementById('filters-toggle').textContent = state.tiers.size === ALL_TIERS.length && state.fields.size === ALL_FIELDS.length ? 'Filters' : 'Filters •';
   const search = document.getElementById('search');
   const displayedTerms = search.value.toLowerCase().split(',').map(s => s.trim()).filter(Boolean);
   if (displayedTerms.join(',') !== state.terms.join(',')) search.value = state.terms.join(', ');
   document.querySelector('.scope-note').hidden = state.range.kind === 'all' &&
-    state.tiers.size === ALL_TIERS.length && state.terms.length === 0 && state.show === 'all';
+    state.tiers.size === ALL_TIERS.length && state.fields.size === ALL_FIELDS.length && state.terms.length === 0 && state.show === 'all';
   document.querySelectorAll('.detail-button').forEach(button => button.setAttribute('aria-pressed', String(button.dataset.show === state.show)));
   document.querySelectorAll('.view-button').forEach(button => {
     button.setAttribute('aria-pressed', String(button.dataset.view === state.view));
@@ -8510,7 +8521,7 @@ function render(){
   sort.setAttribute('aria-pressed', String(state.sort === 'asc'));
   document.getElementById('copy').hidden = chartVisible;
   repositionPanels();
-  const hash = TimelineCore.encodeState(state, bounds);
+  const hash = TimelineCore.encodeState(state, bounds, ALL_FIELDS);
   if (hash !== location.hash) {
     try { history.replaceState(null, '', hash || location.pathname + location.search); }
     catch (_) { /* Some file:// browsers restrict history updates. */ }
@@ -8549,7 +8560,7 @@ d3.select('#search').on('input', function(){
   setState({terms:this.value.toLowerCase().split(',').map(s => s.trim()).filter(Boolean)});
 });
 d3.select('#reset').on('click', () => {
-  setState({range:{kind:'all'}, tiers:new Set(ALL_TIERS), terms:[], show:'notable'});
+  setState({range:{kind:'all'}, tiers:new Set(ALL_TIERS), fields:new Set(ALL_FIELDS), terms:[], show:'notable'});
   if (state.view === 'timeline') svg.call(zoom.transform, d3.zoomIdentity);
   else chartPending.range = true;
 });
@@ -8577,6 +8588,25 @@ customFrom.max = customTo.max = bounds.latest;
 const filtersToggle = document.getElementById('filters-toggle');
 const filtersPopover = document.getElementById('filters-popover');
 filtersPopover.append(document.querySelector('.toolbar-row > .tier-filters').cloneNode(true));
+const fieldGroup = document.createElement('div');
+fieldGroup.className = 'field-filters'; fieldGroup.setAttribute('role','group'); fieldGroup.setAttribute('aria-label','Fields');
+for (const field of ALL_FIELDS) {
+  const label = document.createElement('label'), input = document.createElement('input');
+  input.type = 'checkbox'; input.className = 'fieldbox'; input.value = field;
+  label.append(input, document.createTextNode(LEVELS.fieldLabels[field] || field)); fieldGroup.append(label);
+  input.addEventListener('change', () => {
+    const fields = new Set(state.fields);
+    if (input.checked) fields.add(field); else fields.delete(field);
+    setState({fields});
+  });
+}
+filtersPopover.append(fieldGroup);
+const fieldActions = document.createElement('div'); fieldActions.className = 'filter-actions';
+for (const [label, fields] of [['All fields', ALL_FIELDS], ['No fields', []]]) {
+  const button = document.createElement('button'); button.type = 'button'; button.className = 'btn'; button.textContent = label;
+  button.addEventListener('click', () => setState({fields:new Set(fields)})); fieldActions.append(button);
+}
+filtersPopover.append(fieldActions);
 d3.selectAll('.tierbox').on('change', function(){
   const tiers = new Set(state.tiers);
   if (this.checked) tiers.add(this.value); else tiers.delete(this.value);
@@ -8687,7 +8717,7 @@ document.getElementById('sort').addEventListener('click', () => {
   setState({sort:state.sort === 'desc' ? 'asc' : 'desc'});
 });
 window.addEventListener('hashchange', () => {
-  setState(TimelineCore.decodeState(location.hash, bounds, ALL_TIERS));
+  setState(TimelineCore.decodeState(location.hash, bounds, ALL_TIERS, ALL_FIELDS));
 });
 sizeStrip();
 render();

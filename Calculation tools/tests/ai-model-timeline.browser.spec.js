@@ -231,7 +231,7 @@ for (const width of [1440, 375]) {
     await page.getByRole('button',{name:'Show everything'}).click();
     await expect(page.locator('#chartwrap circle.dot:visible').first()).toBeVisible();
     await page.getByRole('button',{name:'Reset',exact:true}).click();
-    for (const [button,panel] of [['Custom','#custom-popover'],['Controls and shortcuts','#help-popover'],...(width < 640 ? [['Filters','#filters-popover']] : [])]) {
+    for (const [button,panel] of [['Custom','#custom-popover'],['Controls and shortcuts','#help-popover'],['Filters','#filters-popover']]) {
       const toggle = page.getByRole('button',{name:button,exact:button !== 'Custom'});
       await toggle.click();
       const box = await page.locator(panel).boundingBox();
@@ -351,7 +351,7 @@ for (const width of [1440,375]) {
     expect(await page.evaluate(() => new URLSearchParams(location.hash.slice(1)).get('tiers'))).toBe(row.tier);
     await expect(page.locator('#period-label')).toHaveText(new Date(row.date+'T00:00:00Z').toLocaleDateString('en-US',{month:'long',year:'numeric',timeZone:'UTC'}));
     await page.getByRole('button',{name:'Report',exact:true}).click();
-    for (const [name,selector] of [['Custom','#custom-popover'],['Controls and shortcuts','#help-popover'],...(width<640 ? [['Filters','#filters-popover']] : [])]) {
+    for (const [name,selector] of [['Custom','#custom-popover'],['Controls and shortcuts','#help-popover'],['Filters','#filters-popover']]) {
       const toggle = page.getByRole('button',{name:name === 'Filters' ? /^Filters/ : name,exact:name !== 'Custom'});
       await toggle.click();
       const box = await page.locator(selector).boundingBox();
@@ -506,3 +506,47 @@ test('dense phone timeline keeps main and folded dots naturally clickable', asyn
     expect.soft(found, `${model} has a natural click point among ${points.length} visible points`).toBe(true);
   }
 });
+
+for (const width of [1440, 375]) {
+  test(`field filtering updates chart, report and recovery at ${width}px`, async ({page}) => {
+    const {joinedRows,loadCore,levels} = require('./helpers/timeline-page');
+    const rows = joinedRows(), core = loadCore();
+    const selected = rows.filter(row => core.rowShown(row,'notable') && row.field !== 'general');
+    await page.setViewportSize({width,height:900});
+    await page.goto('/ai-model-timeline.html');
+    const lanesBefore = await page.locator('#chartwrap .lane-label').count();
+    await page.getByRole('button',{name:'Filters',exact:true}).click();
+    await page.getByRole('checkbox',{name:'General',exact:true}).uncheck();
+    await expect(page.locator('#chartwrap circle.dot:visible')).toHaveCount(selected.length);
+    expect(await page.locator('#chartwrap .lane-label').count()).toBeLessThan(lanesBefore);
+    await expect(page.locator('#range-summary')).toContainText(`${selected.length} releases`);
+    const stripTotal = await page.locator('#overview-strip rect').evaluateAll(nodes => nodes.reduce((sum,node) => sum + (node.__data__?.to - node.__data__?.from || 0),0));
+    expect(stripTotal).toBe(selected.length);
+    await expect(page.getByRole('button',{name:'Filters •'})).toBeVisible();
+    await page.reload();
+    await page.getByRole('button',{name:'Filters •'}).click();
+    await expect(page.getByRole('checkbox',{name:'General',exact:true})).not.toBeChecked();
+    await page.keyboard.press('Escape');
+    await expect(page.getByRole('button',{name:'Filters •'})).toBeFocused();
+    await page.getByRole('button',{name:'Report',exact:true}).click();
+    await expect(page.locator('#report tr.release')).toHaveCount(selected.length);
+    await expect(page.locator('table.report caption')).toContainText('Fields:');
+    await page.getByRole('button',{name:'Everything',exact:true}).click();
+    await expect(page.locator('.scope-note')).toBeVisible();
+    await page.getByRole('button',{name:'Notable',exact:true}).click();
+    await page.getByRole('button',{name:'Filters •'}).click();
+    await page.getByRole('button',{name:'No fields'}).click();
+    await expect(page.locator('#report-empty')).toContainText('No releases match');
+    await page.keyboard.press('Escape');
+    await page.getByRole('button',{name:'Clear filters'}).click();
+    await expect(page.locator('#report tr.release')).toHaveCount(rows.filter(row => core.rowShown(row,'notable')).length);
+    await page.getByRole('button',{name:'Filters',exact:true}).click();
+    await page.getByRole('button',{name:'No fields'}).click();
+    await page.getByRole('button',{name:'All fields'}).click();
+    for (const field of levels.fields) await expect(page.getByRole('checkbox',{name:levels.fieldLabels[field],exact:true})).toBeChecked();
+    await page.getByRole('checkbox',{name:'General',exact:true}).uncheck();
+    await page.keyboard.press('Escape');
+    await page.getByRole('button',{name:'Reset',exact:true}).click();
+    await expect(page.getByRole('button',{name:'Filters',exact:true})).toBeVisible();
+  });
+}

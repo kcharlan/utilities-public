@@ -462,29 +462,48 @@ test('TimelineCore formats a two-month report with three releases exactly', () =
 
 test('TimelineCore URL state round-trips each range and defaults invalid parts', () => {
   const core = loadCore();
+  const allFields = ['general','coding'];
   const ranges = [
     {kind:'all'}, {kind:'month',ym:'2026-09'}, {kind:'quarter',y:2026,q:3},
     {kind:'year',y:2026}, {kind:'last12',endYm:'2026-09'},
     {kind:'custom',start:'2026-08-01',end:'2026-09-15'},
   ];
   for (const range of ranges) {
-    const state = {view:'report',range,sort:'asc',tiers:new Set(['flagship','mid']),terms:['moonshot','anthropic'],show:'notable'};
-    const hash = core.encodeState(state, fixtureBounds);
-    assert.deepEqual(core.decodeState(hash, fixtureBounds, allTiers), state);
+    const state = {view:'report',range,sort:'asc',tiers:new Set(['flagship','mid']),terms:['moonshot','anthropic'],show:'notable',fields:new Set(['coding'])};
+    const hash = core.encodeState(state, fixtureBounds, allFields);
+    assert.deepEqual(core.decodeState(hash, fixtureBounds, allTiers, allFields), state);
     if (range.kind === 'all') assert.match(hash, /^#view=report&sort=/);
     else assert.match(hash, /^#view=report&range=/);
   }
-  assert.equal(core.encodeState({view:'timeline',range:{kind:'all'},sort:'desc',tiers:new Set(allTiers),terms:[]}, fixtureBounds), '');
-  const noneSelected = {view:'timeline',range:{kind:'all'},sort:'desc',tiers:new Set(),terms:[],show:'notable'};
-  assert.equal(core.encodeState(noneSelected, fixtureBounds), '#tiers=');
-  assert.deepEqual(core.decodeState('#tiers=', fixtureBounds, allTiers), noneSelected);
-  const invalid = core.decodeState('#range=q:2026-Q9&tiers=bogus&view=x', fixtureBounds, allTiers);
-  assert.deepEqual(invalid, {view:'timeline',range:{kind:'all'},sort:'desc',tiers:new Set(allTiers),terms:[],show:'notable'});
-  assert.deepEqual(core.decodeState('#tiers=mid,bogus', fixtureBounds, allTiers).tiers, new Set(allTiers));
-  assert.equal(core.decodeState('#show=bad', fixtureBounds, allTiers).show, 'notable');
-  for (const show of ['headline','all']) { const value = {...noneSelected,show}; assert.equal(core.decodeState(core.encodeState(value,fixtureBounds),fixtureBounds,allTiers).show,show); }
+  assert.equal(core.encodeState({view:'timeline',range:{kind:'all'},sort:'desc',tiers:new Set(allTiers),terms:[],fields:new Set(allFields)}, fixtureBounds, allFields), '');
+  const noneSelected = {view:'timeline',range:{kind:'all'},sort:'desc',tiers:new Set(),terms:[],show:'notable',fields:new Set(allFields)};
+  assert.equal(core.encodeState(noneSelected, fixtureBounds, allFields), '#tiers=');
+  assert.deepEqual(core.decodeState('#tiers=', fixtureBounds, allTiers, allFields), noneSelected);
+  const invalid = core.decodeState('#range=q:2026-Q9&tiers=bogus&view=x', fixtureBounds, allTiers, allFields);
+  assert.deepEqual(invalid, {view:'timeline',range:{kind:'all'},sort:'desc',tiers:new Set(allTiers),terms:[],show:'notable',fields:new Set(allFields)});
+  assert.deepEqual(core.decodeState('#tiers=mid,bogus', fixtureBounds, allTiers, allFields).tiers, new Set(allTiers));
+  assert.equal(core.decodeState('#show=bad', fixtureBounds, allTiers, allFields).show, 'notable');
+  for (const show of ['headline','all']) { const value = {...noneSelected,show}; assert.equal(core.decodeState(core.encodeState(value,fixtureBounds, allFields),fixtureBounds,allTiers,allFields).show,show); }
   assert.equal(core.formatFilters({tiers:new Set(allTiers),allTiers,terms:[],show:'notable'}), '');
   assert.equal(core.formatFilters({tiers:new Set(),allTiers,terms:['example'],show:'headline'}), 'Detail: Headline; Tiers: None; Search: example');
+});
+
+test('field URL state and filter text preserve selections', () => {
+  const core = loadCore(), allFields = ['language','vision','audio'];
+  const defaults = core.decodeState('',fixtureBounds,allTiers,allFields);
+  assert.deepEqual(defaults.fields,new Set(allFields));
+  const subset = {...defaults,fields:new Set(['vision']),show:'all',terms:['example']};
+  const hash = core.encodeState(subset,fixtureBounds,allFields);
+  assert.match(hash,/show=all&fields=vision&q=example/);
+  assert.deepEqual(core.decodeState(hash,fixtureBounds,allTiers,allFields),subset);
+  const none = {...defaults,fields:new Set()};
+  assert.equal(core.encodeState(none,fixtureBounds,allFields),'#fields=');
+  assert.deepEqual(core.decodeState('#fields=',fixtureBounds,allTiers,allFields).fields,new Set());
+  assert.deepEqual(core.decodeState('#fields=vision,bogus',fixtureBounds,allTiers,allFields).fields,new Set(allFields));
+  const meta = {tiers:new Set(allTiers),allTiers,terms:[],show:'notable',allFields,fieldLabels:{vision:'Vision'},fields:new Set(['vision'])};
+  assert.equal(core.formatFilters(meta),'Fields: Vision');
+  assert.equal(core.formatFilters({...meta,fields:new Set()}),'Fields: None');
+  assert.equal(core.formatFilters({...meta,fields:new Set(allFields)}),'');
 });
 
 const {analyze, render} = require('../scripts/timeline-analysis.cjs');
