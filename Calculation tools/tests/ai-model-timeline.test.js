@@ -3,39 +3,20 @@ const fs = require('node:fs');
 const path = require('node:path');
 const vm = require('node:vm');
 const {isDeepStrictEqual} = require('node:util');
+const os = require('node:os');
+const {execFileSync} = require('node:child_process');
 const test = require('node:test');
 
 const htmlPath = path.join(__dirname, '..', 'ai-model-timeline.html');
 const html = fs.readFileSync(htmlPath, 'utf8');
 
-function extractData() {
-  const startMarker = 'const DATA = ';
-  const endMarker = '\n\nconst TIER_COLOR';
-  const start = html.indexOf(startMarker);
-  const end = html.indexOf(endMarker, start);
-  assert.notEqual(start, -1, 'DATA declaration is present');
-  assert.notEqual(end, -1, 'DATA terminator is present');
-  return JSON.parse(html.slice(start + startMarker.length, end).replace(/;\s*$/, ''));
-}
-
-function extractInlineScript() {
-  const matches = [...html.matchAll(/<script(?:\s[^>]*)?>([\s\S]*?)<\/script>/gi)];
-  return matches.map(match => match[1]).find(source => source.includes('const DATA ='));
-}
-
-function extractCoreScript() {
-  const match = html.match(/<script\s+id="timeline-core"\s*>([\s\S]*?)<\/script>/i);
-  assert.ok(match, 'TimelineCore script is present');
-  return match[1];
-}
-
-function loadCore() {
-  const win = {};
-  new Function('window', extractCoreScript())(win);
-  return win.TimelineCore;
-}
+const {extractInlineScript, extractCoreScript, loadCore, rawRows:extractData} = require('./helpers/timeline-page.js');
 
 const data = extractData();
+const levels = require('../docs/ai_model_timeline_levels.json');
+const rowKey = row => JSON.stringify([row.model,row.lab,row.date]);
+const eligibleKeys = new Set(levels.entries.filter(row => row.level <= 2 && !row.of).map(rowKey));
+const eligible = data.filter(row => eligibleKeys.has(rowKey(row)));
 
 test('November 17 update records Astra and Sol as separate OpenAI releases', () => {
   const releases = data.filter(row => row.lab === 'OpenAI' && row.date === '2026-11-17' && ['flagship', 'mid'].includes(row.tier));
@@ -126,13 +107,13 @@ test('Kimi hosted launches and the open-weight release appear in separate monthl
   const range = core.resolveRange({kind:'month', ym:'2026-10'}, bounds);
   const report = core.formatReportText(core.groupByMonth(kimi, 'desc', () => 0),
     {range, tiers:new Set(allTiers), allTiers, terms:['kimi k3.1']});
-  assert.match(report, /Oct 23, 2026 · Moonshot · Kimi K3\.1 Pro · flagship/);
-  assert.match(report, /Oct 23, 2026 · Moonshot · Kimi K3\.1 Pro Highspeed · flagship/);
+  assert.match(report, /Oct 23, 2026 · Moonshot · Kimi K3\.1 Pro · Record · flagship/);
+  assert.match(report, /Oct 23, 2026 · Moonshot · Kimi K3\.1 Pro Highspeed · Record · flagship/);
   const november = core.resolveRange({kind:'month', ym:'2026-11'}, bounds);
   const weights = data.filter(row => row.lab === 'Moonshot' && row.date >= november.start && row.date <= november.end);
   const novemberReport = core.formatReportText(core.groupByMonth(weights, 'desc', () => 0),
     {range:november, tiers:new Set(allTiers), allTiers, terms:['kimi k3.1']});
-  assert.match(novemberReport, /Nov 4, 2026 · Moonshot · Kimi K3\.1 Pro \(open weights\) · open-weights/);
+  assert.match(novemberReport, /Nov 4, 2026 · Moonshot · Kimi K3\.1 Pro \(open weights\) · Record · open-weights/);
 });
 
 test('Meta Wonder models appear in the October 2026 report', () => {
@@ -147,8 +128,8 @@ test('Meta Wonder models appear in the October 2026 report', () => {
   const range = core.resolveRange({kind:'month', ym:'2026-10'}, bounds);
   const report = core.formatReportText(core.groupByMonth(meta, 'desc', () => 0),
     {range, tiers:new Set(allTiers), allTiers, terms:['meta']});
-  assert.match(report, /Oct 12, 2026 · Meta · Muse Wonder Full · flagship/);
-  assert.match(report, /Oct 12, 2026 · Meta · Muse Wonder · flagship/);
+  assert.match(report, /Oct 12, 2026 · Meta · Muse Wonder Full · Record · flagship/);
+  assert.match(report, /Oct 12, 2026 · Meta · Muse Wonder · Record · flagship/);
 });
 
 test('October 13 Argon launch is distinct from its restricted preview and cyber variant', () => {
@@ -169,8 +150,8 @@ test('October 13 Argon launch is distinct from its restricted preview and cyber 
   const range = core.resolveRange(core.presetSpec('month', bounds), bounds);
   const report = core.formatReportText(core.groupByMonth([ga, cyber], 'desc', () => 0),
     {range, tiers:new Set(allTiers), allTiers, terms:['argon']});
-  assert.match(report, /Oct 13, 2026 · Google · Gemini 4 Argon \(general availability\) · flagship/);
-  assert.match(report, /Oct 13, 2026 · Google · Gemini 4 Argon Cyber Permissive \(allowlisted GA\) · specialty/);
+  assert.match(report, /Oct 13, 2026 · Google · Gemini 4 Argon \(general availability\) · Record · flagship/);
+  assert.match(report, /Oct 13, 2026 · Google · Gemini 4 Argon Cyber Permissive \(allowlisted GA\) · Record · specialty/);
 });
 
 const requiredReleases = [
@@ -358,12 +339,21 @@ test('static header metadata and initial chart domain cover the dataset', () => 
   const labs = new Set(data.map(row => row.lab));
   assert.match(html, new RegExp(`<span data-release-count>${data.length}<\\/span>`));
   assert.match(html, new RegExp(`<span data-lab-count>${labs.size}<\\/span>`));
+  const scope = html.match(/<p class="scope-note">[\s\S]*?<\/p>/)?.[0];
+  const findings = html.match(/<section class="findings">[\s\S]*?<\/section>/)?.[0];
+  for (const section of [scope, findings]) assert.match(section, new RegExp(`<span data-notable-count>${eligible.length}<\\/span>`));
+  assert.equal((html.match(/<span data-notable-count>/g) || []).length, 2);
   const latestLabel = new Date(`${latest}T00:00:00Z`).toLocaleDateString('en-US', {timeZone:'UTC', month:'long', day:'numeric', year:'numeric'});
   const titleDate = new Date(`${latest}T00:00:00Z`).toLocaleDateString('en-US', {timeZone:'UTC', month:'short', day:'numeric', year:'numeric'});
-  assert.ok(html.includes(`<title>AI Model Release Timeline — Jan 2024 to ${titleDate}</title>`), 'static title reflects the latest release before scripts run');
+  const earliest = data.reduce((min, row) => row.date < min ? row.date : min, latest);
+  const firstTitle = new Date(`${earliest}T00:00:00Z`).toLocaleDateString('en-US', {timeZone:'UTC', month:'short', year:'numeric'});
+  const firstLabel = new Date(`${earliest}T00:00:00Z`).toLocaleDateString('en-US', {timeZone:'UTC', month:'long', year:'numeric'});
+  assert.ok(html.includes(`<title>AI Model Release Timeline — ${firstTitle} to ${titleDate}</title>`), 'static title reflects the latest release before scripts run');
+  assert.ok(html.includes(`<span data-earliest-month>${firstLabel}</span>`));
   assert.ok(html.includes(`<span data-latest-date>${latestLabel}</span>`));
-  assert.equal((html.match(/· checked November 24, 2026 ·/g) || []).length, 1);
-  assert.equal((html.match(/Verification checked November 24, 2026/g) || []).length, 1);
+  const checked = new Date(`${levels.checked}T00:00:00Z`).toLocaleDateString('en-US', {timeZone:'UTC', month:'long', day:'numeric', year:'numeric'});
+  assert.ok(html.includes(`checked <span data-checked>${checked}</span>`));
+  assert.ok(html.includes(`Verification checked ${checked}`));
   // Proportional range padding replaces the former fixed ±15-day x0 domain,
   // so assert the core-driven domain instead of its retired literal expression.
   const script = extractInlineScript();
@@ -482,47 +472,102 @@ test('TimelineCore formats a two-month report with three releases exactly', () =
   ];
   const groups = core.groupByMonth(rows, 'desc', lab => lab==='Anthropic'?0:1);
   const actual = core.formatReportText(groups, {range:{label:'Custom',start:'2026-08-01',end:'2026-09-22'}, tiers:new Set(allTiers), allTiers, terms:[]});
-  assert.equal(actual, 'AI model releases · Custom · Aug 1 – Sep 22, 2026 · 3 releases · 2 labs\n\nSEPTEMBER 2026 (2)\nSep 22, 2026 · Anthropic · Claude Opus 5.5 · flagship · https://a.example\nSep 22, 2026 · OpenAI · GPT-6 Sol · mid · https://b.example\n\nAUGUST 2026 (1)\nAug 1, 2026 · OpenAI · GPT-6 Astra · flagship · https://c.example');
+  assert.equal(actual, 'AI model releases · Custom · Aug 1 – Sep 22, 2026 · 3 releases · 2 labs\n\nSEPTEMBER 2026 (2)\nSep 22, 2026 · Anthropic · Claude Opus 5.5 · Record · flagship · https://a.example\nSep 22, 2026 · OpenAI · GPT-6 Sol · Record · mid · https://b.example\n\nAUGUST 2026 (1)\nAug 1, 2026 · OpenAI · GPT-6 Astra · Record · flagship · https://c.example');
 });
 
 test('TimelineCore URL state round-trips each range and defaults invalid parts', () => {
   const core = loadCore();
+  const allFields = ['general','coding'];
   const ranges = [
     {kind:'all'}, {kind:'month',ym:'2026-09'}, {kind:'quarter',y:2026,q:3},
     {kind:'year',y:2026}, {kind:'last12',endYm:'2026-09'},
     {kind:'custom',start:'2026-08-01',end:'2026-09-15'},
   ];
   for (const range of ranges) {
-    const state = {view:'report',range,sort:'asc',tiers:new Set(['flagship','mid']),terms:['moonshot','anthropic']};
-    const hash = core.encodeState(state, fixtureBounds);
-    assert.deepEqual(core.decodeState(hash, fixtureBounds, allTiers), state);
+    const state = {view:'report',range,sort:'asc',tiers:new Set(['flagship','mid']),terms:['moonshot','anthropic'],show:'notable',fields:new Set(['coding'])};
+    const hash = core.encodeState(state, fixtureBounds, allFields);
+    assert.deepEqual(core.decodeState(hash, fixtureBounds, allTiers, allFields), state);
     if (range.kind === 'all') assert.match(hash, /^#view=report&sort=/);
     else assert.match(hash, /^#view=report&range=/);
   }
-  assert.equal(core.encodeState({view:'timeline',range:{kind:'all'},sort:'desc',tiers:new Set(allTiers),terms:[]}, fixtureBounds), '');
-  const noneSelected = {view:'timeline',range:{kind:'all'},sort:'desc',tiers:new Set(),terms:[]};
-  assert.equal(core.encodeState(noneSelected, fixtureBounds), '#tiers=');
-  assert.deepEqual(core.decodeState('#tiers=', fixtureBounds, allTiers), noneSelected);
-  const invalid = core.decodeState('#range=q:2026-Q9&tiers=bogus&view=x', fixtureBounds, allTiers);
-  assert.deepEqual(invalid, {view:'timeline',range:{kind:'all'},sort:'desc',tiers:new Set(allTiers),terms:[]});
-  assert.deepEqual(core.decodeState('#tiers=mid,bogus', fixtureBounds, allTiers).tiers, new Set(allTiers));
+  assert.equal(core.encodeState({view:'timeline',range:{kind:'all'},sort:'desc',tiers:new Set(allTiers),terms:[],fields:new Set(allFields)}, fixtureBounds, allFields), '');
+  const noneSelected = {view:'timeline',range:{kind:'all'},sort:'desc',tiers:new Set(),terms:[],show:'notable',fields:new Set(allFields)};
+  assert.equal(core.encodeState(noneSelected, fixtureBounds, allFields), '#tiers=');
+  assert.deepEqual(core.decodeState('#tiers=', fixtureBounds, allTiers, allFields), noneSelected);
+  const invalid = core.decodeState('#range=q:2026-Q9&tiers=bogus&view=x', fixtureBounds, allTiers, allFields);
+  assert.deepEqual(invalid, {view:'timeline',range:{kind:'all'},sort:'desc',tiers:new Set(allTiers),terms:[],show:'notable',fields:new Set(allFields)});
+  assert.deepEqual(core.decodeState('#tiers=mid,bogus', fixtureBounds, allTiers, allFields).tiers, new Set(allTiers));
+  assert.equal(core.decodeState('#show=bad', fixtureBounds, allTiers, allFields).show, 'notable');
+  for (const show of ['headline','all']) { const value = {...noneSelected,show}; assert.equal(core.decodeState(core.encodeState(value,fixtureBounds, allFields),fixtureBounds,allTiers,allFields).show,show); }
+  assert.equal(core.formatFilters({tiers:new Set(allTiers),allTiers,terms:[],show:'notable'}), '');
+  assert.equal(core.formatFilters({tiers:new Set(),allTiers,terms:['example'],show:'headline'}), 'Detail: Headline; Tiers: None; Search: example');
+});
+
+test('field URL state and filter text preserve selections', () => {
+  const core = loadCore(), allFields = ['language','vision','audio'];
+  const defaults = core.decodeState('',fixtureBounds,allTiers,allFields);
+  assert.deepEqual(defaults.fields,new Set(allFields));
+  const subset = {...defaults,fields:new Set(['vision']),show:'all',terms:['example']};
+  const hash = core.encodeState(subset,fixtureBounds,allFields);
+  assert.match(hash,/show=all&fields=vision&q=example/);
+  assert.deepEqual(core.decodeState(hash,fixtureBounds,allTiers,allFields),subset);
+  const none = {...defaults,fields:new Set()};
+  assert.equal(core.encodeState(none,fixtureBounds,allFields),'#fields=');
+  assert.deepEqual(core.decodeState('#fields=',fixtureBounds,allTiers,allFields).fields,new Set());
+  assert.deepEqual(core.decodeState('#fields=vision,bogus',fixtureBounds,allTiers,allFields).fields,new Set(allFields));
+  const meta = {tiers:new Set(allTiers),allTiers,terms:[],show:'notable',allFields,fieldLabels:{vision:'Vision'},fields:new Set(['vision'])};
+  assert.equal(core.formatFilters(meta),'Fields: Vision');
+  assert.equal(core.formatFilters({...meta,fields:new Set()}),'Fields: None');
+  assert.equal(core.formatFilters({...meta,fields:new Set(allFields)}),'');
 });
 
 const {analyze, render} = require('../scripts/timeline-analysis.cjs');
 
+test('writer preserves replacement tokens in recent model names on repeat writes', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'timeline-writer-'));
+  try {
+    fs.mkdirSync(path.join(dir, 'scripts'));
+    for (const name of ['timeline-analysis.cjs', 'timeline-levels.cjs']) fs.copyFileSync(path.join(__dirname, '..', 'scripts', name), path.join(dir, 'scripts', name));
+    const synthetic = {model:'Synthetic $&',lab:'Synthetic lab',date:'2026-01-01',tier:'mid'};
+    const doc = {checked:'2026-01-05',fields:['general'],fieldLabels:{general:'General'},roster:[],entries:[{...synthetic,level:2,field:'general',reason:'Synthetic'}]};
+    const fixture = `<section class="findings">old</section>\n<script id="timeline-levels" type="application/json">${JSON.stringify(doc)}</script>\nconst DATA = ${JSON.stringify([synthetic])};\n\nconst TIER_COLOR`;
+    const file = path.join(dir, 'ai-model-timeline.html');
+    fs.writeFileSync(file, fixture);
+    const write = () => execFileSync(process.execPath, [path.join(dir, 'scripts', 'timeline-analysis.cjs'), '--write']);
+    write(); const first = fs.readFileSync(file, 'utf8');
+    assert.ok(first.includes('Synthetic $& ('));
+    write(); assert.equal(fs.readFileSync(file, 'utf8'), first);
+  } finally { fs.rmSync(dir, {recursive:true}); }
+});
+
+test('volume description anchors the observation period to the newest raw year', () => {
+  const rows = [{model:'A',lab:'A',date:'2025-12-31',tier:'mid'}, {model:'B',lab:'B',date:'2026-01-02',tier:'mid'}];
+  const stats = analyze(rows, {entries:rows.map((row,i) => ({...row,level:i ? 3 : 2}))});
+  assert.match(render(stats), /recorded observation period extends through January 2, 2026/);
+  assert.doesNotMatch(render(stats), /final year is partial/);
+});
+
+test('analysis counts classified main entries and anchors recent to raw dates', () => {
+  const rows = [
+    {model:'A', lab:'OpenAI', date:'2026-01-01', tier:'flagship'},
+    {model:'B', lab:'Google', date:'2026-01-03', tier:'mid'},
+    {model:'C', lab:'Google', date:'2026-01-04', tier:'mid'},
+  ];
+  const levels = {checked:'2026-01-05', entries:rows.map((row,i) => ({...row, level:i === 2 ? 3 : 1}))};
+  const stats = analyze(rows, levels);
+  assert.equal(stats.total, 2);
+  assert.equal(stats.recorded, 3);
+  assert.equal(stats.latest, '2026-01-04');
+  assert.deepEqual(stats.recent, [{model:'B',date:'2026-01-03'}]);
+  assert.throws(() => analyze([], levels), /empty/i);
+});
+
 test('narrative statistics match the expanded dataset', () => {
-  const stats = analyze(data);
-  assert.equal(stats.total, 684);
-  assert.equal(new Set(data.map(row => row.lab)).size, 141);
-  assert.equal(stats.sameDay, 1000);
-  assert.equal(stats.withinTwo, 4120);
-  assert.deepEqual(stats.years, {'2024': 88, '2025': 134, '2026': 462});
-  assert.deepEqual(stats.weekdays, {'0':24, '1':119, '2':142, '3':134, '4':167, '5':85, '6':13});
-  assert.equal(stats.months['2026-10'], 130);
-  assert.equal(stats.months['2026-11'], 125);
-  assert.equal(stats.cadence.OpenAI.major, 46);
-  assert.equal(stats.cadence.Google.major, 28.5);
-  assert.deepEqual(stats.moonshotLags, [14,90,50,31,38,64,4,16,10,25,25]);
+  const stats = analyze(data, levels);
+  assert.equal(stats.total, eligible.length);
+  assert.equal(stats.recorded, data.length);
+  assert.equal(Object.keys(stats.cadence).length, new Set(eligible.map(row => row.lab)).size);
+  for (const counts of [stats.years, stats.months, stats.weekdays]) assert.equal(Object.values(counts).reduce((a,b) => a+b,0), eligible.length);
   assert.ok(html.includes(render(stats)), 'published findings equal reproducible current analysis');
 });
 
@@ -544,29 +589,55 @@ test('analysis handles same-day pairs, medians, and missing prior releases', () 
 });
 
 test('recent-release summary follows the latest dated rows', () => {
-  const summary = render(analyze(data));
-  assert.match(summary, /ERNIE 5\.5 Flash Preview \(open weights\) \(November 24\)/);
-  assert.match(summary, /Hy-MT3 family \(November 24\)/);
-  assert.match(summary, /GLM-5\.4 \(Coding Plan release\) \(November 23\)/);
-  assert.match(summary, /GPT-6\.2 Sol \(November 23, ChatGPT\) \(November 23\)/);
-  assert.match(summary, /Qwen-Audio-3\.1-Live \(November 23\)/);
-  assert.match(summary, /LingSante-3\.1-air-VL \(November 22\)/);
-  assert.match(summary, /LingSante-3\.1-flash \(November 22\)/);
-  assert.match(summary, /Sarvam-105B-1711 \(hosted rollout\) \(November 22\)/);
-  assert.doesNotMatch(summary, /Inkling 2 Mini \(November 20\)/);
-  assert.doesNotMatch(summary, /Ideogram 4\.6 \(November 19\)/);
-  assert.doesNotMatch(summary, /GPT-6\.2 Astra \(November 17\)/);
-  assert.doesNotMatch(summary, /HeyGen Decision 1 \(November 13\)/);
-  assert.doesNotMatch(summary, /Shizuku-Duplex \(research announcement\) \(November 8\)/);
-  assert.doesNotMatch(summary, /Arete-27B \(November 6\)/);
-  assert.doesNotMatch(summary, /Gemini Omni 1\.2 Flash \(November 5\)/);
-  assert.doesNotMatch(summary, /Hydrogen-1\.0 \(November 2\)/);
-  assert.doesNotMatch(summary, /Mistral Large 4 \(open weights\) \(October 29\)/);
-  assert.doesNotMatch(summary, /Kimi K3\.1 Pro \(October 23\)/);
-  assert.doesNotMatch(summary, /Voxtral Transcribe 3 family \(public preview\) \(October 20\)/);
-  assert.doesNotMatch(summary, /Muse Wonder \(October 12\)/);
-  assert.doesNotMatch(summary, /MISSINGNO\. \(October 10\)/);
-  assert.doesNotMatch(summary, /The latest cluster spans Antigravity/);
+  const latest = data.map(row => row.date).sort().at(-1);
+  const latestDay = Date.parse(latest + 'T00:00:00Z');
+  const expected = eligible.filter(row => (latestDay - Date.parse(row.date + 'T00:00:00Z')) / 86400000 <= 2)
+    .sort((a,b) => b.date.localeCompare(a.date) || a.model.localeCompare(b.model))
+    .map(({model,date}) => ({model,date}));
+  const stats = analyze(data, levels);
+  assert.deepEqual(stats.recent, expected);
+  const paragraph = expected.map(row => `${row.model} (${new Date(row.date + 'T00:00:00Z').toLocaleDateString('en-US', {timeZone:'UTC',month:'long',day:'numeric'})})`).join(', ');
+  const expectedText = expected.length ? `Recent releases include ${paragraph}.` : 'No Headline or Notable main entries fall in the recent window.';
+  assert.ok(render(stats).includes(expectedText));
+  const rows = [
+    {model:'Outside',lab:'A',date:'2026-01-01',tier:'mid'},
+    {model:'Boundary',lab:'B',date:'2026-01-02',tier:'mid'},
+    {model:'Inside',lab:'A',date:'2026-01-03',tier:'mid'},
+    {model:'Latest',lab:'B',date:'2026-01-04',tier:'mid'},
+  ];
+  const doc = {checked:'2026-01-05',entries:rows.map((r,i) => ({...r,level:i === 3 ? 3 : 2}))};
+  assert.deepEqual(analyze(rows,doc).recent.map(r => r.model), ['Inside','Boundary']);
+  doc.entries[1].level = 3; doc.entries[2].level = 3;
+  assert.match(render(analyze(rows,doc)), /No Headline or Notable main entries fall in the recent window/);
+});
+
+test('classified analysis handles sparse and empty populations', () => {
+  const rows = [
+    {model:'A',lab:'OpenAI',date:'2026-01-01',tier:'flagship'},
+    {model:'B',lab:'Google',date:'2026-01-02',tier:'mid'},
+    {model:'C',lab:'OpenAI',date:'2026-01-03',tier:'flagship'},
+    {model:'D',lab:'Google',date:'2026-01-04',tier:'mid'},
+    {model:'E',lab:'Moonshot',date:'2026-01-04',tier:'specialty'},
+  ];
+  const doc = {checked:'2026-01-05', entries:rows.map(r => ({...r,level:2}))};
+  const stats = analyze(rows,doc);
+  assert.equal(stats.sameDay,1);
+  assert.equal(stats.withinTwo,6);
+  assert.deepEqual(stats.years,{'2026':5});
+  assert.deepEqual(stats.months,{'2026-01':5});
+  assert.deepEqual(stats.weekdays,{'0':2,'4':1,'5':1,'6':1});
+  assert.equal(stats.cadence.OpenAI.all,2);
+  assert.deepEqual(stats.googleLags,[1,1]);
+  assert.match(render(stats), /<td>Anthropic<\/td><td>Insufficient data/);
+  assert.match(render(stats), /Moonshot's 0 major releases[^]*Insufficient data/);
+  assert.match(render(analyze([rows[0]], {entries:[doc.entries[0]]})), /median lag is <b>Insufficient data<\/b>/);
+  doc.entries.forEach(entry => { entry.level = 3; });
+  doc.fields = ['general']; doc.fieldLabels = {general:'General'}; doc.roster = [];
+  doc.entries.forEach(entry => { entry.field = 'general'; entry.reason = 'Synthetic record'; });
+  assert.deepEqual(require('../scripts/timeline-levels.cjs').validateLevels(rows,doc), []);
+  const empty = render(analyze(rows,doc));
+  assert.match(empty, /5 recorded events[^]*zero Headline and Notable/);
+  assert.doesNotMatch(empty, /NaN|null days/);
 });
 
 test('Inkling releases share the same lab lane', () => {
@@ -576,11 +647,41 @@ test('Inkling releases share the same lab lane', () => {
   assert.equal(successor.lab, original.lab);
 });
 
+function checkLevelChanges(manifests, entries) {
+  const key = row => JSON.stringify([row.model,row.lab,row.date]);
+  const chains = new Map();
+  for (const manifest of manifests) {
+    for (const correction of manifest.corrections || []) {
+      const old = key(correction.before), next = key(correction.after);
+      if (old !== next && chains.has(old)) { assert.ok(!chains.has(next), 'correction collides with level chain'); chains.set(next, chains.get(old)); chains.delete(old); }
+    }
+    const seen = new Set();
+    for (const change of manifest.levelChanges || []) {
+      const id = key(change);
+      assert.ok(!seen.has(id), 'duplicate level change'); seen.add(id);
+      assert.ok([1,2,3].includes(change.from) && [1,2,3].includes(change.to) && change.from !== change.to, 'invalid level change');
+      assert.ok(typeof change.evidence === 'string' && change.evidence.trim(), 'level change evidence required');
+      if (chains.has(id)) assert.equal(change.from, chains.get(id), 'broken level change chain');
+      chains.set(id, change.to);
+    }
+  }
+  for (const [id, level] of chains) assert.equal(entries.find(entry => key(entry) === id)?.level, level, 'final level disagrees');
+}
+test('level changes follow identity corrections and reject broken chains', () => {
+  const a = {model:'A',lab:'Lab',date:'2024-01-01'}, b = {...a,model:'B'};
+  const manifests = [{levelChanges:[{...a,from:3,to:2,evidence:'Evidence'}]},
+    {corrections:[{before:a,after:b}],levelChanges:[{...b,from:2,to:1,evidence:'Evidence'}]}];
+  assert.doesNotThrow(() => checkLevelChanges(manifests,[{...b,level:1}]));
+  manifests[1].levelChanges[0].from = 3;
+  assert.throws(() => checkLevelChanges(manifests,[{...b,level:1}]), /broken level change chain/);
+});
+
 test('every update manifest is reflected in the embedded data', () => {
   const docs = path.join(__dirname, '..', 'docs');
   const names = fs.readdirSync(docs).filter(name => /^ai_model_timeline_update_sources_\d{4}_\d{2}_\d{2}\.json$/.test(name)).sort();
   assert.ok(names.length, 'at least one update manifest exists');
   const manifests = names.map(name => JSON.parse(fs.readFileSync(path.join(docs, name), 'utf8')));
+  checkLevelChanges(manifests, require('./helpers/timeline-page.js').levels.entries);
   const key = row => [row.model, row.lab, row.date].join('\u0000');
   const current = (row, i) => {
     let value = row;
@@ -680,7 +781,7 @@ test('same-day labels stay beside their dots and clear the date axis', () => {
   const start = source.indexOf('const STACK_GAP =');
   const end = source.indexOf('\nfunction renderLanes()', start);
   const rows = data.filter(row => row.lab === 'OpenAI' && row.date === '2026-09-22').map(row => ({...row}));
-  const context = {DATA:rows, visible:() => true, yLane:() => 47};
+  const context = {DATA:rows, visible:() => true, yLane:() => 47, laneKey:row => row.lab};
   vm.createContext(context);
   vm.runInContext(source.slice(start, end) + '\nupdateStackOffsets(); globalThis.positions = DATA.map(d => ({model:d.model, dot:yDot(d), y:labelY(d), dx:labelDx(d), anchor:labelAnchor(d)}));', context);
   assert.equal(context.positions.length, 2);
@@ -697,6 +798,13 @@ test('same-day labels stay beside their dots and clear the date axis', () => {
   assert.equal(context.single.y, 38);
   assert.equal(context.single.dx, 0);
   assert.equal(context.single.anchor, 'middle');
+  // Different labs sharing a lane on the same day must stack together.
+  rows[1].lab = 'Another lab';
+  context.visible = () => true;
+  context.laneKey = () => 'Others: general';
+  vm.runInContext('updateStackOffsets();',context);
+  assert.equal(rows[0].stackOffset, -4);
+  assert.equal(rows[1].stackOffset, 4);
 });
 
 test('label placement retries colliding boxes and suppresses only labels with no room', () => {
@@ -729,6 +837,9 @@ test('label placement retries colliding boxes and suppresses only labels with no
 
 test('SVG placement integration coalesces redraws and restores labels when zoom creates room', () => {
   const core = loadCore();
+  let capturedItems, capturedObstacles;
+  const originalPlace = core.placeLabelBoxes;
+  core.placeLabelBoxes = (items, bounds, obstacles) => { capturedItems = items; capturedObstacles = obstacles; return originalPlace(items, bounds, obstacles); };
   const rows = [100,130,160].map((px,i) => ({model:`Long label ${i}`,dt:px,lab:'Google',tier:'specialty',stackCount:1,stackOffset:0}));
   const makeNode = (d,attrs) => ({d,attrs:{...attrs},getAttribute(name){return this.attrs[name] ?? null;},setAttribute(name,value){this.attrs[name]=String(value);},
     getBBox(){return {width:80,height:10,y:Number(this.attrs.y)-8};}});
@@ -748,6 +859,7 @@ test('SVG placement integration coalesces redraws and restores labels when zoom 
   vm.runInContext('scheduleLabelPlacement(); scheduleLabelPlacement();',context);
   assert.equal(frames.length,1,'multiple zoom events share a single animation frame');
   frames.shift()();
+  assert.equal(capturedItems[0].candidates[1].x, 108.5, 'candidate uses the rendered radius');
   const initiallyVisible=labelNodes.filter(node=>node.attrs.display!=='none').length;
   assert.ok(initiallyVisible>0 && initiallyVisible<3,'dense cluster keeps the labels that fit');
   scale=4;
@@ -764,6 +876,13 @@ test('SVG placement integration coalesces redraws and restores labels when zoom 
       assert.ok(box.x+box.width+2<=cx-4.5 || box.x>=cx+4.5+2 || box.y+box.height+2<=42.5 || box.y>=51.5+2,'text clears every dot');
     }
   }
+  const fold = {model:'Folded release',dt:110,lab:'Google',tier:'specialty',of:{model:'Main'},stackCount:1,stackOffset:0};
+  const foldDot = makeNode(fold,{r:'3'}), foldLabel = makeNode(fold,{y:'38',display:'none'});
+  dotNodes.push(foldDot); labelNodes.push(foldLabel);
+  vm.runInContext('scheduleLabelPlacement();',context);
+  frames.shift()();
+  assert.ok(!capturedItems.some(item => item.id === fold), 'fold has no standalone label');
+  assert.ok(capturedObstacles.some(box => box.x === 137 && box.y === 44 && box.width === 6 && box.height === 6), 'folded dot is a label obstacle');
   assert.ok(extractInlineScript().includes('scheduleLabelPlacement();\n}'),'redraw invokes placement for zoom, filter and resize updates');
 });
 
@@ -772,4 +891,56 @@ test('October 30 update records the new releases and Mistral weights milestone',
   assert.equal(get('Granite Switch 4.1 family')?.date, '2026-10-14');
   assert.equal(get('Nemotron 3.5 Transcribe')?.date, '2026-10-28');
   assert.match(get('Mistral Large 4 (public preview)')?.note || '', /released October 29/);
+});
+
+test('readData ignores a DATA declaration prefix in metadata', () => {
+  const {readData} = require('../scripts/timeline-analysis.cjs');
+  const withMetadata = html.replace('<script id="timeline-core">', '<script type="application/json">{"reason":"const DATA = misleading"}</script>\n<script id="timeline-core">');
+  assert.deepEqual(readData(withMetadata), data);
+});
+
+test('detail selection inherits stage level and defaults unclassified rows to Record', () => {
+  const core = loadCore();
+  const rows = [{model:'Base', lab:'Synthetic', date:'2025-01-01'}, {model:'Stage', lab:'Synthetic', date:'2025-02-01'}, {model:'Unknown', lab:'Synthetic', date:'2025-03-01'}];
+  core.attachLevels(rows, [{...rows[0], level:1, field:'general', reason:'Main'}, {...rows[1], level:3, field:'general', reason:'Stage', kind:'stage', label:'API', of:{model:'Base', date:'2025-01-01'}}]);
+  assert.equal(core.rowShown(rows[1], 'headline'), true);
+  assert.equal(core.rowShown(rows[2], 'notable'), false);
+  assert.equal(core.levelLabel(rows[2]), 'Record');
+});
+
+test('detail predicate respects stored levels for variants and missing parents', () => {
+  const core = loadCore();
+  const rows = [{model:'Variant',lab:'Synthetic',date:'2024-01-01'}, {model:'Stage',lab:'Synthetic',date:'2024-01-02'}, {model:'Base',lab:'Synthetic',date:'2024-01-03'}, {model:'Orphan',lab:'Synthetic',date:'2024-01-04'}];
+  const entries = [
+    {...rows[0],level:3,field:'general',reason:'Variant',kind:'variant',label:'Fast',of:{model:'Base',date:'2024-01-03'}},
+    {...rows[1],level:3,field:'general',reason:'Stage',kind:'stage',label:'API',of:{model:'Base',date:'2024-01-03'}},
+    {...rows[2],level:1,field:'general',reason:'Main'},
+    {...rows[3],level:3,field:'general',reason:'Stage',kind:'stage',label:'API',of:{model:'Missing',date:'2024-01-01'}}
+  ];
+  core.attachLevels(rows,entries);
+  assert.equal(core.rowShown(rows[0],'headline'), false);
+  assert.equal(core.rowShown(rows[1],'headline'), true);
+  assert.equal(core.rowShown(rows[3],'notable'), false);
+  assert.equal(core.rowShown(rows[3],'all'), true);
+  assert.equal(core.levelLabel(rows[0]), 'variant');
+});
+
+test('classification joining preserves raw release properties', () => {
+  const core = loadCore();
+  const row = {model:'Synthetic',lab:'Lab',date:'2024-01-01',tier:'mid',note:'Original'};
+  core.attachLevels([row],[{...row,tier:'small',note:'Overwrite',level:2,field:'general',reason:'Classification'}]);
+  assert.equal(row.tier,'mid');
+  assert.equal(row.note,'Original');
+  assert.equal(row.level,2);
+});
+
+test('lane mapping keeps notable labs and follows a folded parent tier', () => {
+  const {laneKey} = loadCore();
+  const labs = new Set(['Known']);
+  for (const tier of ['flagship','mid','small']) assert.equal(laneKey({lab:'Other',tier},labs), 'Others: general');
+  assert.equal(laneKey({lab:'Other',tier:'open-weights'},labs), 'Others: open weights');
+  assert.equal(laneKey({lab:'Other',tier:'specialty'},labs), 'Others: specialty');
+  assert.equal(laneKey({lab:'Known',tier:'small'},labs), 'Known');
+  assert.equal(laneKey({lab:'Other',tier:'small',parent:{lab:'Other',tier:'specialty'}},labs), 'Others: specialty');
+  assert.equal(laneKey({lab:'Other',tier:'unknown'},labs), 'Others: general');
 });

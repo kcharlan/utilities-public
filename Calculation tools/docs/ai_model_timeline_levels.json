@@ -1,0 +1,6072 @@
+{
+ "checked": "2026-11-24",
+ "roster": [
+  "OpenAI",
+  "Anthropic",
+  "Google",
+  "Meta",
+  "xAI",
+  "Microsoft",
+  "Amazon",
+  "NVIDIA",
+  "Apple",
+  "Thinking Machines",
+  "DeepSeek",
+  "Alibaba (Qwen)",
+  "Moonshot",
+  "Z.ai (Zhipu)",
+  "MiniMax",
+  "ByteDance",
+  "Tencent",
+  "Baidu",
+  "Mistral",
+  "Xiaomi",
+  "Ant Group (inclusionAI)"
+ ],
+ "fields": [
+  "general",
+  "coding",
+  "image",
+  "video",
+  "audio",
+  "world",
+  "science",
+  "other"
+ ],
+ "fieldLabels": {
+  "general": "General",
+  "coding": "Coding and agents",
+  "image": "Image",
+  "video": "Video",
+  "audio": "Voice and audio",
+  "world": "World models and robotics",
+  "science": "Science and medicine",
+  "other": "Other specialist"
+ },
+ "entries": [
+  {
+   "model": "ERNIE 5.5 Flash Preview (open weights)",
+   "lab": "Baidu",
+   "date": "2026-11-24",
+   "level": 3,
+   "field": "general",
+   "reason": "Later stage: post-trained open weights",
+   "of": {
+    "model": "ERNIE 5.5 Flash Base",
+    "date": "2026-11-05"
+   },
+   "kind": "stage",
+   "label": "post-trained open weights"
+  },
+  {
+   "model": "Hy-MT3 family",
+   "lab": "Tencent",
+   "date": "2026-11-24",
+   "level": 3,
+   "field": "other",
+   "reason": "Support-class model"
+  },
+  {
+   "model": "GPT-6.2 Sol (November 23, ChatGPT)",
+   "lab": "OpenAI",
+   "date": "2026-11-23",
+   "level": 3,
+   "field": "general",
+   "reason": "Snapshot: ChatGPT snapshot",
+   "of": {
+    "model": "GPT-6.2 Sol",
+    "date": "2026-11-17"
+   },
+   "kind": "snapshot",
+   "label": "ChatGPT snapshot"
+  },
+  {
+   "model": "GLM-5.4 (Coding Plan release)",
+   "lab": "Z.ai (Zhipu)",
+   "date": "2026-11-23",
+   "level": 1,
+   "field": "general",
+   "reason": "Roster lab, top general model"
+  },
+  {
+   "model": "Solar Mini 4.5 Preview",
+   "lab": "Upstage",
+   "date": "2026-11-23",
+   "level": 3,
+   "field": "general",
+   "reason": "Lab outside the roster; no evidence test passed"
+  },
+  {
+   "model": "Ling-3.2-air",
+   "lab": "Ant Group (inclusionAI)",
+   "date": "2026-11-23",
+   "level": 2,
+   "field": "general",
+   "reason": "Roster lab, open-weight model in the main line",
+   "evidence": "intelligence index rank 34 (score 23)"
+  },
+  {
+   "model": "Kolibri 1.1",
+   "lab": "Aleph Alpha",
+   "date": "2026-11-23",
+   "level": 3,
+   "field": "general",
+   "reason": "Snapshot: update",
+   "of": {
+    "model": "Kolibri 1",
+    "date": "2026-10-03"
+   },
+   "kind": "snapshot",
+   "label": "update"
+  },
+  {
+   "model": "MemT-1.0-Pro",
+   "lab": "MemTensor",
+   "date": "2026-11-23",
+   "level": 3,
+   "field": "general",
+   "reason": "Built on another lab's model"
+  },
+  {
+   "model": "SenseNova-RoboRSI-27B",
+   "lab": "SenseNova",
+   "date": "2026-11-23",
+   "level": 3,
+   "field": "world",
+   "reason": "Lab outside the roster; no evidence test passed"
+  },
+  {
+   "model": "WePocketModel 1.0 family",
+   "lab": "Tencent",
+   "date": "2026-11-23",
+   "level": 3,
+   "field": "general",
+   "reason": "WeChat team family outside the Hy main line; light adoption",
+   "evidence": "GitHub: 195 stars"
+  },
+  {
+   "model": "Qwen-Audio-3.1-Live",
+   "lab": "Alibaba (Qwen)",
+   "date": "2026-11-23",
+   "level": 3,
+   "field": "audio",
+   "reason": "Variant: further member of the Qwen-Audio 3.1 voice line"
+  },
+  {
+   "model": "Qwen-Audio-3.1-Captioner",
+   "lab": "Alibaba (Qwen)",
+   "date": "2026-11-23",
+   "level": 3,
+   "field": "audio",
+   "reason": "Support-class model"
+  },
+  {
+   "model": "HungerG (Qoder preview)",
+   "lab": "Undisclosed (stealth)",
+   "date": "2026-11-23",
+   "level": 3,
+   "field": "coding",
+   "reason": "No named maker"
+  },
+  {
+   "model": "LingSante-3.1-flash",
+   "lab": "Ant Group (inclusionAI)",
+   "date": "2026-11-22",
+   "level": 3,
+   "field": "science",
+   "reason": "medical configuration of Ling 3.1 Flash"
+  },
+  {
+   "model": "LingSante-3.1-air-VL",
+   "lab": "Ant Group (inclusionAI)",
+   "date": "2026-11-22",
+   "level": 3,
+   "field": "science",
+   "reason": "medical configuration of the Ling air model"
+  },
+  {
+   "model": "Sarvam-105B-1711 (hosted rollout)",
+   "lab": "Sarvam AI",
+   "date": "2026-11-22",
+   "level": 3,
+   "field": "general",
+   "reason": "Later stage: hosted rollout",
+   "of": {
+    "model": "Sarvam-105B-1711",
+    "date": "2026-11-17"
+   },
+   "kind": "stage",
+   "label": "hosted rollout"
+  },
+  {
+   "model": "Inkling 2 Mini",
+   "lab": "Thinking Machines",
+   "date": "2026-11-20",
+   "level": 2,
+   "field": "general",
+   "reason": "Roster lab, open-weight model in the main line",
+   "evidence": "intelligence index rank 37 (score 20)"
+  },
+  {
+   "model": "Hy4 (open weights)",
+   "lab": "Tencent",
+   "date": "2026-11-20",
+   "level": 3,
+   "field": "general",
+   "reason": "Later stage: open weights",
+   "of": {
+    "model": "Hy4 (hosted release)",
+    "date": "2026-11-03"
+   },
+   "kind": "stage",
+   "label": "open weights"
+  },
+  {
+   "model": "WeMM-Video family",
+   "lab": "Tencent",
+   "date": "2026-11-20",
+   "level": 3,
+   "field": "general",
+   "reason": "WeChat team family outside the Hy main line; light adoption",
+   "evidence": "GitHub: 147 stars"
+  },
+  {
+   "model": "Ideogram 4.6",
+   "lab": "Ideogram",
+   "date": "2026-11-19",
+   "level": 3,
+   "field": "image",
+   "reason": "Lab outside the roster; no evidence test passed"
+  },
+  {
+   "model": "GPT-Live-1.1 (API release)",
+   "lab": "OpenAI",
+   "date": "2026-11-19",
+   "level": 3,
+   "field": "audio",
+   "reason": "Later stage: API release",
+   "of": {
+    "model": "GPT-Live-1.1 / GPT-Live-1.1 Quip",
+    "date": "2026-10-15"
+   },
+   "kind": "stage",
+   "label": "API release"
+  },
+  {
+   "model": "Olala mini 7A1B",
+   "lab": "OVHcloud",
+   "date": "2026-11-19",
+   "level": 3,
+   "field": "general",
+   "reason": "Lab outside the roster; no evidence test passed"
+  },
+  {
+   "model": "Gemini 4 Neon",
+   "lab": "Google",
+   "date": "2026-11-18",
+   "level": 1,
+   "field": "general",
+   "reason": "ranks third on the intelligence index, above Gemini 4 Carbon",
+   "evidence": "intelligence index rank 3 (score 61)"
+  },
+  {
+   "model": "Genie 4 (Project Genie rollout)",
+   "lab": "Google",
+   "date": "2026-11-18",
+   "level": 3,
+   "field": "world",
+   "reason": "Later stage: wider rollout",
+   "of": {
+    "model": "Genie 4 (research preview)",
+    "date": "2026-10-27"
+   },
+   "kind": "stage",
+   "label": "wider rollout"
+  },
+  {
+   "model": "DaisyRose-27B",
+   "lab": "RadixArk",
+   "date": "2026-11-18",
+   "level": 3,
+   "field": "general",
+   "reason": "Built on another lab's model"
+  },
+  {
+   "model": "Aion 1.0 Instruct (open weights)",
+   "lab": "Microsoft",
+   "date": "2026-11-18",
+   "level": 2,
+   "field": "general",
+   "reason": "Roster lab, open-weight model in the main line",
+   "evidence": "announced at Build in June as a model built into Windows; covered by Windows press"
+  },
+  {
+   "model": "Hy4 flash (open weights)",
+   "lab": "Tencent",
+   "date": "2026-11-18",
+   "level": 3,
+   "field": "general",
+   "reason": "Later stage: open weights",
+   "of": {
+    "model": "Hy4 flash",
+    "date": "2026-11-16"
+   },
+   "kind": "stage",
+   "label": "open weights"
+  },
+  {
+   "model": "Phai-A1 (announcement)",
+   "lab": "Phancy",
+   "date": "2026-11-18",
+   "level": 3,
+   "field": "general",
+   "reason": "Lab outside the roster; no evidence test passed"
+  },
+  {
+   "model": "Phai-M1",
+   "lab": "Phancy",
+   "date": "2026-11-18",
+   "level": 3,
+   "field": "video",
+   "reason": "Lab outside the roster; no evidence test passed"
+  },
+  {
+   "model": "Astra for Law 6.2",
+   "lab": "OpenAI",
+   "date": "2026-11-17",
+   "level": 3,
+   "field": "other",
+   "reason": "legal configuration of GPT-6.2 Astra"
+  },
+  {
+   "model": "MAI Code 2",
+   "lab": "Microsoft",
+   "date": "2026-11-17",
+   "level": 2,
+   "field": "coding",
+   "reason": "Roster lab, lead coding model"
+  },
+  {
+   "model": "MAI Code 2 Flash",
+   "lab": "Microsoft",
+   "date": "2026-11-17",
+   "level": 3,
+   "field": "coding",
+   "reason": "Variant: smaller variant",
+   "of": {
+    "model": "MAI Code 2",
+    "date": "2026-11-17"
+   },
+   "kind": "variant",
+   "label": "smaller variant"
+  },
+  {
+   "model": "MAI Image 2.7 (Foundry preview)",
+   "lab": "Microsoft",
+   "date": "2026-11-17",
+   "level": 3,
+   "field": "image",
+   "reason": "Later stage: Foundry preview",
+   "of": {
+    "model": "MAI Image 2.7 (preview)",
+    "date": "2026-10-27"
+   },
+   "kind": "stage",
+   "label": "Foundry preview"
+  },
+  {
+   "model": "MAI Image 2.7 Flash (Foundry preview)",
+   "lab": "Microsoft",
+   "date": "2026-11-17",
+   "level": 3,
+   "field": "image",
+   "reason": "Variant: faster variant",
+   "of": {
+    "model": "MAI Image 2.7 (preview)",
+    "date": "2026-10-27"
+   },
+   "kind": "variant",
+   "label": "faster variant"
+  },
+  {
+   "model": "MAI Realtime 1",
+   "lab": "Microsoft",
+   "date": "2026-11-17",
+   "level": 2,
+   "field": "audio",
+   "reason": "Roster lab, lead voice model"
+  },
+  {
+   "model": "MAI Cyber 2 Flash (announcement)",
+   "lab": "Microsoft",
+   "date": "2026-11-17",
+   "level": 3,
+   "field": "general",
+   "reason": "announced; nothing usable yet"
+  },
+  {
+   "model": "Microsoft-Decision-1.1 (GA)",
+   "lab": "Microsoft",
+   "date": "2026-11-17",
+   "level": 3,
+   "field": "other",
+   "reason": "Snapshot: v1.1, general availability",
+   "of": {
+    "model": "Microsoft-Decision-1",
+    "date": "2026-10-09"
+   },
+   "kind": "snapshot",
+   "label": "v1.1, general availability"
+  },
+  {
+   "model": "Sarvam-105B-1711",
+   "lab": "Sarvam AI",
+   "date": "2026-11-17",
+   "level": 3,
+   "field": "general",
+   "reason": "Lab outside the roster; no evidence test passed"
+  },
+  {
+   "model": "GPT-6.2 Astra",
+   "lab": "OpenAI",
+   "date": "2026-11-17",
+   "level": 1,
+   "field": "general",
+   "reason": "Roster lab, top general model",
+   "evidence": "intelligence index rank 2 (score 62)"
+  },
+  {
+   "model": "GPT-6.2 Sol",
+   "lab": "OpenAI",
+   "date": "2026-11-17",
+   "level": 2,
+   "field": "general",
+   "reason": "Roster lab, mid model in the main line",
+   "evidence": "intelligence index rank 6 (score 57)"
+  },
+  {
+   "model": "Avatar 6",
+   "lab": "HeyGen",
+   "date": "2026-11-17",
+   "level": 3,
+   "field": "video",
+   "reason": "Lab outside the roster; no evidence test passed"
+  },
+  {
+   "model": "SenseNova-Loop-9B",
+   "lab": "SenseNova",
+   "date": "2026-11-17",
+   "level": 3,
+   "field": "general",
+   "reason": "Later stage: full release",
+   "of": {
+    "model": "SenseNova-Loop-9B-Preview",
+    "date": "2026-10-30"
+   },
+   "kind": "stage",
+   "label": "full release"
+  },
+  {
+   "model": "d1.2 / d1.2-ultra",
+   "lab": "Liquid AI",
+   "date": "2026-11-16",
+   "level": 3,
+   "field": "other",
+   "reason": "Snapshot: v1.2",
+   "of": {
+    "model": "d1 (text-and-vision release)",
+    "date": "2026-10-05"
+   },
+   "kind": "snapshot",
+   "label": "v1.2"
+  },
+  {
+   "model": "CloudRobo-WM1.2 (announcement)",
+   "lab": "Huawei Cloud",
+   "date": "2026-11-16",
+   "level": 3,
+   "field": "world",
+   "reason": "announced; nothing usable yet"
+  },
+  {
+   "model": "Seedance 2.5 Flash (API release)",
+   "lab": "ByteDance",
+   "date": "2026-11-15",
+   "level": 3,
+   "field": "video",
+   "reason": "Variant: faster variant",
+   "of": {
+    "model": "Seedance 2.5",
+    "date": "2026-07-31"
+   },
+   "kind": "variant",
+   "label": "faster variant"
+  },
+  {
+   "model": "Sage S2.1 Flash",
+   "lab": "Shanghai AI Lab",
+   "date": "2026-11-15",
+   "level": 3,
+   "field": "science",
+   "reason": "Lab outside the roster; no evidence test passed"
+  },
+  {
+   "model": "Duo 1.2 Causal Base",
+   "lab": "Ant Group (inclusionAI)",
+   "date": "2026-11-13",
+   "level": 3,
+   "field": "world",
+   "reason": "initialized from MiniMax H3"
+  },
+  {
+   "model": "HY-World 2.1 Panorama (hosted release)",
+   "lab": "Tencent",
+   "date": "2026-11-13",
+   "level": 3,
+   "field": "image",
+   "reason": "Variant: panorama variant of HY-World 2.1"
+  },
+  {
+   "model": "Recraft V4.1 Flash V2",
+   "lab": "Recraft",
+   "date": "2026-11-13",
+   "level": 3,
+   "field": "image",
+   "reason": "Lab outside the roster; no evidence test passed"
+  },
+  {
+   "model": "Inkling 2 Small (open weights)",
+   "lab": "Thinking Machines",
+   "date": "2026-11-12",
+   "level": 3,
+   "field": "general",
+   "reason": "Later stage: open weights",
+   "of": {
+    "model": "Inkling 2 Small (Tinker release)",
+    "date": "2026-11-05"
+   },
+   "kind": "stage",
+   "label": "open weights"
+  },
+  {
+   "model": "MiniMax-H3-Image-PE",
+   "lab": "MiniMax",
+   "date": "2026-11-10",
+   "level": 3,
+   "field": "other",
+   "reason": "Support-class model"
+  },
+  {
+   "model": "Qwen4-Max",
+   "lab": "Alibaba (Qwen)",
+   "date": "2026-11-16",
+   "level": 3,
+   "field": "general",
+   "reason": "Later stage: full release",
+   "of": {
+    "model": "Qwen4-Max-Preview",
+    "date": "2026-11-11"
+   },
+   "kind": "stage",
+   "label": "full release"
+  },
+  {
+   "model": "Hy4 flash",
+   "lab": "Tencent",
+   "date": "2026-11-16",
+   "level": 2,
+   "field": "general",
+   "reason": "Roster lab, mid model in the main line",
+   "evidence": "OpenRouter monthly tokens rank 6"
+  },
+  {
+   "model": "CSAM Image Classifier",
+   "lab": "OpenAI",
+   "date": "2026-11-16",
+   "level": 3,
+   "field": "other",
+   "reason": "Support-class model"
+  },
+  {
+   "model": "LongCat-Video-Avatar 1.6",
+   "lab": "Meituan",
+   "date": "2026-11-15",
+   "level": 3,
+   "field": "video",
+   "reason": "Lab outside the roster; no evidence test passed"
+  },
+  {
+   "model": "Agnes 2.5 Pro Theta",
+   "lab": "Agnes AI",
+   "date": "2026-11-15",
+   "level": 3,
+   "field": "general",
+   "reason": "Lab outside the roster; no evidence test passed",
+   "evidence": "intelligence index rank 33 (score 24); only the maker hosts it; 55 likes; the one outlet item is a press release; a sibling model is a Qwen post-train"
+  },
+  {
+   "model": "Haru-4B",
+   "lab": "higurashi",
+   "date": "2026-11-13",
+   "level": 3,
+   "field": "audio",
+   "reason": "Built on another lab's model"
+  },
+  {
+   "model": "Ling-3.2-flash",
+   "lab": "Ant Group (inclusionAI)",
+   "date": "2026-11-05",
+   "level": 2,
+   "field": "general",
+   "reason": "Roster lab, mid model in the main line"
+  },
+  {
+   "model": "HeyGen Decision 1",
+   "lab": "HeyGen",
+   "date": "2026-11-13",
+   "level": 3,
+   "field": "other",
+   "reason": "Decision model after the first"
+  },
+  {
+   "model": "Atlas (public access)",
+   "lab": "World Labs",
+   "date": "2026-11-12",
+   "level": 2,
+   "field": "world",
+   "reason": "Independent evidence",
+   "evidence": "covered by SiliconANGLE and The Decoder at its September 1 unveiling; no benchmark exists for the field"
+  },
+  {
+   "model": "Bielik-One family",
+   "lab": "SpeakLeash / Cyfronet AGH",
+   "date": "2026-11-12",
+   "level": 3,
+   "field": "other",
+   "reason": "Decision model after the first"
+  },
+  {
+   "model": "Edge0-145B / Edge0-120B",
+   "lab": "AutoArk (Edge0)",
+   "date": "2026-11-12",
+   "level": 3,
+   "field": "general",
+   "reason": "Lab outside the roster; no evidence test passed"
+  },
+  {
+   "model": "Gemini 4 Hydrogen",
+   "lab": "Google",
+   "date": "2026-11-12",
+   "level": 2,
+   "field": "general",
+   "reason": "Roster lab, mid model in the main line",
+   "evidence": "intelligence index rank 8 (score 54)"
+  },
+  {
+   "model": "Granite 4.1 3B / 8B LLMON Preview",
+   "lab": "IBM",
+   "date": "2026-11-12",
+   "level": 3,
+   "field": "general",
+   "reason": "Lab outside the roster; no evidence test passed"
+  },
+  {
+   "model": "Hark Handoff²",
+   "lab": "Hark",
+   "date": "2026-11-12",
+   "level": 3,
+   "field": "coding",
+   "reason": "Lab outside the roster; no evidence test passed"
+  },
+  {
+   "model": "MetaEncoder v1",
+   "lab": "Meta",
+   "date": "2026-11-12",
+   "level": 3,
+   "field": "other",
+   "reason": "encoder for retrieval"
+  },
+  {
+   "model": "Perplexity Decider v1.3 / Decider Flash v1.3",
+   "lab": "Perplexity",
+   "date": "2026-11-12",
+   "level": 3,
+   "field": "other",
+   "reason": "Snapshot: v1.3",
+   "of": {
+    "model": "pplx-decider-v1-27b",
+    "date": "2026-10-01"
+   },
+   "kind": "snapshot",
+   "label": "v1.3"
+  },
+  {
+   "model": "SOV-Transcribe-1",
+   "lab": "Salesforce",
+   "date": "2026-11-12",
+   "level": 3,
+   "field": "audio",
+   "reason": "Lab outside the roster; no evidence test passed"
+  },
+  {
+   "model": "AlphaGenome 2",
+   "lab": "Google",
+   "date": "2026-11-11",
+   "level": 2,
+   "field": "science",
+   "reason": "Roster lab, lead science model"
+  },
+  {
+   "model": "Praxis-1 (open weights)",
+   "lab": "Runway",
+   "date": "2026-11-11",
+   "level": 3,
+   "field": "world",
+   "reason": "Later stage: open weights",
+   "of": {
+    "model": "Praxis-1 (partner preview)",
+    "date": "2026-09-30"
+   },
+   "kind": "stage",
+   "label": "open weights"
+  },
+  {
+   "model": "Scribe v3 Medical (announcement)",
+   "lab": "ElevenLabs",
+   "date": "2026-11-11",
+   "level": 3,
+   "field": "audio",
+   "reason": "announced; nothing usable yet"
+  },
+  {
+   "model": "Scribe v3 / v3 Live",
+   "lab": "ElevenLabs",
+   "date": "2026-11-10",
+   "level": 3,
+   "field": "audio",
+   "reason": "Lab outside the roster; no evidence test passed"
+  },
+  {
+   "model": "GR00T 2 / Turbo (research announcement)",
+   "lab": "NVIDIA",
+   "date": "2026-11-09",
+   "level": 3,
+   "field": "world",
+   "reason": "announced; nothing usable yet",
+   "evidence": "weights planned for December"
+  },
+  {
+   "model": "LongCat-2.5 (open weights)",
+   "lab": "Meituan",
+   "date": "2026-11-09",
+   "level": 3,
+   "field": "general",
+   "reason": "Later stage: open weights",
+   "of": {
+    "model": "LongCat-2.5-Preview",
+    "date": "2026-09-25"
+   },
+   "kind": "stage",
+   "label": "open weights"
+  },
+  {
+   "model": "Qwen4-Max-Preview",
+   "lab": "Alibaba (Qwen)",
+   "date": "2026-11-11",
+   "level": 1,
+   "field": "general",
+   "reason": "Roster lab, top general model",
+   "evidence": "intelligence index rank 14 (score 43)"
+  },
+  {
+   "model": "Gemini Decision 1",
+   "lab": "Google",
+   "date": "2026-11-11",
+   "level": 3,
+   "field": "other",
+   "reason": "Decision model after the first"
+  },
+  {
+   "model": "PAN 2",
+   "lab": "MBZUAI (IFM)",
+   "date": "2026-11-11",
+   "level": 3,
+   "field": "world",
+   "reason": "Lab outside the roster; no evidence test passed"
+  },
+  {
+   "model": "BotPsy-0.8B",
+   "lab": "Tether AI Research",
+   "date": "2026-11-11",
+   "level": 3,
+   "field": "general",
+   "reason": "Lab outside the roster; no evidence test passed"
+  },
+  {
+   "model": "Bielik-11B-v3.1 DFlash",
+   "lab": "SpeakLeash / Cyfronet AGH",
+   "date": "2026-11-11",
+   "level": 3,
+   "field": "other",
+   "reason": "Lab outside the roster; no evidence test passed"
+  },
+  {
+   "model": "ERNIE-Wizshot-ME (documented API availability)",
+   "lab": "Baidu",
+   "date": "2026-11-11",
+   "level": 3,
+   "field": "video",
+   "reason": "the only event is a documentation listing; no ranking or coverage found"
+  },
+  {
+   "model": "ERNIE 5.5 Flash Preview (hosted release)",
+   "lab": "Baidu",
+   "date": "2026-11-10",
+   "level": 3,
+   "field": "general",
+   "reason": "Later stage: hosted preview",
+   "of": {
+    "model": "ERNIE 5.5 Flash Base",
+    "date": "2026-11-05"
+   },
+   "kind": "stage",
+   "label": "hosted preview"
+  },
+  {
+   "model": "ERNIE-Light-DT-1.0 (hosted release)",
+   "lab": "Baidu",
+   "date": "2026-11-10",
+   "level": 2,
+   "field": "general",
+   "reason": "Roster lab, mid model in the main line"
+  },
+  {
+   "model": "Bielik-11B-v3.1-Instruct",
+   "lab": "SpeakLeash / Cyfronet AGH",
+   "date": "2026-11-10",
+   "level": 3,
+   "field": "general",
+   "reason": "Lab outside the roster; no evidence test passed"
+  },
+  {
+   "model": "Gemini 4 Carbon (general availability)",
+   "lab": "Google",
+   "date": "2026-11-10",
+   "level": 3,
+   "field": "general",
+   "reason": "Later stage: general availability",
+   "of": {
+    "model": "Gemini 4 Carbon (limited preview)",
+    "date": "2026-10-28"
+   },
+   "kind": "stage",
+   "label": "general availability"
+  },
+  {
+   "model": "Gemini Robotics 2.5 (partner rollout)",
+   "lab": "Google",
+   "date": "2026-11-10",
+   "level": 2,
+   "field": "world",
+   "reason": "Roster lab, lead world model"
+  },
+  {
+   "model": "MiniMax H3-Image (open weights)",
+   "lab": "MiniMax",
+   "date": "2026-11-10",
+   "level": 2,
+   "field": "image",
+   "reason": "Roster lab, lead image model",
+   "evidence": "Hugging Face: 2,509 likes, 1.0M downloads"
+  },
+  {
+   "model": "Nex-N2.6 (hosted release)",
+   "lab": "Nex AGI",
+   "date": "2026-11-10",
+   "level": 3,
+   "field": "general",
+   "reason": "Built on another lab's model"
+  },
+  {
+   "model": "Claude Fable 5.2 / Mythos 5.2",
+   "lab": "Anthropic",
+   "date": "2026-11-09",
+   "level": 1,
+   "field": "general",
+   "reason": "Roster lab, top general model",
+   "evidence": "intelligence index rank 1 (score 65)"
+  },
+  {
+   "model": "Muse Ember",
+   "lab": "Meta",
+   "date": "2026-11-09",
+   "level": 2,
+   "field": "general",
+   "reason": "Roster lab, small model in the main line",
+   "evidence": "intelligence index rank 16 (score 36)"
+  },
+  {
+   "model": "Seedream 5.5",
+   "lab": "ByteDance",
+   "date": "2026-11-09",
+   "level": 2,
+   "field": "image",
+   "reason": "Roster lab, lead image model",
+   "evidence": "image arena rank 14"
+  },
+  {
+   "model": "K-EXAONE 2.5 (API release)",
+   "lab": "LG AI",
+   "date": "2026-11-09",
+   "level": 3,
+   "field": "general",
+   "reason": "Lab outside the roster; no evidence test passed",
+   "evidence": "Korean press relaying LG figures only; LG calls it a technology verification model"
+  },
+  {
+   "model": "Shizuku-Duplex (research announcement)",
+   "lab": "Shizuku AI",
+   "date": "2026-11-08",
+   "level": 3,
+   "field": "audio",
+   "reason": "announced; nothing usable yet"
+  },
+  {
+   "model": "Arete-27B",
+   "lab": "Nous Research",
+   "date": "2026-11-06",
+   "level": 3,
+   "field": "general",
+   "reason": "Built on another lab's model"
+  },
+  {
+   "model": "Kanana-2-v-decide-3b-2611",
+   "lab": "Kakao",
+   "date": "2026-11-06",
+   "level": 3,
+   "field": "other",
+   "reason": "Decision model after the first"
+  },
+  {
+   "model": "Mistral Large 4 (general availability)",
+   "lab": "Mistral",
+   "date": "2026-11-05",
+   "level": 3,
+   "field": "general",
+   "reason": "Later stage: general availability",
+   "of": {
+    "model": "Mistral Large 4 (public preview)",
+    "date": "2026-10-06"
+   },
+   "kind": "stage",
+   "label": "general availability"
+  },
+  {
+   "model": "GLiDE 0.4B / 0.8B / 2B / 9B",
+   "lab": "Fastino",
+   "date": "2026-11-05",
+   "level": 3,
+   "field": "other",
+   "reason": "Variant: smaller open sizes",
+   "of": {
+    "model": "GLiDE",
+    "date": "2026-09-30"
+   },
+   "kind": "variant",
+   "label": "smaller open sizes"
+  },
+  {
+   "model": "P-Video-2-Pro-Replace",
+   "lab": "Pruna AI",
+   "date": "2026-11-05",
+   "level": 3,
+   "field": "video",
+   "reason": "Built on another lab's model"
+  },
+  {
+   "model": "Lion-ER family (public release announcement)",
+   "lab": "Lion Rock AI Lab",
+   "date": "2026-11-04",
+   "level": 3,
+   "field": "world",
+   "reason": "Lab outside the roster; no evidence test passed"
+  },
+  {
+   "model": "Soniox STT v6",
+   "lab": "Soniox",
+   "date": "2026-11-03",
+   "level": 3,
+   "field": "audio",
+   "reason": "Lab outside the roster; no evidence test passed"
+  },
+  {
+   "model": "Apollo World (public unveiling)",
+   "lab": "Baidu",
+   "date": "2026-11-03",
+   "level": 3,
+   "field": "world",
+   "reason": "announced; nothing usable yet"
+  },
+  {
+   "model": "LongCat-2.5 (general availability)",
+   "lab": "Meituan",
+   "date": "2026-11-02",
+   "level": 3,
+   "field": "general",
+   "reason": "Later stage: general availability",
+   "of": {
+    "model": "LongCat-2.5-Preview",
+    "date": "2026-09-25"
+   },
+   "kind": "stage",
+   "label": "general availability"
+  },
+  {
+   "model": "Hume Audio Decisions",
+   "lab": "Hume AI",
+   "date": "2026-11-02",
+   "level": 3,
+   "field": "other",
+   "reason": "Decision model after the first"
+  },
+  {
+   "model": "Eleven SFX v3 (general availability)",
+   "lab": "ElevenLabs",
+   "date": "2026-11-02",
+   "level": 3,
+   "field": "audio",
+   "reason": "Lab outside the roster; no evidence test passed"
+  },
+  {
+   "model": "SenseNova 6.8 Flash (general availability)",
+   "lab": "SenseNova",
+   "date": "2026-11-02",
+   "level": 3,
+   "field": "general",
+   "reason": "Lab outside the roster; no evidence test passed"
+  },
+  {
+   "model": "Maya Transcribe",
+   "lab": "Maya Research",
+   "date": "2026-11-02",
+   "level": 3,
+   "field": "audio",
+   "reason": "Lab outside the roster; no evidence test passed"
+  },
+  {
+   "model": "Eleven Realtime v1 Mini / Max (general availability)",
+   "lab": "ElevenLabs",
+   "date": "2026-11-02",
+   "level": 3,
+   "field": "audio",
+   "reason": "Lab outside the roster; no evidence test passed"
+  },
+  {
+   "model": "Drex Max v1 (open weights)",
+   "lab": "Nace AI",
+   "date": "2026-11-01",
+   "level": 3,
+   "field": "other",
+   "reason": "Decision model after the first"
+  },
+  {
+   "model": "&Tutor v0.1",
+   "lab": "Humans&",
+   "date": "2026-10-30",
+   "level": 3,
+   "field": "general",
+   "reason": "Lab outside the roster; no evidence test passed"
+  },
+  {
+   "model": "Maya 2 Native (checkpoint 1.0)",
+   "lab": "Maya Research",
+   "date": "2026-10-25",
+   "level": 3,
+   "field": "audio",
+   "reason": "Lab outside the roster; no evidence test passed"
+  },
+  {
+   "model": "Ampersand v0.1",
+   "lab": "Humans&",
+   "date": "2026-10-20",
+   "level": 3,
+   "field": "general",
+   "reason": "Built on another lab's model"
+  },
+  {
+   "model": "Gemini Omni 1.2 Flash",
+   "lab": "Google",
+   "date": "2026-11-05",
+   "level": 2,
+   "field": "video",
+   "reason": "Roster lab, lead video model",
+   "evidence": "video arena rank 6"
+  },
+  {
+   "model": "GPT-6 Cyber (limited access)",
+   "lab": "OpenAI",
+   "date": "2026-11-05",
+   "level": 2,
+   "field": "general",
+   "reason": "Roster lab, lead cyber model",
+   "evidence": "covered by Fortune, The New Stack and security press; OpenAI rates it Critical for cyber risk"
+  },
+  {
+   "model": "Inkling 2 Small (Tinker release)",
+   "lab": "Thinking Machines",
+   "date": "2026-11-05",
+   "level": 2,
+   "field": "general",
+   "reason": "Roster lab, mid model in the main line",
+   "evidence": "intelligence index rank 21 (score 31); Hugging Face: 1,457 likes"
+  },
+  {
+   "model": "Cosmos 3 simulation family",
+   "lab": "NVIDIA",
+   "date": "2026-11-05",
+   "level": 2,
+   "field": "world",
+   "reason": "Roster lab, lead world model"
+  },
+  {
+   "model": "CCORE GLB-3D-Coder 4B",
+   "lab": "CCORE",
+   "date": "2026-11-05",
+   "level": 3,
+   "field": "coding",
+   "reason": "Built on another lab's model"
+  },
+  {
+   "model": "ERNIE 5.5 Flash Base",
+   "lab": "Baidu",
+   "date": "2026-11-05",
+   "level": 2,
+   "field": "general",
+   "reason": "Roster lab, open-weight model in the main line"
+  },
+  {
+   "model": "GPT-Image-2.6 Flare / Sunburst",
+   "lab": "OpenAI",
+   "date": "2026-11-04",
+   "level": 2,
+   "field": "image",
+   "reason": "Roster lab, lead image model",
+   "evidence": "image arena rank 1 and 3"
+  },
+  {
+   "model": "Kimi K3.1 Pro (open weights)",
+   "lab": "Moonshot",
+   "date": "2026-11-04",
+   "level": 3,
+   "field": "general",
+   "reason": "Later stage: open weights",
+   "of": {
+    "model": "Kimi K3.1 Pro",
+    "date": "2026-10-23"
+   },
+   "kind": "stage",
+   "label": "open weights"
+  },
+  {
+   "model": "Ripple-65B Preview",
+   "lab": "Ricursive Intelligence",
+   "date": "2026-11-04",
+   "level": 2,
+   "field": "general",
+   "reason": "Independent evidence",
+   "evidence": "covered by VentureBeat and The Decoder; Hugging Face: 602 likes, 18K downloads"
+  },
+  {
+   "model": "SWE-2 Flash",
+   "lab": "Cognition",
+   "date": "2026-11-04",
+   "level": 3,
+   "field": "coding",
+   "reason": "Variant: faster variant",
+   "of": {
+    "model": "SWE-2",
+    "date": "2026-09-10"
+   },
+   "kind": "variant",
+   "label": "faster variant"
+  },
+  {
+   "model": "TwIL-8B",
+   "lab": "webAI",
+   "date": "2026-11-04",
+   "level": 3,
+   "field": "general",
+   "reason": "Built on another lab's model"
+  },
+  {
+   "model": "P-JiT 21K",
+   "lab": "Linum",
+   "date": "2026-11-04",
+   "level": 3,
+   "field": "image",
+   "reason": "Lab outside the roster; no evidence test passed"
+  },
+  {
+   "model": "Pangram Image 1.0 / Image Flash 1.0",
+   "lab": "Pangram",
+   "date": "2026-11-04",
+   "level": 3,
+   "field": "other",
+   "reason": "Lab outside the roster; no evidence test passed"
+  },
+  {
+   "model": "Dharma Field Extractor",
+   "lab": "Dharma AI",
+   "date": "2026-11-04",
+   "level": 3,
+   "field": "other",
+   "reason": "Lab outside the roster; no evidence test passed"
+  },
+  {
+   "model": "Hy4 (hosted release)",
+   "lab": "Tencent",
+   "date": "2026-11-03",
+   "level": 1,
+   "field": "general",
+   "reason": "Roster lab, top general model",
+   "evidence": "intelligence index rank 18 (score 35)"
+  },
+  {
+   "model": "Sarvam Prism",
+   "lab": "Sarvam AI",
+   "date": "2026-11-03",
+   "level": 3,
+   "field": "other",
+   "reason": "Decision model after the first"
+  },
+  {
+   "model": "P-H3-Image",
+   "lab": "Pruna AI",
+   "date": "2026-11-03",
+   "level": 3,
+   "field": "image",
+   "reason": "Built on another lab's model"
+  },
+  {
+   "model": "Hydrogen-1.0",
+   "lab": "Deep Principle",
+   "date": "2026-11-02",
+   "level": 3,
+   "field": "science",
+   "reason": "Built on another lab's model"
+  },
+  {
+   "model": "Mage-VL-Cowork",
+   "lab": "Microsoft",
+   "date": "2026-10-30",
+   "level": 3,
+   "field": "coding",
+   "reason": "task-specific checkpoint outside the MAI main line; light adoption",
+   "evidence": "Hugging Face: 232 likes, 6K downloads"
+  },
+  {
+   "model": "Clover-35B-A3B-Preview",
+   "lab": "DiffuSpace",
+   "date": "2026-10-30",
+   "level": 3,
+   "field": "general",
+   "reason": "Lab outside the roster; no evidence test passed"
+  },
+  {
+   "model": "GPT-Rosalind-6 Research (limited access)",
+   "lab": "OpenAI",
+   "date": "2026-10-30",
+   "level": 3,
+   "field": "science",
+   "reason": "life-sciences access tier on GPT-6 Astra weights"
+  },
+  {
+   "model": "SenseNova-Loop-9B-Preview",
+   "lab": "SenseNova",
+   "date": "2026-10-30",
+   "level": 3,
+   "field": "general",
+   "reason": "Lab outside the roster; no evidence test passed"
+  },
+  {
+   "model": "TBC mischief 1",
+   "lab": "The Biological Computing Co.",
+   "date": "2026-10-30",
+   "level": 3,
+   "field": "video",
+   "reason": "Lab outside the roster; no evidence test passed"
+  },
+  {
+   "model": "Surya 2.5",
+   "lab": "Datalab",
+   "date": "2026-10-30",
+   "level": 3,
+   "field": "other",
+   "reason": "Lab outside the roster; no evidence test passed"
+  },
+  {
+   "model": "Pika H3 Flex",
+   "lab": "Pika",
+   "date": "2026-10-29",
+   "level": 3,
+   "field": "video",
+   "reason": "Built on another lab's model"
+  },
+  {
+   "model": "Phonic-1",
+   "lab": "Phonic",
+   "date": "2026-10-29",
+   "level": 3,
+   "field": "audio",
+   "reason": "Lab outside the roster; no evidence test passed"
+  },
+  {
+   "model": "joey-1",
+   "lab": "Base Labs (Baseten)",
+   "date": "2026-10-29",
+   "level": 3,
+   "field": "other",
+   "reason": "Decision model after the first"
+  },
+  {
+   "model": "GLM-5.3-FlashX-Legal (AutoClaw release)",
+   "lab": "Z.ai (Zhipu)",
+   "date": "2026-10-29",
+   "level": 3,
+   "field": "other",
+   "reason": "legal configuration of GLM-5.3-FlashX"
+  },
+  {
+   "model": "GO-3 (research preview)",
+   "lab": "AGIBOT",
+   "date": "2026-10-29",
+   "level": 3,
+   "field": "world",
+   "reason": "unveiled; weights planned later"
+  },
+  {
+   "model": "Particle-1",
+   "lab": "Particle AI",
+   "date": "2026-10-28",
+   "level": 3,
+   "field": "coding",
+   "reason": "Lab outside the roster; no evidence test passed"
+  },
+  {
+   "model": "Ling-3.1-flash-1019 (open weights)",
+   "lab": "Ant Group (inclusionAI)",
+   "date": "2026-10-27",
+   "level": 3,
+   "field": "general",
+   "reason": "Snapshot: updated checkpoint",
+   "of": {
+    "model": "Ling 3.1 Flash",
+    "date": "2026-09-30"
+   },
+   "kind": "snapshot",
+   "label": "updated checkpoint"
+  },
+  {
+   "model": "Cosmos3-H-Dreams",
+   "lab": "NVIDIA",
+   "date": "2026-10-20",
+   "level": 3,
+   "field": "world",
+   "reason": "Variant: surgical-simulation checkpoint of Cosmos 3"
+  },
+  {
+   "model": "Nemotron Labs Dory 1.0 4B",
+   "lab": "NVIDIA",
+   "date": "2026-10-16",
+   "level": 3,
+   "field": "general",
+   "reason": "research checkpoint outside the Nemotron main line; light adoption",
+   "evidence": "Hugging Face: 278 likes, 13K downloads"
+  },
+  {
+   "model": "MOSS-Image",
+   "lab": "OpenMOSS",
+   "date": "2026-10-16",
+   "level": 2,
+   "field": "image",
+   "reason": "Independent evidence",
+   "evidence": "GitHub: 3,051 stars"
+  },
+  {
+   "model": "GPT-Live-1.1 / GPT-Live-1.1 Quip",
+   "lab": "OpenAI",
+   "date": "2026-10-15",
+   "level": 2,
+   "field": "audio",
+   "reason": "Roster lab, lead voice model"
+  },
+  {
+   "model": "Krea 3",
+   "lab": "Krea",
+   "date": "2026-10-15",
+   "level": 3,
+   "field": "image",
+   "reason": "Lab outside the roster; no evidence test passed"
+  },
+  {
+   "model": "HiRO-ACEv2",
+   "lab": "Ai2",
+   "date": "2026-10-14",
+   "level": 3,
+   "field": "science",
+   "reason": "Lab outside the roster; no evidence test passed"
+  },
+  {
+   "model": "Ling-3.1-flash (open weights)",
+   "lab": "Ant Group (inclusionAI)",
+   "date": "2026-10-13",
+   "level": 3,
+   "field": "general",
+   "reason": "Later stage: open weights",
+   "of": {
+    "model": "Ling 3.1 Flash",
+    "date": "2026-09-30"
+   },
+   "kind": "stage",
+   "label": "open weights"
+  },
+  {
+   "model": "Voxtral Mini 4B Realtime Arabic",
+   "lab": "Mistral",
+   "date": "2026-10-09",
+   "level": 3,
+   "field": "audio",
+   "reason": "Support-class model"
+  },
+  {
+   "model": "Kandinsky 6.0 Video Lite / Pro",
+   "lab": "Kandinsky Lab",
+   "date": "2026-10-06",
+   "level": 3,
+   "field": "video",
+   "reason": "Lab outside the roster; no evidence test passed"
+  },
+  {
+   "model": "Rho-1 (research preview)",
+   "lab": "Reka",
+   "date": "2026-10-05",
+   "level": 3,
+   "field": "general",
+   "reason": "Lab outside the roster; no evidence test passed"
+  },
+  {
+   "model": "Cactus Whistle",
+   "lab": "Cactus Compute",
+   "date": "2026-10-02",
+   "level": 3,
+   "field": "audio",
+   "reason": "Lab outside the roster; no evidence test passed"
+  },
+  {
+   "model": "Chord",
+   "lab": "Decagon",
+   "date": "2026-10-01",
+   "level": 3,
+   "field": "audio",
+   "reason": "Lab outside the roster; no evidence test passed"
+  },
+  {
+   "model": "Mistral Large 4 (open weights)",
+   "lab": "Mistral",
+   "date": "2026-10-29",
+   "level": 3,
+   "field": "general",
+   "reason": "Later stage: open weights",
+   "of": {
+    "model": "Mistral Large 4 (public preview)",
+    "date": "2026-10-06"
+   },
+   "kind": "stage",
+   "label": "open weights"
+  },
+  {
+   "model": "Granite Switch 4.1.1",
+   "lab": "IBM",
+   "date": "2026-10-29",
+   "level": 3,
+   "field": "general",
+   "reason": "Snapshot: patch update",
+   "of": {
+    "model": "Granite Switch 4.1 family",
+    "date": "2026-10-14"
+   },
+   "kind": "snapshot",
+   "label": "patch update"
+  },
+  {
+   "model": "Nemotron 3.5 Transcribe",
+   "lab": "NVIDIA",
+   "date": "2026-10-28",
+   "level": 3,
+   "field": "audio",
+   "reason": "Support-class model"
+  },
+  {
+   "model": "Granite Switch 4.1 family",
+   "lab": "IBM",
+   "date": "2026-10-14",
+   "level": 3,
+   "field": "general",
+   "reason": "Lab outside the roster; no evidence test passed"
+  },
+  {
+   "model": "Gemini 4 Carbon (limited preview)",
+   "lab": "Google",
+   "date": "2026-10-28",
+   "level": 1,
+   "field": "general",
+   "reason": "Roster lab, top general model",
+   "evidence": "intelligence index rank 4 (score 60)"
+  },
+  {
+   "model": "Prism",
+   "lab": "Rime",
+   "date": "2026-10-28",
+   "level": 3,
+   "field": "audio",
+   "reason": "Lab outside the roster; no evidence test passed"
+  },
+  {
+   "model": "Genie 4 (research preview)",
+   "lab": "Google",
+   "date": "2026-10-27",
+   "level": 2,
+   "field": "world",
+   "reason": "Roster lab, lead world model",
+   "evidence": "covered by TechCrunch and Decrypt"
+  },
+  {
+   "model": "LFM3 family",
+   "lab": "Liquid AI",
+   "date": "2026-10-27",
+   "level": 3,
+   "field": "general",
+   "reason": "Lab outside the roster; no evidence test passed"
+  },
+  {
+   "model": "MAI Image 2.7 (preview)",
+   "lab": "Microsoft",
+   "date": "2026-10-27",
+   "level": 2,
+   "field": "image",
+   "reason": "Roster lab, lead image model",
+   "evidence": "image arena rank 4"
+  },
+  {
+   "model": "Giotto Alto / Solo",
+   "lab": "Giotto AI",
+   "date": "2026-10-27",
+   "level": 3,
+   "field": "general",
+   "reason": "Lab outside the roster; no evidence test passed"
+  },
+  {
+   "model": "Unlimited-OCR-2",
+   "lab": "Baidu",
+   "date": "2026-10-26",
+   "level": 2,
+   "field": "other",
+   "reason": "Independent evidence",
+   "evidence": "Hugging Face: 732 likes, 655K downloads"
+  },
+  {
+   "model": "Hy-SimulMT-30B-A3B",
+   "lab": "Tencent",
+   "date": "2026-10-26",
+   "level": 3,
+   "field": "other",
+   "reason": "Support-class model"
+  },
+  {
+   "model": "GPT-6.1 Terra",
+   "lab": "OpenAI",
+   "date": "2026-10-26",
+   "level": 2,
+   "field": "general",
+   "reason": "Roster lab, mid model in the main line",
+   "evidence": "intelligence index rank 9 (score 51)"
+  },
+  {
+   "model": "Nanbeige4.3-33B",
+   "lab": "Nanbeige",
+   "date": "2026-10-24",
+   "level": 3,
+   "field": "general",
+   "reason": "Lab outside the roster; no evidence test passed",
+   "evidence": "intelligence index rank 36 (score 20); Hugging Face: 1,107 likes, 24K downloads; no hosted provider; no outlet coverage"
+  },
+  {
+   "model": "Dessa (research preview)",
+   "lab": "Block",
+   "date": "2026-10-23",
+   "level": 3,
+   "field": "audio",
+   "reason": "Lab outside the roster; no evidence test passed"
+  },
+  {
+   "model": "WeVisOne-VL 2B / 4B",
+   "lab": "Tencent",
+   "date": "2026-10-23",
+   "level": 3,
+   "field": "other",
+   "reason": "Support-class model"
+  },
+  {
+   "model": "RynnUnify-Base",
+   "lab": "Alibaba (DAMO Academy)",
+   "date": "2026-10-22",
+   "level": 3,
+   "field": "world",
+   "reason": "Lab outside the roster; no evidence test passed"
+  },
+  {
+   "model": "Ling-3.0-flash-Sante (open weights)",
+   "lab": "Ant Group (inclusionAI)",
+   "date": "2026-10-19",
+   "level": 3,
+   "field": "science",
+   "reason": "Later stage: open weights",
+   "of": {
+    "model": "Ling-3.0-flash-Sante",
+    "date": "2026-09-04"
+   },
+   "kind": "stage",
+   "label": "open weights"
+  },
+  {
+   "model": "Kimi K3.1 Pro",
+   "lab": "Moonshot",
+   "date": "2026-10-23",
+   "level": 1,
+   "field": "general",
+   "reason": "Roster lab, top general model",
+   "evidence": "intelligence index rank 12 (score 46); OpenRouter monthly tokens rank 9; Hugging Face: 2,448 likes"
+  },
+  {
+   "model": "Kimi K3.1 Pro Highspeed",
+   "lab": "Moonshot",
+   "date": "2026-10-23",
+   "level": 3,
+   "field": "general",
+   "reason": "Variant: faster serving",
+   "of": {
+    "model": "Kimi K3.1 Pro",
+    "date": "2026-10-23"
+   },
+   "kind": "variant",
+   "label": "faster serving"
+  },
+  {
+   "model": "Nemotron 3.5 Bolt E4B 4GB",
+   "lab": "NVIDIA",
+   "date": "2026-10-23",
+   "level": 3,
+   "field": "general",
+   "reason": "built on Gemma 4 E4B"
+  },
+  {
+   "model": "Hy-Nomas",
+   "lab": "Tencent",
+   "date": "2026-10-23",
+   "level": 2,
+   "field": "world",
+   "reason": "Roster lab, lead world model"
+  },
+  {
+   "model": "Canva Craft",
+   "lab": "Canva",
+   "date": "2026-10-22",
+   "level": 2,
+   "field": "image",
+   "reason": "Independent evidence",
+   "evidence": "image arena rank 12; covered by TechRadar and BetaNews; shipped to all Canva users"
+  },
+  {
+   "model": "OlmoEarth v1.3",
+   "lab": "Ai2",
+   "date": "2026-10-22",
+   "level": 3,
+   "field": "science",
+   "reason": "Lab outside the roster; no evidence test passed"
+  },
+  {
+   "model": "Flint",
+   "lab": "Recursive",
+   "date": "2026-10-21",
+   "level": 2,
+   "field": "general",
+   "reason": "Independent evidence",
+   "evidence": "Hugging Face: 1,443 likes, 62K downloads; covered by TechCrunch, Wired and The Decoder; rank 16 by usage in OpenCode"
+  },
+  {
+   "model": "mammoth-1 / elephant-1",
+   "lab": "Base Labs (Baseten)",
+   "date": "2026-10-21",
+   "level": 3,
+   "field": "other",
+   "reason": "Decision model after the first"
+  },
+  {
+   "model": "Phonon 31m / 40m family (open weights)",
+   "lab": "Gradium",
+   "date": "2026-10-20",
+   "level": 3,
+   "field": "audio",
+   "reason": "Lab outside the roster; no evidence test passed"
+  },
+  {
+   "model": "Rerank 5 Pro / Fast",
+   "lab": "Cohere",
+   "date": "2026-10-21",
+   "level": 3,
+   "field": "other",
+   "reason": "Lab outside the roster; no evidence test passed"
+  },
+  {
+   "model": "Nemotron 3.5 Embed 1B / 8B",
+   "lab": "NVIDIA",
+   "date": "2026-10-20",
+   "level": 3,
+   "field": "other",
+   "reason": "Support-class model"
+  },
+  {
+   "model": "Nemotron 3.5 Rerank 8B",
+   "lab": "NVIDIA",
+   "date": "2026-10-20",
+   "level": 3,
+   "field": "other",
+   "reason": "Support-class model"
+  },
+  {
+   "model": "Voxtral Transcribe 3 family (public preview)",
+   "lab": "Mistral",
+   "date": "2026-10-20",
+   "level": 3,
+   "field": "audio",
+   "reason": "Support-class model"
+  },
+  {
+   "model": "Voxtral TTS 3 (public preview)",
+   "lab": "Mistral",
+   "date": "2026-10-20",
+   "level": 3,
+   "field": "audio",
+   "reason": "Support-class model"
+  },
+  {
+   "model": "Mercury 3",
+   "lab": "Inception",
+   "date": "2026-10-19",
+   "level": 2,
+   "field": "general",
+   "reason": "Independent evidence",
+   "evidence": "covered by The Next Web and Interesting Engineering; an independent test measured 850 to 900 tokens a second"
+  },
+  {
+   "model": "MiniMax-M3.1-Flash (general availability)",
+   "lab": "MiniMax",
+   "date": "2026-10-19",
+   "level": 3,
+   "field": "general",
+   "reason": "Later stage: general availability",
+   "of": {
+    "model": "MiniMax-M3.1-Flash-Preview",
+    "date": "2026-09-27"
+   },
+   "kind": "stage",
+   "label": "general availability"
+  },
+  {
+   "model": "Clairic (preview)",
+   "lab": "Cloudflare",
+   "date": "2026-10-19",
+   "level": 3,
+   "field": "other",
+   "reason": "Lab outside the roster; no evidence test passed"
+  },
+  {
+   "model": "GoTo-AI-Gemma-3-27B-IT",
+   "lab": "GoTo / AI Singapore",
+   "date": "2026-10-19",
+   "level": 3,
+   "field": "general",
+   "reason": "Built on another lab's model"
+  },
+  {
+   "model": "Maxwell (controlled early access)",
+   "lab": "doubleAI",
+   "date": "2026-10-19",
+   "level": 3,
+   "field": "coding",
+   "reason": "announced; access by request only"
+  },
+  {
+   "model": "DeepSeek-V4.1-Flash-1017",
+   "lab": "DeepSeek",
+   "date": "2026-10-17",
+   "level": 3,
+   "field": "general",
+   "reason": "Snapshot: dated revision",
+   "of": {
+    "model": "DeepSeek-V4.1-Flash",
+    "date": "2026-09-10"
+   },
+   "kind": "snapshot",
+   "label": "dated revision"
+  },
+  {
+   "model": "Nemotron 3.5 Parse",
+   "lab": "NVIDIA",
+   "date": "2026-10-17",
+   "level": 3,
+   "field": "other",
+   "reason": "Support-class model"
+  },
+  {
+   "model": "Glimpse (research preview)",
+   "lab": "Elorian",
+   "date": "2026-10-16",
+   "level": 3,
+   "field": "general",
+   "reason": "Lab outside the roster; no evidence test passed"
+  },
+  {
+   "model": "Beam (open weights / public API beta)",
+   "lab": "Reflection AI",
+   "date": "2026-10-16",
+   "level": 3,
+   "field": "general",
+   "reason": "Later stage: open weights and public API beta",
+   "of": {
+    "model": "Beam (restricted preview)",
+    "date": "2026-10-05"
+   },
+   "kind": "stage",
+   "label": "open weights and public API beta"
+  },
+  {
+   "model": "Hy-Memory-30B-A3B",
+   "lab": "Tencent",
+   "date": "2026-10-16",
+   "level": 3,
+   "field": "other",
+   "reason": "Support-class model"
+  },
+  {
+   "model": "pplx-decider-v1.2 / decider-flash-v1.2",
+   "lab": "Perplexity",
+   "date": "2026-10-16",
+   "level": 3,
+   "field": "other",
+   "reason": "Snapshot: v1.2 and Flash",
+   "of": {
+    "model": "pplx-decider-v1-27b",
+    "date": "2026-10-01"
+   },
+   "kind": "snapshot",
+   "label": "v1.2 and Flash"
+  },
+  {
+   "model": "Muse Spark Open",
+   "lab": "Meta",
+   "date": "2026-10-15",
+   "level": 2,
+   "field": "general",
+   "reason": "Roster lab, open-weight model in the main line",
+   "evidence": "intelligence index rank 32 (score 25)"
+  },
+  {
+   "model": "Nemotron 3.5 Super VL 120B-A12B",
+   "lab": "NVIDIA",
+   "date": "2026-10-15",
+   "level": 2,
+   "field": "general",
+   "reason": "Roster lab, open-weight model in the main line",
+   "evidence": "intelligence index score 14; OpenRouter monthly tokens rank 16"
+  },
+  {
+   "model": "Nemotron 3.5 Bolt 74B-A9B-24GB",
+   "lab": "NVIDIA",
+   "date": "2026-10-15",
+   "level": 2,
+   "field": "general",
+   "reason": "Roster lab, open-weight model in the main line"
+  },
+  {
+   "model": "Strands Decider Gemma 4 E2B / E4B / 12B",
+   "lab": "AWS Strands Labs",
+   "date": "2026-10-15",
+   "level": 3,
+   "field": "other",
+   "reason": "Variant: further sizes",
+   "of": {
+    "model": "Strands Decider 2B",
+    "date": "2026-10-01"
+   },
+   "kind": "variant",
+   "label": "further sizes"
+  },
+  {
+   "model": "Pareto 26.10 (stable)",
+   "lab": "Unbiased",
+   "date": "2026-10-15",
+   "level": 3,
+   "field": "general",
+   "reason": "Later stage: stable release",
+   "of": {
+    "model": "Pareto 26.10 Preview",
+    "date": "2026-10-01"
+   },
+   "kind": "stage",
+   "label": "stable release"
+  },
+  {
+   "model": "d1-ultra",
+   "lab": "Liquid AI",
+   "date": "2026-10-15",
+   "level": 3,
+   "field": "other",
+   "reason": "Variant: larger hosted model",
+   "of": {
+    "model": "d1 (text-and-vision release)",
+    "date": "2026-10-05"
+   },
+   "kind": "variant",
+   "label": "larger hosted model"
+  },
+  {
+   "model": "FLUX 3 Image Klein 5.6B",
+   "lab": "Black Forest Labs",
+   "date": "2026-10-15",
+   "level": 3,
+   "field": "image",
+   "reason": "Variant: compact variant",
+   "of": {
+    "model": "FLUX 3 Image",
+    "date": "2026-10-01"
+   },
+   "kind": "variant",
+   "label": "compact variant"
+  },
+  {
+   "model": "Ternary Bonsai 2 2B / 4B / 9B",
+   "lab": "PrismML",
+   "date": "2026-10-15",
+   "level": 3,
+   "field": "general",
+   "reason": "Variant: smaller sizes",
+   "of": {
+    "model": "Ternary Bonsai 2 27B",
+    "date": "2026-09-17"
+   },
+   "kind": "variant",
+   "label": "smaller sizes"
+  },
+  {
+   "model": "Jais 3 family",
+   "lab": "MBZUAI (IFM)",
+   "date": "2026-10-15",
+   "level": 3,
+   "field": "general",
+   "reason": "Lab outside the roster; no evidence test passed",
+   "evidence": "an Arabic adaptation of K2 Horizon; regional coverage only; 9 likes"
+  },
+  {
+   "model": "Jais Speech",
+   "lab": "MBZUAI (IFM)",
+   "date": "2026-10-15",
+   "level": 3,
+   "field": "audio",
+   "reason": "Lab outside the roster; no evidence test passed"
+  },
+  {
+   "model": "Timestral 5M / 28M / 123M / 209M",
+   "lab": "Mistral",
+   "date": "2026-10-15",
+   "level": 3,
+   "field": "other",
+   "reason": "Support-class model"
+  },
+  {
+   "model": "Step 5 Preview (open weights)",
+   "lab": "StepFun",
+   "date": "2026-10-15",
+   "level": 3,
+   "field": "general",
+   "reason": "Later stage: open weights",
+   "of": {
+    "model": "Step 5 Preview",
+    "date": "2026-09-20"
+   },
+   "kind": "stage",
+   "label": "open weights"
+  },
+  {
+   "model": "Jev 1.14.0 (preview)",
+   "lab": "TypeSafe AI",
+   "date": "2026-10-14",
+   "level": 3,
+   "field": "other",
+   "reason": "Snapshot: revision 1.14",
+   "of": {
+    "model": "Jev",
+    "date": "2026-09-15"
+   },
+   "kind": "snapshot",
+   "label": "revision 1.14"
+  },
+  {
+   "model": "kettei fat / chub / core / dot",
+   "lab": "Sqwish Labs",
+   "date": "2026-10-14",
+   "level": 3,
+   "field": "other",
+   "reason": "Decision model after the first"
+  },
+  {
+   "model": "Grok Voice 3.0",
+   "lab": "xAI",
+   "date": "2026-10-14",
+   "level": 2,
+   "field": "audio",
+   "reason": "Roster lab, lead voice model"
+  },
+  {
+   "model": "Strands Decider 26B-A4B (Gemma 4)",
+   "lab": "AWS Strands Labs",
+   "date": "2026-10-09",
+   "level": 3,
+   "field": "other",
+   "reason": "Variant: larger size",
+   "of": {
+    "model": "Strands Decider 2B",
+    "date": "2026-10-01"
+   },
+   "kind": "variant",
+   "label": "larger size"
+  },
+  {
+   "model": "Drama 3",
+   "lab": "Fish Audio",
+   "date": "2026-10-13",
+   "level": 2,
+   "field": "audio",
+   "reason": "Independent evidence",
+   "evidence": "OpenRouter speech rank 3; speech arena rank 8"
+  },
+  {
+   "model": "Gemini 4 Argon (general availability)",
+   "lab": "Google",
+   "date": "2026-10-13",
+   "level": 3,
+   "field": "general",
+   "reason": "Later stage: general availability",
+   "of": {
+    "model": "Gemini 4 Argon",
+    "date": "2026-09-30"
+   },
+   "kind": "stage",
+   "label": "general availability"
+  },
+  {
+   "model": "Gemini 4 Argon Cyber Permissive (allowlisted GA)",
+   "lab": "Google",
+   "date": "2026-10-13",
+   "level": 3,
+   "field": "general",
+   "reason": "Variant: allowlisted cyber configuration",
+   "of": {
+    "model": "Gemini 4 Argon",
+    "date": "2026-09-30"
+   },
+   "kind": "variant",
+   "label": "allowlisted cyber configuration"
+  },
+  {
+   "model": "LFM2.5-24B-A2B / Base",
+   "lab": "Liquid AI",
+   "date": "2026-10-13",
+   "level": 3,
+   "field": "general",
+   "reason": "Lab outside the roster; no evidence test passed"
+  },
+  {
+   "model": "Natura-1 (research announcement)",
+   "lab": "Nature Will",
+   "date": "2026-10-13",
+   "level": 3,
+   "field": "world",
+   "reason": "announced; nothing usable yet"
+  },
+  {
+   "model": "GLM-Legal (beta announcement)",
+   "lab": "Z.ai (Zhipu)",
+   "date": "2026-10-12",
+   "level": 3,
+   "field": "other",
+   "reason": "legal adaptation of GLM-5.3-Flash, access by application"
+  },
+  {
+   "model": "Muse Wonder",
+   "lab": "Meta",
+   "date": "2026-10-12",
+   "level": 1,
+   "field": "general",
+   "reason": "Roster lab, top general model",
+   "evidence": "intelligence index rank 11 (score 50)"
+  },
+  {
+   "model": "Muse Wonder Full",
+   "lab": "Meta",
+   "date": "2026-10-12",
+   "level": 3,
+   "field": "general",
+   "reason": "Variant: companion model, same day",
+   "of": {
+    "model": "Muse Wonder",
+    "date": "2026-10-12"
+   },
+   "kind": "variant",
+   "label": "companion model, same day"
+  },
+  {
+   "model": "MISSINGNO.",
+   "lab": "Undisclosed (stealth)",
+   "date": "2026-10-10",
+   "level": 3,
+   "field": "coding",
+   "reason": "No named maker"
+  },
+  {
+   "model": "Qwen-Image-2.1-Turbo",
+   "lab": "Alibaba (Qwen)",
+   "date": "2026-10-09",
+   "level": 3,
+   "field": "image",
+   "reason": "Variant: faster variant",
+   "of": {
+    "model": "Qwen-Image-2.1",
+    "date": "2026-09-20"
+   },
+   "kind": "variant",
+   "label": "faster variant"
+  },
+  {
+   "model": "Microsoft-Decision-1",
+   "lab": "Microsoft",
+   "date": "2026-10-09",
+   "level": 3,
+   "field": "other",
+   "reason": "Decision model after the first"
+  },
+  {
+   "model": "Clef-omni",
+   "lab": "Cloudflare",
+   "date": "2026-10-09",
+   "level": 3,
+   "field": "other",
+   "reason": "Variant: omni-modal variant",
+   "of": {
+    "model": "Clef / Clef-flash",
+    "date": "2026-10-01"
+   },
+   "kind": "variant",
+   "label": "omni-modal variant"
+  },
+  {
+   "model": "Grok Imagine Video 1.5 Lite (API availability)",
+   "lab": "xAI",
+   "date": "2026-10-08",
+   "level": 3,
+   "field": "video",
+   "reason": "Variant: lighter variant",
+   "of": {
+    "model": "Grok Imagine Video 1.5",
+    "date": "2026-06-16"
+   },
+   "kind": "variant",
+   "label": "lighter variant"
+  },
+  {
+   "model": "Celeris-1 Decision",
+   "lab": "Celeris",
+   "date": "2026-10-08",
+   "level": 3,
+   "field": "other",
+   "reason": "Decision model after the first"
+  },
+  {
+   "model": "Mellum2.1 Thinking",
+   "lab": "JetBrains",
+   "date": "2026-10-08",
+   "level": 3,
+   "field": "coding",
+   "reason": "Lab outside the roster; no evidence test passed"
+  },
+  {
+   "model": "GPT-6 Sol (October ChatGPT update)",
+   "lab": "OpenAI",
+   "date": "2026-10-07",
+   "level": 3,
+   "field": "general",
+   "reason": "Snapshot: ChatGPT snapshot",
+   "of": {
+    "model": "GPT-6 Sol",
+    "date": "2026-09-22"
+   },
+   "kind": "snapshot",
+   "label": "ChatGPT snapshot"
+  },
+  {
+   "model": "GPT-6 Luna (October ChatGPT update)",
+   "lab": "OpenAI",
+   "date": "2026-10-07",
+   "level": 3,
+   "field": "general",
+   "reason": "Snapshot: ChatGPT snapshot",
+   "of": {
+    "model": "GPT-6 Luna",
+    "date": "2026-09-22"
+   },
+   "kind": "snapshot",
+   "label": "ChatGPT snapshot"
+  },
+  {
+   "model": "Bolmo Bwen / Blama family",
+   "lab": "Ai2",
+   "date": "2026-10-07",
+   "level": 3,
+   "field": "general",
+   "reason": "Built on another lab's model"
+  },
+  {
+   "model": "Glyph Cluster",
+   "lab": "Undisclosed (stealth)",
+   "date": "2026-10-07",
+   "level": 3,
+   "field": "coding",
+   "reason": "No named maker"
+  },
+  {
+   "model": "Falcon-Emirati",
+   "lab": "TII",
+   "date": "2026-10-06",
+   "level": 3,
+   "field": "general",
+   "reason": "Lab outside the roster; no evidence test passed"
+  },
+  {
+   "model": "Falcon-ASR",
+   "lab": "TII",
+   "date": "2026-10-06",
+   "level": 3,
+   "field": "audio",
+   "reason": "Lab outside the roster; no evidence test passed"
+  },
+  {
+   "model": "Falcon-OCR-Arabic",
+   "lab": "TII",
+   "date": "2026-10-06",
+   "level": 3,
+   "field": "other",
+   "reason": "Lab outside the roster; no evidence test passed"
+  },
+  {
+   "model": "Amazon Nova 2.5 Sonic",
+   "lab": "Amazon",
+   "date": "2026-10-05",
+   "level": 2,
+   "field": "audio",
+   "reason": "Roster lab, lead voice model"
+  },
+  {
+   "model": "d1 (text-and-vision release)",
+   "lab": "Liquid AI",
+   "date": "2026-10-05",
+   "level": 3,
+   "field": "other",
+   "reason": "Decision model after the first"
+  },
+  {
+   "model": "Kolibri 1",
+   "lab": "Aleph Alpha",
+   "date": "2026-10-03",
+   "level": 3,
+   "field": "general",
+   "reason": "Lab outside the roster; no evidence test passed"
+  },
+  {
+   "model": "AstaBrief 8B",
+   "lab": "Ai2",
+   "date": "2026-10-02",
+   "level": 3,
+   "field": "science",
+   "reason": "Built on another lab's model"
+  },
+  {
+   "model": "Mercury Decide",
+   "lab": "Inception",
+   "date": "2026-09-30",
+   "level": 3,
+   "field": "other",
+   "reason": "Decision model after the first"
+  },
+  {
+   "model": "GLiDE",
+   "lab": "Fastino",
+   "date": "2026-09-30",
+   "level": 3,
+   "field": "other",
+   "reason": "Decision model after the first"
+  },
+  {
+   "model": "Mercury Voice",
+   "lab": "Inception",
+   "date": "2026-09-29",
+   "level": 3,
+   "field": "audio",
+   "reason": "Lab outside the roster; no evidence test passed"
+  },
+  {
+   "model": "Julia 1",
+   "lab": "Supersonic Labs",
+   "date": "2026-09-26",
+   "level": 3,
+   "field": "other",
+   "reason": "Decision model after the first"
+  },
+  {
+   "model": "THIS/THAT Model 1.2",
+   "lab": "FLock.io",
+   "date": "2026-09-25",
+   "level": 3,
+   "field": "other",
+   "reason": "Decision model after the first"
+  },
+  {
+   "model": "Solar Decide",
+   "lab": "Upstage",
+   "date": "2026-09-22",
+   "level": 3,
+   "field": "other",
+   "reason": "Decision model after the first"
+  },
+  {
+   "model": "Altar-1",
+   "lab": "Aikido Security",
+   "date": "2026-09-21",
+   "level": 3,
+   "field": "general",
+   "reason": "Built on another lab's model"
+  },
+  {
+   "model": "StepAudio 3 family",
+   "lab": "StepFun",
+   "date": "2026-09-15",
+   "level": 2,
+   "field": "audio",
+   "reason": "Independent evidence",
+   "evidence": "speech arena rank 3"
+  },
+  {
+   "model": "Music v2.5",
+   "lab": "ElevenLabs",
+   "date": "2026-09-11",
+   "level": 3,
+   "field": "audio",
+   "reason": "Lab outside the roster; no evidence test passed"
+  },
+  {
+   "model": "Muse Voice Transcribe",
+   "lab": "Meta",
+   "date": "2026-09-01",
+   "level": 3,
+   "field": "audio",
+   "reason": "Support-class model"
+  },
+  {
+   "model": "SeedRealtime",
+   "lab": "ByteDance",
+   "date": "2026-08-05",
+   "level": 2,
+   "field": "audio",
+   "reason": "Curated history"
+  },
+  {
+   "model": "NVIDIA Nemotron Parse 2.0",
+   "lab": "NVIDIA",
+   "date": "2026-08-03",
+   "level": 2,
+   "field": "other",
+   "reason": "Curated history"
+  },
+  {
+   "model": "Seedance 2.5",
+   "lab": "ByteDance",
+   "date": "2026-07-31",
+   "level": 2,
+   "field": "video",
+   "reason": "Curated history"
+  },
+  {
+   "model": "Grok Voice Think Fast 2.0",
+   "lab": "xAI",
+   "date": "2026-07-29",
+   "level": 2,
+   "field": "audio",
+   "reason": "Curated history"
+  },
+  {
+   "model": "Jina reranker v3.5",
+   "lab": "Jina AI",
+   "date": "2026-07-27",
+   "level": 2,
+   "field": "other",
+   "reason": "Curated history"
+  },
+  {
+   "model": "Seed Audio 1.0",
+   "lab": "ByteDance",
+   "date": "2026-07-20",
+   "level": 2,
+   "field": "audio",
+   "reason": "Curated history"
+  },
+  {
+   "model": "Music-3.0",
+   "lab": "MiniMax",
+   "date": "2026-07-16",
+   "level": 2,
+   "field": "audio",
+   "reason": "Curated history"
+  },
+  {
+   "model": "Seedream 5.0 Pro",
+   "lab": "ByteDance",
+   "date": "2026-07-08",
+   "level": 2,
+   "field": "image",
+   "reason": "Curated history"
+  },
+  {
+   "model": "Grok Build 0.1",
+   "lab": "xAI",
+   "date": "2026-05-19",
+   "level": 2,
+   "field": "coding",
+   "reason": "Curated history"
+  },
+  {
+   "model": "ERNIE 5.1 (formal)",
+   "lab": "Baidu",
+   "date": "2026-05-09",
+   "level": 3,
+   "field": "general",
+   "reason": "Later stage: formal release",
+   "of": {
+    "model": "ERNIE 5.1 Preview",
+    "date": "2026-04-30"
+   },
+   "kind": "stage",
+   "label": "formal release"
+  },
+  {
+   "model": "Grok Voice Think Fast 1.0",
+   "lab": "xAI",
+   "date": "2026-04-23",
+   "level": 2,
+   "field": "audio",
+   "reason": "Curated history"
+  },
+  {
+   "model": "Grok 4.1 Fast",
+   "lab": "xAI",
+   "date": "2025-11-19",
+   "level": 2,
+   "field": "general",
+   "reason": "Curated history"
+  },
+  {
+   "model": "Grok Code Fast 1",
+   "lab": "xAI",
+   "date": "2025-08-28",
+   "level": 2,
+   "field": "coding",
+   "reason": "Curated history"
+  },
+  {
+   "model": "Beam (restricted preview)",
+   "lab": "Reflection AI",
+   "date": "2026-10-05",
+   "level": 2,
+   "field": "general",
+   "reason": "Independent evidence",
+   "evidence": "intelligence index rank 42 (score 18); covered by Bloomberg, Axios, The Information and VentureBeat; rank 4 by usage in OpenCode; five hosting providers"
+  },
+  {
+   "model": "EmbeddingGemma 2",
+   "lab": "Google",
+   "date": "2026-10-06",
+   "level": 3,
+   "field": "other",
+   "reason": "Support-class model"
+  },
+  {
+   "model": "Claude Haiku 5.5",
+   "lab": "Anthropic",
+   "date": "2026-10-07",
+   "level": 2,
+   "field": "general",
+   "reason": "Roster lab, small model in the main line",
+   "evidence": "intelligence index rank 15 (score 36); OpenRouter monthly tokens rank 15"
+  },
+  {
+   "model": "d1-3B / d1-omni-600M",
+   "lab": "Liquid AI",
+   "date": "2026-10-07",
+   "level": 3,
+   "field": "other",
+   "reason": "Variant: open edge sizes",
+   "of": {
+    "model": "d1 (text-and-vision release)",
+    "date": "2026-10-05"
+   },
+   "kind": "variant",
+   "label": "open edge sizes"
+  },
+  {
+   "model": "pplx-embed-v2-late family",
+   "lab": "Perplexity",
+   "date": "2026-10-07",
+   "level": 3,
+   "field": "other",
+   "reason": "Lab outside the roster; no evidence test passed"
+  },
+  {
+   "model": "Mistral Large 4 (public preview)",
+   "lab": "Mistral",
+   "date": "2026-10-06",
+   "level": 1,
+   "field": "general",
+   "reason": "Roster lab, top general model",
+   "evidence": "intelligence index rank 31 (score 26)"
+  },
+  {
+   "model": "Gemini Nano Banana 2.1",
+   "lab": "Google",
+   "date": "2026-10-06",
+   "level": 2,
+   "field": "image",
+   "reason": "Roster lab, lead image model",
+   "evidence": "image arena rank 8; OpenRouter image rank 3"
+  },
+  {
+   "model": "pplx-decider-v1.1-27b",
+   "lab": "Perplexity",
+   "date": "2026-10-06",
+   "level": 3,
+   "field": "other",
+   "reason": "Snapshot: v1.1",
+   "of": {
+    "model": "pplx-decider-v1-27b",
+    "date": "2026-10-01"
+   },
+   "kind": "snapshot",
+   "label": "v1.1"
+  },
+  {
+   "model": "Qwen-Image-2.1-Pro (API)",
+   "lab": "Alibaba (Qwen)",
+   "date": "2026-10-02",
+   "level": 3,
+   "field": "image",
+   "reason": "Variant: hosted Pro variant",
+   "of": {
+    "model": "Qwen-Image-2.1",
+    "date": "2026-09-20"
+   },
+   "kind": "variant",
+   "label": "hosted Pro variant"
+  },
+  {
+   "model": "Clef / Clef-flash",
+   "lab": "Cloudflare",
+   "date": "2026-10-01",
+   "level": 3,
+   "field": "other",
+   "reason": "Decision model after the first"
+  },
+  {
+   "model": "MAI-Voice-2.1 / MAI-Voice-2.1-Flash",
+   "lab": "Microsoft",
+   "date": "2026-10-01",
+   "level": 3,
+   "field": "audio",
+   "reason": "Support-class model"
+  },
+  {
+   "model": "MAI-Transcribe-2-Streaming",
+   "lab": "Microsoft",
+   "date": "2026-10-01",
+   "level": 3,
+   "field": "audio",
+   "reason": "Variant: streaming variant",
+   "of": {
+    "model": "MAI-Transcribe-2",
+    "date": "2026-09-03"
+   },
+   "kind": "variant",
+   "label": "streaming variant"
+  },
+  {
+   "model": "pplx-decider-v1-27b",
+   "lab": "Perplexity",
+   "date": "2026-10-01",
+   "level": 2,
+   "field": "other",
+   "reason": "Independent evidence",
+   "evidence": "OpenRouter decisions rank 3 (v1.2, 915M requests a month); Perplexity holds 15% of decision requests"
+  },
+  {
+   "model": "Strands Decider 2B",
+   "lab": "AWS Strands Labs",
+   "date": "2026-10-01",
+   "level": 3,
+   "field": "other",
+   "reason": "Decision model after the first"
+  },
+  {
+   "model": "FLUX 3 Image",
+   "lab": "Black Forest Labs",
+   "date": "2026-10-01",
+   "level": 3,
+   "field": "image",
+   "reason": "Lab outside the roster; no evidence test passed",
+   "evidence": "image arena rank 21; Black Forest Labs holds 3% of OpenRouter image requests; covered by The Decoder only"
+  },
+  {
+   "model": "Griffin-Lite (research preview)",
+   "lab": "Tavus",
+   "date": "2026-10-01",
+   "level": 3,
+   "field": "audio",
+   "reason": "Lab outside the roster; no evidence test passed"
+  },
+  {
+   "model": "Ling 3.1 Flash",
+   "lab": "Ant Group (inclusionAI)",
+   "date": "2026-09-30",
+   "level": 2,
+   "field": "general",
+   "reason": "Roster lab, mid model in the main line",
+   "evidence": "intelligence index rank 23 (score 30)"
+  },
+  {
+   "model": "pplx-embed-v2-context-9b-preview",
+   "lab": "Perplexity",
+   "date": "2026-09-30",
+   "level": 3,
+   "field": "other",
+   "reason": "Lab outside the roster; no evidence test passed"
+  },
+  {
+   "model": "HY Image 3.5 Preview",
+   "lab": "Tencent",
+   "date": "2026-09-22",
+   "level": 2,
+   "field": "image",
+   "reason": "Roster lab, lead image model"
+  },
+  {
+   "model": "Pareto 26.10 Preview",
+   "lab": "Unbiased",
+   "date": "2026-10-01",
+   "level": 3,
+   "field": "general",
+   "reason": "system that blends other labs' models"
+  },
+  {
+   "model": "Gemini 4 Argon",
+   "lab": "Google",
+   "date": "2026-09-30",
+   "level": 1,
+   "field": "general",
+   "reason": "Roster lab, top general model",
+   "evidence": "intelligence index rank 10 (score 50)"
+  },
+  {
+   "model": "Cohere Embed 5 family",
+   "lab": "Cohere",
+   "date": "2026-09-30",
+   "level": 3,
+   "field": "other",
+   "reason": "Lab outside the roster; no evidence test passed"
+  },
+  {
+   "model": "HeyGen Video 1",
+   "lab": "HeyGen",
+   "date": "2026-09-30",
+   "level": 2,
+   "field": "video",
+   "reason": "Independent evidence",
+   "evidence": "OpenRouter video rank 1; video arena rank 8; a post-train of MiniMax H3, which ranks above it on the arena"
+  },
+  {
+   "model": "Kling 4.0 (early access)",
+   "lab": "Kuaishou",
+   "date": "2026-09-30",
+   "level": 3,
+   "field": "video",
+   "reason": "Lab outside the roster; no evidence test passed",
+   "evidence": "not on the video arena or the OpenRouter video top 10; press-wire coverage only"
+  },
+  {
+   "model": "Praxis-1 (partner preview)",
+   "lab": "Runway",
+   "date": "2026-09-30",
+   "level": 2,
+   "field": "world",
+   "reason": "Independent evidence",
+   "evidence": "rank 5 on NVIDIA's RoboLab robot benchmark, the highest world-action model; covered by The Robot Report"
+  },
+  {
+   "model": "GPT-6.1 Sol",
+   "lab": "OpenAI",
+   "date": "2026-09-29",
+   "level": 2,
+   "field": "general",
+   "reason": "Roster lab, mid model in the main line",
+   "evidence": "intelligence index score 55, since superseded; OpenRouter monthly tokens rank 10"
+  },
+  {
+   "model": "Claude Sonnet 5.5",
+   "lab": "Anthropic",
+   "date": "2026-09-28",
+   "level": 2,
+   "field": "general",
+   "reason": "Roster lab, mid model in the main line",
+   "evidence": "intelligence index rank 7 (score 55); OpenRouter monthly tokens rank 17"
+  },
+  {
+   "model": "Eleven v4 / Eleven v4 Turbo",
+   "lab": "ElevenLabs",
+   "date": "2026-09-28",
+   "level": 2,
+   "field": "audio",
+   "reason": "Independent evidence",
+   "evidence": "speech arena rank 1 and 2; ElevenLabs holds 31% of OpenRouter speech requests"
+  },
+  {
+   "model": "Kling 4.0 Flash",
+   "lab": "Kuaishou",
+   "date": "2026-09-28",
+   "level": 3,
+   "field": "video",
+   "reason": "Variant: fast tier, two days earlier",
+   "of": {
+    "model": "Kling 4.0 (early access)",
+    "date": "2026-09-30"
+   },
+   "kind": "variant",
+   "label": "fast tier, two days earlier"
+  },
+  {
+   "model": "Naive-N0.5-Flash",
+   "lab": "NaiveAI",
+   "date": "2026-09-27",
+   "level": 3,
+   "field": "general",
+   "reason": "derived from Xiaomi's MiMo-V2.5",
+   "evidence": "derived from Xiaomi's MiMo-V2.5; one independent hands-on test; not on the intelligence index"
+  },
+  {
+   "model": "MiMo-V2.6 MOPD family",
+   "lab": "Xiaomi",
+   "date": "2026-09-27",
+   "level": 3,
+   "field": "general",
+   "reason": "Snapshot: repaired checkpoints",
+   "of": {
+    "model": "MiMo-V2.6 family",
+    "date": "2026-09-21"
+   },
+   "kind": "snapshot",
+   "label": "repaired checkpoints"
+  },
+  {
+   "model": "MiniMax-M3.1-Flash-Preview",
+   "lab": "MiniMax",
+   "date": "2026-09-27",
+   "level": 2,
+   "field": "general",
+   "reason": "Roster lab, mid model in the main line",
+   "evidence": "intelligence index rank 24 (score 29); OpenRouter monthly tokens rank 7"
+  },
+  {
+   "model": "LongCat-2.5-Preview",
+   "lab": "Meituan",
+   "date": "2026-09-25",
+   "level": 2,
+   "field": "general",
+   "reason": "Independent evidence",
+   "evidence": "covered by VentureBeat and The Decoder; rank 23 by usage in OpenCode"
+  },
+  {
+   "model": "Perceptron Mk1.5",
+   "lab": "Perceptron",
+   "date": "2026-09-25",
+   "level": 3,
+   "field": "general",
+   "reason": "Lab outside the roster; no evidence test passed"
+  },
+  {
+   "model": "Pixel Canary",
+   "lab": "Undisclosed (stealth)",
+   "date": "2026-09-25",
+   "level": 3,
+   "field": "coding",
+   "reason": "No named maker"
+  },
+  {
+   "model": "Decision Model Preview",
+   "lab": "Alibaba (Qwen)",
+   "date": "2026-09-24",
+   "level": 2,
+   "field": "other",
+   "reason": "first decision model from a roster lab"
+  },
+  {
+   "model": "Space Bunny Alpha",
+   "lab": "Undisclosed (stealth)",
+   "date": "2026-09-23",
+   "level": 3,
+   "field": "coding",
+   "reason": "No named maker"
+  },
+  {
+   "model": "Aion 3.5 / Aion 3.5 Mini",
+   "lab": "AionLabs",
+   "date": "2026-09-23",
+   "level": 3,
+   "field": "general",
+   "reason": "roleplay systems built from several GLM-based models"
+  },
+  {
+   "model": "CLM-v0.1-8B",
+   "lab": "Contrastive-LM",
+   "date": "2026-09-23",
+   "level": 3,
+   "field": "other",
+   "reason": "Decision model after the first"
+  },
+  {
+   "model": "Qwen-Audio-3.1-Realtime-Plus",
+   "lab": "Alibaba (Qwen)",
+   "date": "2026-09-20",
+   "level": 3,
+   "field": "audio",
+   "reason": "Variant: update in the Qwen-Audio 3.1 voice line"
+  },
+  {
+   "model": "HappyOyster 1.0 family",
+   "lab": "Alibaba (Qwen)",
+   "date": "2026-09-18",
+   "level": 2,
+   "field": "world",
+   "reason": "Roster lab, lead world model"
+  },
+  {
+   "model": "Gemini 3.8 Live with Live Avatar",
+   "lab": "Google",
+   "date": "2026-09-24",
+   "level": 3,
+   "field": "audio",
+   "reason": "Variant: enterprise bundle with avatar video",
+   "of": {
+    "model": "Gemini 3.8 Live family",
+    "date": "2026-09-15"
+   },
+   "kind": "variant",
+   "label": "enterprise bundle with avatar video"
+  },
+  {
+   "model": "LFM2.5-VL-3B-DSpark",
+   "lab": "Liquid AI",
+   "date": "2026-09-24",
+   "level": 3,
+   "field": "other",
+   "reason": "Lab outside the roster; no evidence test passed"
+  },
+  {
+   "model": "VeriLoop E2",
+   "lab": "Tsinghua SIGS Robot Lab",
+   "date": "2026-09-24",
+   "level": 3,
+   "field": "general",
+   "reason": "post-trained Qwen3.8-27B"
+  },
+  {
+   "model": "Gemini 3.8 Flash TTS family",
+   "lab": "Google",
+   "date": "2026-09-23",
+   "level": 2,
+   "field": "audio",
+   "reason": "Independent evidence",
+   "evidence": "OpenRouter speech rank 1 and 2; speech arena rank 7"
+  },
+  {
+   "model": "Qwen3.8-Max-Prime",
+   "lab": "Alibaba (Qwen)",
+   "date": "2026-09-23",
+   "level": 3,
+   "field": "general",
+   "reason": "Variant: serving variant",
+   "of": {
+    "model": "Qwen3.8-Max Preview",
+    "date": "2026-07-19"
+   },
+   "kind": "variant",
+   "label": "serving variant"
+  },
+  {
+   "model": "Ember-1",
+   "lab": "Fireworks AI",
+   "date": "2026-09-23",
+   "level": 3,
+   "field": "coding",
+   "reason": "Built on another lab's model"
+  },
+  {
+   "model": "Claude Opus 5.5",
+   "lab": "Anthropic",
+   "date": "2026-09-22",
+   "level": 1,
+   "field": "general",
+   "reason": "Roster lab, top general model",
+   "evidence": "intelligence index rank 5 (score 59); OpenRouter monthly tokens rank 5"
+  },
+  {
+   "model": "GPT-6 Sol",
+   "lab": "OpenAI",
+   "date": "2026-09-22",
+   "level": 2,
+   "field": "general",
+   "reason": "Roster lab, mid model in the main line"
+  },
+  {
+   "model": "GPT-6 Luna",
+   "lab": "OpenAI",
+   "date": "2026-09-22",
+   "level": 2,
+   "field": "general",
+   "reason": "Roster lab, small model in the main line",
+   "evidence": "intelligence index rank 28 (score 28); OpenRouter monthly tokens rank 4"
+  },
+  {
+   "model": "Solar Mini 4",
+   "lab": "Upstage",
+   "date": "2026-09-22",
+   "level": 3,
+   "field": "general",
+   "reason": "Lab outside the roster; no evidence test passed"
+  },
+  {
+   "model": "Grok 4.7",
+   "lab": "xAI",
+   "date": "2026-09-21",
+   "level": 1,
+   "field": "general",
+   "reason": "Roster lab, top general model",
+   "evidence": "intelligence index rank 17 (score 35)"
+  },
+  {
+   "model": "Qwen3.8-Omni-Flash-Realtime",
+   "lab": "Alibaba (Qwen)",
+   "date": "2026-09-21",
+   "level": 3,
+   "field": "audio",
+   "reason": "Variant: real-time variant",
+   "of": {
+    "model": "Qwen3.8-Omni-Flash",
+    "date": "2026-09-18"
+   },
+   "kind": "variant",
+   "label": "real-time variant"
+  },
+  {
+   "model": "MiMo-V2.6 family",
+   "lab": "Xiaomi",
+   "date": "2026-09-21",
+   "level": 2,
+   "field": "general",
+   "reason": "Roster lab, open-weight model in the main line",
+   "evidence": "intelligence index rank 22 (score 30); OpenRouter monthly tokens rank 19; Hugging Face: 834 likes (Pro)"
+  },
+  {
+   "model": "Step 5 Preview",
+   "lab": "StepFun",
+   "date": "2026-09-20",
+   "level": 2,
+   "field": "general",
+   "reason": "Independent evidence",
+   "evidence": "intelligence index rank 26 (score 29)"
+  },
+  {
+   "model": "Qwen-Image-2.1",
+   "lab": "Alibaba (Qwen)",
+   "date": "2026-09-20",
+   "level": 2,
+   "field": "image",
+   "reason": "Roster lab, lead image model",
+   "evidence": "GitHub: 2,272 stars"
+  },
+  {
+   "model": "Grok Voice Transcribe 2.0",
+   "lab": "xAI",
+   "date": "2026-09-18",
+   "level": 3,
+   "field": "audio",
+   "reason": "Support-class model"
+  },
+  {
+   "model": "Qwen3.8-Omni-Flash",
+   "lab": "Alibaba (Qwen)",
+   "date": "2026-09-18",
+   "level": 2,
+   "field": "audio",
+   "reason": "Roster lab, lead voice model"
+  },
+  {
+   "model": "Laya",
+   "lab": "Convai Innovations",
+   "date": "2026-09-18",
+   "level": 2,
+   "field": "other",
+   "reason": "Independent evidence",
+   "evidence": "GitHub: 35.9K stars; 1,363 points on Hacker News; 253K monthly PyPI downloads; 261 fine-tunes"
+  },
+  {
+   "model": "Antigravity Agent 09-2026",
+   "lab": "Google",
+   "date": "2026-09-17",
+   "level": 3,
+   "field": "coding",
+   "reason": "managed-agent snapshot that runs on a Gemini model"
+  },
+  {
+   "model": "Qwen3.8-LiveTranslate-Flash-Realtime",
+   "lab": "Alibaba (Qwen)",
+   "date": "2026-09-17",
+   "level": 3,
+   "field": "audio",
+   "reason": "Support-class model"
+  },
+  {
+   "model": "Ternary Bonsai 2 27B",
+   "lab": "PrismML",
+   "date": "2026-09-17",
+   "level": 3,
+   "field": "general",
+   "reason": "ternary quantization of Qwen3.8-27B"
+  },
+  {
+   "model": "Pareto 26.9",
+   "lab": "Unbiased",
+   "date": "2026-09-17",
+   "level": 3,
+   "field": "general",
+   "reason": "system that blends other labs' models"
+  },
+  {
+   "model": "Xing4.0-29B-A4B",
+   "lab": "China Telecom AI",
+   "date": "2026-09-17",
+   "level": 3,
+   "field": "general",
+   "reason": "Lab outside the roster; no evidence test passed"
+  },
+  {
+   "model": "SPARSEUP",
+   "lab": "Linkup Research",
+   "date": "2026-09-17",
+   "level": 3,
+   "field": "other",
+   "reason": "Lab outside the roster; no evidence test passed"
+  },
+  {
+   "model": "Needle 3",
+   "lab": "Cactus Compute",
+   "date": "2026-09-17",
+   "level": 3,
+   "field": "general",
+   "reason": "Lab outside the roster; no evidence test passed"
+  },
+  {
+   "model": "HuatuoGPT-3-9B",
+   "lab": "Freedom Intelligence",
+   "date": "2026-09-17",
+   "level": 3,
+   "field": "science",
+   "reason": "Built on another lab's model"
+  },
+  {
+   "model": "XGEN-JING / JING-Flash-v1",
+   "lab": "XGEN Labs",
+   "date": "2026-09-16",
+   "level": 3,
+   "field": "world",
+   "reason": "Lab outside the roster; no evidence test passed"
+  },
+  {
+   "model": "WeVisDoc-2B / 4B",
+   "lab": "Tencent",
+   "date": "2026-09-16",
+   "level": 3,
+   "field": "other",
+   "reason": "Support-class model"
+  },
+  {
+   "model": "Gemini 3.8 Live family",
+   "lab": "Google",
+   "date": "2026-09-15",
+   "level": 2,
+   "field": "audio",
+   "reason": "Roster lab, lead voice model"
+  },
+  {
+   "model": "Koa",
+   "lab": "Salesforce",
+   "date": "2026-09-15",
+   "level": 3,
+   "field": "general",
+   "reason": "Built on another lab's model"
+  },
+  {
+   "model": "Jev",
+   "lab": "TypeSafe AI",
+   "date": "2026-09-15",
+   "level": 2,
+   "field": "other",
+   "reason": "first public decision model; it started a category that now has about 35 entries",
+   "evidence": "OpenRouter monthly tokens rank 13; OpenRouter decisions rank 1 and 2; TypeSafe holds 68% of decision requests"
+  },
+  {
+   "model": "open-1b",
+   "lab": "Gensyn",
+   "date": "2026-09-15",
+   "level": 3,
+   "field": "general",
+   "reason": "Lab outside the roster; no evidence test passed"
+  },
+  {
+   "model": "Kimi K2.8 Preview",
+   "lab": "Moonshot",
+   "date": "2026-09-11",
+   "level": 2,
+   "field": "general",
+   "reason": "Roster lab, mid model in the main line"
+  },
+  {
+   "model": "Atria Dawn Preview",
+   "lab": "Shanghai AI Lab",
+   "date": "2026-09-11",
+   "level": 3,
+   "field": "general",
+   "reason": "built on Z.ai's GLM-5.2",
+   "evidence": "built on Z.ai's GLM-5.2; no announcement, hosted API or independent test"
+  },
+  {
+   "model": "Fugu Max / Fugu Ultra v2",
+   "lab": "Sakana AI",
+   "date": "2026-09-11",
+   "level": 3,
+   "field": "general",
+   "reason": "multi-model orchestration tiers"
+  },
+  {
+   "model": "Agnes-3.0-Flash Preview",
+   "lab": "Agnes AI",
+   "date": "2026-09-11",
+   "level": 3,
+   "field": "general",
+   "reason": "Lab outside the roster; no evidence test passed"
+  },
+  {
+   "model": "DeepSeek-V4.1-Flash",
+   "lab": "DeepSeek",
+   "date": "2026-09-10",
+   "level": 2,
+   "field": "general",
+   "reason": "Roster lab, open-weight model in the main line",
+   "evidence": "intelligence index rank 19 (score 33); OpenRouter monthly tokens rank 1"
+  },
+  {
+   "model": "SWE-2",
+   "lab": "Cognition",
+   "date": "2026-09-10",
+   "level": 3,
+   "field": "coding",
+   "reason": "Built on another lab's model",
+   "evidence": "available only inside Devin; no independent benchmark or usage figures"
+  },
+  {
+   "model": "YuE2-3B",
+   "lab": "M-A-P",
+   "date": "2026-09-10",
+   "level": 3,
+   "field": "audio",
+   "reason": "Lab outside the roster; no evidence test passed",
+   "evidence": "Hugging Face: 1,276 likes, 19.8K downloads; no press or arena listing; non-commercial licence"
+  },
+  {
+   "model": "Suno v6 family",
+   "lab": "Suno",
+   "date": "2026-09-09",
+   "level": 2,
+   "field": "audio",
+   "reason": "Independent evidence",
+   "evidence": "music arena rank 1 (instrumental) and 2 (vocals); covered by Axios and Engadget"
+  },
+  {
+   "model": "AuK / AuK-Flash",
+   "lab": "Tencent",
+   "date": "2026-09-09",
+   "level": 3,
+   "field": "audio",
+   "reason": "Support-class model"
+  },
+  {
+   "model": "Nex-N2.5 family",
+   "lab": "Nex AGI",
+   "date": "2026-09-08",
+   "level": 3,
+   "field": "general",
+   "reason": "post-trained on Qwen and DeepSeek bases",
+   "evidence": "post-trained on Qwen and DeepSeek bases; 70 likes for the Max model; aggregator coverage only"
+  },
+  {
+   "model": "Mercury 2.5",
+   "lab": "Inception",
+   "date": "2026-09-08",
+   "level": 3,
+   "field": "general",
+   "reason": "Lab outside the roster; no evidence test passed"
+  },
+  {
+   "model": "GPT-Image-2.5 Flare / Sunburst",
+   "lab": "OpenAI",
+   "date": "2026-09-08",
+   "level": 2,
+   "field": "image",
+   "reason": "Roster lab, lead image model",
+   "evidence": "image arena rank 2 and 5; OpenRouter image rank 2 and 4"
+  },
+  {
+   "model": "MiniCPM5-2B",
+   "lab": "OpenBMB",
+   "date": "2026-09-07",
+   "level": 2,
+   "field": "general",
+   "reason": "Independent evidence",
+   "evidence": "Hugging Face: 1,870 likes, 916K downloads; scored highest of any open model under 4B on the intelligence index; covered by eWeek"
+  },
+  {
+   "model": "Spark X2.5",
+   "lab": "iFLYTEK",
+   "date": "2026-09-07",
+   "level": 3,
+   "field": "general",
+   "reason": "Lab outside the roster; no evidence test passed",
+   "evidence": "no index listing and no independent coverage found"
+  },
+  {
+   "model": "LLaDA2.2-mini",
+   "lab": "Ant Group (inclusionAI)",
+   "date": "2026-09-05",
+   "level": 3,
+   "field": "general",
+   "reason": "research diffusion model outside the Ling main line; light adoption"
+  },
+  {
+   "model": "Lyria 3.5",
+   "lab": "Google",
+   "date": "2026-09-04",
+   "level": 2,
+   "field": "audio",
+   "reason": "Roster lab, lead music model"
+  },
+  {
+   "model": "Ling-3.0-flash-Sante",
+   "lab": "Ant Group (inclusionAI)",
+   "date": "2026-09-04",
+   "level": 3,
+   "field": "science",
+   "reason": "medical configuration of Ling-3.0-flash"
+  },
+  {
+   "model": "Ling-3.0-flash-VL",
+   "lab": "Ant Group (inclusionAI)",
+   "date": "2026-09-04",
+   "level": 2,
+   "field": "general",
+   "reason": "Roster lab, open-weight model in the main line"
+  },
+  {
+   "model": "K2 Horizon family",
+   "lab": "MBZUAI (IFM)",
+   "date": "2026-09-03",
+   "level": 3,
+   "field": "general",
+   "reason": "Lab outside the roster; no evidence test passed",
+   "evidence": "intelligence index rank 41 (score 18); covered by The National, quoting only the lab; below the median of comparable models on the index"
+  },
+  {
+   "model": "MAI-Transcribe-2",
+   "lab": "Microsoft",
+   "date": "2026-09-03",
+   "level": 2,
+   "field": "audio",
+   "reason": "Independent evidence",
+   "evidence": "OpenRouter transcription rank 3 (36M requests a month)"
+  },
+  {
+   "model": "WeatherNext 3",
+   "lab": "Google",
+   "date": "2026-09-03",
+   "level": 2,
+   "field": "science",
+   "reason": "Roster lab, lead science model"
+  },
+  {
+   "model": "GPT-6 Astra",
+   "lab": "OpenAI",
+   "date": "2026-09-03",
+   "level": 1,
+   "field": "general",
+   "reason": "Roster lab, top general model",
+   "evidence": "intelligence index score 57, since superseded"
+  },
+  {
+   "model": "Qwen3.8-Max-0902",
+   "lab": "Alibaba (Qwen)",
+   "date": "2026-09-02",
+   "level": 3,
+   "field": "general",
+   "reason": "Snapshot: dated snapshot",
+   "of": {
+    "model": "Qwen3.8-Max Preview",
+    "date": "2026-07-19"
+   },
+   "kind": "snapshot",
+   "label": "dated snapshot"
+  },
+  {
+   "model": "Qwen3.8-Flash (API)",
+   "lab": "Alibaba (Qwen)",
+   "date": "2026-08-26",
+   "level": 2,
+   "field": "general",
+   "reason": "Curated history"
+  },
+  {
+   "model": "Qwen-MT-Image 2.0",
+   "lab": "Alibaba (Qwen)",
+   "date": "2026-08-28",
+   "level": 2,
+   "field": "other",
+   "reason": "Curated history"
+  },
+  {
+   "model": "Sora (research preview)",
+   "lab": "OpenAI",
+   "date": "2024-02-15",
+   "level": 2,
+   "field": "video",
+   "reason": "Curated history"
+  },
+  {
+   "model": "GPT-4o",
+   "lab": "OpenAI",
+   "date": "2024-05-13",
+   "level": 1,
+   "field": "general",
+   "reason": "Curated history: roster lab, top general model"
+  },
+  {
+   "model": "GPT-4o mini",
+   "lab": "OpenAI",
+   "date": "2024-07-18",
+   "level": 2,
+   "field": "general",
+   "reason": "Curated history"
+  },
+  {
+   "model": "o1-preview",
+   "lab": "OpenAI",
+   "date": "2024-09-12",
+   "level": 1,
+   "field": "general",
+   "reason": "Curated history: roster lab, top general model"
+  },
+  {
+   "model": "o1-mini",
+   "lab": "OpenAI",
+   "date": "2024-09-12",
+   "level": 2,
+   "field": "general",
+   "reason": "Curated history"
+  },
+  {
+   "model": "GPT-4o Advanced Voice",
+   "lab": "OpenAI",
+   "date": "2024-09-24",
+   "level": 2,
+   "field": "audio",
+   "reason": "Curated history"
+  },
+  {
+   "model": "o1 + o1 pro",
+   "lab": "OpenAI",
+   "date": "2024-12-05",
+   "level": 3,
+   "field": "general",
+   "reason": "Later stage: full release, with o1 pro",
+   "of": {
+    "model": "o1-preview",
+    "date": "2024-09-12"
+   },
+   "kind": "stage",
+   "label": "full release, with o1 pro"
+  },
+  {
+   "model": "Sora (general release)",
+   "lab": "OpenAI",
+   "date": "2024-12-09",
+   "level": 3,
+   "field": "video",
+   "reason": "Later stage: general release",
+   "of": {
+    "model": "Sora (research preview)",
+    "date": "2024-02-15"
+   },
+   "kind": "stage",
+   "label": "general release"
+  },
+  {
+   "model": "Operator (CUA)",
+   "lab": "OpenAI",
+   "date": "2025-01-23",
+   "level": 2,
+   "field": "coding",
+   "reason": "Curated history"
+  },
+  {
+   "model": "o3-mini",
+   "lab": "OpenAI",
+   "date": "2025-01-31",
+   "level": 2,
+   "field": "general",
+   "reason": "Curated history"
+  },
+  {
+   "model": "Deep Research",
+   "lab": "OpenAI",
+   "date": "2025-02-02",
+   "level": 2,
+   "field": "coding",
+   "reason": "Curated history"
+  },
+  {
+   "model": "GPT-4.5",
+   "lab": "OpenAI",
+   "date": "2025-02-27",
+   "level": 1,
+   "field": "general",
+   "reason": "Curated history: roster lab, top general model"
+  },
+  {
+   "model": "GPT-4o image generation",
+   "lab": "OpenAI",
+   "date": "2025-03-25",
+   "level": 2,
+   "field": "image",
+   "reason": "Curated history"
+  },
+  {
+   "model": "GPT-4.1 family",
+   "lab": "OpenAI",
+   "date": "2025-04-14",
+   "level": 2,
+   "field": "general",
+   "reason": "Curated history"
+  },
+  {
+   "model": "o3",
+   "lab": "OpenAI",
+   "date": "2025-04-16",
+   "level": 1,
+   "field": "general",
+   "reason": "Curated history: roster lab, top general model"
+  },
+  {
+   "model": "o4-mini",
+   "lab": "OpenAI",
+   "date": "2025-04-16",
+   "level": 2,
+   "field": "general",
+   "reason": "Curated history"
+  },
+  {
+   "model": "gpt-image-1",
+   "lab": "OpenAI",
+   "date": "2025-04-23",
+   "level": 2,
+   "field": "image",
+   "reason": "Curated history"
+  },
+  {
+   "model": "Codex (cloud agent)",
+   "lab": "OpenAI",
+   "date": "2025-05-16",
+   "level": 2,
+   "field": "coding",
+   "reason": "Curated history"
+  },
+  {
+   "model": "o3-pro",
+   "lab": "OpenAI",
+   "date": "2025-06-10",
+   "level": 1,
+   "field": "general",
+   "reason": "Curated history: roster lab, top general model"
+  },
+  {
+   "model": "ChatGPT Agent",
+   "lab": "OpenAI",
+   "date": "2025-07-17",
+   "level": 2,
+   "field": "coding",
+   "reason": "Curated history"
+  },
+  {
+   "model": "gpt-oss-120b / 20b",
+   "lab": "OpenAI",
+   "date": "2025-08-05",
+   "level": 2,
+   "field": "general",
+   "reason": "Curated history"
+  },
+  {
+   "model": "GPT-5",
+   "lab": "OpenAI",
+   "date": "2025-08-07",
+   "level": 1,
+   "field": "general",
+   "reason": "Curated history: roster lab, top general model"
+  },
+  {
+   "model": "gpt-realtime",
+   "lab": "OpenAI",
+   "date": "2025-08-28",
+   "level": 2,
+   "field": "audio",
+   "reason": "Curated history"
+  },
+  {
+   "model": "GPT-5-Codex",
+   "lab": "OpenAI",
+   "date": "2025-09-15",
+   "level": 2,
+   "field": "coding",
+   "reason": "Curated history"
+  },
+  {
+   "model": "Sora 2",
+   "lab": "OpenAI",
+   "date": "2025-09-30",
+   "level": 2,
+   "field": "video",
+   "reason": "Curated history"
+  },
+  {
+   "model": "GPT-5.1",
+   "lab": "OpenAI",
+   "date": "2025-11-12",
+   "level": 1,
+   "field": "general",
+   "reason": "Curated history: roster lab, top general model"
+  },
+  {
+   "model": "GPT-5.1-Codex-Max",
+   "lab": "OpenAI",
+   "date": "2025-11-19",
+   "level": 2,
+   "field": "coding",
+   "reason": "Curated history"
+  },
+  {
+   "model": "GPT-5.2",
+   "lab": "OpenAI",
+   "date": "2025-12-11",
+   "level": 1,
+   "field": "general",
+   "reason": "Curated history: roster lab, top general model"
+  },
+  {
+   "model": "GPT Image 1.5",
+   "lab": "OpenAI",
+   "date": "2025-12-16",
+   "level": 2,
+   "field": "image",
+   "reason": "Curated history"
+  },
+  {
+   "model": "GPT-5.2-Codex",
+   "lab": "OpenAI",
+   "date": "2025-12-18",
+   "level": 2,
+   "field": "coding",
+   "reason": "Curated history"
+  },
+  {
+   "model": "GPT-5.3-Codex",
+   "lab": "OpenAI",
+   "date": "2026-02-05",
+   "level": 2,
+   "field": "coding",
+   "reason": "Curated history"
+  },
+  {
+   "model": "GPT-5.3-Codex-Spark",
+   "lab": "OpenAI",
+   "date": "2026-02-12",
+   "level": 2,
+   "field": "general",
+   "reason": "Curated history"
+  },
+  {
+   "model": "GPT-5.3 Instant",
+   "lab": "OpenAI",
+   "date": "2026-03-03",
+   "level": 2,
+   "field": "general",
+   "reason": "Curated history"
+  },
+  {
+   "model": "GPT-5.4",
+   "lab": "OpenAI",
+   "date": "2026-03-05",
+   "level": 1,
+   "field": "general",
+   "reason": "Curated history: roster lab, top general model"
+  },
+  {
+   "model": "GPT-5.4 mini & nano",
+   "lab": "OpenAI",
+   "date": "2026-03-17",
+   "level": 2,
+   "field": "general",
+   "reason": "Curated history"
+  },
+  {
+   "model": "GPT-5.4-Cyber",
+   "lab": "OpenAI",
+   "date": "2026-04-15",
+   "level": 2,
+   "field": "general",
+   "reason": "Curated history"
+  },
+  {
+   "model": "GPT-Rosalind",
+   "lab": "OpenAI",
+   "date": "2026-04-16",
+   "level": 2,
+   "field": "science",
+   "reason": "Curated history"
+  },
+  {
+   "model": "ChatGPT Images 2.0",
+   "lab": "OpenAI",
+   "date": "2026-04-21",
+   "level": 2,
+   "field": "image",
+   "reason": "Curated history"
+  },
+  {
+   "model": "GPT-5.5",
+   "lab": "OpenAI",
+   "date": "2026-04-23",
+   "level": 1,
+   "field": "general",
+   "reason": "Curated history: roster lab, top general model"
+  },
+  {
+   "model": "GPT-Realtime-2 / Translate / Whisper",
+   "lab": "OpenAI",
+   "date": "2026-05-07",
+   "level": 2,
+   "field": "audio",
+   "reason": "Curated history"
+  },
+  {
+   "model": "GPT-5.6 (Sol/Terra/Luna)",
+   "lab": "OpenAI",
+   "date": "2026-06-27",
+   "level": 1,
+   "field": "general",
+   "reason": "Curated history: roster lab, top general model"
+  },
+  {
+   "model": "GPT-Live",
+   "lab": "OpenAI",
+   "date": "2026-07-08",
+   "level": 2,
+   "field": "audio",
+   "reason": "Curated history"
+  },
+  {
+   "model": "GPT-5.6-Cyber",
+   "lab": "OpenAI",
+   "date": "2026-08-10",
+   "level": 2,
+   "field": "general",
+   "reason": "Curated history"
+  },
+  {
+   "model": "Claude 3 (Opus/Sonnet/Haiku)",
+   "lab": "Anthropic",
+   "date": "2024-03-04",
+   "level": 1,
+   "field": "general",
+   "reason": "Curated history: roster lab, top general model"
+  },
+  {
+   "model": "Claude 3.5 Sonnet",
+   "lab": "Anthropic",
+   "date": "2024-06-20",
+   "level": 1,
+   "field": "general",
+   "reason": "Curated history: roster lab, top general model"
+  },
+  {
+   "model": "Claude 3.5 Sonnet (new) + computer use",
+   "lab": "Anthropic",
+   "date": "2024-10-22",
+   "level": 1,
+   "field": "general",
+   "reason": "Curated history: roster lab, top general model"
+  },
+  {
+   "model": "Claude 3.5 Haiku",
+   "lab": "Anthropic",
+   "date": "2024-10-22",
+   "level": 2,
+   "field": "general",
+   "reason": "Curated history"
+  },
+  {
+   "model": "Claude 3.7 Sonnet",
+   "lab": "Anthropic",
+   "date": "2025-02-24",
+   "level": 1,
+   "field": "general",
+   "reason": "Curated history: roster lab, top general model"
+  },
+  {
+   "model": "Claude Opus 4 & Sonnet 4",
+   "lab": "Anthropic",
+   "date": "2025-05-22",
+   "level": 1,
+   "field": "general",
+   "reason": "Curated history: roster lab, top general model"
+  },
+  {
+   "model": "Claude Opus 4.1",
+   "lab": "Anthropic",
+   "date": "2025-08-05",
+   "level": 1,
+   "field": "general",
+   "reason": "Curated history: roster lab, top general model"
+  },
+  {
+   "model": "Claude Sonnet 4.5",
+   "lab": "Anthropic",
+   "date": "2025-09-29",
+   "level": 1,
+   "field": "general",
+   "reason": "Curated history: roster lab, top general model"
+  },
+  {
+   "model": "Claude Haiku 4.5",
+   "lab": "Anthropic",
+   "date": "2025-10-15",
+   "level": 2,
+   "field": "general",
+   "reason": "Curated history"
+  },
+  {
+   "model": "Claude Opus 4.5",
+   "lab": "Anthropic",
+   "date": "2025-11-24",
+   "level": 1,
+   "field": "general",
+   "reason": "Curated history: roster lab, top general model"
+  },
+  {
+   "model": "Claude Opus 4.6",
+   "lab": "Anthropic",
+   "date": "2026-02-05",
+   "level": 1,
+   "field": "general",
+   "reason": "Curated history: roster lab, top general model"
+  },
+  {
+   "model": "Claude Sonnet 4.6",
+   "lab": "Anthropic",
+   "date": "2026-02-17",
+   "level": 2,
+   "field": "general",
+   "reason": "Curated history"
+  },
+  {
+   "model": "Claude Opus 4.7",
+   "lab": "Anthropic",
+   "date": "2026-04-16",
+   "level": 1,
+   "field": "general",
+   "reason": "Curated history: roster lab, top general model"
+  },
+  {
+   "model": "Claude Opus 4.8",
+   "lab": "Anthropic",
+   "date": "2026-05-28",
+   "level": 1,
+   "field": "general",
+   "reason": "Curated history: roster lab, top general model"
+  },
+  {
+   "model": "Claude Fable 5 / Mythos 5",
+   "lab": "Anthropic",
+   "date": "2026-06-09",
+   "level": 1,
+   "field": "general",
+   "reason": "Curated history: roster lab, top general model"
+  },
+  {
+   "model": "Claude Sonnet 5",
+   "lab": "Anthropic",
+   "date": "2026-06-30",
+   "level": 2,
+   "field": "general",
+   "reason": "Curated history"
+  },
+  {
+   "model": "Claude Opus 5",
+   "lab": "Anthropic",
+   "date": "2026-07-24",
+   "level": 1,
+   "field": "general",
+   "reason": "Curated history: roster lab, top general model"
+  },
+  {
+   "model": "Claude Fable 5.1 / Mythos 5.1",
+   "lab": "Anthropic",
+   "date": "2026-09-01",
+   "level": 1,
+   "field": "general",
+   "reason": "Roster lab, top general model"
+  },
+  {
+   "model": "Gemini 1.0 Ultra",
+   "lab": "Google",
+   "date": "2024-02-08",
+   "level": 1,
+   "field": "general",
+   "reason": "Curated history: roster lab, top general model"
+  },
+  {
+   "model": "Gemini 1.5 Pro",
+   "lab": "Google",
+   "date": "2024-02-15",
+   "level": 1,
+   "field": "general",
+   "reason": "Curated history: roster lab, top general model"
+  },
+  {
+   "model": "Gemma (2B/7B)",
+   "lab": "Google",
+   "date": "2024-02-21",
+   "level": 2,
+   "field": "general",
+   "reason": "Curated history"
+  },
+  {
+   "model": "Gemini 1.5 Flash",
+   "lab": "Google",
+   "date": "2024-05-14",
+   "level": 2,
+   "field": "general",
+   "reason": "Curated history"
+  },
+  {
+   "model": "Veo",
+   "lab": "Google",
+   "date": "2024-05-14",
+   "level": 2,
+   "field": "video",
+   "reason": "Curated history"
+  },
+  {
+   "model": "Imagen 3",
+   "lab": "Google",
+   "date": "2024-05-14",
+   "level": 2,
+   "field": "image",
+   "reason": "Curated history"
+  },
+  {
+   "model": "Gemma 2 (9B/27B)",
+   "lab": "Google",
+   "date": "2024-06-27",
+   "level": 2,
+   "field": "general",
+   "reason": "Curated history"
+  },
+  {
+   "model": "Gemini 2.0 Flash (exp)",
+   "lab": "Google",
+   "date": "2024-12-11",
+   "level": 2,
+   "field": "general",
+   "reason": "Curated history"
+  },
+  {
+   "model": "Veo 2",
+   "lab": "Google",
+   "date": "2024-12-16",
+   "level": 2,
+   "field": "video",
+   "reason": "Curated history"
+  },
+  {
+   "model": "Gemini 2.0 Flash Thinking",
+   "lab": "Google",
+   "date": "2024-12-19",
+   "level": 2,
+   "field": "general",
+   "reason": "Curated history"
+  },
+  {
+   "model": "Gemini 2.0 family GA",
+   "lab": "Google",
+   "date": "2025-02-05",
+   "level": 1,
+   "field": "general",
+   "reason": "Curated history: roster lab, top general model"
+  },
+  {
+   "model": "Gemma 3",
+   "lab": "Google",
+   "date": "2025-03-12",
+   "level": 2,
+   "field": "general",
+   "reason": "Curated history"
+  },
+  {
+   "model": "Gemini 2.5 Pro (exp)",
+   "lab": "Google",
+   "date": "2025-03-25",
+   "level": 1,
+   "field": "general",
+   "reason": "Curated history: roster lab, top general model"
+  },
+  {
+   "model": "Gemini 2.5 Flash",
+   "lab": "Google",
+   "date": "2025-04-17",
+   "level": 2,
+   "field": "general",
+   "reason": "Curated history"
+  },
+  {
+   "model": "Veo 3",
+   "lab": "Google",
+   "date": "2025-05-20",
+   "level": 2,
+   "field": "video",
+   "reason": "Curated history"
+  },
+  {
+   "model": "Imagen 4",
+   "lab": "Google",
+   "date": "2025-05-20",
+   "level": 2,
+   "field": "image",
+   "reason": "Curated history"
+  },
+  {
+   "model": "Gemini 2.5 GA + Flash-Lite",
+   "lab": "Google",
+   "date": "2025-06-17",
+   "level": 1,
+   "field": "general",
+   "reason": "Curated history: roster lab, top general model"
+  },
+  {
+   "model": "Gemma 3n",
+   "lab": "Google",
+   "date": "2025-06-26",
+   "level": 2,
+   "field": "general",
+   "reason": "Curated history"
+  },
+  {
+   "model": "Gemini 2.5 Deep Think",
+   "lab": "Google",
+   "date": "2025-08-01",
+   "level": 2,
+   "field": "general",
+   "reason": "Curated history"
+  },
+  {
+   "model": "Genie 3",
+   "lab": "Google",
+   "date": "2025-08-05",
+   "level": 2,
+   "field": "world",
+   "reason": "Curated history"
+  },
+  {
+   "model": "Gemma 3 270M",
+   "lab": "Google",
+   "date": "2025-08-14",
+   "level": 2,
+   "field": "general",
+   "reason": "Curated history"
+  },
+  {
+   "model": "Gemini 2.5 Flash Image (Nano Banana)",
+   "lab": "Google",
+   "date": "2025-08-26",
+   "level": 2,
+   "field": "image",
+   "reason": "Curated history"
+  },
+  {
+   "model": "Veo 3.1",
+   "lab": "Google",
+   "date": "2025-10-15",
+   "level": 2,
+   "field": "video",
+   "reason": "Curated history"
+  },
+  {
+   "model": "Gemini 3 Pro",
+   "lab": "Google",
+   "date": "2025-11-18",
+   "level": 1,
+   "field": "general",
+   "reason": "Curated history: roster lab, top general model"
+  },
+  {
+   "model": "Nano Banana Pro",
+   "lab": "Google",
+   "date": "2025-11-20",
+   "level": 2,
+   "field": "image",
+   "reason": "Curated history"
+  },
+  {
+   "model": "Gemini 3 Deep Think",
+   "lab": "Google",
+   "date": "2025-12-04",
+   "level": 2,
+   "field": "general",
+   "reason": "Curated history"
+  },
+  {
+   "model": "Gemini 3 Flash",
+   "lab": "Google",
+   "date": "2025-12-17",
+   "level": 2,
+   "field": "general",
+   "reason": "Curated history"
+  },
+  {
+   "model": "Gemini 3.1 Pro",
+   "lab": "Google",
+   "date": "2026-02-19",
+   "level": 1,
+   "field": "general",
+   "reason": "Curated history: roster lab, top general model"
+  },
+  {
+   "model": "Nano Banana 2",
+   "lab": "Google",
+   "date": "2026-02-26",
+   "level": 2,
+   "field": "image",
+   "reason": "Curated history"
+  },
+  {
+   "model": "Gemma 4",
+   "lab": "Google",
+   "date": "2026-04-02",
+   "level": 2,
+   "field": "general",
+   "reason": "Curated history"
+  },
+  {
+   "model": "Gemini 3.5 Flash",
+   "lab": "Google",
+   "date": "2026-05-19",
+   "level": 2,
+   "field": "general",
+   "reason": "Curated history"
+  },
+  {
+   "model": "Gemini Omni",
+   "lab": "Google",
+   "date": "2026-05-19",
+   "level": 2,
+   "field": "video",
+   "reason": "Curated history"
+  },
+  {
+   "model": "Gemini 3.5 Live Translate",
+   "lab": "Google",
+   "date": "2026-06-09",
+   "level": 2,
+   "field": "audio",
+   "reason": "Curated history"
+  },
+  {
+   "model": "DiffusionGemma",
+   "lab": "Google",
+   "date": "2026-06-10",
+   "level": 2,
+   "field": "general",
+   "reason": "Curated history"
+  },
+  {
+   "model": "Nano Banana 2 Lite",
+   "lab": "Google",
+   "date": "2026-06-30",
+   "level": 2,
+   "field": "image",
+   "reason": "Curated history"
+  },
+  {
+   "model": "Gemini 3.6 Flash",
+   "lab": "Google",
+   "date": "2026-07-21",
+   "level": 2,
+   "field": "general",
+   "reason": "Curated history"
+  },
+  {
+   "model": "Gemini 3.5 Flash-Lite",
+   "lab": "Google",
+   "date": "2026-07-21",
+   "level": 2,
+   "field": "general",
+   "reason": "Curated history"
+  },
+  {
+   "model": "Gemini 3.5 Flash Cyber",
+   "lab": "Google",
+   "date": "2026-07-21",
+   "level": 2,
+   "field": "general",
+   "reason": "Curated history"
+  },
+  {
+   "model": "Gemini 3.7 Flash",
+   "lab": "Google",
+   "date": "2026-08-13",
+   "level": 2,
+   "field": "general",
+   "reason": "Curated history"
+  },
+  {
+   "model": "Gemini 3.5 Transcribe",
+   "lab": "Google",
+   "date": "2026-08-26",
+   "level": 2,
+   "field": "audio",
+   "reason": "Curated history"
+  },
+  {
+   "model": "Gemini Omni 1.1 Flash",
+   "lab": "Google",
+   "date": "2026-08-27",
+   "level": 2,
+   "field": "video",
+   "reason": "Curated history"
+  },
+  {
+   "model": "Gemini 3.8 Flash",
+   "lab": "Google",
+   "date": "2026-09-02",
+   "level": 2,
+   "field": "general",
+   "reason": "Roster lab, mid model in the main line"
+  },
+  {
+   "model": "Gemini 3.8 Flash Cyber",
+   "lab": "Google",
+   "date": "2026-09-02",
+   "level": 2,
+   "field": "general",
+   "reason": "Roster lab, lead cyber model",
+   "evidence": "covered by The Next Web, Android Authority and security press"
+  },
+  {
+   "model": "Llama 3 (8B/70B)",
+   "lab": "Meta",
+   "date": "2024-04-18",
+   "level": 2,
+   "field": "general",
+   "reason": "Curated history"
+  },
+  {
+   "model": "Llama 3.1 (405B)",
+   "lab": "Meta",
+   "date": "2024-07-23",
+   "level": 2,
+   "field": "general",
+   "reason": "Curated history"
+  },
+  {
+   "model": "Llama 3.2",
+   "lab": "Meta",
+   "date": "2024-09-25",
+   "level": 2,
+   "field": "general",
+   "reason": "Curated history"
+  },
+  {
+   "model": "Llama 3.3 70B",
+   "lab": "Meta",
+   "date": "2024-12-06",
+   "level": 2,
+   "field": "general",
+   "reason": "Curated history"
+  },
+  {
+   "model": "Llama 4 (Scout/Maverick)",
+   "lab": "Meta",
+   "date": "2025-04-05",
+   "level": 2,
+   "field": "general",
+   "reason": "Curated history"
+  },
+  {
+   "model": "Muse Spark",
+   "lab": "Meta",
+   "date": "2026-04-08",
+   "level": 1,
+   "field": "general",
+   "reason": "Curated history: roster lab, top general model"
+  },
+  {
+   "model": "Muse Image / Muse Video preview",
+   "lab": "Meta",
+   "date": "2026-07-07",
+   "level": 2,
+   "field": "image",
+   "reason": "Curated history"
+  },
+  {
+   "model": "Muse Spark 1.1",
+   "lab": "Meta",
+   "date": "2026-07-09",
+   "level": 1,
+   "field": "general",
+   "reason": "Curated history: roster lab, top general model"
+  },
+  {
+   "model": "Muse Glimmer",
+   "lab": "Meta",
+   "date": "2026-08-10",
+   "level": 2,
+   "field": "general",
+   "reason": "Curated history"
+  },
+  {
+   "model": "Muse Spark 1.2",
+   "lab": "Meta",
+   "date": "2026-08-05",
+   "level": 1,
+   "field": "general",
+   "reason": "Curated history: roster lab, top general model"
+  },
+  {
+   "model": "Muse Spark 1.3",
+   "lab": "Meta",
+   "date": "2026-09-02",
+   "level": 1,
+   "field": "general",
+   "reason": "Roster lab, top general model",
+   "evidence": "OpenRouter monthly tokens rank 14"
+  },
+  {
+   "model": "Grok-1.5",
+   "lab": "xAI",
+   "date": "2024-03-28",
+   "level": 1,
+   "field": "general",
+   "reason": "Curated history: roster lab, top general model"
+  },
+  {
+   "model": "Grok-1.5V",
+   "lab": "xAI",
+   "date": "2024-04-12",
+   "level": 2,
+   "field": "general",
+   "reason": "Curated history"
+  },
+  {
+   "model": "Grok-2",
+   "lab": "xAI",
+   "date": "2024-08-13",
+   "level": 1,
+   "field": "general",
+   "reason": "Curated history: roster lab, top general model"
+  },
+  {
+   "model": "Aurora",
+   "lab": "xAI",
+   "date": "2024-12-09",
+   "level": 2,
+   "field": "image",
+   "reason": "Curated history"
+  },
+  {
+   "model": "Grok 3",
+   "lab": "xAI",
+   "date": "2025-02-17",
+   "level": 1,
+   "field": "general",
+   "reason": "Curated history: roster lab, top general model"
+  },
+  {
+   "model": "Grok 4",
+   "lab": "xAI",
+   "date": "2025-07-09",
+   "level": 1,
+   "field": "general",
+   "reason": "Curated history: roster lab, top general model"
+  },
+  {
+   "model": "Grok Imagine",
+   "lab": "xAI",
+   "date": "2025-07-28",
+   "level": 2,
+   "field": "video",
+   "reason": "Curated history"
+  },
+  {
+   "model": "Grok 4 Fast",
+   "lab": "xAI",
+   "date": "2025-09-19",
+   "level": 2,
+   "field": "general",
+   "reason": "Curated history"
+  },
+  {
+   "model": "Grok 4.1",
+   "lab": "xAI",
+   "date": "2025-11-17",
+   "level": 1,
+   "field": "general",
+   "reason": "Curated history: roster lab, top general model"
+  },
+  {
+   "model": "Grok 4.20",
+   "lab": "xAI",
+   "date": "2026-02-17",
+   "level": 1,
+   "field": "general",
+   "reason": "Curated history: roster lab, top general model"
+  },
+  {
+   "model": "Grok Imagine Video 1.5",
+   "lab": "xAI",
+   "date": "2026-06-16",
+   "level": 2,
+   "field": "video",
+   "reason": "Curated history"
+  },
+  {
+   "model": "Grok 4.5",
+   "lab": "xAI",
+   "date": "2026-07-08",
+   "level": 1,
+   "field": "general",
+   "reason": "Curated history: roster lab, top general model"
+  },
+  {
+   "model": "Grok 4.6",
+   "lab": "xAI",
+   "date": "2026-08-12",
+   "level": 1,
+   "field": "general",
+   "reason": "Curated history: roster lab, top general model"
+  },
+  {
+   "model": "Phi-3",
+   "lab": "Microsoft",
+   "date": "2024-04-23",
+   "level": 2,
+   "field": "general",
+   "reason": "Curated history"
+  },
+  {
+   "model": "Phi-3.5",
+   "lab": "Microsoft",
+   "date": "2024-08-20",
+   "level": 2,
+   "field": "general",
+   "reason": "Curated history"
+  },
+  {
+   "model": "Phi-4 (14B)",
+   "lab": "Microsoft",
+   "date": "2024-12-12",
+   "level": 2,
+   "field": "general",
+   "reason": "Curated history"
+  },
+  {
+   "model": "Phi-4-multimodal & mini",
+   "lab": "Microsoft",
+   "date": "2025-02-26",
+   "level": 2,
+   "field": "general",
+   "reason": "Curated history"
+  },
+  {
+   "model": "Phi-4-reasoning",
+   "lab": "Microsoft",
+   "date": "2025-04-30",
+   "level": 2,
+   "field": "general",
+   "reason": "Curated history"
+  },
+  {
+   "model": "MAI-1-preview & MAI-Voice-1",
+   "lab": "Microsoft",
+   "date": "2025-08-28",
+   "level": 2,
+   "field": "general",
+   "reason": "Curated history"
+  },
+  {
+   "model": "Phi-4-reasoning-vision-15B",
+   "lab": "Microsoft",
+   "date": "2026-03-15",
+   "level": 2,
+   "field": "general",
+   "reason": "Curated history"
+  },
+  {
+   "model": "MAI-Transcribe-1 & MAI-Image-2",
+   "lab": "Microsoft",
+   "date": "2026-04-02",
+   "level": 2,
+   "field": "image",
+   "reason": "Curated history"
+  },
+  {
+   "model": "MAI-Thinking-1 & MAI-Code-1",
+   "lab": "Microsoft",
+   "date": "2026-06-02",
+   "level": 1,
+   "field": "general",
+   "reason": "Curated history: roster lab, top general model"
+  },
+  {
+   "model": "MAI-Cyber-1-Flash",
+   "lab": "Microsoft",
+   "date": "2026-07-27",
+   "level": 2,
+   "field": "general",
+   "reason": "Curated history"
+  },
+  {
+   "model": "Titan Text Premier",
+   "lab": "Amazon",
+   "date": "2024-05-03",
+   "level": 2,
+   "field": "general",
+   "reason": "Curated history"
+  },
+  {
+   "model": "Amazon Nova",
+   "lab": "Amazon",
+   "date": "2024-12-03",
+   "level": 1,
+   "field": "general",
+   "reason": "Curated history: roster lab, top general model"
+  },
+  {
+   "model": "Nova Act",
+   "lab": "Amazon",
+   "date": "2025-03-31",
+   "level": 2,
+   "field": "coding",
+   "reason": "Curated history"
+  },
+  {
+   "model": "Nova Sonic",
+   "lab": "Amazon",
+   "date": "2025-04-08",
+   "level": 2,
+   "field": "audio",
+   "reason": "Curated history"
+  },
+  {
+   "model": "Nova Premier",
+   "lab": "Amazon",
+   "date": "2025-04-30",
+   "level": 1,
+   "field": "general",
+   "reason": "Curated history: roster lab, top general model"
+  },
+  {
+   "model": "Amazon Nova 2",
+   "lab": "Amazon",
+   "date": "2025-12-02",
+   "level": 1,
+   "field": "general",
+   "reason": "Curated history: roster lab, top general model"
+  },
+  {
+   "model": "Nemotron-4 340B",
+   "lab": "NVIDIA",
+   "date": "2024-06-14",
+   "level": 2,
+   "field": "general",
+   "reason": "Curated history"
+  },
+  {
+   "model": "Llama-3.1-Nemotron-70B",
+   "lab": "NVIDIA",
+   "date": "2024-10-15",
+   "level": 2,
+   "field": "general",
+   "reason": "Curated history"
+  },
+  {
+   "model": "Llama Nemotron (Nano/Super/Ultra)",
+   "lab": "NVIDIA",
+   "date": "2025-03-18",
+   "level": 2,
+   "field": "general",
+   "reason": "Curated history"
+  },
+  {
+   "model": "Nemotron Nano 2",
+   "lab": "NVIDIA",
+   "date": "2025-08-18",
+   "level": 2,
+   "field": "general",
+   "reason": "Curated history"
+  },
+  {
+   "model": "Nemotron 3 Nano",
+   "lab": "NVIDIA",
+   "date": "2025-12-15",
+   "level": 2,
+   "field": "general",
+   "reason": "Curated history"
+  },
+  {
+   "model": "Nemotron 3 Super",
+   "lab": "NVIDIA",
+   "date": "2026-03-11",
+   "level": 2,
+   "field": "general",
+   "reason": "Curated history"
+  },
+  {
+   "model": "Nemotron 3 Ultra",
+   "lab": "NVIDIA",
+   "date": "2026-06-04",
+   "level": 2,
+   "field": "general",
+   "reason": "Curated history"
+  },
+  {
+   "model": "Nemotron 3.5 Lightning",
+   "lab": "NVIDIA",
+   "date": "2026-08-11",
+   "level": 2,
+   "field": "general",
+   "reason": "Curated history"
+  },
+  {
+   "model": "GLM-4",
+   "lab": "Z.ai (Zhipu)",
+   "date": "2024-01-16",
+   "level": 1,
+   "field": "general",
+   "reason": "Curated history: roster lab, top general model"
+  },
+  {
+   "model": "GLM-4-9B",
+   "lab": "Z.ai (Zhipu)",
+   "date": "2024-06-05",
+   "level": 2,
+   "field": "general",
+   "reason": "Curated history"
+  },
+  {
+   "model": "Ying (CogVideoX)",
+   "lab": "Z.ai (Zhipu)",
+   "date": "2024-07-26",
+   "level": 2,
+   "field": "video",
+   "reason": "Curated history"
+  },
+  {
+   "model": "GLM-4-Plus",
+   "lab": "Z.ai (Zhipu)",
+   "date": "2024-08-29",
+   "level": 1,
+   "field": "general",
+   "reason": "Curated history: roster lab, top general model"
+  },
+  {
+   "model": "GLM-4-Voice",
+   "lab": "Z.ai (Zhipu)",
+   "date": "2024-10-25",
+   "level": 2,
+   "field": "audio",
+   "reason": "Curated history"
+  },
+  {
+   "model": "GLM-4-0414 + GLM-Z1",
+   "lab": "Z.ai (Zhipu)",
+   "date": "2025-04-14",
+   "level": 2,
+   "field": "general",
+   "reason": "Curated history"
+  },
+  {
+   "model": "GLM-4.1V-Thinking",
+   "lab": "Z.ai (Zhipu)",
+   "date": "2025-07-02",
+   "level": 2,
+   "field": "general",
+   "reason": "Curated history"
+  },
+  {
+   "model": "GLM-4.5 / 4.5-Air",
+   "lab": "Z.ai (Zhipu)",
+   "date": "2025-07-28",
+   "level": 1,
+   "field": "general",
+   "reason": "Curated history: roster lab, top general model"
+  },
+  {
+   "model": "GLM-4.5V",
+   "lab": "Z.ai (Zhipu)",
+   "date": "2025-08-11",
+   "level": 2,
+   "field": "general",
+   "reason": "Curated history"
+  },
+  {
+   "model": "GLM-4.6V",
+   "lab": "Z.ai (Zhipu)",
+   "date": "2025-12-08",
+   "level": 2,
+   "field": "general",
+   "reason": "Curated history"
+  },
+  {
+   "model": "GLM-4.7",
+   "lab": "Z.ai (Zhipu)",
+   "date": "2025-12-23",
+   "level": 1,
+   "field": "general",
+   "reason": "Curated history: roster lab, top general model"
+  },
+  {
+   "model": "GLM-4.7 Flash",
+   "lab": "Z.ai (Zhipu)",
+   "date": "2026-01-15",
+   "level": 2,
+   "field": "general",
+   "reason": "Curated history"
+  },
+  {
+   "model": "GLM-5",
+   "lab": "Z.ai (Zhipu)",
+   "date": "2026-02-11",
+   "level": 1,
+   "field": "general",
+   "reason": "Curated history: roster lab, top general model"
+  },
+  {
+   "model": "GLM-5.1",
+   "lab": "Z.ai (Zhipu)",
+   "date": "2026-04-08",
+   "level": 1,
+   "field": "general",
+   "reason": "Curated history: roster lab, top general model"
+  },
+  {
+   "model": "GLM-5.2",
+   "lab": "Z.ai (Zhipu)",
+   "date": "2026-06-13",
+   "level": 1,
+   "field": "general",
+   "reason": "Curated history: roster lab, top general model"
+  },
+  {
+   "model": "GLM-5.3",
+   "lab": "Z.ai (Zhipu)",
+   "date": "2026-08-14",
+   "level": 1,
+   "field": "general",
+   "reason": "Curated history: roster lab, top general model"
+  },
+  {
+   "model": "GLM-5.3-Flash",
+   "lab": "Z.ai (Zhipu)",
+   "date": "2026-08-26",
+   "level": 2,
+   "field": "general",
+   "reason": "Curated history"
+  },
+  {
+   "model": "Kimi (2M-char context)",
+   "lab": "Moonshot",
+   "date": "2024-03-18",
+   "level": 1,
+   "field": "general",
+   "reason": "Curated history: roster lab, top general model"
+  },
+  {
+   "model": "Kimi k0-math",
+   "lab": "Moonshot",
+   "date": "2024-11-16",
+   "level": 2,
+   "field": "general",
+   "reason": "Curated history"
+  },
+  {
+   "model": "Kimi k1 (visual thinking)",
+   "lab": "Moonshot",
+   "date": "2024-12-16",
+   "level": 2,
+   "field": "general",
+   "reason": "Curated history"
+  },
+  {
+   "model": "Kimi K1.5",
+   "lab": "Moonshot",
+   "date": "2025-01-20",
+   "level": 1,
+   "field": "general",
+   "reason": "Curated history: roster lab, top general model"
+  },
+  {
+   "model": "Kimi-VL-A3B",
+   "lab": "Moonshot",
+   "date": "2025-04-10",
+   "level": 2,
+   "field": "general",
+   "reason": "Curated history"
+  },
+  {
+   "model": "Kimi-Dev-72B",
+   "lab": "Moonshot",
+   "date": "2025-06-16",
+   "level": 2,
+   "field": "coding",
+   "reason": "Curated history"
+  },
+  {
+   "model": "Kimi K2",
+   "lab": "Moonshot",
+   "date": "2025-07-11",
+   "level": 1,
+   "field": "general",
+   "reason": "Curated history: roster lab, top general model"
+  },
+  {
+   "model": "Kimi K2-0905",
+   "lab": "Moonshot",
+   "date": "2025-09-05",
+   "level": 3,
+   "field": "general",
+   "reason": "Snapshot: dated update",
+   "of": {
+    "model": "Kimi K2",
+    "date": "2025-07-11"
+   },
+   "kind": "snapshot",
+   "label": "dated update"
+  },
+  {
+   "model": "Kimi Linear",
+   "lab": "Moonshot",
+   "date": "2025-10-30",
+   "level": 2,
+   "field": "general",
+   "reason": "Curated history"
+  },
+  {
+   "model": "Kimi K2 Thinking",
+   "lab": "Moonshot",
+   "date": "2025-11-06",
+   "level": 1,
+   "field": "general",
+   "reason": "Curated history: roster lab, top general model"
+  },
+  {
+   "model": "Kimi K2.5",
+   "lab": "Moonshot",
+   "date": "2026-01-27",
+   "level": 1,
+   "field": "general",
+   "reason": "Curated history: roster lab, top general model"
+  },
+  {
+   "model": "Kimi K2.6",
+   "lab": "Moonshot",
+   "date": "2026-04-20",
+   "level": 1,
+   "field": "general",
+   "reason": "Curated history: roster lab, top general model"
+  },
+  {
+   "model": "Kimi K2.7-Code",
+   "lab": "Moonshot",
+   "date": "2026-06-12",
+   "level": 2,
+   "field": "coding",
+   "reason": "Curated history"
+  },
+  {
+   "model": "Kimi K3",
+   "lab": "Moonshot",
+   "date": "2026-07-16",
+   "level": 1,
+   "field": "general",
+   "reason": "Curated history: roster lab, top general model"
+  },
+  {
+   "model": "Qwen1.5",
+   "lab": "Alibaba (Qwen)",
+   "date": "2024-02-04",
+   "level": 2,
+   "field": "general",
+   "reason": "Curated history"
+  },
+  {
+   "model": "Qwen2",
+   "lab": "Alibaba (Qwen)",
+   "date": "2024-06-06",
+   "level": 2,
+   "field": "general",
+   "reason": "Curated history"
+  },
+  {
+   "model": "Qwen2-VL",
+   "lab": "Alibaba (Qwen)",
+   "date": "2024-08-29",
+   "level": 2,
+   "field": "general",
+   "reason": "Curated history"
+  },
+  {
+   "model": "Qwen2.5",
+   "lab": "Alibaba (Qwen)",
+   "date": "2024-09-19",
+   "level": 2,
+   "field": "general",
+   "reason": "Curated history"
+  },
+  {
+   "model": "QwQ-32B-Preview",
+   "lab": "Alibaba (Qwen)",
+   "date": "2024-11-28",
+   "level": 2,
+   "field": "general",
+   "reason": "Curated history"
+  },
+  {
+   "model": "Qwen2.5-VL",
+   "lab": "Alibaba (Qwen)",
+   "date": "2025-01-27",
+   "level": 2,
+   "field": "general",
+   "reason": "Curated history"
+  },
+  {
+   "model": "Qwen2.5-Max",
+   "lab": "Alibaba (Qwen)",
+   "date": "2025-01-28",
+   "level": 1,
+   "field": "general",
+   "reason": "Curated history: roster lab, top general model"
+  },
+  {
+   "model": "QwQ-32B",
+   "lab": "Alibaba (Qwen)",
+   "date": "2025-03-06",
+   "level": 3,
+   "field": "general",
+   "reason": "Later stage: full release",
+   "of": {
+    "model": "QwQ-32B-Preview",
+    "date": "2024-11-28"
+   },
+   "kind": "stage",
+   "label": "full release"
+  },
+  {
+   "model": "Qwen2.5-Omni",
+   "lab": "Alibaba (Qwen)",
+   "date": "2025-03-26",
+   "level": 2,
+   "field": "audio",
+   "reason": "Curated history"
+  },
+  {
+   "model": "Qwen3",
+   "lab": "Alibaba (Qwen)",
+   "date": "2025-04-29",
+   "level": 1,
+   "field": "general",
+   "reason": "Curated history: roster lab, top general model"
+  },
+  {
+   "model": "Qwen3-Coder",
+   "lab": "Alibaba (Qwen)",
+   "date": "2025-07-22",
+   "level": 2,
+   "field": "coding",
+   "reason": "Curated history"
+  },
+  {
+   "model": "Qwen3-Next-80B-A3B",
+   "lab": "Alibaba (Qwen)",
+   "date": "2025-09-12",
+   "level": 2,
+   "field": "general",
+   "reason": "Curated history"
+  },
+  {
+   "model": "Qwen3-Omni",
+   "lab": "Alibaba (Qwen)",
+   "date": "2025-09-22",
+   "level": 2,
+   "field": "audio",
+   "reason": "Curated history"
+  },
+  {
+   "model": "Qwen3-Max",
+   "lab": "Alibaba (Qwen)",
+   "date": "2025-09-24",
+   "level": 1,
+   "field": "general",
+   "reason": "Curated history: roster lab, top general model"
+  },
+  {
+   "model": "Qwen3-Max-Thinking",
+   "lab": "Alibaba (Qwen)",
+   "date": "2026-01-23",
+   "level": 1,
+   "field": "general",
+   "reason": "Curated history: roster lab, top general model"
+  },
+  {
+   "model": "Qwen3.5",
+   "lab": "Alibaba (Qwen)",
+   "date": "2026-02-16",
+   "level": 1,
+   "field": "general",
+   "reason": "Curated history: roster lab, top general model"
+  },
+  {
+   "model": "Qwen3.6 series",
+   "lab": "Alibaba (Qwen)",
+   "date": "2026-04-15",
+   "level": 2,
+   "field": "general",
+   "reason": "Curated history"
+  },
+  {
+   "model": "Qwen3.7-Max",
+   "lab": "Alibaba (Qwen)",
+   "date": "2026-05-20",
+   "level": 1,
+   "field": "general",
+   "reason": "Curated history: roster lab, top general model"
+  },
+  {
+   "model": "Qwen3.8-Max Preview",
+   "lab": "Alibaba (Qwen)",
+   "date": "2026-07-19",
+   "level": 1,
+   "field": "general",
+   "reason": "Curated history: roster lab, top general model"
+  },
+  {
+   "model": "Qwen3.7 Flash",
+   "lab": "Alibaba (Qwen)",
+   "date": "2026-07-27",
+   "level": 2,
+   "field": "general",
+   "reason": "Curated history"
+  },
+  {
+   "model": "Qwen3.8-Max",
+   "lab": "Alibaba (Qwen)",
+   "date": "2026-08-03",
+   "level": 3,
+   "field": "general",
+   "reason": "Later stage: full release with open weights",
+   "of": {
+    "model": "Qwen3.8-Max Preview",
+    "date": "2026-07-19"
+   },
+   "kind": "stage",
+   "label": "full release with open weights"
+  },
+  {
+   "model": "Qwen3.8-27B",
+   "lab": "Alibaba (Qwen)",
+   "date": "2026-08-14",
+   "level": 2,
+   "field": "general",
+   "reason": "Curated history"
+  },
+  {
+   "model": "Qwen3.8-Flash-Next",
+   "lab": "Alibaba (Qwen)",
+   "date": "2026-08-26",
+   "level": 2,
+   "field": "general",
+   "reason": "Curated history"
+  },
+  {
+   "model": "DeepSeek-V2",
+   "lab": "DeepSeek",
+   "date": "2024-05-06",
+   "level": 2,
+   "field": "general",
+   "reason": "Curated history"
+  },
+  {
+   "model": "DeepSeek-Coder-V2",
+   "lab": "DeepSeek",
+   "date": "2024-06-17",
+   "level": 2,
+   "field": "coding",
+   "reason": "Curated history"
+  },
+  {
+   "model": "DeepSeek-V2.5",
+   "lab": "DeepSeek",
+   "date": "2024-09-05",
+   "level": 2,
+   "field": "general",
+   "reason": "Curated history"
+  },
+  {
+   "model": "DeepSeek-R1-Lite-Preview",
+   "lab": "DeepSeek",
+   "date": "2024-11-20",
+   "level": 2,
+   "field": "general",
+   "reason": "Curated history"
+  },
+  {
+   "model": "DeepSeek-V3",
+   "lab": "DeepSeek",
+   "date": "2024-12-26",
+   "level": 1,
+   "field": "general",
+   "reason": "Curated history: roster lab, top general model"
+  },
+  {
+   "model": "DeepSeek-R1",
+   "lab": "DeepSeek",
+   "date": "2025-01-20",
+   "level": 1,
+   "field": "general",
+   "reason": "Curated history: roster lab, top general model"
+  },
+  {
+   "model": "DeepSeek-V3-0324",
+   "lab": "DeepSeek",
+   "date": "2025-03-24",
+   "level": 3,
+   "field": "general",
+   "reason": "Snapshot: dated checkpoint update",
+   "of": {
+    "model": "DeepSeek-V3",
+    "date": "2024-12-26"
+   },
+   "kind": "snapshot",
+   "label": "dated checkpoint update"
+  },
+  {
+   "model": "DeepSeek-R1-0528",
+   "lab": "DeepSeek",
+   "date": "2025-05-28",
+   "level": 3,
+   "field": "general",
+   "reason": "Snapshot: dated upgrade",
+   "of": {
+    "model": "DeepSeek-R1",
+    "date": "2025-01-20"
+   },
+   "kind": "snapshot",
+   "label": "dated upgrade"
+  },
+  {
+   "model": "DeepSeek-V3.1",
+   "lab": "DeepSeek",
+   "date": "2025-08-21",
+   "level": 1,
+   "field": "general",
+   "reason": "Curated history: roster lab, top general model"
+  },
+  {
+   "model": "DeepSeek-V3.1-Terminus",
+   "lab": "DeepSeek",
+   "date": "2025-09-22",
+   "level": 3,
+   "field": "general",
+   "reason": "Snapshot: refinement",
+   "of": {
+    "model": "DeepSeek-V3.1",
+    "date": "2025-08-21"
+   },
+   "kind": "snapshot",
+   "label": "refinement"
+  },
+  {
+   "model": "DeepSeek-V3.2-Exp",
+   "lab": "DeepSeek",
+   "date": "2025-09-29",
+   "level": 1,
+   "field": "general",
+   "reason": "Curated history: roster lab, top general model"
+  },
+  {
+   "model": "DeepSeek-OCR",
+   "lab": "DeepSeek",
+   "date": "2025-10-20",
+   "level": 2,
+   "field": "other",
+   "reason": "Curated history"
+  },
+  {
+   "model": "DeepSeek-V3.2",
+   "lab": "DeepSeek",
+   "date": "2025-12-01",
+   "level": 3,
+   "field": "general",
+   "reason": "Later stage: full release",
+   "of": {
+    "model": "DeepSeek-V3.2-Exp",
+    "date": "2025-09-29"
+   },
+   "kind": "stage",
+   "label": "full release"
+  },
+  {
+   "model": "DeepSeek-V4 Preview",
+   "lab": "DeepSeek",
+   "date": "2026-04-24",
+   "level": 1,
+   "field": "general",
+   "reason": "Curated history: roster lab, top general model"
+  },
+  {
+   "model": "DeepSeek-V4-Flash-0731",
+   "lab": "DeepSeek",
+   "date": "2026-07-31",
+   "level": 3,
+   "field": "general",
+   "reason": "Later stage: full release (Flash)",
+   "of": {
+    "model": "DeepSeek-V4 Preview",
+    "date": "2026-04-24"
+   },
+   "kind": "stage",
+   "label": "full release (Flash)"
+  },
+  {
+   "model": "DeepSeek-V4-Pro (GA)",
+   "lab": "DeepSeek",
+   "date": "2026-08-13",
+   "level": 3,
+   "field": "general",
+   "reason": "Later stage: general availability (Pro)",
+   "of": {
+    "model": "DeepSeek-V4 Preview",
+    "date": "2026-04-24"
+   },
+   "kind": "stage",
+   "label": "general availability (Pro)"
+  },
+  {
+   "model": "DeepSeek-V4-Flash-Vision-Exp",
+   "lab": "DeepSeek",
+   "date": "2026-08-21",
+   "level": 2,
+   "field": "general",
+   "reason": "Curated history"
+  },
+  {
+   "model": "abab 6.5",
+   "lab": "MiniMax",
+   "date": "2024-04-17",
+   "level": 1,
+   "field": "general",
+   "reason": "Curated history: roster lab, top general model"
+  },
+  {
+   "model": "MiniMax-01",
+   "lab": "MiniMax",
+   "date": "2025-01-15",
+   "level": 2,
+   "field": "general",
+   "reason": "Curated history"
+  },
+  {
+   "model": "MiniMax-M1",
+   "lab": "MiniMax",
+   "date": "2025-06-16",
+   "level": 1,
+   "field": "general",
+   "reason": "Curated history: roster lab, top general model"
+  },
+  {
+   "model": "MiniMax-M2",
+   "lab": "MiniMax",
+   "date": "2025-10-23",
+   "level": 1,
+   "field": "general",
+   "reason": "Curated history: roster lab, top general model"
+  },
+  {
+   "model": "MiniMax-M2.1",
+   "lab": "MiniMax",
+   "date": "2025-12-15",
+   "level": 2,
+   "field": "general",
+   "reason": "Curated history"
+  },
+  {
+   "model": "MiniMax-M2.5",
+   "lab": "MiniMax",
+   "date": "2026-02-15",
+   "level": 1,
+   "field": "general",
+   "reason": "Curated history: roster lab, top general model"
+  },
+  {
+   "model": "MiniMax-M2.7",
+   "lab": "MiniMax",
+   "date": "2026-03-15",
+   "level": 2,
+   "field": "general",
+   "reason": "Curated history"
+  },
+  {
+   "model": "MiniMax-M3",
+   "lab": "MiniMax",
+   "date": "2026-06-01",
+   "level": 1,
+   "field": "general",
+   "reason": "Curated history: roster lab, top general model"
+  },
+  {
+   "model": "MiniMax H3",
+   "lab": "MiniMax",
+   "date": "2026-07-31",
+   "level": 2,
+   "field": "video",
+   "reason": "Curated history"
+  },
+  {
+   "model": "Doubao Pro",
+   "lab": "ByteDance",
+   "date": "2024-05-15",
+   "level": 1,
+   "field": "general",
+   "reason": "Curated history: roster lab, top general model"
+  },
+  {
+   "model": "Doubao-1.5-Pro",
+   "lab": "ByteDance",
+   "date": "2025-01-22",
+   "level": 1,
+   "field": "general",
+   "reason": "Curated history: roster lab, top general model"
+  },
+  {
+   "model": "Doubao-Seed-1.6",
+   "lab": "ByteDance",
+   "date": "2025-06-11",
+   "level": 1,
+   "field": "general",
+   "reason": "Curated history: roster lab, top general model"
+  },
+  {
+   "model": "Seed-OSS-36B",
+   "lab": "ByteDance",
+   "date": "2025-08-20",
+   "level": 2,
+   "field": "general",
+   "reason": "Curated history"
+  },
+  {
+   "model": "Seedream 4.0",
+   "lab": "ByteDance",
+   "date": "2025-09-09",
+   "level": 2,
+   "field": "image",
+   "reason": "Curated history"
+  },
+  {
+   "model": "Doubao-Seed-2.0",
+   "lab": "ByteDance",
+   "date": "2026-02-14",
+   "level": 1,
+   "field": "general",
+   "reason": "Curated history: roster lab, top general model"
+  },
+  {
+   "model": "Seed 2.1",
+   "lab": "ByteDance",
+   "date": "2026-06-23",
+   "level": 1,
+   "field": "general",
+   "reason": "Curated history: roster lab, top general model"
+  },
+  {
+   "model": "Hunyuan-Large",
+   "lab": "Tencent",
+   "date": "2024-11-05",
+   "level": 2,
+   "field": "general",
+   "reason": "Curated history"
+  },
+  {
+   "model": "HunyuanVideo",
+   "lab": "Tencent",
+   "date": "2024-12-03",
+   "level": 2,
+   "field": "video",
+   "reason": "Curated history"
+  },
+  {
+   "model": "Hunyuan Turbo S",
+   "lab": "Tencent",
+   "date": "2025-02-27",
+   "level": 1,
+   "field": "general",
+   "reason": "Curated history: roster lab, top general model"
+  },
+  {
+   "model": "Hunyuan-T1",
+   "lab": "Tencent",
+   "date": "2025-03-21",
+   "level": 1,
+   "field": "general",
+   "reason": "Curated history: roster lab, top general model"
+  },
+  {
+   "model": "Hunyuan-A13B",
+   "lab": "Tencent",
+   "date": "2025-06-27",
+   "level": 2,
+   "field": "general",
+   "reason": "Curated history"
+  },
+  {
+   "model": "HunyuanImage 3.0",
+   "lab": "Tencent",
+   "date": "2025-09-28",
+   "level": 2,
+   "field": "image",
+   "reason": "Curated history"
+  },
+  {
+   "model": "Hunyuan 2.0",
+   "lab": "Tencent",
+   "date": "2025-12-08",
+   "level": 1,
+   "field": "general",
+   "reason": "Curated history: roster lab, top general model"
+  },
+  {
+   "model": "Hunyuan Hy3-preview",
+   "lab": "Tencent",
+   "date": "2026-04-23",
+   "level": 1,
+   "field": "general",
+   "reason": "Curated history: roster lab, top general model"
+  },
+  {
+   "model": "Hy-MT2 family",
+   "lab": "Tencent",
+   "date": "2026-05-21",
+   "level": 2,
+   "field": "other",
+   "reason": "Curated history"
+  },
+  {
+   "model": "Hunyuan Hy3 (official)",
+   "lab": "Tencent",
+   "date": "2026-07-07",
+   "level": 3,
+   "field": "general",
+   "reason": "Later stage: official release with open weights",
+   "of": {
+    "model": "Hunyuan Hy3-preview",
+    "date": "2026-04-23"
+   },
+   "kind": "stage",
+   "label": "official release with open weights"
+  },
+  {
+   "model": "ERNIE 4.0 Turbo",
+   "lab": "Baidu",
+   "date": "2024-06-28",
+   "level": 1,
+   "field": "general",
+   "reason": "Curated history: roster lab, top general model"
+  },
+  {
+   "model": "ERNIE 4.5 + X1",
+   "lab": "Baidu",
+   "date": "2025-03-16",
+   "level": 1,
+   "field": "general",
+   "reason": "Curated history: roster lab, top general model"
+  },
+  {
+   "model": "ERNIE 4.5/X1 Turbo",
+   "lab": "Baidu",
+   "date": "2025-04-25",
+   "level": 2,
+   "field": "general",
+   "reason": "Curated history"
+  },
+  {
+   "model": "ERNIE 4.5 open-source",
+   "lab": "Baidu",
+   "date": "2025-06-30",
+   "level": 3,
+   "field": "general",
+   "reason": "Later stage: open weights",
+   "of": {
+    "model": "ERNIE 4.5 + X1",
+    "date": "2025-03-16"
+   },
+   "kind": "stage",
+   "label": "open weights"
+  },
+  {
+   "model": "ERNIE X1.1",
+   "lab": "Baidu",
+   "date": "2025-09-09",
+   "level": 2,
+   "field": "general",
+   "reason": "Curated history"
+  },
+  {
+   "model": "ERNIE 5.0",
+   "lab": "Baidu",
+   "date": "2025-11-13",
+   "level": 1,
+   "field": "general",
+   "reason": "Curated history: roster lab, top general model"
+  },
+  {
+   "model": "ERNIE 5.0 (formal)",
+   "lab": "Baidu",
+   "date": "2026-01-22",
+   "level": 3,
+   "field": "general",
+   "reason": "Later stage: formal release",
+   "of": {
+    "model": "ERNIE 5.0",
+    "date": "2025-11-13"
+   },
+   "kind": "stage",
+   "label": "formal release"
+  },
+  {
+   "model": "ERNIE 5.1 Preview",
+   "lab": "Baidu",
+   "date": "2026-04-30",
+   "level": 1,
+   "field": "general",
+   "reason": "Curated history: roster lab, top general model"
+  },
+  {
+   "model": "Step-2",
+   "lab": "StepFun",
+   "date": "2024-07-04",
+   "level": 2,
+   "field": "general",
+   "reason": "Curated history"
+  },
+  {
+   "model": "Step-R1-V-Mini",
+   "lab": "StepFun",
+   "date": "2025-04-15",
+   "level": 2,
+   "field": "general",
+   "reason": "Curated history"
+  },
+  {
+   "model": "Step-3",
+   "lab": "StepFun",
+   "date": "2025-07-25",
+   "level": 2,
+   "field": "general",
+   "reason": "Curated history"
+  },
+  {
+   "model": "Step 3.5 Flash",
+   "lab": "StepFun",
+   "date": "2026-01-29",
+   "level": 2,
+   "field": "general",
+   "reason": "Curated history"
+  },
+  {
+   "model": "Step 3.7 Flash",
+   "lab": "StepFun",
+   "date": "2026-05-29",
+   "level": 2,
+   "field": "general",
+   "reason": "Curated history"
+  },
+  {
+   "model": "Yi-Large",
+   "lab": "01.AI",
+   "date": "2024-05-13",
+   "level": 2,
+   "field": "general",
+   "reason": "Curated history"
+  },
+  {
+   "model": "Yi-Lightning",
+   "lab": "01.AI",
+   "date": "2024-10-16",
+   "level": 2,
+   "field": "general",
+   "reason": "Curated history"
+  },
+  {
+   "model": "Mistral Large",
+   "lab": "Mistral",
+   "date": "2024-02-26",
+   "level": 1,
+   "field": "general",
+   "reason": "Curated history: roster lab, top general model"
+  },
+  {
+   "model": "Mixtral 8x22B",
+   "lab": "Mistral",
+   "date": "2024-04-17",
+   "level": 2,
+   "field": "general",
+   "reason": "Curated history"
+  },
+  {
+   "model": "Codestral",
+   "lab": "Mistral",
+   "date": "2024-05-29",
+   "level": 2,
+   "field": "coding",
+   "reason": "Curated history"
+  },
+  {
+   "model": "Mistral Large 2",
+   "lab": "Mistral",
+   "date": "2024-07-24",
+   "level": 1,
+   "field": "general",
+   "reason": "Curated history: roster lab, top general model"
+  },
+  {
+   "model": "Pixtral Large",
+   "lab": "Mistral",
+   "date": "2024-11-18",
+   "level": 1,
+   "field": "general",
+   "reason": "Curated history: roster lab, top general model"
+  },
+  {
+   "model": "Mistral Small 3",
+   "lab": "Mistral",
+   "date": "2025-01-30",
+   "level": 2,
+   "field": "general",
+   "reason": "Curated history"
+  },
+  {
+   "model": "Mistral Medium 3",
+   "lab": "Mistral",
+   "date": "2025-05-07",
+   "level": 2,
+   "field": "general",
+   "reason": "Curated history"
+  },
+  {
+   "model": "Devstral Small",
+   "lab": "Mistral",
+   "date": "2025-05-21",
+   "level": 2,
+   "field": "coding",
+   "reason": "Curated history"
+  },
+  {
+   "model": "Magistral",
+   "lab": "Mistral",
+   "date": "2025-06-10",
+   "level": 2,
+   "field": "general",
+   "reason": "Curated history"
+  },
+  {
+   "model": "Voxtral",
+   "lab": "Mistral",
+   "date": "2025-07-15",
+   "level": 2,
+   "field": "audio",
+   "reason": "Curated history"
+  },
+  {
+   "model": "Mistral Large 3",
+   "lab": "Mistral",
+   "date": "2025-12-02",
+   "level": 1,
+   "field": "general",
+   "reason": "Curated history: roster lab, top general model"
+  },
+  {
+   "model": "Devstral 2",
+   "lab": "Mistral",
+   "date": "2025-12-15",
+   "level": 2,
+   "field": "coding",
+   "reason": "Curated history"
+  },
+  {
+   "model": "Mistral Small 4",
+   "lab": "Mistral",
+   "date": "2026-03-16",
+   "level": 2,
+   "field": "general",
+   "reason": "Curated history"
+  },
+  {
+   "model": "Voxtral TTS",
+   "lab": "Mistral",
+   "date": "2026-03-23",
+   "level": 2,
+   "field": "audio",
+   "reason": "Curated history"
+  },
+  {
+   "model": "Mistral Medium 3.5",
+   "lab": "Mistral",
+   "date": "2026-05-22",
+   "level": 1,
+   "field": "general",
+   "reason": "Curated history: roster lab, top general model"
+  },
+  {
+   "model": "Mistral OCR 4",
+   "lab": "Mistral",
+   "date": "2026-06-23",
+   "level": 2,
+   "field": "other",
+   "reason": "Curated history"
+  },
+  {
+   "model": "Leanstral 1.5",
+   "lab": "Mistral",
+   "date": "2026-07-02",
+   "level": 2,
+   "field": "science",
+   "reason": "Curated history"
+  },
+  {
+   "model": "Robostral Navigate",
+   "lab": "Mistral",
+   "date": "2026-07-08",
+   "level": 2,
+   "field": "world",
+   "reason": "Curated history"
+  },
+  {
+   "model": "Command R+",
+   "lab": "Cohere",
+   "date": "2024-04-04",
+   "level": 2,
+   "field": "general",
+   "reason": "Curated history"
+  },
+  {
+   "model": "Aya Expanse",
+   "lab": "Cohere",
+   "date": "2024-10-24",
+   "level": 2,
+   "field": "general",
+   "reason": "Curated history"
+  },
+  {
+   "model": "Command A",
+   "lab": "Cohere",
+   "date": "2025-03-13",
+   "level": 2,
+   "field": "general",
+   "reason": "Curated history"
+  },
+  {
+   "model": "Command A Vision",
+   "lab": "Cohere",
+   "date": "2025-07-31",
+   "level": 2,
+   "field": "general",
+   "reason": "Curated history"
+  },
+  {
+   "model": "Command A Reasoning",
+   "lab": "Cohere",
+   "date": "2025-08-21",
+   "level": 2,
+   "field": "general",
+   "reason": "Curated history"
+  },
+  {
+   "model": "Command A+",
+   "lab": "Cohere",
+   "date": "2026-05-21",
+   "level": 2,
+   "field": "general",
+   "reason": "Curated history"
+  },
+  {
+   "model": "Jamba",
+   "lab": "AI21",
+   "date": "2024-03-28",
+   "level": 2,
+   "field": "general",
+   "reason": "Curated history"
+  },
+  {
+   "model": "Jamba 1.5",
+   "lab": "AI21",
+   "date": "2024-08-22",
+   "level": 2,
+   "field": "general",
+   "reason": "Curated history"
+  },
+  {
+   "model": "Jamba 1.6",
+   "lab": "AI21",
+   "date": "2025-03-06",
+   "level": 2,
+   "field": "general",
+   "reason": "Curated history"
+  },
+  {
+   "model": "Jamba Reasoning 3B",
+   "lab": "AI21",
+   "date": "2025-10-08",
+   "level": 2,
+   "field": "general",
+   "reason": "Curated history"
+  },
+  {
+   "model": "Reka Core",
+   "lab": "Reka",
+   "date": "2024-04-15",
+   "level": 2,
+   "field": "general",
+   "reason": "Curated history"
+  },
+  {
+   "model": "Reka Flash 3",
+   "lab": "Reka",
+   "date": "2025-03-12",
+   "level": 2,
+   "field": "general",
+   "reason": "Curated history"
+  },
+  {
+   "model": "Reka Flash 3.1",
+   "lab": "Reka",
+   "date": "2025-07-10",
+   "level": 2,
+   "field": "general",
+   "reason": "Curated history"
+  },
+  {
+   "model": "OLMo",
+   "lab": "Ai2",
+   "date": "2024-02-01",
+   "level": 2,
+   "field": "general",
+   "reason": "Curated history"
+  },
+  {
+   "model": "Molmo",
+   "lab": "Ai2",
+   "date": "2024-09-25",
+   "level": 2,
+   "field": "general",
+   "reason": "Curated history"
+  },
+  {
+   "model": "Tulu 3",
+   "lab": "Ai2",
+   "date": "2024-11-21",
+   "level": 2,
+   "field": "general",
+   "reason": "Curated history"
+  },
+  {
+   "model": "OLMo 2",
+   "lab": "Ai2",
+   "date": "2024-11-26",
+   "level": 2,
+   "field": "general",
+   "reason": "Curated history"
+  },
+  {
+   "model": "OLMo 3",
+   "lab": "Ai2",
+   "date": "2025-11-20",
+   "level": 2,
+   "field": "general",
+   "reason": "Curated history"
+  },
+  {
+   "model": "Granite 3.0",
+   "lab": "IBM",
+   "date": "2024-10-21",
+   "level": 2,
+   "field": "general",
+   "reason": "Curated history"
+  },
+  {
+   "model": "Granite 4.0",
+   "lab": "IBM",
+   "date": "2025-10-02",
+   "level": 2,
+   "field": "general",
+   "reason": "Curated history"
+  },
+  {
+   "model": "Granite 4.1",
+   "lab": "IBM",
+   "date": "2026-04-29",
+   "level": 2,
+   "field": "general",
+   "reason": "Curated history"
+  },
+  {
+   "model": "DBRX",
+   "lab": "Databricks",
+   "date": "2024-03-27",
+   "level": 2,
+   "field": "general",
+   "reason": "Curated history"
+  },
+  {
+   "model": "Arctic",
+   "lab": "Snowflake",
+   "date": "2024-04-24",
+   "level": 2,
+   "field": "general",
+   "reason": "Curated history"
+  },
+  {
+   "model": "Falcon 2",
+   "lab": "TII",
+   "date": "2024-05-13",
+   "level": 2,
+   "field": "general",
+   "reason": "Curated history"
+  },
+  {
+   "model": "Falcon Mamba 7B",
+   "lab": "TII",
+   "date": "2024-08-12",
+   "level": 2,
+   "field": "general",
+   "reason": "Curated history"
+  },
+  {
+   "model": "Falcon 3",
+   "lab": "TII",
+   "date": "2024-12-17",
+   "level": 2,
+   "field": "general",
+   "reason": "Curated history"
+  },
+  {
+   "model": "Falcon-H1",
+   "lab": "TII",
+   "date": "2025-05-21",
+   "level": 2,
+   "field": "general",
+   "reason": "Curated history"
+  },
+  {
+   "model": "Falcon-H1 Arabic",
+   "lab": "TII",
+   "date": "2026-01-06",
+   "level": 2,
+   "field": "general",
+   "reason": "Curated history"
+  },
+  {
+   "model": "LFM (1B/3B/40B)",
+   "lab": "Liquid AI",
+   "date": "2024-09-30",
+   "level": 2,
+   "field": "general",
+   "reason": "Curated history"
+  },
+  {
+   "model": "LFM2",
+   "lab": "Liquid AI",
+   "date": "2025-07-10",
+   "level": 2,
+   "field": "general",
+   "reason": "Curated history"
+  },
+  {
+   "model": "LFM2.5",
+   "lab": "Liquid AI",
+   "date": "2026-01-05",
+   "level": 2,
+   "field": "general",
+   "reason": "Curated history"
+  },
+  {
+   "model": "LFM2.5-2.6B",
+   "lab": "Liquid AI",
+   "date": "2026-08-05",
+   "level": 2,
+   "field": "general",
+   "reason": "Curated history"
+  },
+  {
+   "model": "Hermes 3",
+   "lab": "Nous",
+   "date": "2024-08-16",
+   "level": 2,
+   "field": "general",
+   "reason": "Curated history"
+  },
+  {
+   "model": "Hermes 4",
+   "lab": "Nous",
+   "date": "2025-08-26",
+   "level": 2,
+   "field": "general",
+   "reason": "Curated history"
+  },
+  {
+   "model": "EXAONE 3.0",
+   "lab": "LG AI",
+   "date": "2024-08-07",
+   "level": 2,
+   "field": "general",
+   "reason": "Curated history"
+  },
+  {
+   "model": "EXAONE 3.5",
+   "lab": "LG AI",
+   "date": "2024-12-09",
+   "level": 2,
+   "field": "general",
+   "reason": "Curated history"
+  },
+  {
+   "model": "EXAONE 4.0",
+   "lab": "LG AI",
+   "date": "2025-07-15",
+   "level": 2,
+   "field": "general",
+   "reason": "Curated history"
+  },
+  {
+   "model": "K-EXAONE",
+   "lab": "LG AI",
+   "date": "2026-01-12",
+   "level": 2,
+   "field": "general",
+   "reason": "Curated history"
+  },
+  {
+   "model": "EXAONE 4.5",
+   "lab": "LG AI",
+   "date": "2026-04-09",
+   "level": 2,
+   "field": "general",
+   "reason": "Curated history"
+  },
+  {
+   "model": "OpenELM",
+   "lab": "Apple",
+   "date": "2024-04-24",
+   "level": 2,
+   "field": "general",
+   "reason": "Curated history"
+  },
+  {
+   "model": "Foundation Models framework",
+   "lab": "Apple",
+   "date": "2025-06-09",
+   "level": 2,
+   "field": "general",
+   "reason": "Curated history"
+  },
+  {
+   "model": "Apple Foundation Models 3",
+   "lab": "Apple",
+   "date": "2026-06-08",
+   "level": 1,
+   "field": "general",
+   "reason": "Curated history: roster lab, top general model"
+  },
+  {
+   "model": "Inkling",
+   "lab": "Thinking Machines",
+   "date": "2026-07-15",
+   "level": 1,
+   "field": "general",
+   "reason": "Curated history: roster lab, top general model"
+  }
+ ]
+}
