@@ -4,7 +4,7 @@ from datetime import datetime, timezone
 from test_fetch import Opener
 from test_source_fc import HtmlResponse
 
-HEADERS = ['#', 'Model', 'Total<br>points (max 900)', 'Avg cost<br>per prompt', 'Avg time<br>per prompt', 'Video', 'Tested with', 'Points per project', 'Penalty Points deducted for INCONSISTENT results across attempts.', 'Laravel Code Quality (max 100)', 'React-TS Code Quality (max 110)', 'Bug Finding Test (max 120)', 'Python Code Quality (max 130)', 'Edge-case Testing (4 projects,<br>max 140)']
+HEADERS = ['#', 'Model', 'Total<br>points (max 900)', 'Avg cost<br>per prompt', 'Avg time<br>per prompt', 'Video', 'Tested with', 'Points per project', '<span><button type="button">Penalty</button><span role="tooltip">Points deducted for INCONSISTENT results across attempts.</span></span>', 'Laravel Code Quality (max 100)', 'React-TS Code Quality (max 110)', 'Bug Finding Test (max 120)', 'Python Code Quality (max 130)', 'Edge-case Testing (4 projects,<br>max 140)']
 
 def row(rank, name, cost='$1.25', time='1:05', harness='Harness One'):
     return f'<tr><td>{rank}</td><td><a href="/invented">{name}</a></td><td>42.5</td><td>{cost}</td><td>{time}</td><td>video</td><td>{harness} <time datetime="2024-03-02">March 2</time></td><td>11</td><td>12</td><td>13</td><td>14</td><td>15</td><td>−2.5</td></tr>'
@@ -91,3 +91,30 @@ def test_aicd_maxima_survive_offline_build(ml, tmp_path):
     output = tmp_path / 'offline.html'
     ml.build_page(tmp_path, output)
     assert '"max":140' in output.read_text()
+
+TOOLTIP_HEADER = ('<span><button type="button" aria-describedby="invented-tip">Avg cost<br>per prompt</button>'
+                  '<span id="invented-tip" role="tooltip" class="hidden">Invented <strong>note</strong>.<br><br>'
+                  'More <span>nested</span> text.</span></span>')
+
+def usage_cell(cost, usage='7% / week'):
+    return (f'<!--[if BLOCK]><![endif]--> {cost} <!--[if ENDBLOCK]><![endif]--> <!--[if BLOCK]><![endif]-->'
+            f'<a href="/invented-usage" title="invented {usage}">{usage}</a><!--[if ENDBLOCK]><![endif]-->')
+
+def test_aicd_header_tooltip_is_excluded(ml):
+    result = ml.parse_ai_coding_daily(AICD_FIXTURE.replace('Avg cost<br>per prompt', TOOLTIP_HEADER))
+    assert result['index_maxima'] == EXPECTED_MAXIMA
+    assert len(result['models']) == 4
+
+def test_aicd_text_after_a_tooltip_still_counts(ml):
+    with pytest.raises(ml.FetchError, match='changed its leaderboard columns'):
+        ml.parse_ai_coding_daily(AICD_FIXTURE.replace('Avg cost<br>per prompt', TOOLTIP_HEADER + ' extra'))
+
+@pytest.mark.parametrize('usage', ['7% / week', '&lt;1% / week'])
+@pytest.mark.parametrize('cost,expected', [('$1.25', 1.25), ('N/A', None)])
+def test_aicd_cost_ignores_the_subscription_line(ml, cost, expected, usage):
+    result = ml.parse_ai_coding_daily(table(row(1, 'Example', cost=usage_cell(cost, usage))))
+    assert ml.classify_ai_coding_daily(result['models'])[0]['axes']['cost'] == expected
+
+def test_aicd_bad_cost_beside_a_subscription_line_is_rejected(ml):
+    with pytest.raises(ml.FetchError, match='Cost'):
+        ml.parse_ai_coding_daily(table(row(1, 'Example', cost=usage_cell('1.25'))))

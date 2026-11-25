@@ -212,7 +212,8 @@ not update it; deploy again after changes.
 - [AI Coding Daily](https://aicodingdaily.com/leaderboard) supplies total and
   category points, cost and time per prompt. Its published maxima set the points
   scales. A model in different harnesses is treated as a separate family. Some
-  configurations have no cost; use the time axis to include them. The site hides
+  configurations have no cost; use the time axis to include them. The site's
+  subscription-usage line under some costs is not shown. The site hides
   older models from its served table, so they do not appear here. A refresh makes
   one GET request.
 - [FrontierCode 2.0](https://cognition.com/frontiercode) supplies scores, harnesses,
