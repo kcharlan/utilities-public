@@ -2725,3 +2725,11 @@ Git Fleet's README pointed users at a table of tool commands (`npm audit`) when
 `ignore_missing_tools` needed bare tool names (`npm`), and an invalid name made the whole
 config invalid with a generic error. List accepted values literally in the docs, test that
 the docs list every one, and name the offending value in the error.
+
+## 2026-11-25: Match provider records on the permanent id
+
+A provider can move a slug to a new model while the original model keeps its ID.
+Match history and saved selections on the permanent ID, with an explicit fallback
+for older snapshots. Model Ladder's `test_diff_follows_id_when_a_new_version_takes_the_slug`
+and `test_start_keeps_aa_id_when_the_slug_moves` cover the reassignment in history
+and in a restored browser selection.

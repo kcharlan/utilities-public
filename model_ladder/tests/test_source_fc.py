@@ -32,7 +32,7 @@ def test_fc_flattens_and_classifies(ml):
     assert rows[0]["extras"] == {"flagged": 0.125}
     assert rows[0]["maker"] == "Example Harness"
     assert rows[-1]["name"] == "Example Model"
-    assert rows[-1]["slug"] == "Example Model|na"
+    assert rows[-1]["id"] == "Example Model|na"
     assert rows[-1]["axes"] == {"cost": None, "tokens": None}
 
 

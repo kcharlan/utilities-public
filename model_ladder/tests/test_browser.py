@@ -449,7 +449,7 @@ def test_fc_decimal_changes_render_only_visible_changes(open_page, ml, tmp_path,
     path = ml.save_snapshot(tmp_path / "fc-changes", result, NOW, "fc")
     payload = ml.build_payload({"aa": (snapshot(ladder_models()), None), "fc": (ml.read_snapshot(path, "fc"), None)}, CONFIG)
     payload["sources"]["fc"]["changes"] = {"from": "2026-11-01T00:00:00Z", "to": "2026-11-05T10:00:00Z", "version": None, "added": [], "removed": [], "maxima": {}, "changed": [
-        {"slug": "invented", "name": "Invented", "scores": {"score": [73.46, 73.47]}, "axes": {"cost": [1, 2 if mixed else 1]}, "extras": {}}]}
+        {"id": "invented", "name": "Invented", "scores": {"score": [73.46, 73.47]}, "axes": {"cost": [1, 2 if mixed else 1]}, "extras": {}}]}
     page = open_page(payload)
     page.click("#source-fc")
     compare(page)
@@ -516,9 +516,9 @@ def test_unknown_source_restores_aa(open_page, source, storage):
 def test_axis_strings_follow_axis(open_page, ml, axis, header, value, unit, tick, up, down, per_point, note, finding):
     payload = synthetic_payload(ml)
     payload["sources"]["aicd"]["changes"] = {"from": "2026-11-01T00:00:00Z", "to": "2026-11-05T10:00:00Z",
-        "version": None, "added": [], "removed": [], "maxima": {}, "changed": [{"slug": "invented-one-high", "name": "Invented One (high)",
+        "version": None, "added": [], "removed": [], "maxima": {}, "changed": [{"id": "invented-one-high", "name": "Invented One (high)",
         "scores": {"test": [60, 60], "category": [40, 40]}, "axes": {"time": [60, 120], "tokens": [1000, 2000]}, "extras": {}},
-        {"slug": "invented-three-high", "name": "Invented Three (high)", "scores": {"test": [40, 40], "category": [25, 25]},
+        {"id": "invented-three-high", "name": "Invented Three (high)", "scores": {"test": [40, 40], "category": [25, 25]},
          "axes": {"time": [None, 60], "tokens": [None, 1000]}, "extras": {}}]}
     page = open_page(payload)
     page.click("#source-aicd")
@@ -1049,3 +1049,51 @@ def test_dark_theme_renders(open_page):
     dark_bg, dark_ink = dark.evaluate(style)
     assert light_bg != dark_bg
     assert dark_ink != light_ink
+
+
+@pytest.mark.parametrize("storage", [False, True])
+def test_start_keeps_aa_id_when_the_slug_moves(ml, open_page, storage):
+    first = model("Invented Model (High)", 50, 2, slug="synthetic-current", model_id="synthetic-v1")
+    base = model("Invented Model (Low)", 30, 1, slug="synthetic-low", model_id="synthetic-low-id")
+    page = open_page(payload_for(ml, [first, base]))
+    compare(page)
+    add(page, "invented model")
+    page.keyboard.press("Escape")
+    page.select_option("#start-select", label="Invented Model High")
+    saved = page.evaluate("localStorage.getItem('model_ladder.state')")
+
+    moved = {**first, "slug": "synthetic-archived"}
+    second = model("Invented Model (Medium)", 40, 1.5, slug=first["slug"], model_id="synthetic-v2")
+    script = f"localStorage.setItem('model_ladder.state', {json.dumps(saved)})" if storage else None
+    fragment = "" if storage else page.evaluate("location.hash")
+    rebuilt = open_page(payload_for(ml, [moved, base, second]), fragment=fragment, init_script=script)
+    expect(rebuilt.locator("#start-ladder h2")).to_have_text("Ladder from Invented Model High")
+    expect(rebuilt.locator("#start-select")).to_have_value(first["id"])
+    assert json.loads(saved)["per"]["aa"]["start"] == first["id"]
+
+
+@pytest.mark.parametrize("storage", [False, True])
+@pytest.mark.parametrize("case", ["slug", "legacy", "unselected"])
+def test_saved_aa_start_matches_only_selected_ids(ml, open_page, storage, case):
+    base = model("Invented Model (Low)", 30, 1, slug="base", model_id="base-id")
+    high = model("Invented Model (High)", 50, 2, slug="high", model_id="high-id")
+    other = model("Other Model", 60, 3, slug="other", model_id="other-id")
+    if case == "legacy":
+        del high["id"]
+    supplied = "other-id" if case == "unselected" else "high"
+    expected = "high" if case == "legacy" else "base-id"
+    label = "Invented Model High" if case == "legacy" else "Invented Model Low"
+    state = {"view": "compare", "mode": "whole", "source": "aa", "per": {"aa": {
+        "keys": [json.dumps(["Example Lab", "Invented Model"])], "start": supplied}}}
+    script = f"localStorage.setItem('model_ladder.state', {json.dumps(json.dumps(state))})" if storage else None
+    fragment = "" if storage else "#" + quote(json.dumps(state))
+    page = open_page(payload_for(ml, [base, high, other]), fragment=fragment, init_script=script)
+    expect(page.locator("#start-ladder h2")).to_have_text("Ladder from " + label)
+    expect(page.locator("#start-select")).to_have_value(expected)
+    assert json.loads(page.evaluate("localStorage.getItem('model_ladder.state')"))["per"]["aa"]["start"] == supplied
+
+
+def test_priced_string_key_has_frontier_status(ml, open_page):
+    item = model("Invented String Key", 50, 2, slug="synthetic-string-key", model_id="__proto__")
+    page = open_page(payload_for(ml, [item]))
+    expect(page.locator('#all-table [data-c="status"]')).to_have_text("Frontier")

@@ -35,7 +35,7 @@ def test_aicd_published(ml):
 def test_aicd_two_harnesses_are_two_families(ml):
     rows = ml.classify_ai_coding_daily(ml.parse_ai_coding_daily(AICD_FIXTURE)['models'])
     assert rows[0]['family_key'] != rows[2]['family_key']
-    assert rows[0]['slug'] != rows[2]['slug']
+    assert rows[0]['id'] != rows[2]['id']
 
 def test_aicd_two_groups_keep_effort(ml):
     rows = ml.classify_ai_coding_daily(ml.parse_ai_coding_daily(AICD_FIXTURE)['models'])
@@ -50,7 +50,7 @@ def test_aicd_hidden_text_is_excluded(ml, where):
         html = html.replace('Harness One <time', 'Harness One<script>ignored()</script><style>ignored</style> <time', 1)
     row = ml.classify_ai_coding_daily(ml.parse_ai_coding_daily(html)['models'])[0]
     assert (row['name'], row['maker'], row['family'], row['rung']) == ('Example (Tag) (High)', 'Harness One', 'Example (Tag)', 'high')
-    assert row['slug'] == '/invented|high|Harness One'
+    assert row['id'] == '/invented|high|Harness One'
 
 @pytest.mark.parametrize('changed', [AICD_FIXTURE.replace('Model</th>', 'Changed</th>'), AICD_FIXTURE.replace('</thead>', '<th>extra</th></thead>'), AICD_FIXTURE.replace('<th rowspan="2">Video</th>', ''), AICD_FIXTURE.replace('max 900', 'max 0')])
 def test_aicd_rejects_changed_header(ml, changed):

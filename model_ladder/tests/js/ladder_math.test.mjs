@@ -52,17 +52,17 @@ test("changes compare selected axis and visible extras at display precision", ()
   const axis = {key: "time", label: "Time per prompt", unit: "time", per: "per prompt"};
   const extras = [{path: "extras.quality", label: "Quality", kind: "points"},
     {path: "extras.tested", label: "Tested", kind: "date"}];
-  const change = (slug, time, quality, tested) => ({slug, scores: {test: [50, 50]},
+  const change = (id, time, quality, tested) => ({id, scores: {test: [50, 50]},
     axes: {time}, extras: {"extras.quality": quality, "extras.tested": tested}});
   const changes = {changed: [change("hidden", [60.1, 60.4], [1.001, 1.004], ["2026-01-01", "2026-01-02"]),
     change("extra", [60, 60], [1, 1.02], [null, null]), change("time", [60, 61], [1, 1], [null, null])]};
-  assert.deepEqual(m.changesToShow(changes, "whole", "test", axis, extras).map(r => r.slug), ["extra", "time"]);
+  assert.deepEqual(m.changesToShow(changes, "whole", "test", axis, extras).map(r => r.id), ["extra", "time"]);
 });
 
 test("FC decimal changes use displayed score precision", () => {
-  const change = (slug, score) => ({slug, scores: {score}, axes: {cost: [1, 1]}, extras: {}});
+  const change = (id, score) => ({id, scores: {score}, axes: {cost: [1, 1]}, extras: {}});
   const changes = {changed: [change("hidden", [73.46, 73.47]), change("visible", [73.44, 73.46])]};
-  assert.deepEqual(m.changesToShow(changes, "decimal", "score", AA_AXIS).map(r => r.slug), ["visible"]);
+  assert.deepEqual(m.changesToShow(changes, "decimal", "score", AA_AXIS).map(r => r.id), ["visible"]);
 });
 
 test("findings use each axis unit and its extremes wording", () => {
@@ -82,7 +82,7 @@ test("findings use each axis unit and its extremes wording", () => {
 
 function row(family, rung, index, cost, extra = {}) {
   return {
-    slug: `${family}-${rung}`.toLowerCase().replace(/ /g, "-"),
+    id: `${family}-${rung}`.toLowerCase().replace(/ /g, "-"),
     name: family + (rung ? " " + rung : ""),
     maker: MAKER,
     family,
@@ -117,16 +117,16 @@ test("starting ladder places frontier, dominated and unpriced starts", () => {
   const base = m.startLadder(rows, null);
   assert.deepEqual(labels(base.rungs), labels(m.frontier(rows)).reverse());
   const dominated = rows.find(r => r.label === "Alpha Test 1 XHigh");
-  const chosen = m.startLadder(rows, dominated.slug);
-  assert.equal(chosen.start.slug, dominated.slug);
+  const chosen = m.startLadder(rows, dominated.id);
+  assert.equal(chosen.start.id, dominated.id);
   assert.equal(chosen.startOn, false);
-  assert.equal(chosen.offLadder[0].slug, dominated.slug);
-  assert.ok(chosen.rungs.some(r => r.slug === dominated.slug));
+  assert.equal(chosen.offLadder[0].id, dominated.id);
+  assert.ok(chosen.rungs.some(r => r.id === dominated.id));
   assert.deepEqual(labels(chosen.rungs), ["Alpha Test 1 Max", "Alpha Test 1 High", "Alpha Test 1 XHigh", "Beta Test 1 XHigh", "Alpha Test 1 Medium", "Beta Test 1 High", "Beta Test 1 Medium"]);
-  const absent = {...rows[0], slug: "no-price", cost: null};
-  const fallback = m.startLadder([...rows, absent], absent.slug);
-  assert.equal(fallback.unplaced.slug, absent.slug);
-  assert.equal(fallback.start.slug, m.frontier(rows)[0].slug);
+  const absent = {...rows[0], id: "no-price", cost: null};
+  const fallback = m.startLadder([...rows, absent], absent.id);
+  assert.equal(fallback.unplaced.id, absent.id);
+  assert.equal(fallback.start.id, m.frontier(rows)[0].id);
   const ties = select([row("Tie A", "high", 50, 4), row("Tie B", "high", 50, 4)], "whole");
   const tied = m.startLadder(ties, null);
   assert.equal(m.stepSentence(tied.steps[0].step, tied.steps[0].direction, AA_AXIS, "whole"), "Same score and cost per task");
@@ -340,7 +340,7 @@ test("families summary", () => {
 });
 
 test("families count only rows with an effort level", () => {
-  const rows = FIXTURE.concat([row("Alpha Test 1", null, 30.0, 1.0, { slug: "alpha-plain" })]);
+  const rows = FIXTURE.concat([row("Alpha Test 1", null, 30.0, 1.0, { id: "alpha-plain" })]);
   assert.equal(m.families(rows)[0].levels, 4);
   assert.equal(m.families([row("Plain Test 1", null, 10.0, 1.0)])[0].levels, 0);
 });
@@ -350,7 +350,7 @@ test("row search matches maker, family and the full name with tags", () => {
     name: "Iota Test 1 (High, Synthetic Tag)", tags: ["Synthetic Tag"],
   });
   const rows = FIXTURE.concat([tagged]);
-  assert.deepEqual(m.searchRows(rows, "synthetic TAG").map((r) => r.slug), [tagged.slug]);
+  assert.deepEqual(m.searchRows(rows, "synthetic TAG").map((r) => r.id), [tagged.id]);
   assert.equal(m.searchRows(rows, "beta").length, 4);
   assert.equal(m.searchRows(rows, "example lab").length, 9);
   assert.equal(m.searchRows(rows, "  ").length, 9);
@@ -407,24 +407,24 @@ test("unscored rows follow the selection order, then effort order", () => {
 test("changes filter uses per-index scores including null", () => {
   const changes = {
     changed: [
-      { slug: "a", name: "A", scores: {intelligence: [61.8, 62.2]}, axes: {cost: [1, 1]} },
-      { slug: "b", name: "B", scores: {intelligence: [61.4, 61.6]}, axes: {cost: [1, 1]} },
-      { slug: "c", name: "C", scores: {intelligence: [50, 50]}, axes: {cost: [1.2341, 1.2349]} },
-      { slug: "d", name: "D", scores: {intelligence: [50, 50]}, axes: {cost: [1.23, 1.25]} },
-      { slug: "e", name: "E", scores: {intelligence: [null, 0]}, axes: {cost: [1, 1]} },
-      { slug: "f", name: "F", scores: {intelligence: [null, null]}, axes: {cost: [1, 1]} },
+      { id: "a", name: "A", scores: {intelligence: [61.8, 62.2]}, axes: {cost: [1, 1]} },
+      { id: "b", name: "B", scores: {intelligence: [61.4, 61.6]}, axes: {cost: [1, 1]} },
+      { id: "c", name: "C", scores: {intelligence: [50, 50]}, axes: {cost: [1.2341, 1.2349]} },
+      { id: "d", name: "D", scores: {intelligence: [50, 50]}, axes: {cost: [1.23, 1.25]} },
+      { id: "e", name: "E", scores: {intelligence: [null, 0]}, axes: {cost: [1, 1]} },
+      { id: "f", name: "F", scores: {intelligence: [null, null]}, axes: {cost: [1, 1]} },
     ],
   };
-  assert.deepEqual(m.changesToShow(changes, "whole", "intelligence", AA_AXIS).map((c) => c.slug), ["b", "d", "e"]);
-  assert.deepEqual(m.changesToShow(changes, "decimal", "intelligence", AA_AXIS).map((c) => c.slug), ["a", "b", "d", "e"]);
+  assert.deepEqual(m.changesToShow(changes, "whole", "intelligence", AA_AXIS).map((c) => c.id), ["b", "d", "e"]);
+  assert.deepEqual(m.changesToShow(changes, "decimal", "intelligence", AA_AXIS).map((c) => c.id), ["a", "b", "d", "e"]);
   const domain = {changed: [
-    {slug: "appears", scores: {finance: [null, 0]}, axes: {cost: [1, 1]}},
-    {slug: "disappears", scores: {finance: [5, null]}, axes: {cost: [1, 1]}},
-    {slug: "unchanged", scores: {finance: [null, null]}, axes: {cost: [1, 1]}},
+    {id: "appears", scores: {finance: [null, 0]}, axes: {cost: [1, 1]}},
+    {id: "disappears", scores: {finance: [5, null]}, axes: {cost: [1, 1]}},
+    {id: "unchanged", scores: {finance: [null, null]}, axes: {cost: [1, 1]}},
     // Not scored in this index before or after, so the view does not list it: a cost change alone stays out.
-    {slug: "cost-only-unscored", scores: {finance: [null, null]}, axes: {cost: [1, 2]}},
-    {slug: "cost-only-scored", scores: {finance: [7, 7]}, axes: {cost: [1, 2]}},
+    {id: "cost-only-unscored", scores: {finance: [null, null]}, axes: {cost: [1, 2]}},
+    {id: "cost-only-scored", scores: {finance: [7, 7]}, axes: {cost: [1, 2]}},
   ]};
-  assert.deepEqual(m.changesToShow(domain, "whole", "finance", AA_AXIS).map(c => c.slug), ["appears", "disappears", "cost-only-scored"]);
+  assert.deepEqual(m.changesToShow(domain, "whole", "finance", AA_AXIS).map(c => c.id), ["appears", "disappears", "cost-only-scored"]);
   assert.deepEqual(m.changesToShow(null, "whole"), []);
 });

@@ -19,7 +19,7 @@ def test_diff_added_removed_changed(ml):
     assert diff["from"] == "2026-11-01T12:00:00+00:00" and diff["to"] == "2026-11-02T12:00:00+00:00"
     assert diff["version"] is None
     assert diff["added"] == ["Delta Test 4"] and diff["removed"] == ["Beta Test 2"]
-    assert diff["changed"] == [{"slug": "alpha-test-1--high-", "name": "Alpha Test 1 (high)",
+    assert diff["changed"] == [{"id": "id-alpha-test-1--high-", "name": "Alpha Test 1 (high)",
                                 "scores": {key: [50.04, 51.26] if key == "intelligence" else [None, None]
                                            for key, *_ in ml.INDEXES}, "axes": {"cost": [1.5, 1.75]}, "extras": {}}]
 
@@ -63,7 +63,7 @@ def test_displayed_extras_only_change(ml, monkeypatch, tmp_path):
                                                {"key": "framework", "label": "Framework", "kind": "number", "path": "scores.framework"}],
             "classify": lambda models: models}
     monkeypatch.setitem(ml.SOURCE_SPECS, "aicd", spec)
-    base = {"slug": "synthetic", "name": "Synthetic", "scores": {"intelligence": 5}, "axes": {"cost": 1}, "extras": {"grade": "A"}}
+    base = {"id": "synthetic", "name": "Synthetic", "scores": {"intelligence": 5}, "axes": {"cost": 1}, "extras": {"grade": "A"}}
     old = snap([base])
     new = snap([{**base, "extras": {"grade": "B"}}], fetched="2026-11-02T12:00:00+00:00")
     diff = ml.diff_rows(old, new, "aicd")
@@ -83,3 +83,39 @@ def test_displayed_extras_only_change(ml, monkeypatch, tmp_path):
 def test_diff_version_change(ml):
     diff = ml.diff_rows(snap([], version=5), snap([], version=6))
     assert diff["version"] == [5, 6]
+
+
+def test_diff_follows_id_when_a_new_version_takes_the_slug(ml):
+    old = snap([model("Alpha Test 1", 50, 1.0, slug="alpha-test-1", model_id="id-first")])
+    new = snap([model("Alpha Test 1 0101", 50, 1.0, slug="alpha-test-1-0101", model_id="id-first"),
+                model("Alpha Test 1", 60, 2.0, slug="alpha-test-1", model_id="id-second")])
+    diff = ml.diff_rows(old, new)
+    assert diff["added"] == ["Alpha Test 1"]
+    assert diff["removed"] == [] and diff["changed"] == []
+
+
+def test_diff_reports_a_change_across_a_slug_rename(ml):
+    old = snap([model("Beta Test 2", 30, 2.0, slug="beta-test-2-0101", model_id="id-beta")])
+    new = snap([model("Beta Test 2", 31, 2.0, slug="beta-test-2", model_id="id-beta")])
+    diff = ml.diff_rows(old, new)
+    assert diff["added"] == [] and diff["removed"] == []
+    assert [(item["id"], item["scores"]["intelligence"]) for item in diff["changed"]] == [("id-beta", [30, 31])]
+
+
+def test_slug_only_change_keeps_the_last_real_change(ml, tmp_path):
+    item = model("Gamma Test 3", 20, 1.0, slug="gamma-test-3", model_id="id-gamma")
+    older = snap([model("Gamma Test 3", 19, 1.0, slug="gamma-test-3", model_id="id-gamma")])
+    previous = snap([item], fetched="2026-11-02T12:00:00+00:00")
+    current = snap([{**item, "slug": "gamma-test-3-0101"}], fetched="2026-11-03T12:00:00+00:00")
+    previous_path = tmp_path / "previous.json.gz"
+    older_path = tmp_path / "older.json.gz"
+    ml._write_snapshot(previous_path, previous)
+    ml._write_snapshot(older_path, older)
+    assert ml._last_real_change([previous_path, older_path], current) == older
+
+
+def test_name_only_change_is_omitted(ml):
+    item = model("Invented Name", 50, 1)
+    old = snap([item])
+    new = snap([{**item, "name": "Invented Renamed"}], fetched="2026-11-02T12:00:00+00:00")
+    assert not ml._shows_a_change(ml.diff_rows(old, new))
