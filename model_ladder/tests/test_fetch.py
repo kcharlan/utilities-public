@@ -289,3 +289,14 @@ def test_rejects_bad_identity_fields(ml):
     bad_cost["artificial_analysis_intelligence_index_cost"]["cost_per_task"]["total_cost"] = "x"
     with pytest.raises(ml.FetchError, match="total_cost"):
         ml.validate_models([bad_cost])
+
+
+@pytest.mark.parametrize("bad", [None, "", 7, "absent"])
+def test_rejects_invalid_model_id(ml, bad):
+    item = model("Invented Model", 1)
+    if bad == "absent":
+        del item["id"]
+    else:
+        item["id"] = bad
+    with pytest.raises(ml.FetchError, match="field id"):
+        ml.validate_models([item])

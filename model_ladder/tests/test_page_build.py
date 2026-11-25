@@ -38,7 +38,7 @@ def test_payload_keys_and_types(ml):
     snap = snapshot(ladder_models())
     payload = ml.build_payload({"aa": (snap, None)}, CONFIG)
     assert set(payload) == {"schema", "app", "rung_order", "default_source", "sources"}
-    assert payload["schema"] == 3
+    assert payload["schema"] == 4
     assert set(payload["sources"]) == {"aa", "aicd", "fc"}
     assert not payload["sources"]["aicd"]["available"]
     assert payload["app"] == {"name": "Model Ladder", "version": ml.VERSION}
@@ -270,3 +270,26 @@ def test_build_page_skips_unreadable_snapshot_while_walking_back(ml, tmp_path, c
     assert payload_of(out.read_text(encoding="utf-8"))["sources"]["aa"]["changes"]["added"] == ["Gamma Test 1"]
     err = capsys.readouterr().err
     assert str(broken) in err and err.count("\n") == 1 and "Traceback" not in err
+
+
+@pytest.mark.parametrize("api_id", ["legacy-key", "new-key"])
+def test_build_page_compares_legacy_keys_through_unchanged_id_snapshots(ml, tmp_path, api_id):
+    item = model("Invented Model", 50, 1, slug="legacy-key")
+    del item["id"]
+    older = datetime(2026, 11, 1, tzinfo=timezone.utc)
+    middle = datetime(2026, 11, 3, tzinfo=timezone.utc)
+    first = seed(ml, [item], when=older)
+    second = seed(ml, [{**item, "id": api_id}], when=middle)
+    third = seed(ml, [{**item, "id": api_id, "performance": {"synthetic": 1}}])
+    assert set(ml.load_snapshots(ml.runtime_home())) == {first, second, third}
+    out = tmp_path / "page.html"
+    ml.build_page(ml.runtime_home(), out)
+    source = payload_of(out.read_text(encoding="utf-8"))["sources"]["aa"]
+    assert source["fetched_at"] == NOW.isoformat()
+    if api_id == "legacy-key":
+        assert source["changes"] is None
+    else:
+        changes = source["changes"]
+        assert changes["from"] == older.isoformat() and changes["to"] == NOW.isoformat()
+        assert changes["added"] == ["Invented Model"] and changes["removed"] == ["Invented Model"]
+        assert changes["changed"] == []

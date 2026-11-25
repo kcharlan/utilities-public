@@ -133,6 +133,25 @@ dropped: they stay in the all-models table under their full name and are left ou
 of effort ladders. The fix is a visible row, or one word added to the vocabulary
 in the launcher.
 
+## Model identity
+
+Artificial Analysis rows use the provider model ID for change reporting and saved
+starting rows. If an existing model changes its slug and a new model takes the old
+slug, the new model is reported as added. The existing model remains the same row.
+A name-only edit leaves change reporting as it was.
+
+Older snapshots use the slug as the key when an ID is missing. History compares
+keys exactly. An API ID equal to the old slug matches the older row. A different
+ID appears as a removal and addition, which can remain visible through later
+unchanged snapshots. Keys must be distinct within each Artificial Analysis snapshot,
+including fallback keys.
+
+A saved starting row matches an ID in the current Compare selection, including a
+legacy fallback key. If it is unavailable or lacks a value on the selected axis,
+the ladder uses its usual fallback. The saved value remains available for a later
+match. AI Coding Daily derives its key from the link (or model name), effort and
+harness. FrontierCode uses model and effort.
+
 ## Runtime home
 
 `~/.model_ladder/` (override with `MODEL_LADDER_HOME`), directory mode 0700,

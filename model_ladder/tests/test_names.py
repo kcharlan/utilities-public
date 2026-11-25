@@ -54,7 +54,7 @@ def test_classify_skips_unscored(ml):
 def test_classify_row_shape(ml):
     (row,) = ml.classify([model("Alpha Test 1 (High, Tag)", index=50, cost=2.5, total=9.0, release="2026-02-03", slug="s1")])
     assert row == {
-        "slug": "s1", "name": "Alpha Test 1 (High, Tag)", "maker": "Example Lab", "family": "Alpha Test 1",
+        "id": "id-s1", "name": "Alpha Test 1 (High, Tag)", "maker": "Example Lab", "family": "Alpha Test 1",
         "family_key": '["Example Lab", "Alpha Test 1"]', "rung": "high", "tags": ["Tag"],
         "scores": {key: 50 if key == "intelligence" else None for key, *_ in ml.INDEXES},
         "cost": 2.5, "axes": {"cost": 2.5}, "extras": {}, "total_cost": 9.0, "release_date": "2026-02-03", "problem": None,
@@ -88,3 +88,14 @@ def test_pipe_and_markup_in_names(ml):
     rows = ml.classify([model("C<b> (High)", 1, maker="A|B"), model("B|C<b> (High)", 2, maker="A", slug="y")])
     assert rows[0]["family_key"] != rows[1]["family_key"]
     assert [r["family"] for r in rows] == ["C<b>", "B|C<b>"]
+
+
+def test_row_id_is_the_api_id_with_slug_for_rows_without_one(ml):
+    with_id = model("Alpha Test 1", 1, slug="alpha", model_id="id-1")
+    missing = model("Beta Test 1", 1, slug="beta")
+    del missing["id"]
+    empty = model("Gamma Test 1", 1, slug="gamma")
+    empty["id"] = ""
+    invalid = model("Delta Test 1", 1, slug="delta", model_id=7)
+    rows = ml.classify([with_id, missing, empty, invalid])
+    assert [row["id"] for row in rows] == ["id-1", "beta", "gamma", "delta"]

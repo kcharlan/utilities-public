@@ -28,7 +28,7 @@ from datetime import datetime, timedelta, timezone
 from html.parser import HTMLParser
 from pathlib import Path
 
-VERSION = "1.2.1"
+VERSION = "1.2.2"
 USER_AGENT = f"model_ladder/{VERSION}"
 FC_DATA_URL = "https://cognition.com/data/frontier-code-2.0/data.json"
 FC_PAGE_URL = "https://cognition.com/frontiercode"
@@ -165,6 +165,12 @@ INDEXES = (
 DEFAULT_INDEX = "intelligence"
 
 
+def _model_id(item: dict) -> str | None:
+    """Return the model ID, with the legacy snapshot fallback."""
+    value = item.get("id")
+    return value if isinstance(value, str) and value else item.get("slug")
+
+
 def classify(models: list[dict]) -> list[dict]:
     """One row per scored model, in input order, with its family and effort rung."""
     rows = []
@@ -180,7 +186,7 @@ def classify(models: list[dict]) -> list[dict]:
         maker = (item.get("model_creator") or {}).get("name")
         parts = split_name(item.get("name") or "")
         rows.append({
-            "slug": item.get("slug"),
+            "id": _model_id(item),
             "name": item.get("name"),
             "maker": maker,
             "family": parts["family"],
@@ -366,7 +372,7 @@ def validate_models(models: list) -> None:
             raise FetchError(f"model {position} is not an object")
         slug = item.get("slug")
         label = slug if isinstance(slug, str) and slug else f"model {position}"
-        for field in ("name", "slug"):
+        for field in ("name", "slug", "id"):
             if not isinstance(item.get(field), str) or not item[field]:
                 raise FetchError(f"{label}: field {field} must be a non-empty string")
         creator = item.get("model_creator")
@@ -533,7 +539,7 @@ def classify_ai_coding_daily(records) -> list[dict]:
     for record in records:
         name, maker = record["model"], record["harness"]
         parts = split_name(name, last_group=True)
-        rows.append({"slug": f"{record['href'] or name}|{parts['rung']}|{maker}", "name": name, "maker": maker,
+        rows.append({"id": f"{record['href'] or name}|{parts['rung']}|{maker}", "name": name, "maker": maker,
                      "family": parts["family"], "family_key": _family_key(maker, parts["family"]), "rung": parts["rung"],
                      "tags": parts["tags"], "problem": parts["problem"], "scores": record["scores"], "cost": record["cost"],
                      "axes": {"cost": record["cost"], "time": record["time"]}, "extras": {"penalty": record["penalty"], "tested": record["tested"]},
@@ -579,7 +585,7 @@ def classify_frontiercode(records) -> list[dict]:
         model, effort, maker = record["model"], record["effort"], record["harness"]
         rung = NON_REASONING if effort == "none" else None if effort == "na" else effort
         cost = record["cost"] or None
-        rows.append({"slug": f"{model}|{effort}", "name": model if effort == "na" else f"{model} ({effort})",
+        rows.append({"id": f"{model}|{effort}", "name": model if effort == "na" else f"{model} ({effort})",
                      "maker": maker, "family": model, "family_key": _family_key(maker, model), "rung": rung,
                      "tags": [], "scores": {"score": round(record["new_score"] * 100, 2)},
                      "cost": cost, "axes": {"cost": cost, "tokens": record["tokens"] or None},
@@ -832,20 +838,20 @@ def _row_path(row: dict, path: str):
 
 
 def diff_rows(old: dict | None, new: dict, source: str = "aa") -> dict | None:
-    """What changed between two snapshots, by slug. Raw values, no rounding."""
+    """What changed between two snapshots, by ID. Raw values, no rounding."""
     if old is None:
         return None
     spec = SOURCE_SPECS[source]
-    before = {row["slug"]: row for row in spec["classify"](old["models"])}
-    after = {row["slug"]: row for row in spec["classify"](new["models"])}
+    before = {row["id"]: row for row in spec["classify"](old["models"])}
+    after = {row["id"]: row for row in spec["classify"](new["models"])}
     changed = []
-    for slug, row in after.items():
-        prior = before.get(slug)
+    for key, row in after.items():
+        prior = before.get(key)
         extras = {item["path"]: [_row_path(prior, item["path"]), _row_path(row, item["path"])]
                   for item in spec["extras"] if prior and item["path"] != "tested" and item["path"] != "extras.tested"}
         extras = {key: pair for key, pair in extras.items() if pair[0] != pair[1]}
         if prior and (prior["scores"] != row["scores"] or prior["axes"] != row["axes"] or extras):
-            changed.append({"slug": slug, "name": row["name"],
+            changed.append({"id": key, "name": row["name"],
                             "scores": {item["key"]: [prior["scores"].get(item["key"]), row["scores"].get(item["key"])] for item in spec["indexes"]},
                             "axes": {item["key"]: [prior["axes"].get(item["key"]), row["axes"].get(item["key"])] for item in spec["axes"]},
                             "extras": extras})
@@ -856,8 +862,8 @@ def diff_rows(old: dict | None, new: dict, source: str = "aa") -> dict | None:
         "to": new["fetched_at"],
         "version": None if old["index_version"] == new["index_version"]
         else [old["index_version"], new["index_version"]],
-        "added": [row["name"] for slug, row in after.items() if slug not in before],
-        "removed": [row["name"] for slug, row in before.items() if slug not in after],
+        "added": [row["name"] for key, row in after.items() if key not in before],
+        "removed": [row["name"] for key, row in before.items() if key not in after],
         "changed": changed,
         "maxima": {key: [old_max.get(key), new_max.get(key)] for key in old_max.keys() | new_max.keys() if old_max.get(key) != new_max.get(key)},
     }
@@ -867,7 +873,7 @@ def diff_rows(old: dict | None, new: dict, source: str = "aa") -> dict | None:
 # Page build
 # ---------------------------------------------------------------------------
 
-PAGE_SCHEMA = 3
+PAGE_SCHEMA = 4
 
 
 def build_source_entry(key: str, newest: dict | None, previous: dict | None, status: dict, config: dict, store_error: str | None = None) -> dict:
@@ -1152,15 +1158,15 @@ function showPoints(value, mode) {
   return mode === "decimal" ? Math.abs(value).toFixed(1) : String(Math.round(Math.abs(value)));
 }
 
-function startLadder(sel, startSlug) {
+function startLadder(sel, startId) {
   var pareto = paretoRows(sel);
   var front = pareto.filter(function (r) { return r.status === "frontier"; });
   var unpriced = sel.filter(function (r) { return !priced(r); });
-  var chosen = sel.filter(function (r) { return r.slug === startSlug; })[0] || front[0] || null;
+  var chosen = sel.filter(function (r) { return r.id === startId; })[0] || front[0] || null;
   var unplaced = chosen && !priced(chosen) ? chosen : null;
   var start = unplaced ? (front[0] || null) : chosen;
   if (!start) return { rungs: [], start: null, startOn: false, unplaced: unplaced, steps: [], offLadder: [], unpriced: unpriced };
-  var startRow = pareto.filter(function (r) { return r.slug === start.slug; })[0];
+  var startRow = pareto.filter(function (r) { return r.id === start.id; })[0];
   var startOn = startRow.status === "frontier";
   var rungs = front.slice().reverse();
   if (!startOn) {
@@ -1173,7 +1179,7 @@ function startLadder(sel, startSlug) {
                       : { direction: "down", step: makeStep(rungs[i - 1], rungs[i], "down") });
   }
   var offLadder = pareto.filter(function (r) { return r.status === "dominated"; })
-    .sort(function (a, b) { return (b.slug === start.slug) - (a.slug === start.slug); });
+    .sort(function (a, b) { return (b.id === start.id) - (a.id === start.id); });
   return { rungs: rungs, start: startRow, startOn: startOn, unplaced: unplaced, steps: steps, offLadder: offLadder, unpriced: unpriced };
 }
 
@@ -1616,7 +1622,7 @@ APP_JS = r"""
     const [ylo, yhi] = scoreRange(rows.map((r) => r.score));
     const x = (c) => PAD.l + (Math.log(c) - Math.log(lo)) / (Math.log(hi) - Math.log(lo)) * (W - PAD.l - PAD.r);
     const y = yScale(ylo, yhi);
-    const onFront = new Set(front.map((r) => r.slug));
+    const onFront = new Set(front.map((r) => r.id));
     let d = "";
     front.forEach((r, i) => {
       d += i === 0 ? "M" + x(r.cost) + "," + y(r.score) : " H" + x(r.cost) + " V" + y(r.score);
@@ -1630,8 +1636,8 @@ APP_JS = r"""
       ${d ? html`<path class=${borrowed ? "stair borrowed" : "stair"} d=${d} />` : null}
       ${rows.map((r) => {
         const c = color(r);
-        const filled = onFront.has(r.slug);
-        return html`<circle key=${r.slug} cx=${x(r.cost)} cy=${y(r.score)} r="4.5"
+        const filled = onFront.has(r.id);
+        return html`<circle key=${r.id} cx=${x(r.cost)} cy=${y(r.score)} r="4.5"
           fill=${filled ? c : "var(--panel)"} stroke=${c} stroke-width="1.8">
           <title>${r.label + ": " + scoreText(r.index, "decimal") + ", " + M.formatAxis(r.cost, axis.unit) + (borrowed ? " overall" : "")}</title></circle>`;
       })}
@@ -1655,7 +1661,7 @@ APP_JS = r"""
         const color = colorOf(keys, k);
         return html`<g key=${k}>
           <polyline fill="none" stroke=${color} stroke-width="2" points=${pts.map((p) => p.x + "," + p.y).join(" ")} />
-          ${pts.map((p) => html`<circle key=${p.row.slug} cx=${p.x} cy=${p.y} r="4" fill=${color}>
+          ${pts.map((p) => html`<circle key=${p.row.id} cx=${p.x} cy=${p.y} r="4" fill=${color}>
             <title>${p.row.label + ": " + scoreText(p.row.index, mode)}</title></circle>`)}
         </g>`;
       })}
@@ -1702,7 +1708,7 @@ APP_JS = r"""
     return html`<section id="needs-attention" class="box attention">
       <h2>Needs attention</h2>
       <p class="note">These names do not fit the name rule. They are listed in the all-models table under their full name and left out of effort ladders.</p>
-      <ul>${view.attention.map((r) => html`<li key=${r.slug}><b>${r.name}</b> ${PROBLEM_TEXT[r.problem] || r.problem}</li>`)}</ul>
+      <ul>${view.attention.map((r) => html`<li key=${r.id}><b>${r.name}</b> ${PROBLEM_TEXT[r.problem] || r.problem}</li>`)}</ul>
     </section>`;
   }
 
@@ -1735,7 +1741,7 @@ APP_JS = r"""
         ${maximum ? html`<p class="ver">${SRC.indexes.find((i) => i.key === index).label} maximum changed from ${maximum[0]} to ${maximum[1]}. Scores are not comparable.</p>` : null}
         ${c.added.length ? html`<div data-changes="added"><h3>Added (${c.added.length})</h3><ul>${c.added.map((n, i) => html`<li key=${i}>${n}</li>`)}</ul></div>` : null}
         ${c.removed.length ? html`<div data-changes="removed"><h3>Removed (${c.removed.length})</h3><ul>${c.removed.map((n, i) => html`<li key=${i}>${n}</li>`)}</ul></div>` : null}
-        ${shown.length ? html`<div><h3>Score or ${QUANTITY[axis.unit]}${SRC.extras.length ? " or extras" : ""} changed (${shown.length})</h3><ul>${shown.map((item) => html`<li key=${item.slug}>${item.name}: ${describe(item)}</li>`)}</ul></div>` : null}
+        ${shown.length ? html`<div><h3>Score or ${QUANTITY[axis.unit]}${SRC.extras.length ? " or extras" : ""} changed (${shown.length})</h3><ul>${shown.map((item) => html`<li key=${item.id}>${item.name}: ${describe(item)}</li>`)}</ul></div>` : null}
         ${empty ? html`<p class="note">Nothing changed that shows in ${mode === "whole" ? "whole points" : "decimals"}.</p>` : null}
       </div>
     </details>`;
@@ -1748,10 +1754,10 @@ APP_JS = r"""
     useEffect(() => { if (creator && !view.makers.includes(creator)) setCreator(""); }, [view, creator]);
     const rows = useMemo(() => {
       const sel = M.selectRows(view.rows, { keys: view.allKeys, hi: null, lo: null, rungOrder: ORDER, mode: state.mode });
-      const status = {};
-      M.paretoRows(sel).forEach((r) => { status[r.slug] = r.status; });
+      const status = Object.create(null);
+      M.paretoRows(sel).forEach((r) => { status[r.id] = r.status; });
       return sel.map((r) => Object.assign(r, {
-        effort: effortValue(r), tagText: r.tags.length ? r.tags.join(", ") : null, status: status[r.slug] || null,
+        effort: effortValue(r), tagText: r.tags.length ? r.tags.join(", ") : null, status: status[r.id] || null,
       }));
     }, [state.mode, state.index, state.axis, SRC.key]);
     const front = useMemo(() => M.frontier(rows), [rows]);
@@ -1793,7 +1799,7 @@ APP_JS = r"""
           </tr></thead>
           <tbody>${visible.map((r) => {
             const on = state.keys.indexOf(r.family_key) !== -1;
-            return html`<tr key=${r.slug} class=${r.status === "dominated" ? "dom" : ""}>
+            return html`<tr key=${r.id} class=${r.status === "dominated" ? "dom" : ""}>
               <td><input type="checkbox" checked=${on} disabled=${!on && full} aria-label=${"Compare " + r.family}
                 onChange=${() => toggleKey(r.family_key)} /></td>
               <td class="l" data-c="maker">${r.maker}</td>
@@ -1949,18 +1955,18 @@ APP_JS = r"""
       ${controls}
       ${note}
       <section id="start-ladder">
-        <div class="group"><label for="start-select">Start from</label><select id="start-select" value=${state.start && sel.some((r) => r.slug === state.start) ? state.start : starting.start?.slug || ""} onChange=${(e) => update({start: e.currentTarget.value})}>
-          ${sel.map((r) => html`<option key=${r.slug} value=${r.slug}>${r.label}</option>`)}
+        <div class="group"><label for="start-select">Start from</label><select id="start-select" value=${state.start && sel.some((r) => r.id === state.start) ? state.start : starting.start?.id || ""} onChange=${(e) => update({start: e.currentTarget.value})}>
+          ${sel.map((r) => html`<option key=${r.id} value=${r.id}>${r.label}</option>`)}
         </select></div>
         ${starting.start ? html`<h2>Ladder from ${starting.start.label}</h2>
           <p class="note">The selection's frontier on ${axisName}, highest score at the top. Each line between rungs is the step to the next rung: up if this one fails, down to try for less.</p>
           ${starting.unplaced ? html`<p id="start-unplaced" class="ver">${starting.unplaced.label} has no ${axisName}, so it can't be placed on this ladder. Showing the ladder from ${starting.start.label} instead.</p>` : null}
           <div class="start-layout"><ol class="ladder box">${starting.rungs.map((r, i) => [
             i ? html`<li class="step"><span>${M.stepSentence(starting.steps[i - 1].step, starting.steps[i - 1].direction, axis, mode)}</span></li>` : null,
-            html`<li class=${"rung" + (r.slug === starting.start.slug ? " start" : "")} style=${"--c:" + color(r)}><span class="node"></span><span class="who"><strong>${r.label}</strong>${r.slug === starting.start.slug ? html`<span class="tag">${starting.startOn ? "Start" : "Start, off the ladder"}</span>` : null}</span><span class="score">${scoreText(r.index, mode)}</span><span class="x">${M.formatAxis(r.cost, axis.unit)}</span></li>`
+            html`<li class=${"rung" + (r.id === starting.start.id ? " start" : "")} style=${"--c:" + color(r)}><span class="node"></span><span class="who"><strong>${r.label}</strong>${r.id === starting.start.id ? html`<span class="tag">${starting.startOn ? "Start" : "Start, off the ladder"}</span>` : null}</span><span class="score">${scoreText(r.index, mode)}</span><span class="x">${M.formatAxis(r.cost, axis.unit)}</span></li>`
           ])}</ol><aside class="box start-side">
-            <h3>${starting.start.family} at each effort</h3><div class="scroll"><table><thead><tr><th>Effort</th><th>Score</th><th>${axis.label}</th></tr></thead><tbody>${sel.filter((r) => r.family_key === starting.start.family_key).map((r) => html`<tr class=${starting.offLadder.some((d) => d.slug === r.slug) ? "off" : ""}><td>${M.rungLabel(r.rung) || r.label}${starting.offLadder.some((d) => d.slug === r.slug) ? " (off ladder)" : ""}</td><td>${scoreText(r.index, mode)}</td><td>${M.formatAxis(r.cost, axis.unit)}</td></tr>`)}</tbody></table></div>
-            ${starting.offLadder.length ? html`<h3>Off the ladder</h3><ul>${starting.offLadder.map((r) => html`<li>${r.label}${r.slug === starting.start.slug ? " (start)" : ""}: ${M.dominatedReason(r, mode, axis)}.</li>`)}</ul>` : null}
+            <h3>${starting.start.family} at each effort</h3><div class="scroll"><table><thead><tr><th>Effort</th><th>Score</th><th>${axis.label}</th></tr></thead><tbody>${sel.filter((r) => r.family_key === starting.start.family_key).map((r) => html`<tr class=${starting.offLadder.some((d) => d.id === r.id) ? "off" : ""}><td>${M.rungLabel(r.rung) || r.label}${starting.offLadder.some((d) => d.id === r.id) ? " (off ladder)" : ""}</td><td>${scoreText(r.index, mode)}</td><td>${M.formatAxis(r.cost, axis.unit)}</td></tr>`)}</tbody></table></div>
+            ${starting.offLadder.length ? html`<h3>Off the ladder</h3><ul>${starting.offLadder.map((r) => html`<li>${r.label}${r.id === starting.start.id ? " (start)" : ""}: ${M.dominatedReason(r, mode, axis)}.</li>`)}</ul>` : null}
             ${starting.unpriced.length ? html`<h3>Not on this ladder</h3><p>No ${axisName}: ${starting.unpriced.map((r) => r.label).join(", ")}.</p>` : null}
           </aside></div>` : html`<p class="empty box">None of the selected rows has a ${axisName}.</p>`}
       </section>
@@ -1999,7 +2005,7 @@ APP_JS = r"""
             <${Th} ...${sp} k="cost" label=${label} />
             <${StepHeads} ...${sp} axis=${axis} />
           </tr></thead>
-          <tbody>${stepRows.map((r) => html`<tr key=${r.slug}>
+          <tbody>${stepRows.map((r) => html`<tr key=${r.id}>
             <td class="l" data-c="family"><${Dot} color=${color(r)} />${r.family}</td>
             <td class="l" data-c="effort">${M.rungLabel(r.rung)}</td>
             <${ScoreCell} row=${r} mode=${mode} />
@@ -2025,7 +2031,7 @@ APP_JS = r"""
               <${Th} ...${pp} k="status" label="Status" cls="l" />
               <${StepHeads} ...${pp} axis=${axis} />
             </tr></thead>
-            <tbody>${paretoRows.map((r) => html`<tr key=${r.slug} class=${r.status === "dominated" ? "dom" : ""}>
+            <tbody>${paretoRows.map((r) => html`<tr key=${r.id} class=${r.status === "dominated" ? "dom" : ""}>
               <td class="l" data-c="label"><${Dot} color=${color(r)} />${r.label}</td>
               <${ScoreCell} row=${r} mode=${mode} />
               <${CostCell} row=${r} borrowed=${borrowed} axis=${axis} />
