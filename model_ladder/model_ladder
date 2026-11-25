@@ -28,7 +28,7 @@ from datetime import datetime, timedelta, timezone
 from html.parser import HTMLParser
 from pathlib import Path
 
-VERSION = "1.2.2"
+VERSION = "1.2.3"
 USER_AGENT = f"model_ladder/{VERSION}"
 FC_DATA_URL = "https://cognition.com/data/frontier-code-2.0/data.json"
 FC_PAGE_URL = "https://cognition.com/frontiercode"
@@ -437,29 +437,45 @@ def parse_ai_coding_daily(html: str) -> dict:
             self.headers, self.rows = [], []
             self.row = self.cell = None
             self.in_time = False
+            self.links = 0
+            self.tooltip = None  # [tag, open count] while inside a role="tooltip" element
 
         def handle_starttag(self, tag, attrs):
             super().handle_starttag(tag, attrs)
             attrs = dict(attrs)
+            if self.tooltip:
+                if tag == self.tooltip[0]: self.tooltip[1] += 1
+            elif attrs.get("role") == "tooltip":
+                self.tooltip = [tag, 1]
+                self.hidden += 1
             if tag == "table":
                 self.tables += 1
                 self.inside = True
             elif self.inside and tag == "tr":
                 self.row = []
             elif self.inside and tag in ("td", "th"):
-                self.cell = {"tag": tag, "parts": [], "harness": [], "colspan": "colspan" in attrs, "href": None, "date": None}
+                self.links = 0
+                self.cell = {"tag": tag, "parts": [], "own": [], "harness": [], "colspan": "colspan" in attrs, "href": None, "date": None}
             elif self.cell is not None:
                 self.cell["parts"].append(" ")
                 self.cell["harness"].append(" ")
-                if tag == "a": self.cell["href"] = attrs.get("href")
+                if tag == "a":
+                    self.links += 1
+                    self.cell["href"] = attrs.get("href")
                 if tag == "time":
                     self.in_time = True
                     self.cell["date"] = attrs.get("datetime")
 
         def handle_endtag(self, tag):
             super().handle_endtag(tag)
+            if self.tooltip and tag == self.tooltip[0]:
+                self.tooltip[1] -= 1
+                if not self.tooltip[1]:
+                    self.tooltip = None
+                    self.hidden -= 1
             if tag in ("td", "th") and self.cell is not None:
                 self.cell["text"] = " ".join("".join(self.cell["parts"]).split())
+                self.cell["own"] = " ".join("".join(self.cell["own"]).split())
                 self.cell["harness"] = " ".join("".join(self.cell["harness"]).split())
                 if tag == "th": self.headers.append(self.cell["text"])
                 elif self.row is not None: self.row.append(self.cell)
@@ -470,6 +486,7 @@ def parse_ai_coding_daily(html: str) -> dict:
             elif tag == "table": self.inside = False
             elif self.cell is not None:
                 if tag == "time": self.in_time = False
+                if tag == "a" and self.links: self.links -= 1
                 self.cell["parts"].append(" ")
                 self.cell["harness"].append(" ")
 
@@ -477,11 +494,12 @@ def parse_ai_coding_daily(html: str) -> dict:
             super().handle_data(data)
             if self.cell is not None and not self.hidden:
                 self.cell["parts"].append(data)
+                if not self.links: self.cell["own"].append(data)
                 if not self.in_time: self.cell["harness"].append(data)
 
     parser = TableParser()
     parser.feed(html)
-    patterns = [r"#", r"Model", r"Total points \(max (\d+)\)", r"Avg cost per prompt", r"Avg time per prompt", r"Video", r"Tested with", r"Points per project", r"Penalty Points deducted for INCONSISTENT results across attempts\.", r"Laravel Code Quality \(max (\d+)\)", r"React-TS Code Quality \(max (\d+)\)", r"Bug Finding Test \(max (\d+)\)", r"Python Code Quality \(max (\d+)\)", r"Edge-case Testing \(4 projects, max (\d+)\)"]
+    patterns = [r"#", r"Model", r"Total points \(max (\d+)\)", r"Avg cost per prompt", r"Avg time per prompt", r"Video", r"Tested with", r"Points per project", r"Penalty", r"Laravel Code Quality \(max (\d+)\)", r"React-TS Code Quality \(max (\d+)\)", r"Bug Finding Test \(max (\d+)\)", r"Python Code Quality \(max (\d+)\)", r"Edge-case Testing \(4 projects, max (\d+)\)"]
     matches = [re.fullmatch(pattern, value) for pattern, value in zip(patterns, parser.headers)]
     if parser.tables != 1 or len(parser.headers) != len(patterns) or not all(matches) or any(int(m.group(1)) <= 0 for m in matches if m.groups()):
         raise FetchError("AI Coding Daily changed its leaderboard columns; keeping the last good data")
@@ -497,7 +515,7 @@ def parse_ai_coding_daily(html: str) -> dict:
             value = cells[index]["text"]
             if not re.fullmatch(r"\d+(?:\.\d+)?", value): fail(label, value)
             return float(value)
-        cost = cells[3]["text"]
+        cost = cells[3]["own"]  # the cell's text outside links: a subscription-usage link may follow the price
         if cost == "N/A": cost = None
         elif re.fullmatch(r"\$\d+(?:\.\d+)?", cost): cost = float(cost[1:]) or None
         else: fail("Cost", cost)

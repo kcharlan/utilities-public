@@ -2733,3 +2733,12 @@ Match history and saved selections on the permanent ID, with an explicit fallbac
 for older snapshots. Model Ladder's `test_diff_follows_id_when_a_new_version_takes_the_slug`
 and `test_start_keeps_aa_id_when_the_slug_moves` cover the reassignment in history
 and in a restored browser selection.
+
+## 2026-11-25: Scraped cells and headers gain hidden and secondary text
+
+AI Coding Daily added a hover tooltip inside one column header and a linked
+second line inside the cost cells, and Model Ladder's exact-match checks rejected
+the whole page. When scraping a table, read a header without `role="tooltip"`
+content (the old pattern had silently depended on one tooltip's text) and take a value from the cell's own text, outside links, while keeping
+the strict format check on that value. `test_aicd_header_tooltip_is_excluded` and
+`test_aicd_cost_ignores_the_subscription_line` cover both.
