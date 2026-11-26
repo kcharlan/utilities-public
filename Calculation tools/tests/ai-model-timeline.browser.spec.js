@@ -32,6 +32,7 @@ const november16 = require('../docs/ai_model_timeline_update_sources_2026_11_16.
 const november17 = require('../docs/ai_model_timeline_update_sources_2026_11_17.json');
 const november21 = require('../docs/ai_model_timeline_update_sources_2026_11_21.json');
 const november24 = require('../docs/ai_model_timeline_update_sources_2026_11_24.json');
+const november26 = require('../docs/ai_model_timeline_update_sources_2026_11_26.json');
 
 for (const width of [1440, 375]) {
   for (const target of ['http', 'file']) {
@@ -89,7 +90,7 @@ for (const width of [1440, 375]) {
       await page.getByRole('button', {name:'Everything', exact:true}).click();
       await expect(page.locator('#period-label')).toHaveText('November 2026');
       await page.getByRole('button', { name: 'Report', exact: true }).click();
-      const novemberRows = [november06, november10, november12, november13, november16, november17, november21, november24]
+      const novemberRows = [november06, november10, november12, november13, november16, november17, november21, november24, november26]
         .flatMap(update => update.additions).filter(row => row.date.startsWith('2026-11'));
       await expect(page.locator('#report tr.release')).toHaveCount(raw.filter(row => row.date.startsWith('2026-11')).length);
       for (const row of novemberRows) {
