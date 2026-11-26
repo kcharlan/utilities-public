@@ -1,5 +1,5 @@
 {
- "checked": "2026-11-24",
+ "checked": "2026-11-26",
  "roster": [
   "OpenAI",
   "Anthropic",
@@ -21,7 +21,8 @@
   "Baidu",
   "Mistral",
   "Xiaomi",
-  "Ant Group (inclusionAI)"
+  "Ant Group (inclusionAI)",
+  "StepFun"
  ],
  "fields": [
   "general",
@@ -44,6 +45,223 @@
   "other": "Other specialist"
  },
  "entries": [
+  {
+   "model": "Ming-Image-0.2-Design",
+   "lab": "Ant Group (inclusionAI)",
+   "date": "2026-11-25",
+   "level": 2,
+   "field": "image",
+   "reason": "Roster lab, lead image model"
+  },
+  {
+   "model": "Decision Model (production API)",
+   "lab": "Alibaba (Qwen)",
+   "date": "2026-11-25",
+   "level": 3,
+   "field": "other",
+   "reason": "Later stage: production API",
+   "of": {
+    "model": "Decision Model Preview",
+    "date": "2026-09-24"
+   },
+   "kind": "stage",
+   "label": "production API"
+  },
+  {
+   "model": "Nemotron-Labs-Image-30B-A3B",
+   "lab": "NVIDIA",
+   "date": "2026-11-24",
+   "level": 2,
+   "field": "image",
+   "reason": "Independent evidence",
+   "evidence": "Separate coverage by PC Watch and XenoSpectrum."
+  },
+  {
+   "model": "MAGI-2",
+   "lab": "Sand.ai",
+   "date": "2026-11-24",
+   "level": 2,
+   "field": "video",
+   "reason": "Independent evidence",
+   "evidence": "Artificial Analysis image-to-video with audio rank 1 and text-to-video with audio rank 7 on November 26."
+  },
+  {
+   "model": "RD Flow 64",
+   "lab": "Retro Diffusion",
+   "date": "2026-11-24",
+   "level": 3,
+   "field": "image",
+   "reason": "Lab outside the roster; no evidence test passed"
+  },
+  {
+   "model": "Raon-1 mini (open weights)",
+   "lab": "KRAFTON",
+   "date": "2026-11-24",
+   "level": 3,
+   "field": "general",
+   "reason": "Later stage: open weights",
+   "of": {
+    "model": "Raon-1 mini (preview)",
+    "date": "2026-10-21"
+   },
+   "kind": "stage",
+   "label": "open weights"
+  },
+  {
+   "model": "OCRia-nano-1",
+   "lab": "LlamaIndex",
+   "date": "2026-11-23",
+   "level": 3,
+   "field": "other",
+   "reason": "Lab outside the roster; no evidence test passed"
+  },
+  {
+   "model": "Kling Image 4.0",
+   "lab": "Kuaishou",
+   "date": "2026-11-17",
+   "level": 2,
+   "field": "image",
+   "reason": "Independent evidence",
+   "evidence": "Artificial Analysis text-to-image rank 7 on November 26."
+  },
+  {
+   "model": "Raon-1 mini (preview)",
+   "lab": "KRAFTON",
+   "date": "2026-10-21",
+   "level": 3,
+   "field": "general",
+   "reason": "Lab outside the roster; no evidence test passed"
+  },
+  {
+   "model": "Qwen-Audio-3.1-TTS-Plus",
+   "lab": "Alibaba (Qwen)",
+   "date": "2026-10-21",
+   "level": 2,
+   "field": "audio",
+   "reason": "Independent evidence",
+   "evidence": "Artificial Analysis provider-voice speech arena rank 4 on November 26."
+  },
+  {
+   "model": "Kling 4.0 (general availability)",
+   "lab": "Kuaishou",
+   "date": "2026-10-15",
+   "level": 3,
+   "field": "video",
+   "reason": "Later stage: general availability",
+   "of": {
+    "model": "Kling 4.0 (early access)",
+    "date": "2026-09-30"
+   },
+   "kind": "stage",
+   "label": "general availability"
+  },
+  {
+   "model": "Utopai X",
+   "lab": "Utopai Studios",
+   "date": "2026-09-30",
+   "level": 2,
+   "field": "video",
+   "reason": "Independent evidence",
+   "evidence": "Artificial Analysis text-to-video with audio rank 2 on November 26."
+  },
+  {
+   "model": "Boreal-H3",
+   "lab": "Creatify",
+   "date": "2026-09-28",
+   "level": 2,
+   "field": "video",
+   "reason": "Independent evidence",
+   "evidence": "Artificial Analysis image-to-video with audio rank 4 on November 26."
+  },
+  {
+   "model": "Atlas (unveiling)",
+   "lab": "World Labs",
+   "date": "2026-09-01",
+   "level": 2,
+   "field": "world",
+   "reason": "Independent evidence",
+   "evidence": "covered by SiliconANGLE and The Decoder at its September 1 unveiling; no benchmark exists for the field"
+  },
+  {
+   "model": "Sonic 3.6",
+   "lab": "Cartesia",
+   "date": "2026-08-27",
+   "level": 2,
+   "field": "audio",
+   "reason": "Independent evidence",
+   "evidence": "Artificial Analysis provider-voice speech arena rank 6 on November 26."
+  },
+  {
+   "model": "Wan 3.0 (general availability)",
+   "lab": "Alibaba (Qwen)",
+   "date": "2026-08-24",
+   "level": 3,
+   "field": "video",
+   "reason": "Later stage: general availability",
+   "of": {
+    "model": "Wan 3.0 (invite-only launch)",
+    "date": "2026-08-06"
+   },
+   "kind": "stage",
+   "label": "general availability"
+  },
+  {
+   "model": "Solar Pro 4",
+   "lab": "Upstage",
+   "date": "2026-08-20",
+   "level": 3,
+   "field": "general",
+   "reason": "Lab outside the roster; no current evidence test passed"
+  },
+  {
+   "model": "Wan 3.0 (public beta)",
+   "lab": "Alibaba (Qwen)",
+   "date": "2026-08-07",
+   "level": 3,
+   "field": "video",
+   "reason": "Later stage: public beta",
+   "of": {
+    "model": "Wan 3.0 (invite-only launch)",
+    "date": "2026-08-06"
+   },
+   "kind": "stage",
+   "label": "public beta"
+  },
+  {
+   "model": "Grok Imagine Image 2.0",
+   "lab": "xAI",
+   "date": "2026-08-07",
+   "level": 2,
+   "field": "image",
+   "reason": "Roster lab, lead image model",
+   "evidence": "Artificial Analysis text-to-image rank 9 on November 26."
+  },
+  {
+   "model": "Wan 3.0 (invite-only launch)",
+   "lab": "Alibaba (Qwen)",
+   "date": "2026-08-06",
+   "level": 2,
+   "field": "video",
+   "reason": "Roster lab, lead video model",
+   "evidence": "Artificial Analysis text-to-video with audio rank 1 on November 26."
+  },
+  {
+   "model": "MAGI-2 Preview",
+   "lab": "Sand.ai",
+   "date": "2026-08-05",
+   "level": 3,
+   "field": "video",
+   "reason": "Lab outside the roster; no evidence test passed"
+  },
+  {
+   "model": "Aion 1.0 Instruct (Edge developer preview)",
+   "lab": "Microsoft",
+   "date": "2026-06-02",
+   "level": 2,
+   "field": "general",
+   "reason": "Roster lab, open-weight model in the main line",
+   "evidence": "announced at Build in June as a model built into Windows; covered by Windows press"
+  },
   {
    "model": "ERNIE 5.5 Flash Preview (open weights)",
    "lab": "Baidu",
@@ -295,10 +513,15 @@
    "model": "Aion 1.0 Instruct (open weights)",
    "lab": "Microsoft",
    "date": "2026-11-18",
-   "level": 2,
+   "level": 3,
    "field": "general",
-   "reason": "Roster lab, open-weight model in the main line",
-   "evidence": "announced at Build in June as a model built into Windows; covered by Windows press"
+   "reason": "Later stage: open weights",
+   "of": {
+    "model": "Aion 1.0 Instruct (Edge developer preview)",
+    "date": "2026-06-02"
+   },
+   "kind": "stage",
+   "label": "open weights"
   },
   {
    "model": "Hy4 flash (open weights)",
@@ -632,10 +855,15 @@
    "model": "Atlas (public access)",
    "lab": "World Labs",
    "date": "2026-11-12",
-   "level": 2,
+   "level": 3,
    "field": "world",
-   "reason": "Independent evidence",
-   "evidence": "covered by SiliconANGLE and The Decoder at its September 1 unveiling; no benchmark exists for the field"
+   "reason": "Later stage: public access",
+   "of": {
+    "model": "Atlas (unveiling)",
+    "date": "2026-09-01"
+   },
+   "kind": "stage",
+   "label": "public access"
   },
   {
    "model": "Bielik-One family",
@@ -2721,10 +2949,10 @@
    "model": "Kling 4.0 (early access)",
    "lab": "Kuaishou",
    "date": "2026-09-30",
-   "level": 3,
+   "level": 2,
    "field": "video",
-   "reason": "Lab outside the roster; no evidence test passed",
-   "evidence": "not on the video arena or the OpenRouter video top 10; press-wire coverage only"
+   "reason": "Independent evidence",
+   "evidence": "Artificial Analysis image-to-video with audio rank 6 on November 26."
   },
   {
    "model": "Praxis-1 (partner preview)",
@@ -3012,10 +3240,10 @@
    "model": "Step 5 Preview",
    "lab": "StepFun",
    "date": "2026-09-20",
-   "level": 2,
+   "level": 1,
    "field": "general",
-   "reason": "Independent evidence",
-   "evidence": "intelligence index rank 26 (score 29)"
+   "reason": "Roster lab, new top general model",
+   "evidence": "Artificial Analysis current intelligence index rank 25 (score 29) on November 26."
   },
   {
    "model": "Qwen-Image-2.1",

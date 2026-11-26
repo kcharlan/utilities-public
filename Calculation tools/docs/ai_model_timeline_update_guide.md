@@ -150,26 +150,4 @@ In a new update manifest, record each previously classified row whose stored lev
 
 The boards cover general models, image, video, speech and music well. They cover robotics, world models, science and document models poorly or not at all; for those, use the coverage test.
 
-## Research leads for the next update
-
-The November 24, 2026 research pass logged these leads. Check the current timeline for each candidate and verify qualifying new rows against a primary source.
-
-| Model | Maker | Released | Where it ranked |
-| --- | --- | --- | --- |
-| Grok Imagine Image 2.0 | xAI | Aug 7, 2026 | Image arena rank 10 |
-| Solar Pro 4 | Upstage | Aug 6 or 14, 2026 (sources differ) | Intelligence index score 14 |
-| Wan 3.0 | Alibaba | Aug 24, 2026 | Video arena rank 1; OpenRouter video rank 3 |
-| Sonic 3.6 | Cartesia | Aug 27, 2026 | Speech arena rank 5 |
-| Utopai X | Utopai Studios | Sep 30, 2026 | Video arena rank 2; a post-train of MiniMax H3 |
-| Kling Image 4.0 | Kuaishou | Nov 17, 2026 | Image arena rank 7 |
-| JoyAI-VL-Preview | JD | Nov 17, 2026 | Intelligence index rank 27 (score 28) |
-
-Dated milestones flagged for follow-up:
-
-- Kuaishou Kling 4.0 general availability on October 15, 2026.
-- World Labs Atlas unveiling on September 1, 2026.
-- Microsoft Aion 1.0 announcement at Build on June 2, 2026.
-
-Leads with no confirmed date: JT-4.1 Flash from China Mobile (sources give July 9 and November 11, 2026), Qwen-Audio-3.1-TTS-Plus (speech arena rank 4), HyperFlow H3 from Video Rebirth (video arena rank 5, a compressed MiniMax H3), SkyReels V4 (video arena rank 11), and FLUX 3 Max (video arena rank 7, excluded by an earlier run for lack of a dated source).
-
-Remove an item from this section when its row is added or it is excluded.
+The [November 26 update manifest](ai_model_timeline_update_sources_2026_11_26.json) records the disposition of the November 24 research leads, including candidates whose release dates could not be verified.

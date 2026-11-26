@@ -1,0 +1,512 @@
+{
+  "checked": "2026-11-26",
+  "latestRelease": "2026-11-25",
+  "baselineManifest": "ai_model_timeline_update_sources_2026_11_24.json",
+  "preservedHistoricalRows": 684,
+  "additions": [
+    {
+      "model": "Ming-Image-0.2-Design",
+      "lab": "Ant Group (inclusionAI)",
+      "date": "2026-11-25",
+      "tier": "open-weights",
+      "note": "MIT-licensed image-generation checkpoint tuned for design layouts, complex compositions, lighting, and text rendering.",
+      "source": "https://huggingface.co/inclusionAI/Ming-Image-0.2-Design"
+    },
+    {
+      "model": "Decision Model (production API)",
+      "lab": "Alibaba (Qwen)",
+      "date": "2026-11-25",
+      "tier": "specialty",
+      "note": "Qwen Cloud released the production decision-model endpoint for structured classification, binary decisions, and scoring across text and images.",
+      "source": "https://docs.qwencloud.com/changelog/models"
+    },
+    {
+      "model": "Nemotron-Labs-Image-30B-A3B",
+      "lab": "NVIDIA",
+      "date": "2026-11-24",
+      "tier": "open-weights",
+      "note": "Standalone autoregressive text-to-image model with 30B total and 3B active parameters. NVIDIA released the weights, image tokenizer, and inference code for noncommercial research and evaluation.",
+      "source": "https://huggingface.co/nvidia/Nemotron-Labs-Image-30B-A3B"
+    },
+    {
+      "model": "MAGI-2",
+      "lab": "Sand.ai",
+      "date": "2026-11-24",
+      "tier": "specialty",
+      "note": "Full-scale 480B video model with about 28B active parameters. Generates up to 30 seconds of 1080p video with synchronized audio and accepts image, video, and audio references.",
+      "source": "https://sand.ai/blog/magi-2"
+    },
+    {
+      "model": "RD Flow 64",
+      "lab": "Retro Diffusion",
+      "date": "2026-11-24",
+      "tier": "open-weights",
+      "note": "271M text-to-image checkpoint trained from scratch to make 64 × 64 pixel art with discrete palettes and transparency. Weights are available for noncommercial use.",
+      "source": "https://retrodiffusion.ai/blog/rd-flow-64-technical-report"
+    },
+    {
+      "model": "Raon-1 mini (open weights)",
+      "lab": "KRAFTON",
+      "date": "2026-11-24",
+      "tier": "open-weights",
+      "note": "Public Apache-2.0 weights for KRAFTON’s Raon-1 mini, a 30B mixture-of-experts model with about 4B active parameters and adjustable reasoning effort.",
+      "source": "https://huggingface.co/KRAFTON/Raon-1-mini"
+    },
+    {
+      "model": "OCRia-nano-1",
+      "lab": "LlamaIndex",
+      "date": "2026-11-23",
+      "tier": "open-weights",
+      "note": "8.1M-parameter CPU document parsing model for OCR, layout detection, and table reconstruction in LiteParse.",
+      "source": "https://www.llamaindex.ai/blog/introducing-ocria-nano-1"
+    },
+    {
+      "model": "Kling Image 4.0",
+      "lab": "Kuaishou",
+      "date": "2026-11-17",
+      "tier": "specialty",
+      "note": "Still-image generator with native output up to 8K, distinct from the Kling 4.0 video model.",
+      "source": "https://kling.ai/release-note/release-notes/Kling_Image_4"
+    },
+    {
+      "model": "Raon-1 mini (preview)",
+      "lab": "KRAFTON",
+      "date": "2026-10-21",
+      "tier": "small",
+      "note": "Initial preview of KRAFTON’s in-house Korean and English reasoning model, trained from scratch.",
+      "source": "https://press.krafton.com/pt-BR/KRAFTON-ANNOUNCES-THIRD-QUARTER-2026-RESULTS"
+    },
+    {
+      "model": "Qwen-Audio-3.1-TTS-Plus",
+      "lab": "Alibaba (Qwen)",
+      "date": "2026-10-21",
+      "tier": "specialty",
+      "note": "Hosted streaming speech synthesis with multilingual voices, voice cloning, and controls for emotion, tone, and pace.",
+      "source": "https://docs.qwencloud.com/changelog/models"
+    },
+    {
+      "model": "Kling 4.0 (general availability)",
+      "lab": "Kuaishou",
+      "date": "2026-10-15",
+      "tier": "specialty",
+      "note": "Kuaishou opened Kling 4.0 video generation more broadly following early access. Supports 30-second clips and multimodal references.",
+      "source": "https://ir.kuaishou.com/news-releases/news-release-details/kling-ai-officially-launches-next-generation-kling-40-raising/"
+    },
+    {
+      "model": "Utopai X",
+      "lab": "Utopai Studios",
+      "date": "2026-09-30",
+      "tier": "specialty",
+      "note": "MiniMax H3 post-train for video generation with audio, available in Utopai’s PAI production platform.",
+      "source": "https://www.businesswire.com/news/home/20260930840757/en/"
+    },
+    {
+      "model": "Boreal-H3",
+      "lab": "Creatify",
+      "date": "2026-09-28",
+      "tier": "specialty",
+      "note": "MiniMax H3 post-train for advertising video, tuned to preserve product details and creator identity. Offered in Creatify’s playground and API.",
+      "source": "https://labs.creatify.ai/research/boreal-h3-technical-report"
+    },
+    {
+      "model": "Atlas (unveiling)",
+      "lab": "World Labs",
+      "date": "2026-09-01",
+      "tier": "specialty",
+      "note": "World Labs unveiled its multimodal world model for camera-controlled generation, spatial reconstruction, and simulation across text, images, video, and 3D.",
+      "source": "https://worldlabs.ai/blog/atlas"
+    },
+    {
+      "model": "Sonic 3.6",
+      "lab": "Cartesia",
+      "date": "2026-08-27",
+      "tier": "specialty",
+      "note": "Hosted text-to-speech model with improved prosody and multilingual speech across 44 languages, including newly added Odia and Urdu.",
+      "source": "https://cartesia.ai/blog/sonic-3.6"
+    },
+    {
+      "model": "Wan 3.0 (general availability)",
+      "lab": "Alibaba (Qwen)",
+      "date": "2026-08-24",
+      "tier": "specialty",
+      "note": "Wan 3.0 moved to general availability with a Model Studio API that no longer required a beta application.",
+      "source": "https://www.alibabacloud.com/en/news/product/video-generation-model-wan30-officially-launched-nsb?_p_lc=1"
+    },
+    {
+      "model": "Solar Pro 4",
+      "lab": "Upstage",
+      "date": "2026-08-20",
+      "tier": "flagship",
+      "note": "Closed commercial flagship for document understanding, long-context reasoning, and tool-based enterprise workflows.",
+      "source": "https://www.upstage.ai/news/upstage-ai-unveils-solar-pro-4-scoring-42-on-artificial-analysis-index-to-rank"
+    },
+    {
+      "model": "Wan 3.0 (public beta)",
+      "lab": "Alibaba (Qwen)",
+      "date": "2026-08-07",
+      "tier": "specialty",
+      "note": "Alibaba began an application-based public beta for its video model supporting up to 30 seconds and mixed text, image, video, and audio inputs.",
+      "source": "https://www.alibabacloud.com/blog/alibaba-unveils-wan3-0-with-twice-as-long-video-outputs-from-a-richer-variety-of-inputs_603439"
+    },
+    {
+      "model": "Grok Imagine Image 2.0",
+      "lab": "xAI",
+      "date": "2026-08-07",
+      "tier": "specialty",
+      "note": "Image generation and editing model with support for flexible aspect ratios and an API endpoint named grok-imagine-image-2.0.",
+      "source": "https://x.ai/news/grok-imagine-image-2"
+    },
+    {
+      "model": "Wan 3.0 (invite-only launch)",
+      "lab": "Alibaba (Qwen)",
+      "date": "2026-08-06",
+      "tier": "specialty",
+      "note": "Invite-only first access to Alibaba’s video generation model ahead of an application-based public beta.",
+      "source": "https://docs.qwencloud.com/changelog/models"
+    },
+    {
+      "model": "MAGI-2 Preview",
+      "lab": "Sand.ai",
+      "date": "2026-08-05",
+      "tier": "open-weights",
+      "note": "114B research checkpoint with about 6B active parameters for video generation, distinct from the later 480B MAGI-2 model.",
+      "source": "https://sand.ai/blog/magi-2-preview/"
+    },
+    {
+      "model": "Aion 1.0 Instruct (Edge developer preview)",
+      "lab": "Microsoft",
+      "date": "2026-06-02",
+      "tier": "small",
+      "note": "Microsoft introduced a developer preview of the on-device small language model through Edge Canary and Dev channels at Build.",
+      "source": "https://blogs.windows.com/msedgedev/2026/06/02/expanding-on-device-ai-in-microsoft-edge-new-models-and-apis-for-the-web/"
+    }
+  ],
+  "corrections": [],
+  "dateEvidence": [
+    {
+      "models": [
+        "Ming-Image-0.2-Design"
+      ],
+      "sourceURLs": [
+        "https://huggingface.co/inclusionAI/Ming-Image-0.2-Design",
+        "https://huggingface.co/inclusionAI/Ming-Image-0.2-Design/commit/675d9c3c3143ebece150b0b04b08f5edf0af80e4",
+        "https://artificialanalysis.ai/image/leaderboard/text-to-image"
+      ],
+      "result": "The maker’s repository records the weights upload on November 25; the November 26 changes update the model card."
+    },
+    {
+      "models": [
+        "Decision Model (production API)"
+      ],
+      "sourceURLs": [
+        "https://docs.qwencloud.com/changelog/models"
+      ],
+      "result": "Qwen Cloud dates decision-model to November 25 in Singapore and Beijing. Its September 24 changelog records the separately named preview endpoint."
+    },
+    {
+      "models": [
+        "Nemotron-Labs-Image-30B-A3B"
+      ],
+      "sourceURLs": [
+        "https://huggingface.co/nvidia/Nemotron-Labs-Image-30B-A3B",
+        "https://huggingface.co/nvidia/Nemotron-Labs-Image-30B-A3B/commit/1bda628830563104bf6bdf53cf0486190251fe5b",
+        "https://pc.watch.impress.co.jp/docs/news/2159286.html",
+        "https://xenospectrum.com/en/nvidia-nemotron-labs-image-30b-a3b-model-comparison/"
+      ],
+      "result": "NVIDIA’s clean release snapshot was committed November 24 at 21:55 UTC; September repository creation and November 25 coverage do not date the public checkpoint."
+    },
+    {
+      "models": [
+        "MAGI-2"
+      ],
+      "sourceURLs": [
+        "https://sand.ai/blog/magi-2",
+        "https://artificialanalysis.ai/video/leaderboard/text-to-video",
+        "https://artificialanalysis.ai/video/leaderboard/image-to-video"
+      ],
+      "result": "Sand.ai dates the full-model launch November 24 and distinguishes the 480B checkpoint from its 114B research preview. The full weights were not part of this release."
+    },
+    {
+      "models": [
+        "RD Flow 64"
+      ],
+      "sourceURLs": [
+        "https://retrodiffusion.ai/blog/rd-flow-64-technical-report",
+        "https://huggingface.co/Retro-Diffusion/rd-flow-64"
+      ],
+      "result": "Retro Diffusion’s November 24 report links to the downloadable checkpoint and a live demo."
+    },
+    {
+      "models": [
+        "Raon-1 mini (open weights)"
+      ],
+      "sourceURLs": [
+        "https://huggingface.co/KRAFTON/Raon-1-mini",
+        "https://huggingface.co/KRAFTON/Raon-1-mini/commits/main",
+        "https://raon-mini.krafton.ai/en"
+      ],
+      "result": "KRAFTON published the released model’s weights in its official repository on November 24."
+    },
+    {
+      "models": [
+        "OCRia-nano-1"
+      ],
+      "sourceURLs": [
+        "https://www.llamaindex.ai/blog/introducing-ocria-nano-1",
+        "https://huggingface.co/llamaindex/OCRia-nano-1"
+      ],
+      "result": "LlamaIndex dates the public weight release November 23."
+    },
+    {
+      "models": [
+        "Kling Image 4.0"
+      ],
+      "sourceURLs": [
+        "https://kling.ai/release-note/release-notes/Kling_Image_4",
+        "https://kling.ai/app/activity-zone?id=951146223321362494",
+        "https://artificialanalysis.ai/image/leaderboard/text-to-image"
+      ],
+      "result": "Kling’s official launch challenge opened November 17 and describes the model as available."
+    },
+    {
+      "models": [
+        "Raon-1 mini (preview)"
+      ],
+      "sourceURLs": [
+        "https://press.krafton.com/pt-BR/KRAFTON-ANNOUNCES-THIRD-QUARTER-2026-RESULTS"
+      ],
+      "result": "KRAFTON’s earnings announcement dates the first preview to October 21."
+    },
+    {
+      "models": [
+        "Qwen-Audio-3.1-TTS-Plus"
+      ],
+      "sourceURLs": [
+        "https://docs.qwencloud.com/changelog/models",
+        "https://artificialanalysis.ai/text-to-speech/leaderboard/provider-voice"
+      ],
+      "result": "Qwen Cloud dates the hosted release October 21; the arena lists a month without establishing a public access date."
+    },
+    {
+      "models": [
+        "Kling 4.0 (general availability)"
+      ],
+      "sourceURLs": [
+        "https://ir.kuaishou.com/news-releases/news-release-details/kling-ai-officially-launches-next-generation-kling-40-raising/",
+        "https://artificialanalysis.ai/video/leaderboard/image-to-video"
+      ],
+      "result": "The company’s release explicitly dates the rollout October 15, before the date of the release notice."
+    },
+    {
+      "models": [
+        "Utopai X"
+      ],
+      "sourceURLs": [
+        "https://www.businesswire.com/news/home/20260930840757/en/",
+        "https://artificialanalysis.ai/video/leaderboard/text-to-video"
+      ],
+      "result": "Utopai Studios’ dated press release announces the model and its immediate availability through PAI."
+    },
+    {
+      "models": [
+        "Boreal-H3"
+      ],
+      "sourceURLs": [
+        "https://labs.creatify.ai/research/boreal-h3-technical-report",
+        "https://artificialanalysis.ai/video/leaderboard/image-to-video"
+      ],
+      "result": "Creatify’s technical announcement is dated September 28. The November ranking update in the same article is not a release."
+    },
+    {
+      "models": [
+        "Atlas (unveiling)"
+      ],
+      "sourceURLs": [
+        "https://worldlabs.ai/blog/atlas"
+      ],
+      "result": "The maker dates the formal unveiling September 1. The November 12 row records later public access."
+    },
+    {
+      "models": [
+        "Sonic 3.6"
+      ],
+      "sourceURLs": [
+        "https://cartesia.ai/blog/sonic-3.6",
+        "https://artificialanalysis.ai/text-to-speech/leaderboard/provider-voice"
+      ],
+      "result": "Cartesia dates its model introduction August 27."
+    },
+    {
+      "models": [
+        "Wan 3.0 (general availability)"
+      ],
+      "sourceURLs": [
+        "https://www.alibabacloud.com/en/news/product/video-generation-model-wan30-officially-launched-nsb?_p_lc=1"
+      ],
+      "result": "Alibaba Cloud dates general availability and open API access August 24."
+    },
+    {
+      "models": [
+        "Solar Pro 4"
+      ],
+      "sourceURLs": [
+        "https://www.upstage.ai/news/upstage-ai-unveils-solar-pro-4-scoring-42-on-artificial-analysis-index-to-rank",
+        "https://console.upstage.ai/api/chat",
+        "https://artificialanalysis.ai/leaderboards/models"
+      ],
+      "result": "Upstage’s dated August 20 announcement establishes the public launch. The API snapshot identifier alone does not establish an August 6 launch."
+    },
+    {
+      "models": [
+        "Wan 3.0 (public beta)"
+      ],
+      "sourceURLs": [
+        "https://www.alibabacloud.com/blog/alibaba-unveils-wan3-0-with-twice-as-long-video-outputs-from-a-richer-variety-of-inputs_603439",
+        "https://artificialanalysis.ai/video/leaderboard/text-to-video"
+      ],
+      "result": "Alibaba Cloud dates its report of the public beta August 7."
+    },
+    {
+      "models": [
+        "Grok Imagine Image 2.0"
+      ],
+      "sourceURLs": [
+        "https://x.ai/news/grok-imagine-image-2",
+        "https://artificialanalysis.ai/image/leaderboard/text-to-image"
+      ],
+      "result": "The maker’s August 7 announcement identifies the model and its API availability."
+    },
+    {
+      "models": [
+        "Wan 3.0 (invite-only launch)"
+      ],
+      "sourceURLs": [
+        "https://docs.qwencloud.com/changelog/models",
+        "https://artificialanalysis.ai/video/leaderboard/text-to-video"
+      ],
+      "result": "Qwen Cloud identifies August 6 as the original invite-only launch, before Alibaba Cloud’s August 7 public beta report."
+    },
+    {
+      "models": [
+        "MAGI-2 Preview"
+      ],
+      "sourceURLs": [
+        "https://sand.ai/blog/magi-2-preview/",
+        "https://huggingface.co/sand-ai/MAGI-2-preview",
+        "https://artificialanalysis.ai/video/leaderboard/text-to-video"
+      ],
+      "result": "Sand.ai dates the research release August 5 and distinguishes this checkpoint from the full model."
+    },
+    {
+      "models": [
+        "Aion 1.0 Instruct (Edge developer preview)"
+      ],
+      "sourceURLs": [
+        "https://blogs.windows.com/msedgedev/2026/06/02/expanding-on-device-ai-in-microsoft-edge-new-models-and-apis-for-the-web/"
+      ],
+      "result": "The Edge team dates developer access June 2. The November 18 entry separately records downloadable weights."
+    }
+  ],
+  "exclusions": [
+    {
+      "candidate": "JoyAI-VL-Preview",
+      "reason": "Current intelligence index rank 27, but no dated maker source established the release of this checkpoint. The earlier JoyAI-VL-Interaction report is for a differently named model.",
+      "sources": [
+        "https://artificialanalysis.ai/leaderboards/models",
+        "https://echovideo.jd.cn/JoyAI-VL-Interaction/JoyAI-VL-Interaction-Reportv1.pdf"
+      ]
+    },
+    {
+      "candidate": "JT-4.1 Flash, HyperFlow H3, SkyReels V4, and FLUX 3 Max",
+      "reason": "The relevant boards name these models, but no dated primary source verified their release or formal announcement dates in this pass.",
+      "sources": [
+        "https://artificialanalysis.ai/leaderboards/models",
+        "https://artificialanalysis.ai/video/leaderboard/text-to-video"
+      ]
+    },
+    {
+      "candidate": "Solar Pro 4 Contributor",
+      "reason": "The maker’s API lists a contributor alias and dated contributor identifier for the same 260806 model, without a distinct checkpoint or dated release milestone.",
+      "sources": [
+        "https://console.upstage.ai/api/chat"
+      ]
+    },
+    {
+      "candidate": "MiMo-V2.6-Flash-MOPD (November listing)",
+      "reason": "The primary model repository shows its weights uploaded September 27; the September MiMo-V2.6 MOPD family row already records the release.",
+      "sources": [
+        "https://huggingface.co/XiaomiMiMo/MiMo-V2.6-Flash-MOPD/commits/main"
+      ]
+    },
+    {
+      "candidate": "WePocketModel 1.0 MLX packages",
+      "reason": "MLX packages are exported builds of the November 23 Tencent checkpoints, not new models.",
+      "sources": [
+        "https://huggingface.co/tencent/WePocketModel1.0-2B-MLX",
+        "https://huggingface.co/tencent/WePocketModel1.0-4B-MLX"
+      ]
+    },
+    {
+      "candidate": "Gemini 3.8 Live (LLM Gateway listing)",
+      "reason": "The November 26 event is a third-party gateway listing, not a first-party release or access milestone.",
+      "sources": [
+        "https://llmgateway.io/timeline/2026"
+      ]
+    },
+    {
+      "candidate": "Sulphur-3 (November 26 trending listing)",
+      "reason": "Trending status is not a release. The repository shows earlier changes, including a November 21 reorganization; this pass did not verify a first public release date.",
+      "sources": [
+        "https://huggingface.co/SulphurAI/Sulphur-3/commits/main"
+      ]
+    },
+    {
+      "candidate": "Nemotron-Labs-VisionCode and VisualCreation framework",
+      "reason": "NVIDIA lists VisionCode weights as future work and the framework is not itself a model.",
+      "sources": [
+        "https://huggingface.co/nvidia/Nemotron-Labs-Image-30B-A3B"
+      ]
+    },
+    {
+      "candidate": "Qwen4-Max preview retirement",
+      "reason": "Retiring the preview and routing its alias to the existing production model does not release a model.",
+      "sources": [
+        "https://docs.qwencloud.com/changelog/models"
+      ]
+    }
+  ],
+  "levelChanges": [
+    {
+      "model": "Atlas (public access)",
+      "lab": "World Labs",
+      "date": "2026-11-12",
+      "from": 2,
+      "to": 3,
+      "evidence": "World Labs dated the original unveiling September 1; the November 12 public release folds into that earlier main entry."
+    },
+    {
+      "model": "Aion 1.0 Instruct (open weights)",
+      "lab": "Microsoft",
+      "date": "2026-11-18",
+      "from": 2,
+      "to": 3,
+      "evidence": "Microsoft Edge dates developer preview access June 2; the November 18 release of weights is a later stage."
+    },
+    {
+      "model": "Step 5 Preview",
+      "lab": "StepFun",
+      "date": "2026-09-20",
+      "from": 2,
+      "to": 1,
+      "evidence": "StepFun entered the roster at rank 25 of the current Artificial Analysis intelligence index; Step 5 Preview is its top general model."
+    },
+    {
+      "model": "Kling 4.0 (early access)",
+      "lab": "Kuaishou",
+      "date": "2026-09-30",
+      "from": 3,
+      "to": 2,
+      "evidence": "Artificial Analysis image-to-video with audio rank 6 on November 26. https://artificialanalysis.ai/video/leaderboard/image-to-video"
+    }
+  ]
+}
