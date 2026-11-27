@@ -148,9 +148,9 @@ class BrokerageAdapter:
 
 
 def canonical_fidelity_action(value: str) -> str:
-    """Collapse Fidelity's detail-bearing action labels to supported actions."""
+    """Collapse Fidelity's detail-bearing action labels to known actions."""
     normalized = " ".join(value.split()).upper()
-    for action in ("DIVIDEND RECEIVED", "REINVESTMENT"):
+    for action in ("DIVIDEND RECEIVED", "REINVESTMENT", "DIRECT DEPOSIT"):
         if normalized == action or normalized.startswith(f"{action} "):
             return action
     return value
@@ -187,7 +187,7 @@ ADAPTERS = {
         actions={
             "DIVIDEND RECEIVED": "dividend",
         },
-        skipped_actions=("REINVESTMENT",),
+        skipped_actions=("REINVESTMENT", "DIRECT DEPOSIT"),
         category_actions=("dividend",),
         transfer_actions=(),
         required_security_keys=(),

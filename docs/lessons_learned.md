@@ -1,5 +1,13 @@
 # Lessons learned
 
+## 2026-11-27: Recognize cash activity in dividend exports
+
+Fidelity History can include cash deposits alongside dividends. Recognize the
+complete `DIRECT DEPOSIT` action with its optional detail suffix and use the
+existing warned-skip path for both outputs. Exercise both Fidelity CSV headers
+with a deposit ahead of a dividend and verify that unfamiliar actions still
+stop conversion.
+
 ## 2026-11-13: Choose a default source that has data
 
 Select the first available source for a fresh page while preserving explicit
