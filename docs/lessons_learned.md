@@ -2,11 +2,11 @@
 
 ## 2026-11-27: Recognize cash activity in dividend exports
 
-Fidelity History can include cash deposits alongside dividends. Recognize the
-complete `DIRECT DEPOSIT` action with its optional detail suffix and use the
-existing warned-skip path for both outputs. Exercise both Fidelity CSV headers
-with a deposit ahead of a dividend and verify that unfamiliar actions still
-stop conversion.
+Fidelity History can report annuity income as a direct deposit with blank
+symbol and description. Allow the full action label to opt that specific deposit
+into the dividend pipeline with a local security mapping. Keep the warned-skip
+path for other deposits and test that mixed activity produces matching records
+in cooked CSV and QIF under both Fidelity headers.
 
 ## 2026-11-13: Choose a default source that has data
 
