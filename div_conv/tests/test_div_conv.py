@@ -1262,12 +1262,12 @@ def test_fidelity_converts_only_the_configured_deposit_as_a_dividend(
     deposit = {
         "Account": account,
         "Run Date": "01/02/2030",
-        "Action": deposit_action,
+        "Action": f"  {deposit_action}  ",
         "Amount ($)": "123.45",
     }
     other_deposit = {
         **deposit,
-        "Action": "DIRECT DEPOSIT SYNTHETIC ANNUITY EXTRA (Cash)",
+        "Action": "DIRECT DEPOSIT SYNTHETIC ANNUITY (cash)",
         "Amount ($)": "67.89",
     }
     dividend = {**deposit, "Action": "DIVIDEND RECEIVED", "Symbol": "SYNTH1", "Amount ($)": "10.00"}
@@ -1285,7 +1285,7 @@ def test_fidelity_converts_only_the_configured_deposit_as_a_dividend(
     with source.with_suffix(".cooked.csv").open(newline="", encoding="utf-8") as handle:
         cooked = list(csv.DictReader(handle))
     assert [(row["Action"], row["Amount ($)"]) for row in cooked] == [
-        (deposit_action, "123.45"), ("DIVIDEND RECEIVED", "10.00"),
+        (deposit["Action"], "123.45"), ("DIVIDEND RECEIVED", "10.00"),
     ]
     qif = source.with_suffix(".qif").read_text(encoding="utf-8")
     assert qif.count("NMiscInc\n") == 2
