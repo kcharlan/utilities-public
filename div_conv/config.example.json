@@ -6,12 +6,16 @@
         "SYNTHETIC FIDELITY ACCOUNT": "SYNTHETIC CHECKING"
       },
       "securities": {
-        "SYNTH1": "SYNTHETIC INCOME FUND"
+        "SYNTH1": "SYNTHETIC INCOME FUND",
+        "SYNTHETIC ANNUITY": "SYNTHETIC ANNUITY SECURITY"
       },
       "categories": {
         "dividend": "Synthetic:Dividends"
       },
-      "transfers": {}
+      "transfers": {},
+      "direct_deposit_dividends": {
+        "DIRECT DEPOSIT SYNTHETIC ANNUITY (Cash)": "SYNTHETIC ANNUITY"
+      }
     },
     "vanguard": {
       "accounts": {

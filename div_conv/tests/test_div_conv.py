@@ -1246,6 +1246,81 @@ def test_fidelity_skips_direct_deposits_and_keeps_dividends(
     assert "T10.00\n" in qif
 
 
+@pytest.mark.parametrize("history", [False, True])
+def test_fidelity_converts_only_the_configured_deposit_as_a_dividend(
+    tmp_path: Path, history: bool
+) -> None:
+    home = tmp_path / "runtime"
+    account = "SYNTHETIC FIDELITY ACCOUNT"
+    deposit_action = "DIRECT DEPOSIT SYNTHETIC ANNUITY (Cash)"
+    section = configured_section(account, "SYNTH1")
+    section["securities"]["SYNTHETIC ANNUITY"] = "SYNTHETIC ANNUITY SECURITY"
+    section["direct_deposit_dividends"] = {deposit_action: "SYNTHETIC ANNUITY"}
+    write_config(home, {"fidelity": section})
+    source = tmp_path / "synthetic-annuity.csv"
+    headers = APP["FIDELITY_HISTORY_HEADERS" if history else "FIDELITY_HEADERS"]
+    deposit = {
+        "Account": account,
+        "Run Date": "01/02/2030",
+        "Action": f"  {deposit_action}  ",
+        "Amount ($)": "123.45",
+    }
+    other_deposit = {
+        **deposit,
+        "Action": "DIRECT DEPOSIT SYNTHETIC ANNUITY (cash)",
+        "Amount ($)": "67.89",
+    }
+    dividend = {**deposit, "Action": "DIVIDEND RECEIVED", "Symbol": "SYNTH1", "Amount ($)": "10.00"}
+    rows = [[row.get(header, "") for header in headers] for row in (deposit, other_deposit, dividend)]
+    if history:
+        write_fidelity_history_csv(source, rows)
+    else:
+        write_csv(source, headers, rows)
+
+    result = run_cli(home, str(source))
+
+    assert result.returncode == 0, result.stderr
+    assert result.stderr.count("Skipped action 'DIRECT DEPOSIT'") == 1
+    assert "2 transaction(s), total amount 133.45." in result.stdout
+    with source.with_suffix(".cooked.csv").open(newline="", encoding="utf-8") as handle:
+        cooked = list(csv.DictReader(handle))
+    assert [(row["Action"], row["Amount ($)"]) for row in cooked] == [
+        (deposit["Action"], "123.45"), ("DIVIDEND RECEIVED", "10.00"),
+    ]
+    qif = source.with_suffix(".qif").read_text(encoding="utf-8")
+    assert qif.count("NMiscInc\n") == 2
+    assert "YSYNTHETIC ANNUITY SECURITY\nT123.45\nMDividend SYNTHETIC ANNUITY\nLSynthetic:Dividends\n" in qif
+    assert "T10.00\n" in qif
+    assert "T67.89\n" not in qif
+
+
+@pytest.mark.parametrize(
+    ("deposit_mapping", "error"),
+    [
+        ([], "must be an object"),
+        ({"SYNTHETIC UNKNOWN ACTION": "SYNTH1"}, "must be a DIRECT DEPOSIT action"),
+        ({"DIRECT DEPOSIT SYNTHETIC ANNUITY": "SYNTH_UNMAPPED"}, "must name a key in securities"),
+    ],
+)
+def test_fidelity_rejects_invalid_deposit_dividend_config(
+    tmp_path: Path, deposit_mapping: object, error: str
+) -> None:
+    home = tmp_path / "runtime"
+    section = configured_section("SYNTHETIC ACCOUNT", "SYNTH1")
+    section["direct_deposit_dividends"] = deposit_mapping
+    write_config(home, {"fidelity": section})
+    source = tmp_path / "synthetic-invalid-config.csv"
+    write_csv(source, APP["FIDELITY_HEADERS"], [synthetic_fidelity_row("2030-01-02", "10.00")])
+
+    result = run_cli(home, str(source))
+
+    assert result.returncode == 2
+    assert "brokerages.fidelity.direct_deposit_dividends" in result.stderr
+    assert error in result.stderr
+    assert not source.with_suffix(".cooked.csv").exists()
+    assert not source.with_suffix(".qif").exists()
+
+
 def test_fidelity_rejects_direct_deposit_lookalike(tmp_path: Path) -> None:
     home = tmp_path / "runtime"
     write_config(home, {"fidelity": configured_section("SYNTHETIC ACCOUNT", "SYNTH1")})

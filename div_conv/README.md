@@ -81,7 +81,7 @@ Supported Fidelity actions:
 
 - `DIVIDEND RECEIVED` (case-insensitive, with an optional detail suffix) → normalized `dividend`, rendered as QIF `MiscInc` with memo `Dividend <source symbol/security>`
 
-`REINVESTMENT` and `DIRECT DEPOSIT` (case-insensitive, with optional detail suffixes) are excluded from both cooked CSV and QIF with visible warnings and require no transaction mappings. Direct deposits are cash activity outside the dividend conversion.
+`REINVESTMENT` and unconfigured `DIRECT DEPOSIT` rows are excluded from both cooked CSV and QIF with visible warnings and require no transaction mappings. Both action labels are recognized case-insensitively with optional detail suffixes. To include a specific direct deposit as dividend income, add its complete `Action` text to the optional Fidelity mapping below. The cooked CSV keeps the original action text.
 
 Vanguard required headers, in the usual export order:
 
@@ -118,6 +118,13 @@ Generated QIF fields reject CR, LF, and other control characters instead of allo
 - `transfers`: normalized action → QIF transfer account; `withdrawal` is required only for Vanguard
 
 All four mapping objects must be present. `accounts` and `securities` must be non-empty for a selected brokerage. Fidelity may use an empty `transfers` object because its supported action does not use transfers. Vanguard requires both `securities.@withdrawal` and `transfers.withdrawal`; the reserved security value is deliberately distinct from dividend source-security mappings. No reinvestment mapping is required. Unknown top-level keys, unregistered brokerage sections, and unknown keys inside registered sections are preserved when the program backfills a missing registered section.
+
+Fidelity's optional `direct_deposit_dividends` object maps the full source
+`Action` text to a key in `securities`. Match the action exactly, including
+case and any payer or cash suffix, after trimming surrounding whitespace.
+A configured deposit uses that security and the existing `categories.dividend`
+mapping even when the source symbol and description are blank. An absent or
+empty object leaves direct deposits on the warned-skip path.
 
 Cooked CSVs retain the selected brokerage's declared headers rather than using a combined normalized schema. Generated files are operational local data and must not be committed.
 
