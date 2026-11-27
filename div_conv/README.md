@@ -81,7 +81,7 @@ Supported Fidelity actions:
 
 - `DIVIDEND RECEIVED` (case-insensitive, with an optional detail suffix) → normalized `dividend`, rendered as QIF `MiscInc` with memo `Dividend <source symbol/security>`
 
-`REINVESTMENT` (also with an optional detail suffix) is excluded from both cooked CSV and QIF with a visible warning and does not require a mapping.
+`REINVESTMENT` and `DIRECT DEPOSIT` (case-insensitive, with optional detail suffixes) are excluded from both cooked CSV and QIF with visible warnings and require no transaction mappings. Direct deposits are cash activity outside the dividend conversion.
 
 Vanguard required headers, in the usual export order:
 

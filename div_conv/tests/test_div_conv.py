@@ -1201,6 +1201,67 @@ def test_fidelity_processes_dividend_and_visibly_skips_reinvestment(
     assert "1 transaction(s)" in result.stdout
 
 
+@pytest.mark.parametrize("history", [False, True])
+@pytest.mark.parametrize("action", ["DIRECT DEPOSIT", "Direct  Deposit SYNTHETIC PAYER (Cash)"])
+def test_fidelity_skips_direct_deposits_and_keeps_dividends(
+    tmp_path: Path, history: bool, action: str
+) -> None:
+    home = tmp_path / "runtime"
+    account = "SYNTHETIC FIDELITY ACCOUNT"
+    write_config(home, {"fidelity": configured_section(account, "SYNTH1")})
+    source = tmp_path / "synthetic-mixed-activity.csv"
+    headers = APP["FIDELITY_HISTORY_HEADERS" if history else "FIDELITY_HEADERS"]
+    dividend = {
+        "Account": account,
+        "Run Date": "01/02/2030",
+        "Action": "DIVIDEND RECEIVED",
+        "Symbol": "SYNTH1",
+        "Amount ($)": "10.00",
+    }
+    deposit = {
+        **dividend,
+        "Action": action,
+        "Symbol": "",
+        "Description": "SYNTHETIC UNMAPPED PAYER",
+        "Amount ($)": "123.45",
+    }
+    rows = [[row.get(header, "") for header in headers] for row in (deposit, dividend)]
+    if history:
+        write_fidelity_history_csv(source, rows)
+    else:
+        write_csv(source, headers, rows)
+
+    result = run_cli(home, str(source))
+
+    assert result.returncode == 0, result.stderr
+    assert "Skipped action 'DIRECT DEPOSIT'" in result.stderr
+    assert "1 transaction(s)" in result.stdout
+    assert "123.45" not in result.stdout
+    with source.with_suffix(".cooked.csv").open(newline="", encoding="utf-8") as handle:
+        cooked = list(csv.DictReader(handle))
+    assert [row["Action"] for row in cooked] == ["DIVIDEND RECEIVED"]
+    qif = source.with_suffix(".qif").read_text(encoding="utf-8")
+    assert qif.count("^\n") == 1
+    assert "NMiscInc\n" in qif
+    assert "T10.00\n" in qif
+
+
+def test_fidelity_rejects_direct_deposit_lookalike(tmp_path: Path) -> None:
+    home = tmp_path / "runtime"
+    write_config(home, {"fidelity": configured_section("SYNTHETIC ACCOUNT", "SYNTH1")})
+    source = tmp_path / "synthetic-unsupported-action.csv"
+    row = synthetic_fidelity_row("2030-01-02", "10.00")
+    row[2] = "DIRECT DEPOSITOR SYNTHETIC ACTION"
+    write_csv(source, APP["FIDELITY_HEADERS"], [row])
+
+    result = run_cli(home, str(source))
+
+    assert result.returncode == 2
+    assert "unsupported action 'DIRECT DEPOSITOR SYNTHETIC ACTION'" in result.stderr
+    assert not source.with_suffix(".cooked.csv").exists()
+    assert not source.with_suffix(".qif").exists()
+
+
 @pytest.mark.parametrize("brokerage,history", [("fidelity", False), ("fidelity", True), ("vanguard", False)])
 @pytest.mark.parametrize("amount", ["-12.34", "0.00", "12.34"])
 @pytest.mark.parametrize("symbol", ["SYNTH_NEW_FUND_A", "SYNTH_NEW_FUND_B"])
